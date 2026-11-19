@@ -63,7 +63,10 @@ fn a_handover_halfway_through_an_epoch_splits_the_fifth_between_the_two_operator
     // Nothing is staked at the close that opens the epoch, so it pays no one and starts the count.
     h.advance_to(start);
     assert_eq!(allocated(&h.cmd(Command::Tick)), UsdcUnits(0));
-    assert_eq!(office(&h), TimeInOffice { since: start, served: Default::default() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice { since: start, served: Default::default(), later: Vec::new(), inherited_to: None }
+    );
     stake(&mut h, STAKER_A, 1);
 
     h.advance_to(start + 12 * HOUR_MS);
@@ -79,7 +82,10 @@ fn a_handover_halfway_through_an_epoch_splits_the_fifth_between_the_two_operator
         [100_000_000, 100_000_000, 800_000_000]
     );
     assert_eq!(allocated(&events), UsdcUnits(1_000_000_000));
-    assert_eq!(office(&h), TimeInOffice { since: end_of(&h, 8), served: Default::default() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice { since: end_of(&h, 8), served: Default::default(), later: Vec::new(), inherited_to: None }
+    );
 }
 
 #[test]
@@ -210,7 +216,10 @@ fn a_close_that_distributes_nothing_still_restarts_the_count() {
     // that time is not carried into the next epoch, which the incoming operator serves alone.
     let mut h = rotating_v50(1_000_000_000);
     seat(&mut h, 1, CANDIDATE, key());
-    assert_eq!(office(&h), TimeInOffice { since: h.ts, served: Default::default() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice { since: h.ts, served: Default::default(), later: Vec::new(), inherited_to: None }
+    );
     assert_eq!(h.engine.staking().unwrap().distributed, UsdcUnits(0));
     h.cmd(Command::Tick);
     stake(&mut h, STAKER_A, 1);
@@ -240,7 +249,10 @@ fn v50_starts_counting_at_its_activation_and_the_close_it_runs_with_keeps_the_ol
     let events = h.cmd(Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V50 }));
     assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
     assert_eq!(shares(&events), vec![(CANDIDATE, excess(&events) / 5)]);
-    assert_eq!(office(&h), TimeInOffice { since: end, served: Default::default() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice { since: end, served: Default::default(), later: Vec::new(), inherited_to: None }
+    );
 
     // Activated six hours into the next epoch, the count starts there: the key in effect serves all of it.
     let mut h = rotating(1_000_000_000);
@@ -279,7 +291,10 @@ fn staking_initialised_under_v50_counts_from_its_initialisation() {
     let start_ms = h.ts + HOUR_MS;
     let config = engine_core::StakingConfig { liquidity_floor: floor, epoch_ms: DAY_MS, start_ms, cooldown_ms: DAY_MS };
     h.operator_admin(AdminCommand::InitStaking(config));
-    assert_eq!(office(&h), TimeInOffice { since: start_ms - HOUR_MS, served: Default::default() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice { since: start_ms - HOUR_MS, served: Default::default(), later: Vec::new(), inherited_to: None }
+    );
     switch(&mut h, true);
     stake(&mut h, STAKER_A, 1);
     // The hour before epoch 0 starts counts too, as the first close pays what built up in it.

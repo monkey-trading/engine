@@ -183,12 +183,12 @@ impl Engine {
         });
     }
 
-    /// The integral of `holder`'s haircut over `[from, to]` of its office, in bps·ms, rounded up: over
-    /// the part `[a, b]` the haircut covers, `initial_bps · ((end − a)² − (end − b)²) / (2 · decay_ms)`,
-    /// with `end` when it reaches nothing. 0 without a haircut.
-    pub(crate) fn withheld_in_office(&self, holder: AccountId, from: Millis, to: Millis) -> i64 {
-        let faults = &self.operator_faults;
-        let (Some(config), Some(&since)) = (faults.config, faults.haircuts.get(&holder)) else { return 0 };
+    /// The integral over `[from, to]` of a member's office of the haircut that began decaying at
+    /// `haircut`, in bps·ms, rounded up: over the part `[a, b]` the haircut covers,
+    /// `initial_bps · ((end − a)² − (end − b)²) / (2 · decay_ms)`, with `end` when it reaches nothing.
+    /// 0 without a haircut.
+    pub(crate) fn withheld_over(&self, haircut: Option<Millis>, from: Millis, to: Millis) -> i64 {
+        let (Some(config), Some(since)) = (self.operator_faults.config, haircut) else { return 0 };
         let end = since.saturating_add(config.penalty.decay_ms);
         let (a, b) = (from.max(since), to.min(end));
         if b <= a {

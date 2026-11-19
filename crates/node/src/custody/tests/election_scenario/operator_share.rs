@@ -98,7 +98,8 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     node.wait("the election to mirror", |e| e.operator_election().last.is_some()).await;
 
     // 3. Before the election takes effect, the candidate earns nothing: the house is at the floor,
-    //    so the epochs the wait crosses pay no one.
+    //    so the epochs the wait crosses pay no one, nor does the epoch the election takes effect in,
+    //    whose share the outgoing operator's time in it would split.
     node.advance_to(EFFECTIVE_MS + 60_000).await;
     let block = chain.mine_at(EFFECTIVE_SECS + 60).await;
     node.wait("the mirror to pass the effective time", move |e| completed_through(e) >= Some(block)).await;
@@ -109,6 +110,8 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
     for account in balances {
         assert_eq!(node.query(move |e| e.distribution(account)).await, UsdcUnits(0));
     }
+    let events = next_epoch(&mut node, &chain).await;
+    assert_eq!(allocated_of(&events), UsdcUnits(0), "{events:?}");
 
     // 4. A client loses at least $900 to the house, with the spreads it pays, so the close finds that
     //    much USDC above the floor: a fifth to the operator, and the rest to stakers 30:40:20. The

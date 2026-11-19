@@ -198,6 +198,12 @@ pub enum Event {
         account: AccountId,
         amount: Fixed,
     },
+    /// From `V83`, a deposit credited again repaid the house, from its principal, what the house wrote off
+    /// (`BadDebt`) against the account since the deposit's reversal, at most that principal.
+    WriteOffRepaid {
+        account: AccountId,
+        amount: Fixed,
+    },
     Financing {
         account: AccountId,
         market: MarketId,

@@ -256,6 +256,32 @@ fn a_write_off_the_same_period_losses_absorb_leaves_no_debt() {
 }
 
 #[test]
+fn from_v83_a_write_off_the_deposit_repays_no_longer_cancels_the_losses() {
+    // As above, but the reversed deposit is credited again in the same period: it repays the house the
+    // write-off, so the client bore the whole loss and its weight stands.
+    let (mut h, client) = emitting(ProtocolVersion::V83);
+    let account = client.account;
+    let budget = h.engine.emissions().expect("initialised").schedule.budget(0);
+    let deposit = receipt(1, account, "100");
+    credit(&mut h, &deposit);
+    lose(&mut h, "100", "90");
+    let events = reverse(&mut h, &deposit);
+    let written_off = events
+        .iter()
+        .find_map(|e| match e {
+            Event::BadDebt { amount, .. } => Some(*amount),
+            _ => None,
+        })
+        .expect("the reversal writes the loss off");
+    credit(&mut h, &DepositReceipt { block: 200, block_hash: B256::repeat_byte(0x99), ..deposit });
+    assert_eq!(h.engine.accounts()[&account].balance, f("100") - written_off);
+    let result = h.engine.period_results()[&account];
+    assert_eq!(result.written_off, Fixed::ZERO, "the repayment takes the write-off back out");
+    assert_eq!(allocations(&next_period(&mut h)), [(account, 0, result.losses, budget)]);
+    assert_eq!(h.engine.emission_debt(account), Fixed::ZERO);
+}
+
+#[test]
 fn before_v32_a_later_period_reversal_leaves_earlier_allocations_unclawed() {
     let (mut h, client) = emitting(ProtocolVersion::V26);
     let account = client.account;

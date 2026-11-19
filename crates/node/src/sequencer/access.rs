@@ -1,10 +1,13 @@
 //! Access-source alert episodes from authenticated engine decisions.
 
+use std::collections::BTreeMap;
+
 use engine_core::Engine;
 use engine_core::access::AccessReject;
 use engine_core::command::Command;
-use engine_core::deposits::DepositUpdate;
+use engine_core::deposits::{DepositReceipt, DepositUpdate, RecordedDeposit};
 use engine_core::event::{Event, Reject};
+use engine_core::types::AccountId;
 use tracing::{info, warn};
 
 #[derive(Default)]
@@ -59,9 +62,11 @@ impl AccessAlerts {
 
 /// The source health the access command `cmd` itself established. Only events that record this
 /// command's own verified screening count: an approval of an older queued withdrawal, a retained
-/// credit and an inherited hold say nothing about the source.
+/// credit and an inherited hold say nothing about the source. From `V83` a reorganisation screens each
+/// of its moves, and any move whose screening failed outweighs those that passed.
 fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<SourceHealth> {
-    events.iter().find_map(|event| match event {
+    let replaced = replaced_receipts(engine, cmd);
+    let health = |event: &Event| match event {
         Event::EligibilityAttested { .. }
         | Event::OrderAccepted { .. }
         | Event::PositionLevelsSet { .. }
@@ -69,12 +74,12 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
         | Event::Deposited { .. }
         | Event::HouseCapitalMoved { .. } => Some(SourceHealth::Verified),
         // A receipt credited on screening; adoption moves no principal and screens nothing.
-        Event::CustodyDepositChanged { uncredited: None, principal_delta, .. }
-            if principal_delta.is_positive() && !retained_credit(engine, cmd) =>
+        Event::CustodyDepositChanged { receipt, uncredited: None, principal_delta, .. }
+            if principal_delta.is_positive() && !retained_credit(&replaced, &receipt.reference()) =>
         {
             Some(SourceHealth::Verified)
         }
-        Event::DepositHeld { .. } if inherited_hold(engine, cmd) => None,
+        Event::DepositHeld { chain_ref, .. } if inherited_hold(&replaced, chain_ref) => None,
         Event::DepositHeld { reason, .. } | Event::DepositPending { reason, .. } => source_result(*reason),
         Event::EligibilityRejected { reason, .. }
         | Event::OrderRejected { reason, .. }
@@ -97,33 +102,48 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
             _ => Some(SourceHealth::Verified),
         },
         _ => None,
-    })
+    };
+    if matches!(cmd, Command::CustodyReorganisation { .. }) {
+        let mut results = events.iter().filter_map(health);
+        let first = results.next()?;
+        return Some(results.find(|result| matches!(result, SourceHealth::Failed(_))).unwrap_or(first));
+    }
+    events.iter().find_map(health)
 }
 
-/// The replaced receipt of a screened replacement, as recorded after it applied.
-fn replaced_receipt<'a>(
-    engine: &'a Engine,
-    cmd: &Command,
-) -> Option<(&'a engine_core::deposits::RecordedDeposit, bool)> {
-    match cmd {
-        Command::AccessCustodyReplacement { update, payer, .. } => {
-            let DepositUpdate::Replace { receipt, .. } = &**update else { return None };
-            let orphan = engine.recorded_deposit(&receipt.reference())?;
-            Some((orphan, payer.is_some() && orphan.payer == *payer))
+/// Each replaced receipt of a screened replacement, as recorded after it applied, by its replacement's
+/// reference, and whether its payer is the replacement's: one for `AccessCustodyReplacement`, and from
+/// `V83` one for each move of a reorganisation.
+fn replaced_receipts<'a>(engine: &'a Engine, cmd: &Command) -> BTreeMap<String, (&'a RecordedDeposit, bool)> {
+    let moves: Vec<(&DepositReceipt, &DepositReceipt, Option<AccountId>)> = match cmd {
+        Command::AccessCustodyReplacement { update, payer, .. } => match &**update {
+            DepositUpdate::Replace { receipt, replacement, .. } => vec![(receipt, replacement, *payer)],
+            _ => Vec::new(),
+        },
+        Command::CustodyReorganisation { moves } => {
+            moves.iter().map(|move_| (&move_.receipt, &move_.replacement, move_.payer)).collect()
         }
-        _ => None,
-    }
+        _ => Vec::new(),
+    };
+    moves
+        .into_iter()
+        .filter_map(|(receipt, replacement, payer)| {
+            let orphan = engine.recorded_deposit(&receipt.reference())?;
+            Some((replacement.reference(), (orphan, payer.is_some() && orphan.payer == payer)))
+        })
+        .collect()
 }
 
 /// Whether a replacement kept a credited receipt's principal for its unchanged authenticated
 /// payer, which the engine does whatever the replacement's screening said.
-fn retained_credit(engine: &Engine, cmd: &Command) -> bool {
-    replaced_receipt(engine, cmd).is_some_and(|(orphan, same_payer)| same_payer && orphan.uncredited.is_none())
+fn retained_credit(replaced: &BTreeMap<String, (&RecordedDeposit, bool)>, replacement: &str) -> bool {
+    replaced.get(replacement).is_some_and(|(orphan, same_payer)| *same_payer && orphan.uncredited.is_none())
 }
 
 /// Whether a replacement's hold was inherited from the receipt it replaced, not screened afresh.
-fn inherited_hold(engine: &Engine, cmd: &Command) -> bool {
-    replaced_receipt(engine, cmd)
+fn inherited_hold(replaced: &BTreeMap<String, (&RecordedDeposit, bool)>, replacement: &str) -> bool {
+    replaced
+        .get(replacement)
         .is_some_and(|(orphan, _)| orphan.uncredited.is_some_and(|held| held.reason.holds_deposit()))
 }
 
@@ -139,6 +159,7 @@ pub(super) fn is_access_command(cmd: &Command) -> bool {
             | Command::AccessDeposit { .. }
             | Command::AccessCustodyDeposit { .. }
             | Command::AccessCustodyReplacement { .. }
+            | Command::CustodyReorganisation { .. }
             | Command::RetryDepositScreening { .. }
     )
 }
@@ -349,6 +370,52 @@ mod tests {
             assert!(!state.failed);
             assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), resolved);
         }
+    }
+
+    #[test]
+    fn a_failed_screening_in_a_reorganisation_outweighs_a_passed_one() {
+        use alloy::primitives::B256;
+        use engine_core::deposits::{DepositBeneficiary, DepositStatus, ReceiptMove};
+        let receipt = |byte: u8| DepositReceipt {
+            block: u64::from(byte),
+            block_hash: B256::repeat_byte(byte),
+            tx_hash: B256::repeat_byte(byte),
+            log_index: 0,
+            transaction_deposit_index: 0,
+            deposit_id: u64::from(byte),
+            beneficiary: DepositBeneficiary::Trader { account: ACCOUNT },
+            amount: Fixed::ONE,
+        };
+        let moved = |byte: u8| ReceiptMove {
+            receipt: receipt(byte),
+            observed_at_seq: 0,
+            replacement: receipt(byte + 1),
+            replacement_reversed_at_seq: None,
+            payer: None,
+            evidence: None,
+        };
+        let reorganisation = Command::CustodyReorganisation { moves: vec![moved(1), moved(3)] };
+        let credited = Event::CustodyDepositChanged {
+            receipt: receipt(2),
+            status: DepositStatus::Unfinalised,
+            principal_delta: Fixed::ONE,
+            uncredited: None,
+        };
+        let pending = Event::DepositPending {
+            chain_ref: receipt(4).reference(),
+            account: Some(ACCOUNT),
+            payer: None,
+            amount: Fixed::ONE,
+            reason: AccessReject::SourceUnavailable,
+        };
+        for events in [[credited.clone(), pending.clone()], [pending, credited.clone()]] {
+            let mut state = AccessAlerts::default();
+            state.note(&Engine::default(), &reorganisation, &events);
+            assert!(state.failed, "{events:?}");
+        }
+        let mut state = AccessAlerts { failed: true };
+        state.note(&Engine::default(), &reorganisation, &[credited]);
+        assert!(!state.failed, "a reorganisation whose screenings all passed resolves the episode");
     }
 
     #[test]

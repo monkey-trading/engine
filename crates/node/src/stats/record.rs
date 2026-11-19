@@ -60,7 +60,8 @@ impl Inner {
         let queued = engine.withdrawal_cash().is_some();
         // Allocations of the period the command closes: MONKEY base units, and the weight they share.
         let mut periods: BTreeMap<u64, (Amount, Amount)> = BTreeMap::new();
-        // What the command's epoch close allocated before its closing event says so.
+        // What the command's next epoch close allocated before its closing event says so; from V83 one
+        // command can close several, each after the one before.
         let mut close = CloseSoFar::default();
         for (index, event) in events.iter().enumerate() {
             match event {
@@ -124,6 +125,7 @@ impl Inner {
                 }
                 Event::DistributionEpochClosed { epoch, nav, floor, excess, allocated } => {
                     let closed_ms = engine.staking().map_or(ts, |s| s.config.epoch_end(*epoch));
+                    let close = std::mem::take(&mut close);
                     self.distributions.push(EpochClose {
                         epoch: *epoch,
                         close_seq: seq,
@@ -135,8 +137,8 @@ impl Inner {
                         allocated_usdc_units: *allocated,
                         stakers_usdc_units: UsdcUnits(close.stakers_usdc_units),
                         stakers: close.stakers,
-                        operator_shares: std::mem::take(&mut close.operator_shares),
-                        skipped: close.skipped.take(),
+                        operator_shares: close.operator_shares,
+                        skipped: close.skipped,
                     });
                     self.series.add(Metric::DistributedPerEpoch, None, closed_ms, units(allocated.0));
                     self.distribution = Some(Distribution {

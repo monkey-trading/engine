@@ -322,12 +322,16 @@ impl Engine {
                 }
                 self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
+                let inherits_office = self.protocol_version < ProtocolVersion::V83 && *version >= ProtocolVersion::V83;
                 self.set_protocol_version(*version);
                 // Rules before `V47` record no candidate, so one an election already seated is seated before
                 // any time counts.
                 if counts_office {
                     self.settle_operator_candidate();
                     self.start_time_in_office();
+                }
+                if inherits_office {
+                    self.inherit_time_in_office();
                 }
                 if *version >= ProtocolVersion::V26 {
                     self.hot_indexes = None;

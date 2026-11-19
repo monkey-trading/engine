@@ -12,7 +12,7 @@ use crate::auth::{ClientAuth, Operator, RequestAuth};
 use crate::benchmark::BenchmarkBatch;
 use crate::close_spread::CloseSpreadCeiling;
 use crate::corporate::CorporateAction;
-use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit};
+use crate::deposits::{CustodyCheckpoint, DepositReceipt, DepositUpdate, LegacyDeposit, ReceiptMove};
 use crate::election::{RegistryElection, RegistryInstallation};
 use crate::emissions::{EmissionSchedule, TokenUnits};
 use crate::governance::{GovernanceConfig, PassedProposal, VotedChange};
@@ -89,6 +89,11 @@ pub enum Command {
     },
     /// A quorum-proven custody receipt transition, from V20.
     CustodyDeposit(Box<DepositUpdate>),
+    /// From `V83`, every move of one reorganisation: each live receipt whose transaction-local deposit
+    /// is canonical again in another block, possibly at another vault id, applied together.
+    CustodyReorganisation {
+        moves: Vec<ReceiptMove>,
+    },
     /// Finalised scan progress, recorded after its receipts have settled.
     CustodyFinalised(CustodyCheckpoint),
     /// A trader asks to withdraw. If approved, the enclave signs a

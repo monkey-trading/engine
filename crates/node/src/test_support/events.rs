@@ -293,6 +293,7 @@ pub fn every_event() -> Vec<Event> {
             stop_loss: Some(amount),
             reason: LevelsRemoved::StopLoss,
         },
+        Event::WriteOffRepaid { account, amount },
     ]);
     for event in &events {
         match event {
@@ -322,6 +323,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::Fill(_)
             | Event::CloseOut { .. }
             | Event::BadDebt { .. }
+            | Event::WriteOffRepaid { .. }
             | Event::Financing { .. }
             | Event::FinancingApplied { .. }
             | Event::BenchmarkRateMissing { .. }

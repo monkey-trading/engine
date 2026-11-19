@@ -412,24 +412,21 @@ pub enum ProtocolVersion {
     /// notional, a close-out's own count included) until the catch-up has passed its time, and the tier
     /// read at an earlier boundary leaves them out. The volume leaf encodes them while any are kept.
     V69,
-    /// A fault the fault proof contract proves, two signed log heads of one turn's assignment that
-    /// disagree at one seq, cuts its member's operator share by a haircut that starts at the recorded
-    /// penalty and falls linearly to nothing over its decay; the withheld part goes to stakers
-    /// (`operator_faults`).
+    /// A fault the fault proof contract proves, two signed log heads of one turn's assignment that disagree at one
+    /// seq, cuts its member's operator share by a haircut that starts at the recorded penalty and falls linearly to
+    /// nothing over its decay; the withheld part goes to stakers (`operator_faults`).
     V70,
     /// A promotion the schedule finalised after its turn's nominal end applies when it is mirrored, as
     /// long as no later turn is in effect, so the promoted member's key signs and its `TurnTaken` is
     /// accepted, where an earlier version refused every assignment for a turn that had ended. A turn
     /// applied after its end holds the office, for the operator's share, until a later turn applies.
     V71,
-    /// The engine keeps the set of each turn whose assignment it refused, until a later turn is in
-    /// effect, so a promotion of that turn after its end is not refused for a set a later adoption
-    /// pruned.
+    /// The engine keeps the set of each turn whose assignment it refused, until a later turn is in effect, so a
+    /// promotion of that turn after its end is not refused for a set a later adoption pruned.
     V72,
-    /// The engine forgets a rotation set by the block time the staking mirror has completed, when that
-    /// is earlier than the sequenced time, and forgets none before the mirror records one, so a mirror
-    /// that lags the chain keeps a set until the draws from it are mirrored, where an earlier version
-    /// counted from the sequenced time alone.
+    /// The engine forgets a rotation set by the block time the staking mirror has completed, when that is earlier than
+    /// the sequenced time, and forgets none before the mirror records one, so a mirror that lags the chain keeps a set
+    /// until the draws from it are mirrored, where an earlier version counted from the sequenced time alone.
     V73,
     /// A price re-checks only the resting limits it could fill. A limit is indexed at the index mid
     /// where its market's least fill rate, the lower of its least spread band and its close-spread
@@ -497,4 +494,7 @@ pub enum ProtocolVersion {
     /// an instant its calendar in force has it open is refused (`listing_bounds`). Added hours, and a first listing's
     /// calendar, meet no notice under it.
     V82,
+    /// A reorganisation's receipt moves apply as one command, a reversal's write-off is repaid by the deposit's next
+    /// credit (`deposits`), and epochs close in turn, the operator's share counted to each one's end (`staking`).
+    V83,
 }

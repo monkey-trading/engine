@@ -1,9 +1,11 @@
 //! From `V75`, an epoch closes only once the staking mirror's finalised frontier has passed its end, as
 //! an election waits for its effective time: the latest epoch both the sequenced time and the frontier
 //! have passed closes, within a day of its end. A host that holds the mirror's reads back can delay a
-//! close, but no close pays a stake set the mirror has not brought to the epoch's end: an epoch the
-//! mirror passes only a day after its end is skipped, and its excess stays with the house for the close
-//! the mirror lets through. `V74` closed on whatever stake the mirror had delivered.
+//! close, but no close pays a stake set the mirror has not brought to the epoch's end. Under `V75` an
+//! epoch the mirror passes only a day after its end is skipped, and the time a close is held is the
+//! operator in office's; from `V83` each epoch closes in turn however late, and splits the operator's
+//! share by time in office to its own end (`held_closes`). `V74` closed on whatever stake the mirror
+//! had delivered.
 
 use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
@@ -23,6 +25,7 @@ const LEAVER: AccountId = AccountId([0xa1; 20]);
 const JOINER: AccountId = AccountId([0xa2; 20]);
 const V74: ProtocolVersion = ProtocolVersion::V74;
 const V75: ProtocolVersion = ProtocolVersion::V75;
+const V83: ProtocolVersion = ProtocolVersion::V83;
 /// The stakers' part of the excess: four fifths, the operator in office taking the rest.
 const STAKERS: u128 = EXCESS / 5 * 4;
 
@@ -155,7 +158,7 @@ fn a_frontier_ahead_of_the_sequenced_time_closes_no_unended_epoch() {
 }
 
 #[test]
-fn an_epoch_the_mirror_passes_a_day_after_its_end_is_skipped() {
+fn an_epoch_the_mirror_passes_a_day_after_its_end_is_skipped_before_v83_and_closes_from_it() {
     // A mirror that passes the end a millisecond inside the day closes the epoch.
     let (mut h, end) = open_epoch(V75);
     stake(&mut h, LEAVER, 1);
@@ -164,63 +167,76 @@ fn an_epoch_the_mirror_passes_a_day_after_its_end_is_skipped() {
     let events = h.cmd(Command::Tick);
     assert_eq!(closed(&events), Some((EXCESS, EXCESS)), "{events:?}");
 
-    let (mut h, end) = open_epoch(V75);
-    stake(&mut h, LEAVER, 1);
-    let open = h.engine.staking().expect("staking").epoch;
-    // The mirror stalls before the end, and passes it only a day after it, while the next epoch, which
-    // ends then, waits for the mirror to pass its own end.
-    let next_end = end + DAY_MS;
-    h.advance_to(next_end);
-    assert_eq!(closed(&h.cmd(Command::Tick)), None);
-    // The joiner staked on chain an hour after `open` ended, before the next epoch's end.
-    stake(&mut h, JOINER, 1);
-    assert_eq!(closed(&frontier(&mut h, end + HOUR_MS)), None);
-    assert_eq!(closed(&h.cmd(Command::Tick)), None);
-    h.advance(HOUR_MS);
-    frontier(&mut h, next_end);
-    let events = h.cmd(Command::Tick);
-    assert!(events.contains(&Event::DistributionEpochsSkipped { first: open, last: open }), "{events:?}");
-    assert!(
-        events.iter().any(|event| matches!(event, Event::DistributionEpochClosed { epoch, .. } if *epoch == open + 1))
-    );
-    // The excess the house kept pays the stake set the mirror brought to the end of the epoch that closed.
-    assert_eq!((paid(&h, LEAVER), paid(&h, JOINER)), (STAKERS / 2, STAKERS / 2));
+    for version in [V75, V83] {
+        let (mut h, end) = open_epoch(version);
+        stake(&mut h, LEAVER, 1);
+        let open = h.engine.staking().expect("staking").epoch;
+        // The mirror stalls before the end, and passes it only a day after it, while the next epoch,
+        // which ends then, waits for the mirror to pass its own end.
+        let next_end = end + DAY_MS;
+        h.advance_to(next_end);
+        assert_eq!(closed(&h.cmd(Command::Tick)), None);
+        // The joiner staked on chain an hour after `open` ended, within the scan that passes its end.
+        stake(&mut h, JOINER, 1);
+        assert_eq!(closed(&frontier(&mut h, end + HOUR_MS)), None);
+        let events = h.cmd(Command::Tick);
+        let late =
+            events.iter().any(|event| matches!(event, Event::DistributionEpochClosed { epoch, .. } if *epoch == open));
+        // From `V83` the epoch closes however late; before it, it waits to be skipped.
+        assert_eq!(late, version == V83, "{version:?}: {events:?}");
+        h.advance(HOUR_MS);
+        frontier(&mut h, next_end);
+        let events = h.cmd(Command::Tick);
+        let skipped = events.contains(&Event::DistributionEpochsSkipped { first: open, last: open });
+        assert_eq!(skipped, version == V75, "{version:?}: {events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, Event::DistributionEpochClosed { epoch, .. } if *epoch == open + 1))
+        );
+        // Either way the excess pays the stake set the mirror brought to the end of the epoch that paid.
+        assert_eq!((paid(&h, LEAVER), paid(&h, JOINER)), (STAKERS / 2, STAKERS / 2), "{version:?}");
+    }
 }
 
 #[test]
-fn a_held_close_splits_the_operators_share_by_time_in_office_to_the_close() {
+fn a_held_close_splits_the_operators_share_by_time_in_office_to_the_epochs_end_from_v83() {
     const CANDIDATE: AccountId = AccountId([0xc1; 20]);
-    let mut h = harness(V75);
-    let start = end_of(&h, 7);
-    let end = start + DAY_MS;
-    let handover = end - 2 * HOUR_MS;
-    elect(&mut h, CANDIDATE, 0x66, handover);
-    assert_eq!(closed(&close_at(&mut h, start)), Some((EXCESS, 0)));
-    stake(&mut h, LEAVER, 1);
-    // The mirror passes the election's effective time, and the candidate takes office then, two hours
-    // before the epoch ends.
-    h.advance_to(handover);
-    frontier(&mut h, handover);
-    h.cmd(Command::Tick);
-    assert_eq!(h.engine.operator_candidate(), Some(CANDIDATE));
-    // The mirror passes the epoch's end three hours late, and the time held is the candidate's.
-    let close = end + 3 * HOUR_MS;
-    h.advance_to(close);
-    assert_eq!(closed(&frontier(&mut h, close)), None);
-    let events = h.cmd(Command::Tick);
-    assert_eq!(closed(&events), Some((EXCESS, EXCESS)), "{events:?}");
-    let share = |account: AccountId| {
-        events.iter().find_map(|event| match event {
-            Event::OperatorShareAllocated { account: paid, amount, .. } if *paid == account => Some(amount.0),
-            _ => None,
-        })
-    };
-    let (fifth, counted, served) = (EXCESS / 5, (close - start) as u128, (close - handover) as u128);
-    assert_eq!(share(CANDIDATE), Some(fifth * served / counted));
-    assert_eq!(share(operator().address), Some(fifth * (counted - served) / counted));
-    // The next epoch counts from the close.
-    let office = h.engine.staking().and_then(|staking| staking.office.clone()).expect("V50 counts time in office");
-    assert_eq!(office.since, close);
+    for version in [V75, V83] {
+        let mut h = harness(version);
+        let start = end_of(&h, 7);
+        let end = start + DAY_MS;
+        let handover = end - 2 * HOUR_MS;
+        elect(&mut h, CANDIDATE, 0x66, handover);
+        assert_eq!(closed(&close_at(&mut h, start)), Some((EXCESS, 0)));
+        stake(&mut h, LEAVER, 1);
+        // The mirror passes the election's effective time, and the candidate takes office then, two
+        // hours before the epoch ends.
+        h.advance_to(handover);
+        frontier(&mut h, handover);
+        h.cmd(Command::Tick);
+        assert_eq!(h.engine.operator_candidate(), Some(CANDIDATE));
+        // The mirror passes the epoch's end three hours late. Before `V83` the time held was the
+        // candidate's, and the next epoch counted from the close; from `V83` the epoch counts to its end,
+        // and the next from that end.
+        let close = end + 3 * HOUR_MS;
+        h.advance_to(close);
+        assert_eq!(closed(&frontier(&mut h, close)), None);
+        let events = h.cmd(Command::Tick);
+        assert_eq!(closed(&events), Some((EXCESS, EXCESS)), "{events:?}");
+        let share = |account: AccountId| {
+            events.iter().find_map(|event| match event {
+                Event::OperatorShareAllocated { account: paid, amount, .. } if *paid == account => Some(amount.0),
+                _ => None,
+            })
+        };
+        let counted_to = if version == V83 { end } else { close };
+        let (fifth, counted, served) = (EXCESS / 5, (counted_to - start) as u128, (counted_to - handover) as u128);
+        assert_eq!(share(CANDIDATE), Some(fifth * served / counted), "{version:?}");
+        assert_eq!(share(operator().address), Some(fifth * (counted - served) / counted), "{version:?}");
+        let office = h.engine.staking().and_then(|staking| staking.office.clone()).expect("V50 counts time in office");
+        assert_eq!(office.since, counted_to, "{version:?}");
+    }
 }
 
 #[test]

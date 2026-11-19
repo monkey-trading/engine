@@ -1,5 +1,7 @@
 //! Fixed-size custody accounting derived from authenticated engine output, never host metadata.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::access::{AccessDeposit, AccessReject};
@@ -23,10 +25,11 @@ pub(crate) struct Accounting {
     pub(super) pending: Fixed,
     unpaid: Fixed,
     /// A receipt was reversed and no finalised custody frontier has applied since. The custody
-    /// adapter sequences a reorganisation's transitions one receipt at a time and logs a frontier
-    /// only once none is left, so until then the exit terms can name gaps the vault would refund
-    /// twice or refuse. Serialized only when set, which a gated node's snapshots, taken at the
-    /// checkpoints it signs, never are.
+    /// adapter sequences a reorganisation's transitions one receipt at a time, or from `V83` its
+    /// dropped receipts' reversals and then its moves in one command, and logs a frontier only once
+    /// none is left, so until then the exit terms can name gaps the vault would refund twice or
+    /// refuse. Serialized only when set, which a gated node's snapshots, taken at the checkpoints it
+    /// signs, never are.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) reorganising: bool,
 }
@@ -60,7 +63,19 @@ impl Accounting {
             Command::CustodyDeposit(_)
                 | Command::AccessCustodyDeposit { .. }
                 | Command::AccessCustodyReplacement { .. }
+                | Command::CustodyReorganisation { .. }
         );
+        // From `V83` a reorganisation's events each name one of its moves' orphan or replacement.
+        let moves: BTreeMap<String, DepositUpdate> = match command {
+            Command::CustodyReorganisation { moves } => moves
+                .iter()
+                .flat_map(|move_| {
+                    let update = move_.update();
+                    [(move_.receipt.reference(), update.clone()), (move_.replacement.reference(), update)]
+                })
+                .collect(),
+            _ => BTreeMap::new(),
+        };
         for event in events {
             match event {
                 Event::DepositPending { .. } | Event::DepositHeld { .. } if receipt => {}
@@ -114,7 +129,8 @@ impl Accounting {
                 }
                 Event::CustodyDepositChanged { receipt, status, principal_delta, uncredited } => {
                     self.reorganising |= *status == DepositStatus::Reversed;
-                    self.receipt_changed(command, receipt, status, *principal_delta, *uncredited)?;
+                    let moved = moves.get(&receipt.reference());
+                    self.receipt_changed(command, moved, receipt, status, *principal_delta, *uncredited)?;
                 }
                 _ => {}
             }
@@ -139,6 +155,7 @@ impl Accounting {
     fn receipt_changed(
         &mut self,
         command: &Command,
+        moved: Option<&DepositUpdate>,
         receipt: &DepositReceipt,
         status: &DepositStatus,
         principal_delta: Fixed,
@@ -163,6 +180,7 @@ impl Accounting {
                 update.subject() == receipt || replacement
             }
             Command::AccessCustodyDeposit { receipt: subject, .. } => subject == receipt,
+            Command::CustodyReorganisation { .. } => moved.is_some(),
             _ => false,
         };
         if !subject_matches {
@@ -174,6 +192,7 @@ impl Accounting {
                 update.as_ref().clone()
             }
             Command::AccessCustodyDeposit { receipt, .. } => DepositUpdate::Credit { receipt: receipt.clone() },
+            Command::CustodyReorganisation { .. } => moved.expect("matched above").clone(),
             _ => anyhow::bail!("custody accounting event has no receipt command"),
         };
         let replacement = matches!(&update, DepositUpdate::Replace { replacement, .. } if replacement == receipt);
