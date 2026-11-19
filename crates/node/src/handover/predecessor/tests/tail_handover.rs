@@ -14,7 +14,7 @@ use crate::handover::tail::{Prepared, TailMiss, TailRefused, Taken, Tip, take_ta
 use crate::log::{MANIFEST, Manifest, offset_of};
 use crate::sequencer::Request as SequencerRequest;
 use crate::standby::Follower;
-use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, log_entries};
+use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, keep_time_fresh, log_entries};
 
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
@@ -114,12 +114,15 @@ async fn a_lagging_tip_is_refused_before_the_stop_and_the_predecessor_sequences_
     let operator = scratch_dir("tail-lagged-operator");
     let early = scratch_dir("tail-lagged-early");
     let node = TestSequencer::start(&operator, 1024);
+    // The ticks below wait on the disk, which may keep them past trusted time's grace.
+    tokio::spawn(keep_time_fresh(node.tx.downgrade()));
     ticks(&node, 6).await;
     crate::test_support::copy_dir(&operator, &early);
     // Past what a restarted sequencer retains, so the copy's tip is older than the log retains.
     ticks(&node, crate::sequencer::prefixes::RETAINED_PREFIXES + 64).await;
     node.stop().await;
     let node = TestSequencer::start(&operator, 1024);
+    tokio::spawn(keep_time_fresh(node.tx.downgrade()));
     let mut tailed = Tailed::over("tail-lagged", operator, node, &early).await;
     let tip = tailed.follower.tip().unwrap();
     let err = tailed.take(&tailed.prepared(None)).await.err().expect("a lagging tip took the tail");
