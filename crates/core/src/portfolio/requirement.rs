@@ -104,7 +104,7 @@ pub(crate) struct RequirementParts {
 impl Engine {
     /// `acct`'s portfolio requirement under `grid` at the market's bands, at marks now: the
     /// per-position requirement `Engine::equity_and_margin` gives, less each group's credit at each
-    /// member's normal shocks. `grid` is one `PortfolioGrid::validate` and
+    /// member's residual shock. `grid` is one `PortfolioGrid::validate` and
     /// `PortfolioGrid::check_listings` passed.
     pub fn portfolio_margin(&self, acct: &Account, grid: &PortfolioGrid) -> Fixed {
         self.equity_and_portfolio_requirement(acct, grid, Basis::Market, &[], at_mark).1

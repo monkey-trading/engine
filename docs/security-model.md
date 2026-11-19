@@ -210,8 +210,8 @@ processes. The bounds are:
   order or a level fills is checked for close-out once the instruction's trades are done. The groups,
   their members, loadings and bounds are fixed at launch. Each residual shock and floor share moves
   only up, within its bound, after seven days' notice or by a vote, and a fast-path vote may raise a
-  floor share. The requirement is the same at every time. A market given a weekend margin raises only
-  its own bands over its weekend closures, and each group keeps its credit: an account below that
+  floor share. The grid's shocks are the same at every time. A market given a weekend margin raises
+  only its own bands over its weekend closures, and each group keeps its credit: an account below that
   whole requirement when such a closure starts is closed out in the closing markets at their last
   prices. A market without a weekend margin has no weekend close-out. An account left open below its
   close-out level after an instruction, a close-out of an account above it, or a requirement or grid
