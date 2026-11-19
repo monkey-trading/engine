@@ -20,9 +20,9 @@
 //!   launch curve at every hold, from `V62` each launch house loss threshold kept at its level or
 //!   above, at most its launch value (`house_loss`), and from `V76` loosened price rules within the
 //!   market's launch rules, corporate bounds no looser than launch's, and a corporate action within the
-//!   bounds in force, but for a dividend's share of the mark. A `SetParams` or `UpsertMarket` applies
-//!   only over the baseline it was mirrored against, so a change applied while it waits is never undone
-//!   by it, and a ceiling adoption only while none waits. It carries every field, so members check it
+//!   bounds in force, but for a dividend's share of the mark. A `SetParams`, `UpsertMarket` or
+//!   `RelistMarkets` applies only over the baseline it was mirrored against, so a change applied while it
+//!   waits is never undone by it, and a ceiling adoption only while none waits. It carries every field, so members check it
 //!   against the values in force when they vote.
 //! - A fast-path proposal applies at once as a restriction (`restriction`): only a higher margin or
 //!   close-out level, a stress floor, a lower house or market cap, or reduce-only, refused if any
@@ -398,8 +398,8 @@ impl Engine {
     /// - before `V56`
     /// - no change waits under the proposal, or it waits with another command
     /// - its notice has not run
-    /// - a `SetParams` or `UpsertMarket` whose baseline has moved since it was mirrored, which it would
-    ///   otherwise undo, or a ceiling adoption while another waits, which it would replace
+    /// - a `SetParams`, `UpsertMarket` or `RelistMarkets` whose baseline has moved since it was mirrored,
+    ///   which it would otherwise undo, or a ceiling adoption while another waits, which it would replace
     /// - any error case of the command (`Engine::admin`), with the notices the vote's own replaces
     pub(crate) fn apply_proposal(&mut self, voted: &VotedChange, events: &mut Vec<Event>) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V56 {
