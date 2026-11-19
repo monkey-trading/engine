@@ -877,7 +877,9 @@ an index: load only the rule whose hint matches the current action.
   and catalog checks are left out), a member's replica build (`Follower::open_seeded`) and the history index's catch-up,
   and tail handovers grown under launch flow to about 1 MiB, 64 MiB and 1 MiB under `MAX_TAIL_BYTES`, each read by the
   holder (`read_tail`) and taken through `take_tail` from the stand-in predecessor, each window with the member's start
-  from its replica; it fails a day of flow that priced or filled nothing or rejected over 1% of its requests, and
+  from its replica; it starts emissions and staking inside the flow, with the staking mirror's frontier reported each
+  minute, and fails a flow that closes no period or epoch, a day of flow that priced or filled nothing or rejected over
+  1% of its requests, and
   prints each figure against #904's recovery bar, the 30-day replay projected from the markets' calendars and the
   replay's rate, and the largest tail whose switch fits the daily rotation's 1 s;
   `dev-loss-trigger.sh`, the house loss

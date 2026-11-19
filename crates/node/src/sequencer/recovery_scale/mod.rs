@@ -5,7 +5,9 @@
 //! `flow` writes the log through a node's sequencer on accelerated sequenced time: `LAUNCH_SECS` of
 //! launch flow, then `TEN_TIMES_SECS` of ten times it, each market priced at `load_scenario`'s live
 //! rate while its venue is open, printing each day's commands and bytes and failing a day that priced
-//! or filled nothing or rejected over 1% of its requests. The node then writes a cache at its
+//! or filled nothing or rejected over 1% of its requests, or a flow that closes no emission period or
+//! staking epoch: the book starts both ten minutes after the flow's start, with the staking mirror's
+//! frontier reported each minute (`mix`). The node then writes a cache at its
 //! checkpoint, as a capture with `[snapshots]` does, and sequences `SUFFIX_SECS` of launch flow past it
 //! before it stops. On that log:
 //! - `engine replay`'s replay, in commands a second and wall time;
@@ -42,7 +44,7 @@ use engine_core::Engine;
 use engine_core::types::{AccountId, MarketId};
 
 use crate::clock::Clock;
-use crate::common::launch_book::{Mix, NamedCounts, build};
+use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::config::{HistorySection, SnapshotSection};
 use crate::history::derived::RowsStore;
 use crate::load_scenario::{CRYPTO_RATES, RWA_MOVES};
@@ -75,6 +77,11 @@ const RWA_CONNECTIONS: f64 = 2.0;
 const BAR_DAYS: u64 = 30;
 const FULL_REPLAY_BAR: Duration = Duration::from_secs(30 * 60);
 const RESTART_BAR: Duration = Duration::from_secs(2 * 60);
+/// Emissions' period 0 and staking's epoch 0 start this long after the book's clock, past the few
+/// minutes assembling the book moves it on, so the flow crosses their ends. A staking epoch is the
+/// deployment's day, or a third of the launch leg if that is shorter, so a short run closes some.
+const ORIGIN_AFTER_SECS: u64 = 10 * 60;
+const EPOCH_SECS: u64 = DAY_SECS;
 /// The daily rotation scenario's budget for a switch (`custody::tests::election_scenario::daily_turns`).
 const SWITCH_BUDGET: Duration = Duration::from_secs(1);
 
@@ -104,12 +111,27 @@ fn dev_scenario_recovery_scale() {
     runtime.block_on(run());
 }
 
+/// The book's mix for a flow that starts `start_secs` after its clock and runs `launch_secs` of launch
+/// flow: #905's proposal with emissions and staking started inside the flow, as a log written from
+/// launch day closes a period every ten minutes and an epoch each day.
+fn mix(accounts: usize, start_secs: u64, launch_secs: u64) -> Mix {
+    let epoch_secs = EPOCH_SECS.min(launch_secs / 3).max(60);
+    let origin = Origin {
+        start_after: ((start_secs + ORIGIN_AFTER_SECS) * 1_000) as i64,
+        epoch_ms: (epoch_secs * 1_000) as i64,
+    };
+    Mix { origin: Some(origin), ..Mix::proposal(accounts) }
+}
+
 /// The run.
 async fn run() {
     let accounts = env("RECOVERY_ACCOUNTS", ACCOUNTS);
+    let (start_secs, launch_secs) = (env("RECOVERY_START_SECS", 0), env("RECOVERY_LAUNCH_SECS", LAUNCH_SECS));
     let counts = NamedCounts { adders: 1, openers: env("RECOVERY_TRADERS", TRADERS), closeouts: 0 };
-    let mut book = build(&Mix::proposal(accounts), counts);
+    let mut book = build(&mix(accounts, start_secs, launch_secs), counts);
     let engine = std::mem::take(&mut book.h.engine);
+    let first_end = engine.emissions().expect("emissions are initialised").schedule.period_end(0);
+    assert!(first_end > engine.now() + 1_000, "the first emission period ends before the flow starts");
     let started = Instant::now();
     let base = Base { encoded: serde_json::to_string(&engine).expect("the book encodes") };
     println!(
@@ -132,10 +154,13 @@ async fn run() {
     let signer = AccountId(key.address());
     let mut node = Node::start(engine, &log, key.clone());
     // The flow can start later than the book, so a short run crosses a session's close.
-    node.clock.advance(Duration::from_secs(env("RECOVERY_START_SECS", 0)));
+    node.clock.advance(Duration::from_secs(start_secs));
     let mut flow = Flow::new(traders, rates);
     let bar_commands = flow.scheduled(&node.seq.engine, node.clock.now_ms(), BAR_DAYS * DAY_SECS, 1.0);
     let days = write_log(&mut node, &mut flow, &log);
+    let closed = node.closed;
+    println!("RECOVERY closes periods={} epochs={}", closed.periods, closed.epochs);
+    assert!(closed.periods > 0 && closed.epochs > 0, "the flow closed no emission period or staking epoch");
 
     // A cache at the node's checkpoint, as a capture with `[snapshots]` writes one, then launch flow
     // past it until the node stops.
@@ -284,4 +309,25 @@ fn rss_mib() -> u64 {
     let pid = std::process::id().to_string();
     let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid]).output().expect("ps runs");
     String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().unwrap_or(0) / 1024
+}
+
+#[cfg(test)]
+mod closes_tests {
+    use super::*;
+
+    /// The flow of a run sized as CI's is, on a small book priced in BTC-USD alone, closes emission
+    /// periods and staking epochs.
+    #[test]
+    fn a_flow_closes_emission_periods_and_staking_epochs() {
+        let counts = NamedCounts { adders: 1, openers: 4, closeouts: 0 };
+        let mut book = build(&mix(200, 0, 1_800), counts);
+        let engine = std::mem::take(&mut book.h.engine);
+        let traders = Traders::new(std::mem::take(&mut book.named.openers), &engine);
+        let run = scratch_dir("recovery-closes");
+        let mut node = Node::start(engine, &run.join("log"), Arc::new(EnclaveKey::generate()));
+        let mut flow = Flow::new(traders, BTreeMap::from([(1, 11.0)]));
+        flow.run(&mut node, Duration::from_secs(1_800), 1.0, |_, _, _| {});
+        // Ten-minute periods and ten-minute epochs, from ten minutes in.
+        assert!(node.closed.periods > 0 && node.closed.epochs > 0, "{:?}", node.closed);
+    }
 }
