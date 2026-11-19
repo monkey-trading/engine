@@ -1,6 +1,7 @@
 //! An exit proof checked as a wallet checks it before keeping it: each vault call the exit takes,
 //! run first as the verifier's read that anyone may make, with no sender, against the root the
-//! vault accepted. A change to the verifier that leaves a wallet no such read fails here.
+//! vault accepted. A change to the verifier that leaves a wallet no read for a part the proof holds
+//! fails here; the verifier's forge tests read every part from any address.
 
 use alloy::primitives::{Address, B256, U256};
 use alloy::sol;

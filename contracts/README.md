@@ -15,7 +15,7 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 | Contract | Where it runs | Purpose |
 | --- | --- | --- |
 | `Vault` | Arbitrum | Holds the USDC collateral. It takes deposits of 10 to 1,000,000,000 USDC, records the enclave's signed checkpoints, pays withdrawals and MONKEY and USDC claims proven against them, and runs the exit if checkpoints stop. |
-| `ExitVerifier` | Arbitrum | The vault's proof checker for the exit. It values accounts at the last root and matches deposit receipts. Anyone can preview an account's claim with `previewClaim`, which registers nothing, so a wallet can check its proof before the exit and during it. |
+| `ExitVerifier` | Arbitrum | The vault's proof checker for the exit. It values accounts at the last root and matches deposit receipts. Anyone can preview what an account's equity and credits register with `previewClaim`, which registers nothing, so a wallet can check its proof before the exit and during it. |
 | `StateTree` | A library of `ExitVerifier`, which checks the vault's proofs | Checks a proof against the engine's state root, a sparse Merkle tree hashed with keccak-256 |
 | `MonkeyToken` | Arbitrum | The capped MONKEY ERC-20 token, which only the vault mints |
 | `Staking` | Arbitrum | Holds staked MONKEY, lets stakers delegate votes to operator candidates, enforces the unstaking cooldown and locks candidates' self-bonds |

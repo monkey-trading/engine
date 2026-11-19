@@ -348,6 +348,64 @@ contract ExitUnfinalisedTest is ExitTest {
         assertEq(verifier.previewClaim(root, alice, a, positions, markets, credits), 20e6, "it still checks after");
     }
 
+    /// A preview refuses the account's own credit unless its leaf proves: a changed amount, a wrong
+    /// sibling, or its pending leaf offered as a credit.
+    function testAPreviewRefusesAnAccountsOwnCreditWhoseLeafDoesNotProve() public {
+        _deposit(alice, alice, 60e6);
+        _addTerms(1, 0, 0, 0, 0, 60e6 * UNIT, new uint64[](0));
+        ExitVerifier.AccountState memory a = _addUnfinalised(alice, 60e6 * UNIT, 60e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory credit = _addCredit(bytes("alice's"), 0, alice, alice, 60e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(bytes("pending"), 0, alice, alice, 60e6 * UNIT);
+        bytes32 root = _post();
+        a = _withAccountProof(alice, a);
+        ExitVerifier verifier = vault.exitVerifier();
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(credit, CREDIT))), 60e6);
+
+        ExitVerifier.ReceiptLeaf memory forged = _proven(credit, CREDIT);
+        forged.amount += 1;
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(forged));
+        forged = _proven(credit, CREDIT);
+        forged.siblings[0] = bytes32(uint256(forged.siblings[0]) ^ 1);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(forged));
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(pending, PENDING)));
+    }
+
+    /// Every read a wallet makes of an account's exit proof answers any caller, as an `eth_call` with
+    /// no sender does: the terms, the claim's preview, an approval, a queued request, a distribution and
+    /// a pending deposit's receipt.
+    function testAWalletReadsEveryPartOfAnExitProofFromAnyAddress() public {
+        _deposit(alice, alice, 100e6);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
+        ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
+        ExitVerifier.Approval memory approval = _addApproval(alice, 5e6, 1);
+        ExitVerifier.QueuedWithdrawal memory queued = _addQueued(alice, 3e6 * UNIT, 7);
+        _addDistribution(alice, 2e6);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(bytes("pending"), 1, alice, alice, 10e6 * UNIT);
+        bytes32 root = _post();
+        ExitVerifier verifier = vault.exitVerifier();
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        a = _withAccountProof(alice, a);
+        address wallet = makeAddr("wallet");
+
+        vm.startPrank(wallet);
+        assertTrue(verifier.provesTerms(root, terms, _siblings(keccak256(abi.encodePacked(uint8(24))))));
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, new ExitVerifier.ReceiptLeaf[](0)), 100e6);
+        assertTrue(
+            verifier.provesApproval(root, approval, _siblings(keccak256(abi.encodePacked(uint8(32), alice, uint64(1)))))
+        );
+        assertTrue(verifier.provesQueued(root, queued, _siblings(keccak256(abi.encodePacked(uint8(33), uint64(7))))));
+        assertTrue(
+            verifier.provesDistribution(root, alice, 2e6, _siblings(keccak256(abi.encodePacked(uint8(13), alice))))
+        );
+        (bool proven,) = verifier.provesReceipt(root, _proven(pending, PENDING), PENDING);
+        assertTrue(proven);
+        vm.stopPrank();
+    }
+
     /// The verifier keeps each account's running equity for the vault, which alone may change it.
     function testOnlyTheVaultRegistersClaimsThroughTheVerifier() public {
         ExitVerifier verifier = vault.exitVerifier();

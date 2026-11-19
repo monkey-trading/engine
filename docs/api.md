@@ -1192,10 +1192,14 @@ state root of the latest checkpoint:
 | `pending_deposits` | Deposits for the account still waiting for screening, which the exit refunds to their payers. |
 | `unfinalised_credits` | The account's credited deposits that were not yet final, in increasing deposit id. |
 
-A wallet checks the proofs with the vault's `ExitVerifier` before keeping them: `previewClaim` values
-the account's claim at the proof's root, its matched credits included, without registering anything,
-before the exit and during it, and the other parts prove through `provesTerms`, `provesApproval`,
-`provesQueued`, `provesDistribution` and `provesReceipt`.
+A wallet checks the proofs before keeping them. It first checks that the vault's `checkpointRoots`
+holds the proof's `root` at its `seq`. Then it checks them with the vault's `ExitVerifier`:
+
+- `previewClaim` values what the account's equity and its matched credits register, without
+  registering anything, before the exit and during it.
+- Each unpaid approval and queued remainder that the exit registers adds to that amount.
+- The other parts prove through `provesTerms`, `provesApproval`, `provesQueued`,
+  `provesDistribution` and `provesReceipt`.
 
 The proofs serve the exit once the vault's latest checkpoint is the proof's `seq`. The route answers
 for any address, with `account` set to `null` for an account that the checkpoint does not hold, and

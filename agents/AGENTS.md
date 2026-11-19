@@ -447,7 +447,7 @@ an index: load only the rule whose hint matches the current action.
   against that root through `src/ExitVerifier.sol` for the claim window (account equity at its
   marks less its unfinalised principal, which `registerExitCredits` adds back credit by credit where the vault's deposit
   records (payer, amount, beneficiary) match, unpaid approvals and queued remainders, then distributions; its
-  `previewClaim` values an account's claim, credits included, for any caller without registering, so a wallet checks its
+  `previewClaim` values what an account's equity and credits register, for any caller without registering, so a wallet checks its
   proof before the exit and during it, as the exit scenario does with the API's proof), pays them pro
   rata, refunds deposits the root does not hold or holds pending to their payers, and, while claims register, one at an
   id whose held, pending or credited receipt in the root its records do not match, and releases the remainder
