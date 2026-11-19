@@ -388,3 +388,18 @@ fn a_hedged_member_is_beyond_the_range_once_its_per_position_walk_is() {
     assert_eq!(closeout_of(&funded, TRADER, 1).reach, ReachKind::Beyond);
     assert_eq!(closeout_of(&hedged_pair(), TRADER, 1).reach, ReachKind::At);
 }
+
+/// The per-position walk is the shortcut's floor: it holds the group's credit at the mark, so at the
+/// portfolio requirement it would overstate the slack once the moving leg's matched exposure shrinks. The
+/// pair funded $400 under where the walk at the per-position requirement finds BTC beyond the range, and
+/// above where one at the portfolio requirement would, is closed out before BTC reaches zero, as the group
+/// goes one-sided and its credit falls away.
+#[test]
+fn a_hedged_member_funded_inside_the_per_position_walks_reach_is_priced_where_the_engine_closes_out() {
+    let funded = || with_balance(hedged_pair(), 501_800);
+    assert_eq!(closeout_of(&funded(), TRADER, 1).reach, ReachKind::At);
+    let mut btc_leg = Case::new(1, funded);
+    btc_leg.keep = vec![(ETH, "4000".parse().unwrap())];
+    let price = btc_leg.agrees();
+    assert!(price > Fixed::ZERO && price < Fixed::from_int(100_000), "{price}");
+}
