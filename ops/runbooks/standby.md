@@ -124,7 +124,14 @@ trading server or with the operator.
 
    The console prints `standby following the operator in effect`, the log directory fills, and no
    `standby_follow_failed` page arrives. A cold start first backfills the completed segments from
-   the mirrors, and then follows the stream.
+   the mirrors, replays them as a takeover would, and only then follows the stream. If the backfill
+   does not replay, the standby raises `standby_backfill_refused`, sets the copy aside as
+   `<log_dir>.refused`, and backfills again from the operator alone. The first start of this
+   release checks a copy that an earlier release backfilled in the same way, which replays the
+   whole copy once. A copy that holds no checkpoint cannot be checked, so the standby sets it aside
+   as `<log_dir>.unchecked` and backfills again from the operator alone. If the operator's own copy
+   holds no checkpoint yet either, the standby sets that copy aside too, and the stream refills the
+   copy from seq 0.
 
 4. Check that the copy keeps up, daily and after every change of the operator's release. Copy the
    directory first, because the standby is still writing it.
@@ -151,7 +158,8 @@ vault's latest accepted checkpoint.
 | --- | --- | --- |
 | `standby_follow_failed`, Critical | The stream failed, or a frame did not verify. The standby retries every `poll_interval`. A dead operator refuses connections at once, which is the case the standby exists for, and the standby keeps the copy it has. | If the operator's signer changed, follow step 5. |
 | `operator_log_rollback`, Critical | The operator's log no longer holds entries that the standby copied. Its signed head is behind the copy, its repeat of the copy's last command differs, or a command it sent does not chain onto the copy. The message names the range. The standby appends nothing more and keeps its copy, which holds the entries as the standby received them. The alert resolves by itself if the operator's log holds them again. | Keep a copy of the directory before anything else touches it, with `cp -R data/log /tmp/rollback-evidence`. Tell the operator and the owner. The entries that the stream carried are sealed by the enclave, but a copy bootstrapped from an archive mirror is only checked by hash against that mirror. Before you restore the operator from this copy, verify it with `engine replay --attestation`, and treat a refusal as a poisoned copy, not as the operator's fault. |
-| `standby_signal_failed`, Critical | Reading the registry or the vault for a promotion failed. | Check `[checkpoints].rpc_url`. |
+| `standby_backfill_refused`, Critical | The copy that a cold start backfilled from the archive does not replay as a takeover would, so a mirror served altered segments. The message names the origins tried. The standby set the copy aside as `<log_dir>.refused` and backfilled again from the operator alone. While that set-aside copy is there, every start backfills from the operator alone. A copy that the standby then refuses is the operator's own, and the standby sets it aside as `<log_dir>.refused-operator` and exits without following. The page's `served_by` field says which origin served the refused copy, `archive` or `operator`. The alert resolves once a copy replays. | Keep the set-aside copies as evidence. If `served_by` is `archive`, tell the mirror's owner, or remove the mirror from `mirrors`. If `served_by` is `operator`, tell the operator and the owner. A set-aside never replaces an earlier one, so while an earlier set-aside copy is there, the refused copy stays in `<log_dir>` and the start fails. Move the earlier copy away, and restart the standby. |
+| `standby_signal_failed`, Critical | Reading the registry or the vault for a promotion failed, or reading the vault's signers for a takeover failed. The standby reads the signers again at the next poll. | Check `[checkpoints].rpc_url`. |
 | `standby_takeover_failed`, Critical | A promotion arrived, and the copy could not be finalised. | Follow step 4 of [After a promotion](#after-a-promotion). |
 
 ## After a promotion
@@ -200,15 +208,23 @@ in [How a takeover goes](#how-a-takeover-goes) is running.**
    `call syncRelease (anyone may) and start again once its block is finalized`.
 
 4. Let the standby finalise its copy. Within `poll_interval` of the promotion becoming visible, the
-   standby refreshes the completed segments from the mirrors, requires the checkpoint that the vault
-   accepted last, and cuts the copy after that checkpoint. It then logs
-   `promoted: the copy ends at the latest published checkpoint …`, and exits with status 0.
+   standby reads the vault's signers. It then refreshes the completed segments from the mirrors,
+   replays the copy against those signers, requires the checkpoint that the vault accepted last, and
+   cuts the copy after that checkpoint. It then logs
+   `promoted: the copy ends at the latest published checkpoint …`, and exits with status 0. While
+   the read of the signers fails, the standby raises `standby_signal_failed`, and reads them again at
+   the next poll.
 
-   If `standby_takeover_failed` fires instead, the copy is missing the vault's last accepted
-   checkpoint. That checkpoint was posted after the stream last reached you, and is not yet in the
-   mirrors' completed segments. Fetch the operator's archive and the mirrors again, because they may
-   lag, and then restart the standby. The cut can be resumed and repeated safely. A crash in the
-   middle of the cut leaves a `takeover.json` file, which the next start repairs.
+   If `standby_takeover_failed` fires instead, the copy does not replay against those signers, or
+   the copy is missing the vault's last accepted checkpoint. A missing checkpoint was posted after the
+   stream last reached you, and is not yet in the mirrors' completed segments. When the segments
+   that the refresh took from the archive do not replay, the message says that they were dropped.
+   The copy is then the stream's copy again, marked as it was before the refresh. Remove the mirror
+   that served those segments from `mirrors`. Fetch the operator's archive and the mirrors again,
+   because they may lag, and then restart the standby. The cut can be resumed and repeated safely.
+   A crash in the middle of the cut leaves a `takeover.json` file. A crash during the refresh or
+   its replay leaves a `refresh.before` file. The next start finishes or drops either before
+   anything else.
 
 5. Check the copy. Replay it, and read the vault's accepted checkpoint:
 

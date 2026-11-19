@@ -18,7 +18,7 @@ use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::history::marks::fold::MarkFold;
 use crate::log::command_seal::{checkpoint_link, command_link};
-use crate::log::{CommandEntry, truncate_to_checkpoint};
+use crate::log::{CommandEntry, MANIFEST, truncate_to_checkpoint};
 use crate::sequencer::genesis_commands;
 use crate::standby::replica::Follower;
 use crate::standby::tests::{DOMAIN, copy_log, ticks};

@@ -114,6 +114,15 @@ pub(crate) async fn named_since(cfg: &NodeConfig, from: u64) -> anyhow::Result<V
     if !applies(cfg) {
         return Ok(Vec::new());
     }
+    named_at_latest(cfg, from).await
+}
+
+/// Every key the vault names at the latest agreed block from signer epoch `from` on, up to
+/// `UNFINAL_EPOCHS` epochs past it (`signers_from`), read through the custody quorum `[log_heads]` sits
+/// beside.
+/// Error cases:
+/// - there is no `[log_heads]`, or the custody quorum cannot be built or read
+pub(crate) async fn named_at_latest(cfg: &NodeConfig, from: u64) -> anyhow::Result<Vec<AccountId>> {
     let log_heads = cfg.log_heads.as_ref().context("[log_heads]")?.contract;
     let chain = StandbyReader::connect_named(&cfg.custody, log_heads, "signers")?;
     let vault = Address::from(cfg.custody.vault.parse::<AccountId>()?.0);

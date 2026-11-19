@@ -7,8 +7,8 @@
 //! names (`[standby].enclave`): the host that carries the connection can delay, drop, or splice
 //! bytes, but cannot forge a frame. Missed history is backfilled from the operator's public
 //! archive on a cold start, and by the stream itself after a restart; the archive's bytes are
-//! checked against its manifest, and every checkpoint in them against the engine's replay when
-//! the standby resumes.
+//! checked against its manifest, and must replay as the takeover replays the copy before the
+//! standby follows onto them (`backfill`).
 //!
 //! The copy takes only history that extends it (`chain`): each stream resumes at the copy's last
 //! command, which the operator must repeat exactly, and each later command must carry the enclave's
@@ -37,6 +37,7 @@ use tracing::{error, info, warn};
 use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
+mod backfill;
 mod chain;
 mod cut;
 pub(crate) use cut::{cut_marked, finish as finish_cut};
@@ -52,7 +53,7 @@ mod replica;
 pub(crate) use replica::Follower;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, SegmentedLog};
 use crate::node::member::turn::COMING_UP;
 use crate::telemetry::Telemetry;
 
@@ -127,17 +128,11 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     // A cold start backfills completed segments from the archive; a restart resumes the stream at
     // its own last command, which backfills anything after it.
     let dir = cfg.node.log_dir.as_path();
-    if !dir.join(MANIFEST).exists() {
-        archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
-        // A poisoned cold start must surface now, not when the operator is already gone:
-        // replay what was backfilled; a fresh deployment with no checkpoint yet has nothing
-        // to verify, which is fine.
-        if let Err(e) = crate::sequencer::replay_path(dir) {
-            warn!("the backfilled copy does not replay: {e:#}");
-        }
-    }
     let domain =
         CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().context("custody.vault")? };
+    // A poisoned cold start must surface now, not when the operator is already gone.
+    let signers = async || operator::copy_signers(cfg, &chain, &operator).await;
+    backfill::prepare(&archive, &operator, dir, domain, signers).await?;
     let (mut writer, mut copied) =
         open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, operator.enclave))?;
     info!(operator = %operator.origin, enclave = %operator.enclave, "standby following the operator in effect");
@@ -146,20 +141,21 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     // The operator each open episode paged, which its resolution names: a resolution under another
     // key would end no episode.
     let mut follow_failed: Option<String> = None;
-    let mut signal_failed = false;
+    // Unknown at a start, which may find an episode the alert outbox kept open: the first read ends it.
+    let mut signal_failed: Option<bool> = None;
     let mut rolled_back: Option<String> = None;
     loop {
         match chain.takeover(my_key).await {
             Ok(Some(takeover)) => {
+                // Read while the copy is still open, so a failed read retries at the next poll.
+                let Some(signers) = operator::takeover_signers(cfg, &chain, &operator, &mut signal_failed).await else {
+                    sleep(standby.poll_interval).await;
+                    continue;
+                };
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
-                let signers = operator::takeover_signers(cfg, standby, &chain).await;
-                let finalized = match signers {
-                    Ok(signers) => {
-                        finalize(&archive, (domain, signers), &operator.origins(), dir, &takeover, copied).await
-                    }
-                    Err(e) => Err(e),
-                };
+                let finalized =
+                    finalize(&archive, (domain, signers), &operator.origins(), dir, &takeover, copied).await;
                 if let Err(e) = finalized {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
@@ -175,16 +171,14 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 return Ok(());
             }
             Ok(None) => {
-                if signal_failed {
-                    info!(alert_resolved = "standby_signal_failed", "reading the takeover signal works again");
-                    signal_failed = false;
+                if signal_failed.replace(false) != Some(false) {
+                    info!(alert_resolved = "standby_signal_failed", "reading the takeover signal works");
                 }
             }
             Err(e) => {
-                if !signal_failed {
+                if signal_failed.replace(true) != Some(true) {
                     error!(alert = "standby_signal_failed", "reading the takeover signal failed: {e:#}");
                 }
-                signal_failed = true;
                 sleep(standby.poll_interval).await;
             }
         }
@@ -308,6 +302,9 @@ async fn finalize(
     takeover: &Takeover,
     mut copied: Chain,
 ) -> anyhow::Result<()> {
+    // The refresh adds archive bytes no check has replayed yet: until the replay commits them, what the
+    // copy held before is recorded, and any start drops what the refresh added.
+    backfill::begin_refresh(dir)?;
     let refreshed = archive::refresh_archive(archive, origins, dir, |staged| copied.extend_with(staged)).await;
     match refreshed.as_ref().err().map(|e| (e, rollback_of(e))) {
         Some((_, Some(rollback))) => error!(
@@ -321,9 +318,10 @@ async fn finalize(
     // The whole copy must replay before any history is dropped: archive-fetched bytes were only
     // hash-checked against the server's own manifest, and this catches a forged prefix here
     // rather than after the timelock installs this enclave. Withdrawals verify against `signers`,
-    // the keys that signed this copy's payouts (`operator::takeover_signers`), and every command must
-    // carry one's seal, so the copy's command prefix is the one the operator posted heads of.
-    crate::sequencer::replay_copy(dir, domain, signers).context("the copy does not replay; refusing to truncate it")?;
+    // the keys that signed this copy's payouts (`operator::copy_signers`), and every command must carry
+    // one's seal, so the copy's command prefix is the one the operator posted heads of. A cold start's
+    // backfill passes the same replay before the standby follows onto it.
+    backfill::replay_refreshed(dir, domain, signers).context("refusing to truncate the copy")?;
     // The resume point is the latest checkpoint in the published log that the outgoing key
     // signed and that extends the vault's latest root: the anchor itself, then every later
     // checkpoint of the copy that continues the outgoing key's signed parent chain. Checkpoints

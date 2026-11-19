@@ -9,9 +9,14 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
+use tracing::{error, info};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::{NodeConfig, StandbySection};
+
+/// The most signer epochs `copy_signers` reads, one call each: far past any deployment's history, whose
+/// epochs only a promotion or the timelock's `setSigner` adds.
+const MAX_SIGNER_EPOCHS: u64 = 1 << 16;
 
 /// Where a follower reads the operator's stream and archive, and the enclave its frames verify against.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,22 +96,61 @@ pub(crate) async fn for_standby(
     })
 }
 
-/// The signers a promoted standby's copy must replay against before its takeover truncates it: with
-/// rotation on, every signer the vault recorded at finality, since turns and elections move the
-/// operator and a signer replacement moves its enclave, so `[standby].enclave` need not have signed
-/// the copy; with rotation off, the enclave `[standby]` names.
+/// The signers a standby's copy must replay against, at its cold start and before its takeover truncates
+/// it: every signer epoch the vault recorded at finality, whatever the rotation switch, since a copy
+/// holds what each signed and a signer change moves the enclave; `operator`'s enclave, under rotation the
+/// vault's signer at the latest block, which finality may not name yet, and without it the one `[standby]`
+/// names; and under rotation, with `[log_heads]`, every key the vault names since the finalized epoch,
+/// which promotions name before finality does. Every epoch is read,
+/// so a read that fails fails here rather than leaving a signer out of the set.
 /// Error cases:
-/// - with rotation on, the vault cannot be read
+/// - the vault cannot be read, records more than `MAX_SIGNER_EPOCHS` epochs, or under rotation the keys
+///   named since finality cannot be read
+pub(crate) async fn copy_signers(
+    cfg: &NodeConfig,
+    vault: &impl CheckpointChain,
+    operator: &Followed,
+) -> anyhow::Result<BTreeSet<AccountId>> {
+    let at = vault.observe(View::Finalized, &[]).await.context("reading the vault's signers at finality")?;
+    let mut signers = BTreeSet::from([at.state.signer, operator.enclave]);
+    // A chain without canonical lifecycle evidence names its current signer only.
+    let Some(lifecycle) = at.lifecycle.as_ref() else { return Ok(signers) };
+    let epochs = lifecycle.signer_epoch;
+    ensure!(epochs <= MAX_SIGNER_EPOCHS, "the vault records {epochs} signer epochs, more than {MAX_SIGNER_EPOCHS}");
+    for epoch in 1..=epochs {
+        let named = vault.epoch_signers(&at, &[epoch]).await;
+        signers.extend(named.with_context(|| format!("reading the vault's signer of epoch {epoch}"))?);
+    }
+    if cfg.operator.rotation_enabled && cfg.log_heads.is_some() {
+        signers.extend(crate::node::member::standby::named_at_latest(cfg, epochs).await?);
+    }
+    Ok(signers)
+}
+
+/// `copy_signers` for a takeover, read while the copy is still open: `None` while the read fails, which
+/// pages Critical `standby_signal_failed` once per episode, as a failed read of the takeover signal does,
+/// and a read that works ends that episode, or one a restart's alert outbox kept open (`signal_failed`
+/// unknown, `None`).
 pub(crate) async fn takeover_signers(
     cfg: &NodeConfig,
-    standby: &StandbySection,
     vault: &impl CheckpointChain,
-) -> anyhow::Result<BTreeSet<AccountId>> {
-    if !cfg.operator.rotation_enabled {
-        return Ok(BTreeSet::from([standby.enclave]));
+    operator: &Followed,
+    signal_failed: &mut Option<bool>,
+) -> Option<BTreeSet<AccountId>> {
+    match copy_signers(cfg, vault, operator).await {
+        Ok(signers) => {
+            if signal_failed.replace(false) != Some(false) {
+                info!(alert_resolved = "standby_signal_failed", "reading the takeover signal works");
+            }
+            Some(signers)
+        }
+        Err(e) => {
+            if signal_failed.replace(true) != Some(true) {
+                error!(alert = "standby_signal_failed", "reading the signers for the takeover failed: {e:#}");
+            }
+            None
+        }
     }
-    let at = vault.observe(View::Finalized, &[]).await.context("reading the vault's signers at finality")?;
-    crate::handover::vault_signers(vault, &at).await
 }
 
 #[cfg(test)]

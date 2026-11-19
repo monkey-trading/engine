@@ -256,7 +256,10 @@ an index: load only the rule whose hint matches the current action.
   penalty the config names recorded once `V70` is in force, at a start or after a passed activation,
   and a start refused on a log recording others), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
-  segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up,
+  segment-for-segment copy, backfilled from the public archive and the archive mirrors #48 sets up
+  (`standby/backfill.rs`: a cold start's backfill must replay as the takeover replays the copy before
+  it is followed, and one that does not is set aside and backfilled from the operator alone, Critical
+  `standby_backfill_refused`),
   taking only entries whose command seals continue the copy and raising `operator_log_rollback`, with
   the copy left as it is, when the operator's log no longer holds it (`standby/chain.rs`),
   and takes over when the registry's liveness rule promotes its candidate: it finalizes the copy at

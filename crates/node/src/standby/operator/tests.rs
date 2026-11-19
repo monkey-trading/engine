@@ -86,29 +86,22 @@ async fn a_signer_replaced_at_the_same_hostname_moves_the_standby() {
     assert!(after.moved_from(&before), "a setSigner replacement at the same hostname was not followed");
 }
 
-/// A promotion under rotation finalizes a copy the vault's signer signed, though `[standby]` names
-/// another enclave: the copy replays against the signers the vault recorded. Against the configured
-/// enclave alone it would not, which is what rotation off keeps.
+/// A takeover finalizes a copy the vault's signer signed, though `[standby]` names another enclave,
+/// whatever the rotation switch: it replays against the signers the vault recorded and the followed
+/// enclave, as the cold start does. Against a set that names neither, the copy is refused.
 #[tokio::test]
-async fn a_promotion_replays_the_copy_against_the_vaults_signers_under_rotation() {
+async fn a_takeover_replays_the_copy_against_the_vaults_signers_whatever_the_switch() {
     let signer = AccountId(crate::tee::EnclaveKey::test_key().address());
-    let (dir, refused) = (scratch_dir("standby-promotion-signers"), scratch_dir("standby-promotion-configured"));
+    let dir = scratch_dir("standby-promotion-signers");
     let node = TestSequencer::start(&dir, 1024);
     for _ in 0..6 {
         node.submit(Command::Tick).await;
     }
     node.stop().await;
-    std::fs::create_dir_all(&refused).unwrap();
-    for file in std::fs::read_dir(&dir).unwrap().map(Result::unwrap) {
-        std::fs::copy(file.path(), refused.join(file.file_name())).unwrap();
-    }
     let Some(LogEntry::Checkpoint(last)) = log_entries(&dir).pop() else { panic!("the log ends at a checkpoint") };
     let takeover = Takeover { seq: last.seq, root: last.root.clone(), signer };
     let (mut cfg, section) = (dev_config(), standby());
-    cfg.operator.rotation_enabled = true;
     let registry = Registry { hostname: Mutex::new("a.operator.example".into()), signer };
-    let signers = takeover_signers(&cfg, &section, &registry).await.unwrap();
-    assert_eq!(signers, BTreeSet::from([signer]), "the takeover replays against another set than the vault's");
     let (archive, domain) = (super::super::archive::archive_client(false).unwrap(), DOMAIN);
     // No archive answers: the copy is what the stream left.
     let origins = ["http://127.0.0.1:9".to_owned()];
@@ -116,16 +109,127 @@ async fn a_promotion_replays_the_copy_against_the_vaults_signers_under_rotation(
         let copied = super::super::chain::Chain::new(domain, signer);
         super::super::finalize(&archive, (domain, signers), &origins, dir, &takeover, copied).await
     };
-    finalize(&dir, signers).await.expect("a copy the vault's signer signed was refused");
+    let err = finalize(&dir, BTreeSet::from([section.enclave])).await.expect_err("another enclave's set took the copy");
+    assert!(format!("{err:#}").contains("refusing to truncate the copy"), "{err:#}");
+    for rotation in [true, false] {
+        cfg.operator.rotation_enabled = rotation;
+        let signers = copy_signers(&cfg, &registry, &Followed::from_standby(&section)).await.unwrap();
+        assert_eq!(signers, BTreeSet::from([signer, section.enclave]), "rotation {rotation}");
+        finalize(&dir, signers).await.unwrap_or_else(|e| panic!("rotation {rotation}: the copy was refused: {e:#}"));
+    }
+}
 
-    cfg.operator.rotation_enabled = false;
-    let configured = takeover_signers(&cfg, &section, &registry).await.unwrap();
-    assert_eq!(configured, BTreeSet::from([section.enclave]), "rotation off replays against another enclave");
-    let err = finalize(&refused, configured).await.expect_err("a copy another enclave signed was finalized");
-    assert!(format!("{err:#}").contains("does not replay"), "{err:#}");
+/// A takeover's signer read that fails gives no signers and pages `standby_signal_failed` once while it
+/// keeps failing, and a read that works ends the episode; the first read after a start ends one a
+/// restart's alert outbox kept open.
+#[tokio::test]
+async fn a_takeover_signer_read_pages_once_per_episode_and_ends_it_once_it_works() {
+    let (_guard, mut alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
+    let (cfg, followed) = (dev_config(), Followed::from_standby(&standby()));
+    let working = Epochs { epochs: 3, failing: None };
+    let mut signal_failed = None;
+    assert!(takeover_signers(&cfg, &working, &followed, &mut signal_failed).await.is_some());
+    let ended = std::iter::from_fn(|| resolved.try_recv().ok()).count();
+    assert_eq!(ended, 1, "a start's first read that works did not end a kept episode");
+    for _ in 0..2 {
+        let read = takeover_signers(&cfg, &Epochs { epochs: 3, failing: Some(2) }, &followed, &mut signal_failed);
+        assert!(read.await.is_none(), "a failed read gave signers");
+    }
+    let paged = std::iter::from_fn(|| alerts.try_recv().ok()).filter(|alert| alert["alert"] == "standby_signal_failed");
+    assert_eq!(paged.count(), 1, "a failing read paged other than once");
+    let read = takeover_signers(&cfg, &working, &followed, &mut signal_failed).await;
+    assert!(read.is_some() && signal_failed == Some(false), "a read that works gave no signers");
+    let mut ended = std::iter::from_fn(|| resolved.try_recv().ok());
+    assert!(ended.any(|line| line["alert_resolved"] == "standby_signal_failed"), "the episode did not end");
+}
+
+/// A copy's signers are the vault's at finality and the followed operator's enclave, which the vault names
+/// at the latest block before finality does, whatever the rotation switch; every recorded epoch is read,
+/// and one whose read fails fails the set rather than leaving its signer out.
+#[tokio::test]
+async fn a_copys_signers_are_every_recorded_epochs_and_the_followed_enclave() {
+    let (mut cfg, section) = (dev_config(), standby());
+    let registry = Registry { hostname: Mutex::new("a.operator.example".into()), signer: AccountId([0x51; 20]) };
+    for rotation in [true, false] {
+        cfg.operator.rotation_enabled = rotation;
+        let followed = Followed { enclave: AccountId([0x52; 20]), ..Followed::from_standby(&section) };
+        let signers = copy_signers(&cfg, &registry, &followed).await.unwrap();
+        assert_eq!(signers, BTreeSet::from([AccountId([0x51; 20]), AccountId([0x52; 20])]), "rotation {rotation}");
+    }
+    let followed = Followed::from_standby(&section);
+    let signers = copy_signers(&cfg, &Epochs { epochs: 300, failing: None }, &followed).await.unwrap();
+    assert_eq!(signers, (1..=300).map(signer_of).chain([section.enclave]).collect(), "a recorded epoch is missing");
+    let failed = copy_signers(&cfg, &Epochs { epochs: 3, failing: Some(2) }, &followed).await.unwrap_err();
+    assert!(format!("{failed:#}").contains("epoch 2"), "{failed:#}");
 }
 
 // ── Helpers ──
+
+/// The signer the `Epochs` vault records for `epoch`.
+fn signer_of(epoch: u64) -> AccountId {
+    let mut address = [0u8; 20];
+    address[12..].copy_from_slice(&epoch.to_be_bytes());
+    AccountId(address)
+}
+
+/// A vault that has recorded `epochs` signer epochs, `signer_of` each, the last its current signer,
+/// whose read of epoch `failing` fails.
+struct Epochs {
+    epochs: u64,
+    failing: Option<u64>,
+}
+
+impl CheckpointChain for Epochs {
+    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
+        Ok(VaultState {
+            height: 1,
+            signer: signer_of(self.epochs),
+            checkpoint: None,
+            balance: Fixed::ZERO,
+            deposits: 0,
+            deposited: Fixed::ZERO,
+            distributions_paid: Fixed::ZERO,
+        })
+    }
+
+    async fn observe(
+        &self,
+        view: View,
+        _approvals: &[crate::checkpoints::ApprovalId],
+    ) -> anyhow::Result<crate::checkpoints::Observation> {
+        let state = self.state(view).await?;
+        let lifecycle = crate::checkpoints::LifecycleEvidence {
+            height: 1,
+            block_hash: engine_core::eip712::B256::repeat_byte(1),
+            signer: state.signer,
+            signer_epoch: self.epochs,
+            withdrawals_paused: false,
+            total_withdrawn: Fixed::ZERO,
+            checkpoint_seq: None,
+            checkpoint_root: None,
+            approvals: Vec::new(),
+        };
+        Ok(crate::checkpoints::Observation { view, state, lifecycle: Some(lifecycle) })
+    }
+
+    async fn post(&self, _checkpoint: &Checkpoint) -> anyhow::Result<()> {
+        bail!("this vault takes no checkpoints")
+    }
+
+    async fn epoch_signers(
+        &self,
+        _at: &crate::checkpoints::Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<AccountId>> {
+        epochs
+            .iter()
+            .map(|epoch| match self.failing == Some(*epoch) {
+                true => Err(anyhow::anyhow!("the read of epoch {epoch} timed out")),
+                false => Ok(signer_of(*epoch)),
+            })
+            .collect()
+    }
+}
 
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: crate::log::CheckpointDomain =
