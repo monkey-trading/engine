@@ -118,30 +118,30 @@ fn baseline(h: &Harness) -> ProtocolParams {
 }
 
 /// Passes `proposal` carrying `command`, scheduled seven days on.
-fn scheduled(h: &mut Harness, proposal: u64, command: &AdminCommand) {
+pub(crate) fn scheduled(h: &mut Harness, proposal: u64, command: &AdminCommand) {
     let events = pass(h, proposal, false, Some(command.clone()));
     assert!(matches!(events.last(), Some(Event::ProposalScheduled { .. })), "{events:?}");
 }
 
 /// Applies `proposal`'s `command`, which must apply.
-fn applied(h: &mut Harness, proposal: u64, command: AdminCommand) {
+pub(crate) fn applied(h: &mut Harness, proposal: u64, command: AdminCommand) {
     let events = h.cmd(Command::ApplyProposal(Box::new(VotedChange { proposal, command })));
     assert_eq!(events.last(), Some(&Event::AdminApplied), "{events:?}");
 }
 
 /// `market`'s mark.
-fn mark(h: &Harness, market: MarketId) -> Fixed {
+pub(crate) fn mark(h: &Harness, market: MarketId) -> Fixed {
     h.engine.markets()[&market].mark.expect("traded before")
 }
 
 /// $200k of quantity at `price`, to the nearest thousandth below.
-fn qty(price: Fixed) -> Fixed {
+pub(crate) fn qty(price: Fixed) -> Fixed {
     let units = Fixed::from_int(200_000).div_rounded(price, Rounding::Down);
     units - Fixed::from_raw(units.raw() % 1_000_000)
 }
 
 /// $200k of BTC long and $200k of ETH short for `client` at `btc` and `eth`.
-fn open_pair(h: &mut Harness, client: &Client, btc: Fixed, eth: Fixed) {
+pub(crate) fn open_pair(h: &mut Harness, client: &Client, btc: Fixed, eth: Fixed) {
     let (btc_qty, eth_qty) = (qty(btc).to_string(), qty(eth).to_string());
     let events = trade(h, client, BTC, Side::Buy, &btc_qty, &btc.to_string());
     assert_eq!(fills(&events).len(), 1, "{events:?}");

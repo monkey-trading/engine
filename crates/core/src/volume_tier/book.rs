@@ -20,13 +20,22 @@ use crate::fixed::Rounding;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{FillMark, HORIZON_MS};
 use crate::types::{AccountId, MarketId, Millis, Side};
-use crate::volume_tier::{MIN_HOLD_MS, WINDOW_DAYS, day_of};
+use crate::volume_tier::{MIN_HOLD_MS, VolumeTier, WINDOW_DAYS, day_of, tier_of};
 
 /// The most opening lots one position keeps; past it a new lot joins the newest, which then matures
 /// with it, later than it would have.
 pub const MAX_OPENING_LOTS: usize = 16;
 /// The most closing lots one account keeps; past it the oldest is dropped and counts nothing.
 pub const MAX_CLOSING_LOTS: usize = 256;
+
+/// A close-out's fill as its volume counts: its market, the quantity it closes, and its price and FX index.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClosedOut {
+    pub(crate) market: MarketId,
+    pub(crate) qty: Fixed,
+    pub(crate) price: Fixed,
+    pub(crate) fx: Option<Fixed>,
+}
 
 /// An account's counted volume and the notional waiting to count, committed in its own state-tree
 /// leaf (kind 28).
@@ -182,6 +191,12 @@ impl AccountVolume {
         opening.chain(closing).fold(Fixed::ZERO, plus)
     }
 
+    /// The quantity of `market`'s opening lots whose time has not come by `now`.
+    fn unmatured(&self, market: MarketId, now: Millis) -> Fixed {
+        let lots = self.opening.get(&market).into_iter().flatten();
+        lots.filter(|lot| lot.matures_at > now).fold(Fixed::ZERO, |sum, lot| sum + lot.qty)
+    }
+
     /// Takes up to `qty` from `market`'s opening lots, newest first, each lot's notional falling with
     /// its quantity, rounded down; returns the quantity taken.
     fn consume_opening(&mut self, market: MarketId, qty: Fixed) -> Fixed {
@@ -332,6 +347,27 @@ impl Engine {
         }
         // From `V79` the book's change may move the account's tier, which its levels' keys read.
         self.refresh_level_inputs(exec.account);
+    }
+
+    /// The tier of the table in force `account` would trade at now, from `V59`, once close-outs filling
+    /// `closed` in order had counted their volume as `count_volume` counts a close-out's, without changing
+    /// the book: each counts at once on today's day what it closes past the position's opening lots that have
+    /// yet to mature, at its fill's price and FX index. A settlement would count the lots whose time has come,
+    /// which the window already holds. `None` before `V59`.
+    pub(crate) fn tier_after_closeouts(&self, account: AccountId, closed: &[ClosedOut]) -> Option<&VolumeTier> {
+        let tiers = self.volume_tiers_in_force()?;
+        let now = self.hold_clock_time();
+        let empty = AccountVolume::default();
+        let volume = self.volumes.get(&account).unwrap_or(&empty);
+        let mut window = volume.window(now);
+        AccountVolume::without_early(&mut window, now, &volume.early);
+        let today = &mut window[WINDOW_DAYS - 1];
+        for close in closed {
+            let currency = self.markets[&close.market].spec.quote_currency;
+            let matured = close.qty - volume.unmatured(close.market, now).min(close.qty);
+            *today = plus(*today, currency.to_usd(matured.mul(close.price), close.fx, Rounding::Down));
+        }
+        Some(&tiers[tier_of(&window, tiers)])
     }
 
     /// At `V59`'s activation, gives each held position an opening lot of the whole position that matures

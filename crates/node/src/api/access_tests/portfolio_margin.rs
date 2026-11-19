@@ -8,6 +8,7 @@
 use engine_core::types::MarketId;
 
 mod closeouts;
+mod new_risk;
 
 use super::spreads::{fill_event, price};
 use super::*;

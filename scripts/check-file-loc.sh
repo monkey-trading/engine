@@ -24,7 +24,8 @@ check_pkg() {
   fi
 }
 
-check_pkg crates/core 500
+# The protocol versions are one documented enum, which a module split cannot divide.
+check_pkg crates/core 500 crates/core/src/protocol/versions.rs
 check_pkg crates/node 500
 check_pkg crates/verify 500
 check_pkg crates/verify-wasm 500

@@ -216,11 +216,6 @@ percentage of position value, in bands that rise as the position grows.
 | Commodities | 1% to $2M, 5% above |
 | Shares | 10% to $500k, 20% to $2M, 50% above |
 
-Opening or increasing a position, and making a withdrawal, must leave your equity at or above the
-initial margin requirement. The initial requirement uses the bands above, with each band raised to
-at least 5% at volume tier 0 and 2% at tier 1. These floors limit leverage to 20 times and 50 times
-respectively.
-
 Some markets move together, so positions in them can offset each other. These markets form offset
 groups, each with a floor share:
 
@@ -236,6 +231,24 @@ the short side, is matched. Matched exposure takes a credit off its margin: the 
 allowance for each market's own move and for the cost of closing the position, but never more than
 the margin less its floor share. Exposure that offsets nothing keeps its full margin, so this
 portfolio requirement is never above the margin at the market's bands.
+
+Opening or increasing a position, and making a withdrawal, must leave your equity at or above the
+initial margin requirement. The initial requirement is the portfolio requirement with each band raised
+to at least 5% at volume tier 0 and 2% at tier 1. A position on its own is therefore limited to 20
+times leverage at tier 0 and 50 times at tier 1, while a hedged book in an offset group can reach more.
+A group gives no credit to the initial requirement while one of its markets that you hold cannot be
+traded, because it is closed or has no price.
+
+Closing one position of a hedge gives up its group's credit, and can raise the initial requirement. An
+order that only reduces a position is checked like an order that adds one when it would leave the
+initial requirement higher, and is rejected if your equity would fall below it. Whether it raises the
+requirement is judged with every group's credit kept, so while one of a group's markets cannot be
+traded, an order closing another leg of the group is checked too, though the requirement shown falls.
+An order that lowers the requirement on that basis is never checked. A close-all, a triggered stop or limit order, a take profit or stop
+loss, and a close-out are never rejected for margin, so a close-all of one market can close a leg that
+an order could not. A triggered order that turns a position around is checked on the risk it adds. The
+order preview shows the price, the margin after the order and any reason it would be rejected, for any
+size.
 
 The close-out level is half of the portfolio requirement. If your equity falls below the close-out
 level, the engine closes one position or group at a time. It closes the one whose closing restores

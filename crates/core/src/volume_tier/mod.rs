@@ -47,6 +47,7 @@ use crate::spread_tier::SpreadTier;
 use crate::types::{AccountId, MarketId, Millis};
 
 mod book;
+pub(crate) use book::ClosedOut;
 pub use book::{AccountVolume, ClosingLot, DayVolume, EarlyCount, MAX_CLOSING_LOTS, MAX_OPENING_LOTS, OpeningLot};
 mod benefits;
 pub(crate) use benefits::names_benefits;

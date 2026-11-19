@@ -32,6 +32,7 @@ pub(crate) use signing::Signing;
 mod notice;
 mod operating;
 mod payouts;
+mod preview;
 pub(crate) mod pricing;
 mod reads;
 use reads::markets;
@@ -299,6 +300,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/accounts/{address}/emissions", get(emissions))
         .route("/v1/accounts/{address}/distributions", get(distributions::distributions))
         .route("/v1/accounts/{address}/exit", get(exit::exit))
+        .route("/v1/accounts/{address}/preview", get(preview::preview))
         .route("/v1/eligibility", post(attest_eligibility))
         .route("/v1/orders", post(place_order))
         .route("/v1/orders/cancel", post(cancel_order))

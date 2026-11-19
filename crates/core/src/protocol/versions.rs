@@ -497,4 +497,11 @@ pub enum ProtocolVersion {
     /// A reorganisation's receipt moves apply as one command, a reversal's write-off is repaid by the deposit's next
     /// credit (`deposits`), and epochs close in turn, the operator's share counted to each one's end (`staking`).
     V83,
+    /// New risk and withdrawals read portfolio margin while the parameters name an offset grid: the initial requirement
+    /// is the portfolio requirement at initial bands, each band at least the account's tier floor and a market's
+    /// weekend margin over its window, with no credit for a group while a member the account holds cannot trade. A fill
+    /// that only reduces is checked against it, as new risk is, when it raises that requirement judged with every
+    /// group's credit kept, a shut member's included; a close-all entry, a triggered order or level and a close-out
+    /// never are. A close-out scores a group's later members at the volume tier its earlier fills leave.
+    V84,
 }

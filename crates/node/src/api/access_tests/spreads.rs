@@ -150,8 +150,8 @@ pub(super) async fn price(node: &Node, market: MarketId, mid: &str) -> Vec<Event
     node.state.submit(Command::Prices { market, quotes: quotes.to_vec() }).await.unwrap()
 }
 
-/// `account`'s BTC quote from a fresh signed stream connection, verified frame by frame.
-async fn quote(node: &Node, account: AccountId) -> Value {
+/// `account`'s quote in `market` from a fresh signed stream connection, verified frame by frame.
+pub(super) async fn quote(node: &Node, account: AccountId, market: MarketId) -> Value {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let service = router(node.state.clone()).into_make_service_with_connect_info::<SocketAddr>();
@@ -164,7 +164,7 @@ async fn quote(node: &Node, account: AccountId) -> Value {
     let challenge: [u8; 32] = hex::decode(CHALLENGE).unwrap().try_into().unwrap();
     let connection = Connection::new(challenge, &format!("/v1/stream?{query}"));
     let mut verifier = FrameVerifier::new(EnclaveKey::test_key().address(), deployment, connection);
-    ws.send(WsMessage::text(format!(r#"{{"op":"quotes","account":"{account}","markets":[{BTC}]}}"#))).await.unwrap();
+    ws.send(WsMessage::text(format!(r#"{{"op":"quotes","account":"{account}","markets":[{market}]}}"#))).await.unwrap();
     loop {
         let message = timeout(Duration::from_secs(10), ws.next()).await.expect("a frame").unwrap().unwrap();
         let WsMessage::Text(text) = message else { continue };
@@ -180,7 +180,7 @@ async fn quote(node: &Node, account: AccountId) -> Value {
 /// Checks `account`'s signed quote for selling BTC: its first steps are `qtys`, and each step's price
 /// is no better than that of any smaller sell, so an order quoted at the step it takes fills.
 async fn check_bid(node: &Node, account: AccountId, qtys: &[i64]) {
-    let quote = quote(node, account).await;
+    let quote = quote(node, account, BTC).await;
     let field = |step: &Value, key: &str| -> Fixed { step[key].as_str().unwrap().parse().unwrap() };
     let bid: Vec<(Fixed, Fixed)> =
         quote["bid"].as_array().unwrap().iter().map(|step| (field(step, "qty"), field(step, "price"))).collect();

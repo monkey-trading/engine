@@ -30,7 +30,13 @@ an index: load only the rule whose hint matches the current action.
   of a grouped position's close-out price is `portfolio/reach.rs`; the close-out index keys on per-position margin,
   which bounds the portfolio requirement, and re-assesses its unkeyed accounts when the grid or a grouped market's
   ceiling moves (`tests/portfolio_closeouts/index.rs`); the cost of its close-outs at 100k accounts is
-  `tests/hot_path_benchmark/portfolio.rs`), the profit fee (from `V55` falling with holding time
+  `tests/hot_path_benchmark/portfolio.rs`; from `V84` new risk and withdrawals read it too, the initial requirement
+  the portfolio requirement at initial bands, each band at its tier's floor, with no credit for a group while a held
+  member cannot trade, and an ordinary order that only reduces checked as new risk when it raises it, a close-all
+  entry, a triggered order or level and a close-out never (`execution/risk.rs`, `tests/portfolio_new_risk.rs` and
+  `tests/portfolio_new_risk/`), an order's preview, `Engine::preview_order`, from the same pricing and checks
+  (`execution/quote.rs`), and a close-out scoring a group's later members at the tier its earlier fills leave; their
+  cost at 100k accounts is `tests/hot_path_benchmark/new_risk.rs`), the profit fee (from `V55` falling with holding time
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
@@ -310,8 +316,11 @@ an index: load only the rule whose hint matches the current action.
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
   initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), from `V79` each position's levels and each market's `min_level_distance_bps` in the market read, and
   from `V81`, under the parameters' offset grid, the portfolio requirement with each offset group's part, the
-  maintenance requirement and each position's close-out price read from it, the
-  signed quote ladder's steps at the account's own band bounds, checkpoint posting
+  maintenance requirement and each position's close-out price read from it, and from `V84` the initial requirement,
+  `/v1/accounts/{address}/preview`, an order's price, requirements after it and refusal read on the API's engine
+  copy (`api/preview.rs`), the
+  signed quote ladder's steps at the account's own band bounds, each step's verdict its own size's and the close's
+  carrying its own (`api/stream/quotes/ladder.rs`), checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
@@ -733,7 +742,10 @@ an index: load only the rule whose hint matches the current action.
   `dev-portfolio-margin.sh`, portfolio margin as a read on a dev node under `dev.toml`'s fixture group: a $1M BTC
   long and $1M ETH short taking its matched exposure's credit, above the group's floor share of its bands, a
   BTC long alone at its bands, both after a 2% move in BTC and after the pair's ETH leg closes, each account
-  read verified as `engine verify-response` verifies it;
+  read verified as `engine verify-response` verifies it, the `V81` close-outs, and from `V84` a hedged pair opened
+  and withdrawn against its portfolio requirement, a lone close refused as its preview says while a close-all and
+  a stop close the leg, a stale member's group at per-position margin, and hedging previews between two signed
+  quote steps agreeing with their orders;
   `check-reference-logs.sh`, which fails a branch that changes a committed reference log;
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
@@ -1187,7 +1199,12 @@ Run from the repo root:
 - Portfolio margin dev scenario: `./scripts/dev-portfolio-margin.sh` (runs the isolated access-screened BTC
   and ETH trading and signed account reads under `config/dev.toml`'s fixture group on deterministic time); the
   requirement's cost at 100k holders: `cargo test -p engine-core --test portfolio_margin_benchmark --locked --
-  --ignored --nocapture --test-threads=1`
+  --ignored --nocapture --test-threads=1`; `V84`'s hedged fills, withdrawals, refused lone closes and preview at
+  100k accounts: `cargo test -p engine-core --test hot_path_benchmark --locked -- --ignored --nocapture
+  --test-threads=1 portfolio_new_risk_latency`; a quote read for a hedged account:
+  `cargo test -p engine-node --lib quotes::bench::portfolio_quote_read_cost -- --ignored --nocapture`; and a price's
+  wait over 100k hedged accounts: `cargo test -p engine-node --lib sequencer::wait_bench::portfolio -- --ignored
+  --nocapture --test-threads=1`
 - Position levels dev scenario: `./scripts/dev-position-levels.sh` (runs the isolated access-screened BTC, ETH and
   WTI levels scenario through the signed order and levels routes, the account and market reads, the history and the
   operator's stress floor over TLS, on deterministic time across a weekend, restart and public replay)

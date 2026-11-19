@@ -62,6 +62,7 @@ impl Engine {
             reduce_only: order.reduce_only,
             guard,
             liquidation: false,
+            close_checked: false,
         };
         match self.execute(exec, events) {
             Ok(fill) => {
@@ -109,6 +110,7 @@ impl Engine {
                 reduce_only: true,
                 guard,
                 liquidation: false,
+                close_checked: false,
             };
             self.execute(exec, events).ok()
         };

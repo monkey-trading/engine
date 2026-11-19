@@ -9,17 +9,23 @@
 //! `command_latency_under_quote_reads` runs the reads and commands through one thread, as the
 //! sequencer does, and times the commands from queueing to done.
 
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use engine_core::command::{Command, OrderKind, OrderRequest, Sequenced};
+use engine_core::event::Event;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Side};
 use engine_core::{Engine, Fixed};
+use tokio::sync::oneshot;
 
 use super::read;
 use super::tests::{SMALL, T0, TRADER, engine_with};
-use crate::test_support::dev_config;
+use crate::clock::Clock;
+use crate::clock::test_clock::TestClock;
+use crate::sequencer::genesis_commands;
+use crate::test_support::{TestSequencer, dev_config, scratch_dir};
 
 const SAMPLES: usize = 2000;
 /// Markets the production genesis lists.
@@ -69,6 +75,99 @@ fn quote_read_cost() {
             );
         }
     }
+}
+
+/// A quote read's cost for accounts holding $1M of BTC-USD, alone and hedged with $1M of ETH-USD short,
+/// under the latest protocol, where the dev genesis's BTC-USD/ETH-USD group gives the pair its credit: from
+/// `V84` every step's verdict reads the portfolio requirement, and so does the close's. The positions are
+/// placed under `V23`, which takes unsigned orders, and a restart activates the latest protocol over them.
+/// The reads are timed on the sequencer's thread, beside `quote_read_cost`'s.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "benchmark: run in a quiet CPU window"]
+async fn portfolio_quote_read_cost() {
+    const BTC: MarketId = 1;
+    const ETH: MarketId = 2;
+    let dir = scratch_dir("quotes-portfolio-bench");
+    let clock = Arc::new(TestClock::default());
+    let genesis = genesis_commands(&dev_config().genesis);
+    let prices = |clock: &TestClock| {
+        [(BTC, 100_000), (ETH, 4_000)].map(|(market, mid)| {
+            let quotes = ["a", "b"].map(|source| SourceQuote {
+                source: source.into(),
+                mid: Fixed::from_int(mid),
+                ts: clock.now_ms(),
+                contract: None,
+            });
+            Command::Prices { market, quotes: quotes.to_vec() }
+        })
+    };
+    let node = TestSequencer::start_legacy_at(&dir, 64, clock.clone(), genesis.clone());
+    let deposits = [TRADER, SMALL].map(|account| Command::Deposit {
+        account,
+        amount: Fixed::from_int(1_000_000),
+        chain_ref: format!("0x{account}"),
+    });
+    let market_order = |account, market, side, qty: i64, quoted: i64| {
+        Command::PlaceOrder(OrderRequest {
+            account,
+            client_id: 1,
+            market,
+            side,
+            qty: Fixed::from_int(qty),
+            kind: OrderKind::Market { quoted: Fixed::from_int(quoted), max_slippage_bps: Some(10_000) },
+            reduce_only: false,
+            auth: None,
+            take_profit: None,
+            stop_loss: None,
+        })
+    };
+    let orders = [
+        market_order(TRADER, BTC, Side::Buy, 10, 100_000),
+        market_order(TRADER, ETH, Side::Sell, 250, 4_000),
+        market_order(SMALL, BTC, Side::Buy, 10, 100_000),
+    ];
+    for cmd in deposits.into_iter().chain(prices(clock.as_ref())).chain(orders) {
+        let events = node.submit(cmd).await;
+        assert!(!events.iter().any(|event| matches!(event, Event::OrderRejected { .. })), "{events:?}");
+    }
+    node.stop().await;
+    let node = TestSequencer::start_at(&dir, 64, clock.clone(), genesis);
+    // Newer quotes than the ones the log holds, at a time trusted time admits.
+    clock.advance(Duration::from_secs(2));
+    let sample = crate::test_support::sample_around(clock.as_ref());
+    node.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    for cmd in prices(clock.as_ref()) {
+        node.submit(cmd).await;
+    }
+    let (reply, lines) = oneshot::channel();
+    let query: crate::sequencer::Query = Box::new(move |engine: &Engine| {
+        assert_eq!(engine.protocol_version(), ProtocolVersion::LATEST);
+        // Both accounts' quotes price both markets, so the reads below walk their ladders.
+        for account in [TRADER, SMALL] {
+            for quote in read(engine, account, &[BTC, ETH]).unwrap_or_else(|_| panic!("quotable")) {
+                assert!(quote.unavailable.is_none() && !quote.ask.is_empty(), "{quote:?}");
+            }
+        }
+        let mut out = Vec::new();
+        for (name, account) in [("hedged", TRADER), ("alone", SMALL)] {
+            let mut times: Vec<u128> = (0..SAMPLES)
+                .map(|_| {
+                    let began = Instant::now();
+                    let reply = read(engine, account, &[BTC, ETH]);
+                    let took = began.elapsed().as_micros();
+                    assert!(reply.is_ok());
+                    took
+                })
+                .collect();
+            times.sort_unstable();
+            let (p50, p99) = (times[SAMPLES / 2], times[SAMPLES * 99 / 100]);
+            out.push(format!("QUOTES portfolio account={name} markets=2 p50_us={p50} p99_us={p99}"));
+        }
+        let _ = reply.send(out);
+    });
+    node.tx.send(crate::sequencer::Request::Query(query)).await.unwrap();
+    lines.await.unwrap().iter().for_each(|line| println!("{line}"));
+    node.stop().await;
 }
 
 /// Prices the always-open markets, returning their ids in order.

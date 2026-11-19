@@ -26,6 +26,7 @@ use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
 
 mod mass;
+mod portfolio;
 mod proofs;
 mod rollover;
 mod tail;
@@ -341,15 +342,21 @@ impl Clock for StampClock {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
+    let mut rig = Rig::new("wait-budget");
+    resting_bench::place(&mut rig, &mut 0, ACCOUNTS, resting_bench::OUT_OF_REACH);
+    rig.activate_latest();
+    hold_price_wait(rig);
+}
+
+/// `price_wait_budget`'s prices, reads and checkpoints over `rig`, under the latest protocol, held to its
+/// budgets.
+pub(super) fn hold_price_wait(mut rig: Rig) {
     const EVERY: u64 = 25;
     const PRICES: usize = 600;
     const BATCHES: usize = 5;
     const MEDIAN_US: u128 = 1_000;
     const P90_US: u128 = 5_000;
     const SYNC_STALL: std::time::Duration = std::time::Duration::from_millis(10);
-    let mut rig = Rig::new("wait-budget");
-    resting_bench::place(&mut rig, &mut 0, ACCOUNTS, resting_bench::OUT_OF_REACH);
-    rig.activate_latest();
     let clock = Arc::new(StampClock { inner: TestClock::default(), stamps: Default::default() });
     rig.seq.clock = clock.clone();
     rig.seq.checkpoint_every = EVERY;
