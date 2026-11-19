@@ -22,7 +22,7 @@ use crate::merkle::tree::value::{Association, ExitIndex, ExitTotals, LeafValue};
 use crate::merkle::{ExitTerms, RootWork, exit_terms_hash, exit_terms_key};
 use crate::protocol::ProtocolVersion;
 
-pub use proofs::ExitItems;
+pub use proofs::ExitItem;
 pub use value::LeafUpdate;
 
 /// Branches this many levels above the deepest leaves of a balanced tree are hashed only on commit,

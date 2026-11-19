@@ -4,7 +4,7 @@
 
 use std::collections::VecDeque;
 
-use engine_core::merkle::tree::{ExitItems, StateTree};
+use engine_core::merkle::tree::{ExitItem, StateTree};
 use engine_core::merkle::{AccountProof, ExitProof};
 use engine_core::types::AccountId;
 use tracing::debug;
@@ -15,7 +15,7 @@ use crate::root_worker::{Message, Outcome, Proved, Read, Work};
 
 /// Nodes freed in one step.
 const FREE_STEP: usize = 20_000;
-/// Proofs taken in one step of a claim capture, a payout's proofs, or an exit read's approvals.
+/// Proofs taken in one step of a claim capture, a payout's proofs, or an exit read's items and approvals.
 const PROOF_STEP: usize = 32;
 
 /// What the worker holds: the tree, and each lane's queue.
@@ -49,14 +49,16 @@ impl Reading {
     }
 }
 
-/// An exit proof under way: its head, and the items and approvals still to prove.
+/// An exit proof under way: its head and the items proved so far, where the listing of its items has
+/// reached, and the approvals still to prove.
 struct Exiting {
     version: u64,
     account: AccountId,
     proof: ExitProof,
-    queued: VecDeque<u64>,
-    pending: VecDeque<String>,
-    credits: VecDeque<String>,
+    /// The last item proved, from which the listing goes on.
+    last: Option<ExitItem>,
+    /// Whether the listing has ended.
+    listed: bool,
     /// The next approval nonce to prove, up to the account leaf's `withdrawal_nonce`.
     next: u64,
     reply: tokio::sync::oneshot::Sender<Option<ExitProof>>,
@@ -242,9 +244,7 @@ impl WorkerState {
                 match head {
                     Some((version, proof)) => {
                         self.tree.pin(version);
-                        let ExitItems { queued, pending, credits } = self.tree.exit_items(account);
-                        let (queued, pending, credits) = (queued.into(), pending.into(), credits.into());
-                        let exiting = Exiting { version, account, proof, queued, pending, credits, next: 1, reply };
+                        let exiting = Exiting { version, account, proof, last: None, listed: false, next: 1, reply };
                         Some(Reading::Exit(Box::new(exiting)))
                     }
                     None => {
@@ -257,8 +257,7 @@ impl WorkerState {
                 if self.exit_step(&mut exiting) {
                     Some(Reading::Exit(exiting))
                 } else {
-                    let Exiting { version, mut proof, reply, .. } = *exiting;
-                    proof.unfinalised_credits.sort_by_key(|credit| credit.deposit.deposit_id);
+                    let Exiting { version, proof, reply, .. } = *exiting;
                     self.tree.unpin(version);
                     self.queue_free();
                     let _ = reply.send(Some(proof));
@@ -273,18 +272,18 @@ impl WorkerState {
     }
 
     /// Proves up to `PROOF_STEP` of an exit's items, its queued requests, pending deposits and credits
-    /// in turn, then its approvals, and returns whether any are left.
+    /// in proof order, each listed from the last one proved, then its approvals, and returns whether any
+    /// are left.
     fn exit_step(&self, exiting: &mut Exiting) -> bool {
         let version = self.tree.version(exiting.version).expect("a pinned version is kept");
         let (account, proof) = (exiting.account, &mut exiting.proof);
         let nonces = proof.account.as_ref().map_or(0, |held| held.leaf.withdrawal_nonce);
         for _ in 0..PROOF_STEP {
-            if let Some(seq) = exiting.queued.pop_front() {
-                proof.queued.extend(self.tree.queued_proof(version, account, seq));
-            } else if let Some(reference) = exiting.pending.pop_front() {
-                proof.pending_deposits.extend(self.tree.pending_deposit_proof(version, Some(account), &reference));
-            } else if let Some(reference) = exiting.credits.pop_front() {
-                proof.unfinalised_credits.extend(self.tree.credit_proof(version, account, &reference));
+            let item = if exiting.listed { None } else { self.tree.next_exit_item(account, exiting.last.as_ref()) };
+            exiting.listed = item.is_none();
+            if let Some(item) = item {
+                self.tree.prove_exit_item(version, account, &item, proof);
+                exiting.last = Some(item);
             } else if exiting.next <= nonces {
                 proof.approvals.extend(self.tree.approval_proof(version, account, exiting.next));
                 exiting.next += 1;

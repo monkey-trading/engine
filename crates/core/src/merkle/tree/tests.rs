@@ -8,7 +8,7 @@ use super::*;
 use crate::Fixed;
 use crate::emissions::TokenUnits;
 use crate::merkle::tree::arena::Node;
-use crate::merkle::{SparseMerkleTree, keccak};
+use crate::merkle::{ExitProof, SparseMerkleTree, keccak};
 use crate::types::AccountId;
 use crate::withdrawal::QueuedWithdrawal;
 
@@ -234,6 +234,61 @@ fn an_exit_entry_an_older_pinned_version_holds_is_pruned_once_that_version_goes(
     assert!(!tree.index.queued.contains_key(&account), "no version holds the entry: the index lets it go");
 }
 
+#[test]
+fn an_accounts_exit_items_are_listed_an_item_at_a_time_in_proof_order_while_later_versions_change() {
+    let (account, other) = (AccountId([3; 20]), AccountId([4; 20]));
+    let mut tree = StateTree::default();
+    // Credits whose deposit ids run against their references, and another account's items.
+    tree.advance(vec![
+        queued_leaf(account, 9),
+        queued_leaf(account, 5),
+        queued_leaf(other, 7),
+        pending_leaf(account, "p-b", 11),
+        pending_leaf(account, "p-a", 10),
+        credit_leaf(account, "c-a", 7),
+        credit_leaf(account, "c-b", 3),
+        credit_leaf(account, "c-c", 5),
+        credit_leaf(other, "c-o", 1),
+    ]);
+    let terms = || TermsInput { frontier: (12, Vec::new(), Fixed::ZERO, Fixed::ZERO), deposit_base: 0 };
+    let (first, _) = tree.commit(1, ProtocolVersion::LATEST, Some(terms()));
+    assert!(tree.release(1, first));
+    // A read pins the version, and takes its items one at a time.
+    let pinned = tree.released().expect("released").id();
+    tree.pin(pinned);
+    let mut proof = tree.exit_head(tree.version(pinned).expect("pinned"), account).expect("the exit terms");
+    let mut last = None;
+    while let Some(item) = tree.next_exit_item(account, last.as_ref()) {
+        tree.prove_exit_item(tree.version(pinned).expect("pinned"), account, &item, &mut proof);
+        if last.is_none() {
+            // Past the first item, a later version drops a request and a credit, adds both, and moves a
+            // credit's receipt to another deposit id.
+            tree.advance(vec![
+                LeafUpdate::valued(crate::merkle::withdrawal_queue_key(9), None),
+                queued_leaf(account, 6),
+                LeafUpdate::valued(crate::merkle::unfinalised_credit_key("c-b"), None),
+                credit_leaf(account, "c-d", 4),
+                credit_leaf(account, "c-a", 2),
+            ]);
+            let (second, _) = tree.commit(2, ProtocolVersion::LATEST, Some(terms()));
+            assert!(tree.release(2, second));
+        }
+        last = Some(item);
+    }
+    // The pinned version's items, each once and in proof order: credits by deposit id.
+    let credits = |proof: &ExitProof| -> Vec<(u64, String)> {
+        proof.unfinalised_credits.iter().map(|credit| (credit.deposit.deposit_id, credit.chain_ref.clone())).collect()
+    };
+    let queued: Vec<u64> = proof.queued.iter().map(|queued| queued.queued.requested_seq).collect();
+    let pending: Vec<&str> = proof.pending_deposits.iter().map(|pending| pending.chain_ref.as_str()).collect();
+    assert_eq!((queued, pending), (vec![5, 9], vec!["p-a", "p-b"]));
+    assert_eq!(credits(&proof), [(3, "c-b"), (5, "c-c"), (7, "c-a")].map(|(id, r)| (id, r.to_owned())));
+    // The newest version lists its own, the moved receipt under its new deposit id.
+    let newest = tree.exit_proof_without_approvals(tree.released().expect("released"), account).expect("terms");
+    assert_eq!(newest.queued.iter().map(|queued| queued.queued.requested_seq).collect::<Vec<_>>(), [5, 6]);
+    assert_eq!(credits(&newest), [(2, "c-a"), (4, "c-d"), (5, "c-c")].map(|(id, r)| (id, r.to_owned())));
+}
+
 // ── Helpers ──
 
 /// How many keys `key_pool` holds.
@@ -314,4 +369,30 @@ fn reachable(tree: &StateTree) -> (usize, usize) {
         }
     }
     (branches.len(), leaves.len())
+}
+
+/// A queued request of `account`'s at `seq`.
+fn queued_leaf(account: AccountId, seq: u64) -> LeafUpdate {
+    let amount = Fixed::from_int(5);
+    let queued = QueuedWithdrawal { account, amount, remaining: amount, requested_seq: seq, ticket: seq };
+    LeafUpdate::valued(crate::merkle::withdrawal_queue_key(seq), Some((value(seq), LeafValue::Queued(queued))))
+}
+
+/// A receipt-backed pending deposit for `account` at `reference`, with vault deposit id `id`.
+fn pending_leaf(account: AccountId, reference: &str, id: u64) -> LeafUpdate {
+    let (reference, receipt) = (reference.to_owned(), Some(receipt(account, id)));
+    let pending = LeafValue::Pending { reference: reference.clone(), amount: Fixed::from_int(10), receipt };
+    LeafUpdate::valued(crate::merkle::pending_deposit_key(&reference), Some((value(id), pending)))
+}
+
+/// An unfinalised credit of `account`'s at `reference`, with vault deposit id `id`.
+fn credit_leaf(account: AccountId, reference: &str, id: u64) -> LeafUpdate {
+    let credit = LeafValue::Credit { reference: reference.to_owned(), receipt: receipt(account, id) };
+    LeafUpdate::valued(crate::merkle::unfinalised_credit_key(reference), Some((value(100 + id), credit)))
+}
+
+/// A receipt paid by `account` for itself.
+fn receipt(account: AccountId, deposit_id: u64) -> crate::merkle::PendingReceipt {
+    let (account, amount) = (Some(account), Fixed::from_int(10));
+    crate::merkle::PendingReceipt { deposit_id, account, payer: account, amount }
 }

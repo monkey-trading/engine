@@ -1,6 +1,7 @@
 //! Proofs against one version of the state tree, from its leaves and their values alone.
 
 use std::collections::BTreeSet;
+use std::ops::Bound::{self, Excluded, Unbounded};
 
 use alloy_primitives::B256;
 
@@ -17,13 +18,14 @@ use crate::merkle::{
 use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
-/// The ids of the exit leaves an account may hold, in proof order: its queued requests, and its
-/// receipt-backed pending deposits and unfinalised credits by reference.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ExitItems {
-    pub queued: Vec<u64>,
-    pub pending: Vec<String>,
-    pub credits: Vec<String>,
+/// An exit leaf an account may hold, in proof order: its queued requests by seq, then its
+/// receipt-backed pending deposits by reference, then its unfinalised credits by deposit id and
+/// reference.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExitItem {
+    Queued(u64),
+    Pending(String),
+    Credit(u64, String),
 }
 
 impl StateTree {
@@ -114,21 +116,17 @@ impl StateTree {
     /// a version before `V38`. The work is bounded by what the account holds.
     pub fn exit_proof_without_approvals(&self, version: &Version, account: AccountId) -> Option<ExitProof> {
         let mut proof = self.exit_head(version, account)?;
-        let ExitItems { queued, pending, credits } = self.exit_items(account);
-        proof.queued = queued.into_iter().filter_map(|seq| self.queued_proof(version, account, seq)).collect();
-        proof.pending_deposits = pending
-            .iter()
-            .filter_map(|reference| self.pending_deposit_proof(version, Some(account), reference))
-            .collect();
-        proof.unfinalised_credits =
-            credits.iter().filter_map(|reference| self.credit_proof(version, account, reference)).collect();
-        proof.unfinalised_credits.sort_by_key(|credit| credit.deposit.deposit_id);
+        let mut item = None;
+        while let Some(next) = self.next_exit_item(account, item.as_ref()) {
+            self.prove_exit_item(version, account, &next, &mut proof);
+            item = Some(next);
+        }
         Some(proof)
     }
 
     /// `account`'s exit proof against `version` with its terms, account and distribution proofs only,
     /// or `None` for a version before `V38`: the part whose work the markets bound. The rest is proved
-    /// item by item from `exit_items`.
+    /// item by item from `next_exit_item`.
     pub fn exit_head(&self, version: &Version, account: AccountId) -> Option<ExitProof> {
         let terms = self.exit_terms_proof(version)?;
         Some(ExitProof {
@@ -144,14 +142,46 @@ impl StateTree {
         })
     }
 
-    /// The exit leaves `account` may hold in any version kept, in proof order, for `queued_proof`,
-    /// `pending_deposit_proof` and `credit_proof` to prove one at a time.
-    pub fn exit_items(&self, account: AccountId) -> ExitItems {
-        let listed = |index: Option<&BTreeSet<String>>| index.into_iter().flatten().cloned().collect();
-        ExitItems {
-            queued: self.index.queued.get(&account).into_iter().flatten().copied().collect(),
-            pending: listed(self.index.pending.get(&Some(account))),
-            credits: listed(self.index.credits.get(&Some(account))),
+    /// The exit leaf `account` may hold in any version kept that follows `after` in proof order, or
+    /// its first for `None`. A version kept between calls keeps every leaf it holds listed, so calls
+    /// each from the item the last one returned list them all, an item at a time, however the
+    /// versions after it change.
+    pub fn next_exit_item(&self, account: AccountId, after: Option<&ExitItem>) -> Option<ExitItem> {
+        let queued = |from: Bound<&u64>| {
+            let next = self.index.queued.get(&account)?.range((from, Unbounded)).next();
+            next.map(|seq| ExitItem::Queued(*seq))
+        };
+        let pending = |from: Bound<&str>| {
+            let next = self.index.pending.get(&Some(account))?.range::<str, _>((from, Unbounded)).next();
+            next.map(|reference| ExitItem::Pending(reference.clone()))
+        };
+        let credit = |from: Bound<&(u64, String)>| {
+            let next = self.index.credits.get(&Some(account))?.range((from, Unbounded)).next();
+            next.map(|(id, reference)| ExitItem::Credit(*id, reference.clone()))
+        };
+        match after {
+            None => queued(Unbounded).or_else(|| pending(Unbounded)).or_else(|| credit(Unbounded)),
+            Some(ExitItem::Queued(seq)) => {
+                queued(Excluded(seq)).or_else(|| pending(Unbounded)).or_else(|| credit(Unbounded))
+            }
+            Some(ExitItem::Pending(reference)) => pending(Excluded(reference)).or_else(|| credit(Unbounded)),
+            Some(ExitItem::Credit(id, reference)) => credit(Excluded(&(*id, reference.clone()))),
+        }
+    }
+
+    /// Adds the proof of `item` against `version` to `proof`, `account`'s exit proof, if the version
+    /// holds it for the account: a credit only at the deposit id it is listed under, so a reference
+    /// whose receipt moved to another id between versions is proved once.
+    pub fn prove_exit_item(&self, version: &Version, account: AccountId, item: &ExitItem, proof: &mut ExitProof) {
+        match item {
+            ExitItem::Queued(seq) => proof.queued.extend(self.queued_proof(version, account, *seq)),
+            ExitItem::Pending(reference) => {
+                proof.pending_deposits.extend(self.pending_deposit_proof(version, Some(account), reference))
+            }
+            ExitItem::Credit(id, reference) => {
+                let credit = self.credit_proof(version, account, reference);
+                proof.unfinalised_credits.extend(credit.filter(|credit| credit.deposit.deposit_id == *id))
+            }
         }
     }
 
@@ -226,8 +256,9 @@ impl StateTree {
             by_account.values().flatten().cloned().collect::<BTreeSet<String>>()
         };
         let held = if version.protocol >= ProtocolVersion::V77 { self.index.held.clone() } else { BTreeSet::new() };
+        let credited = self.index.credits.values().flatten().map(|(_, reference)| reference.clone()).collect();
         let kinds = [
-            (ReceiptKind::Credited, all(&self.index.credits)),
+            (ReceiptKind::Credited, credited),
             (ReceiptKind::Pending, all(&self.index.pending)),
             (ReceiptKind::Held, held),
         ];
