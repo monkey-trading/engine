@@ -134,7 +134,21 @@ max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"
 [[ "$max_drift" =~ ^[0-9]+s$ ]] || fail "expected time.max_drift in whole seconds, got '$max_drift'"
 ready_within="$(( ${max_drift%s} + 15 ))"
 
-# Runs the node on the config and waits until it serves its markets, then reads what a client pins.
+# Waits until the node signs an answer. A restarted node serves its recovered markets before its first
+# trusted time sample, and signs only once trusted time bounds the host clock, so an answer asked for
+# earlier is unsigned.
+wait_until_signed() {
+  local started
+  started="$(date +%s)"
+  until curl -sk -D "$work/signed.headers" -o /dev/null -H "X-Engine-Challenge: $(challenge)" "$api/v1/markets" 2>/dev/null \
+    && grep -qi '^x-engine-time:' "$work/signed.headers"; do
+    (( $(date +%s) - started <= ${ready_within} )) || fail "no signed answer within ${ready_within}s of boot"
+    kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
+    sleep 0.2
+  done
+}
+
+# Runs the node on the config and waits until it serves its markets and signs, then reads what a client pins.
 start_node() {
   "$engine" run --config "$work/node.toml" >> "$work/node.log" 2>&1 &
   node_pid=$!
@@ -145,6 +159,7 @@ start_node() {
     kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
     sleep 0.2
   done
+  wait_until_signed
   signer="$(curl -sfk "$api/v1/attestation" | jq -r .enclave_address)"
   pin="$(curl -sfk "$api/v1/attestation" | jq -r '.tls_public_key_sha256 | ltrimstr("0x")')"
   [[ "$signer" =~ ^0x[0-9a-f]{40}$ && "$pin" =~ ^[0-9a-f]{64}$ ]] || fail "no signer or pin in the attestation"

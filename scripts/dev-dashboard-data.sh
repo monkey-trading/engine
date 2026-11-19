@@ -98,7 +98,21 @@ max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"
 [[ "$max_drift" =~ ^[0-9]+s$ ]] || fail "expected time.max_drift in whole seconds, got '$max_drift'"
 sample_within="$(( ${max_drift%s} + 15 ))"
 
-# Runs the node on the config and waits until it sequences and every mock market is priced.
+# Waits until the node signs an answer. A restarted node serves its recovered markets before its first
+# trusted time sample, and signs only once trusted time bounds the host clock, so an answer asked for
+# earlier is unsigned.
+wait_until_signed() {
+  local started
+  started="$(date +%s)"
+  until curl -sk -D "$work/signed.headers" -o /dev/null -H "X-Engine-Challenge: $(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')" "$api/v1/markets" 2>/dev/null \
+    && grep -qi '^x-engine-time:' "$work/signed.headers"; do
+    (( $(date +%s) - started <= ${sample_within} )) || fail "no signed answer within ${sample_within}s of boot"
+    kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
+    sleep 0.2
+  done
+}
+
+# Runs the node on the config and waits until it sequences, signs and every mock market is priced.
 start_node() {
   : > "$work/node.log"
   "$engine" run --config "$work/node.toml" >> "$work/node.log" 2>&1 &
@@ -114,6 +128,7 @@ start_node() {
     kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
     sleep 0.3
   done
+  wait_until_signed
 }
 start_node
 
