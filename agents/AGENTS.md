@@ -181,11 +181,12 @@ an index: load only the rule whose hint matches the current action.
   signed request, and a production floor of 68 slots a second of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
   byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
-  replay`, each whole replay's command seals (`engine replay`'s, recovery's, the log-head prefix pass's, a member's
-  replica build's and a taken copy's) checked ahead on `node.replay_workers` threads or `--replay-workers`, one per
-  core by default, by a second reader of the log's files, the replay taking a verdict only for the seal and link it
-  computed and applying each command once its own seal is checked (`log/seals_ahead.rs`, `Origin::check_ahead`,
-  `sequencer/replay/ahead_tests.rs`), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
+  replay`, each whole replay's command seals (`engine replay`'s, recovery's, the log-head prefix pass's, the startup history
+  rebuild's, a member's replica build's and a taken copy's; not a history repair's, which runs beside the sequencer)
+  checked ahead on `node.replay_workers` threads or `--replay-workers`, one per core by default, by a second reader of
+  the log's files, the replay taking a verdict only for the seal and link it computed, applying each command once its
+  own seal is checked, and checking every later seal in place once the two reads part (`log/seals_ahead.rs`,
+  `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
   log, or with `--deposit` the refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the

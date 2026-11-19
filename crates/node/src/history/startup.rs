@@ -14,12 +14,12 @@ use crate::history::authenticated::{Head, Index};
 use crate::history::derived::RowsStore;
 use crate::history::rebuild::ReplayFingerprint;
 use crate::history::runtime::{self, Replacement};
-use crate::log::CheckpointDomain;
 use crate::log::catalog::CatalogRoot;
 use crate::log::catalog_access::{CatalogRead, StoreCatalogRead};
 use crate::log::catalog_head::VerifiedCatalogHead;
 use crate::log::catalog_head::{CatalogDomain, CatalogHeadAuthority};
 use crate::log::catalog_owner::CatalogOwner;
+use crate::log::{CheckpointDomain, ReplayWorkers};
 use crate::sequencer::ReplayedLog;
 use crate::snapshot::generations::Allocate;
 use crate::snapshot::head::StoreId;
@@ -35,6 +35,8 @@ pub(crate) struct Plan {
     pub signer: Option<engine_core::types::AccountId>,
     pub source: Source,
     pub catalog: Catalog,
+    /// The threads that check command seals ahead of a rebuild's replay.
+    pub workers: ReplayWorkers,
 }
 
 pub(crate) enum Source {
@@ -126,10 +128,10 @@ impl Plan {
                     &self.log_dir,
                     log.manifest_view(),
                     &prefix,
-                    self.domain,
-                    self.signer,
+                    (self.domain, self.signer),
                     &RowsStore::new(&self.history.dir, self.history.retention_ms()?),
                     &mut index,
+                    self.workers,
                 )?;
                 log.verify_history_tip(&index.head())?;
                 Replacement { id: generation.id, store: generation.store, index }

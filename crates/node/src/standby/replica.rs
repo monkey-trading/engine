@@ -98,9 +98,9 @@ impl Follower {
     /// with `marks`, folding each mark the replica applies, from the build on, into it, and with `checked`,
     /// recording each checkpoint it verifies there (`LiveReplay::record_checked_with`), and with `rows`, the
     /// store each command's derived rows are written to as the replica applies them
-    /// (`LiveReplay::store_rows_in`); an `observe` that fails ends the build. A tail after the copy's last checkpoint that no accepted signer sealed is copied
-    /// aside to `<dir>.unaccepted-<seq>`, paged as Critical `copy_tail_unaccepted`, and cut back (`cut`),
-    /// and the replica rebuilt.
+    /// (`LiveReplay::store_rows_in`); an `observe` that fails ends the build. A tail after the copy's last
+    /// checkpoint that no accepted signer sealed is copied aside to `<dir>.unaccepted-<seq>`, paged as
+    /// Critical `copy_tail_unaccepted`, and cut back (`cut`), and the replica rebuilt.
     /// Error cases:
     /// - see `open`, or `observe` fails
     /// - the copy holds such a tail and no checkpoint before it, or the tail cannot be kept or cut

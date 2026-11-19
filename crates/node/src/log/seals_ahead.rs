@@ -327,9 +327,10 @@ fn check(jobs: &Mutex<Receiver<Job>>, verdicts: &Sender<Verdict>) {
 }
 
 /// Hands `visit` each entry of the log at `path` in order, until `stop` is set: from the segment
-/// holding `from` in a segment directory, or the whole of a single file.
+/// holding `from` in a segment directory, or the whole of a single file. A segment that is not a
+/// regular file, such as a pipe, whose open could wait for a writer that never comes, ends the read.
 /// Error cases:
-/// - a file cannot be listed, opened or read, or holds a line that is no entry
+/// - a file cannot be listed, opened or read, is not a regular file, or holds a line that is no entry
 /// - `visit` fails, or `stop` is set (`Stop`)
 fn each_entry(
     path: &Path,
@@ -346,6 +347,7 @@ fn each_entry(
     };
     for file in files {
         anyhow::ensure!(!stop.load(Ordering::Relaxed), Stop);
+        anyhow::ensure!(fs::metadata(&file)?.is_file(), "{} is not a regular file", file.display());
         read_lines(BufReader::new(File::open(file)?), |n, line| {
             anyhow::ensure!(!stop.load(Ordering::Relaxed), Stop);
             match parse_line(n, line)? {

@@ -98,15 +98,44 @@ fn what_the_reader_cannot_read_is_checked_in_place() {
     assert_eq!((ahead.ahead, ahead.in_place), (6, 6));
 }
 
-/// A log the reader cannot open a second time without taking bytes from the replay's own read, a
-/// device as a descriptor's alias is, or one that is not there, starts no checks: the replay checks
-/// every seal in place.
+/// A log the reader cannot open a second time without taking bytes from the replay's own read starts
+/// no checks, and the replay checks every seal in place: a pipe, a regular file reached through a path
+/// under `/dev` (macOS's alias of an open descriptor, or Linux's `/dev/shm`), a device, or a log that
+/// is not there. A regular file and a directory are read twice.
 #[test]
 fn a_log_that_cannot_be_read_twice_starts_no_checks() {
-    let missing = log_file("seals-ahead-missing");
-    for path in [Path::new("/dev/null"), missing.as_path()] {
+    let file = log_file("seals-ahead-twice");
+    write_file(&file, &sealed(&EnclaveKey::test_key(), 0..2, 100));
+    let dir = file.parent().unwrap();
+    assert!(readable_twice(&file) && readable_twice(dir), "a regular file and a directory are read twice");
+    let pipe = dir.join("pipe");
+    assert!(std::process::Command::new("mkfifo").arg(&pipe).status().unwrap().success());
+    let opened = File::open(&file).unwrap();
+    let under_dev = UnderDev::of(&opened);
+    let missing = dir.join("missing");
+    let refused =
+        [Some(pipe.as_path()), under_dev.as_ref().map(|found| found.0.as_path()), Some(Path::new("/dev/null"))];
+    for path in refused.into_iter().flatten().chain([missing.as_path()]) {
         assert!(SealsAhead::start(path, 0, B256::default(), workers(1)).is_none(), "{}", path.display());
     }
+}
+
+/// A segment that is not a regular file, such as a pipe no writer opens, ends the reader's read before
+/// it opens it, rather than leaving the reader waiting on it while the replay waits to join it.
+#[test]
+fn a_segment_that_is_a_pipe_ends_the_read() {
+    let dir = scratch_dir("seals-ahead-pipe-segment");
+    write_segments(&dir, &sealed(&EnclaveKey::test_key(), 0..20, 100), 8);
+    let pipe = dir.join(segment_name(8));
+    fs::remove_file(&pipe).unwrap();
+    assert!(std::process::Command::new("mkfifo").arg(&pipe).status().unwrap().success());
+    let mut read = 0;
+    let ended = each_entry(&dir, 0, &AtomicBool::new(false), |_| {
+        read += 1;
+        Ok(())
+    });
+    assert!(format!("{:#}", ended.unwrap_err()).contains("is not a regular file"));
+    assert_eq!(read, 8, "the read ends at the pipe, after the segment before it");
 }
 
 /// A command the log holds twice, the second with the same seq, takes the verdict on its own seal, in
@@ -171,6 +200,35 @@ fn dropping_mid_log_stops_and_joins_the_threads() {
 }
 
 // ── Helpers ──
+
+/// A regular file reached through a path under `/dev`: macOS's alias of an open descriptor, or a file in
+/// Linux's `/dev/shm`, removed when dropped. None on a system with neither.
+struct UnderDev(PathBuf, bool);
+
+impl Drop for UnderDev {
+    /// Removes the file it made, if it made one.
+    fn drop(&mut self) {
+        if self.1 {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+}
+
+impl UnderDev {
+    /// `opened`'s alias under `/dev/fd`.
+    #[cfg(target_os = "macos")]
+    fn of(opened: &File) -> Option<Self> {
+        use std::os::fd::AsRawFd;
+        Some(Self(PathBuf::from(format!("/dev/fd/{}", opened.as_raw_fd())), false))
+    }
+
+    /// A new file in `/dev/shm`, if the system has one.
+    #[cfg(not(target_os = "macos"))]
+    fn of(_: &File) -> Option<Self> {
+        let path = PathBuf::from(format!("/dev/shm/engine-node-test-{}-seals-ahead", std::process::id()));
+        fs::write(&path, "").ok().map(|()| Self(path, true))
+    }
+}
 
 /// A log file in a new scratch directory named `name`.
 fn log_file(name: &str) -> PathBuf {

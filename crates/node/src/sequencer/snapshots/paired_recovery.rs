@@ -313,5 +313,6 @@ fn plan(
         signer,
         source,
         catalog,
+        workers: cfg.node.replay_workers,
     }
 }
