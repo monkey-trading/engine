@@ -330,6 +330,13 @@ impl Engine {
         }
     }
 
+    /// Whether a command stamped `ts` would close the open period (`finalise_emissions`).
+    pub(crate) fn emission_close_due(&self, ts: Millis) -> bool {
+        self.emissions
+            .as_ref()
+            .is_some_and(|emissions| emissions.schedule.period_at(ts).is_some_and(|current| current > emissions.period))
+    }
+
     /// Finalises the open period once the sequenced time has reached its end: allocates its budget
     /// to the accounts with weight at their cash now, cancels the remainder, and cancels every later
     /// period the time has passed with no command. Runs before anything else the command does.

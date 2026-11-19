@@ -74,6 +74,7 @@ fn a_close_waits_for_the_mirror_to_pass_the_epochs_end() {
     stake(&mut h, LEAVER, 1);
     let open = h.engine.staking().expect("staking").epoch;
     h.advance_to(end);
+    assert!(!h.engine.staking_close_due(end), "the close waits for the mirror");
     assert_eq!(closed(&h.cmd(Command::Tick)), None);
     // A frontier a millisecond short of the end holds the close; the command that records the frontier
     // at the end closes nothing itself, as the close runs before it acts.
@@ -81,6 +82,7 @@ fn a_close_waits_for_the_mirror_to_pass_the_epochs_end() {
     assert_eq!(closed(&frontier(&mut h, end - 1)), None);
     assert_eq!(closed(&h.cmd(Command::Tick)), None);
     assert_eq!(closed(&frontier(&mut h, end)), None);
+    assert!(h.engine.staking_close_due(h.ts), "the mirror has passed the end");
     assert_eq!(h.engine.staking().expect("staking").epoch, open);
     assert_eq!(paid(&h, LEAVER), 0);
     // The next command closes the epoch the mirror has passed, though its end was ten minutes ago.

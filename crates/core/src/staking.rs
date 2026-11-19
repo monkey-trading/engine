@@ -445,9 +445,24 @@ impl Engine {
     /// completed scan past the end, so a stake or unstake after the end within that scan counts; a
     /// frontier recorded ahead of the sequenced time lets later scans in before the close too.
     fn mirrored_close(&self, config: &StakingConfig, open: u64) -> Option<u64> {
+        self.mirrored_close_at(config, open, self.now)
+    }
+
+    /// `mirrored_close` for a command stamped `now`.
+    fn mirrored_close_at(&self, config: &StakingConfig, open: u64, now: Millis) -> Option<u64> {
         let reached = self.finalised_chain_time()?;
-        let closed = config.epochs_elapsed(reached.min(self.now)).checked_sub(1).filter(|closed| *closed >= open)?;
-        (config.epoch_end(closed).saturating_add(CLOSE_HORIZON_MS) > self.now).then_some(closed)
+        let closed = config.epochs_elapsed(reached.min(now)).checked_sub(1).filter(|closed| *closed >= open)?;
+        (config.epoch_end(closed).saturating_add(CLOSE_HORIZON_MS) > now).then_some(closed)
+    }
+
+    /// Whether a command stamped `ts` would close a distribution epoch (`finalise_staking`).
+    pub fn staking_close_due(&self, ts: Millis) -> bool {
+        let Some(staking) = &self.staking else { return false };
+        let (config, open) = (staking.config, staking.epoch);
+        if config.epochs_elapsed(ts) <= open {
+            return false;
+        }
+        self.protocol_version < ProtocolVersion::V75 || self.mirrored_close_at(&config, open, ts).is_some()
     }
 
     /// The operator's share of a close, `share` USDC base units, by recipient, with what a proven fault's
