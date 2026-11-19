@@ -973,15 +973,21 @@ every member of the set, so a promotion is refused only when no member qualifies
 
 The key holder is the candidate whose assignment, release move or naming as a turn's source recorded
 the release that signed the signer epoch's newest head, which no later release move of its own
-changes. Before the epoch's first head, no member has taken the keys in it, so they are where the
-epoch found them: with the member of the latest turn that a member took or a promotion reached, or
-else with the source of the earliest turn since, such as the operator in office when turns begin or
-after an installation. When the timelock installs a new signer during a turn whose member has not yet
-taken it, the schedule still takes that source for the key holder, although the timelock installed the
-member's registered enclave, so that member may later be promoted into its own turn. A holder that
-withholds the keys therefore cannot take the turn itself, and cannot choose whom a promotion names.
-It can still hand the keys to the member that a skip names next in the order, which the seed fixed:
-at the proposed values, two skips fall due before an untaken turn's promotion.
+changes. A head counts only if its enclave signed it since the latest turn drawn while the registry
+named its own operator began: the first turn, or the first after an installation. Without one, no
+member has taken the keys in the epoch since then, so they are where the epoch found them. They are
+with the member of the latest turn that a member took or a promotion reached; in a turn the epoch
+began in, with the member whose registered enclave the timelock installed; or else with the source
+of the earliest turn since, such as the operator in office when turns begin or after an
+installation, whether or not the installed operator took the outgoing operator's keys. An
+installation that keeps the signer epoch therefore assumes the outgoing operator handed the
+installed one its keys; when it has not, the timelock installs a new signer. A skip that passes a
+member holding the keys records it as having held them and as the epoch's key holder, so no
+promotion names it in that turn, the next turn's skips pass it, and the next turn's promotions take
+it last. A holder that withholds the keys therefore cannot take the turn itself, and cannot choose
+whom a promotion names. It can still hand the keys to the member that a skip names next in the
+order, which the seed fixed: at the proposed values, two skips fall due before an untaken turn's
+promotion.
 
 **Skips.** A turn's member takes the turn with its first head under its assignment, which `LogHeads`
 latches. Once `takeWindow` witnessed slots pass with no latch, counted from the latest of the

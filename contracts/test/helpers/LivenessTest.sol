@@ -100,21 +100,36 @@ abstract contract LivenessTest is ScheduleTest {
         return (0, address(0));
     }
 
-    /// @dev The candidate whose enclave holds the keys: the one whose assignment recorded the release of
-    /// the signer epoch's newest head; before its first, walking back from the turn in effect over turns
-    /// whose latest assignment is neither latched nor a promotion, the member of the first that is, or
-    /// the source of the first turn drawn, the only one these suites draw while the registry names its own
-    /// operator: none installs one.
+    /// @dev `OperatorSchedule.Turn.reason` for a promotion.
+    uint8 internal constant REASON_PROMOTED = 2;
+
+    /// @dev The key holder the rule names, restated over the schedule's and the log heads' public reads (it
+    /// restates `LogHeads.keyHolder`, so the suites that use it check the order a promotion walks, and
+    /// `FirstTurnHolder.t.sol` checks the holder itself): while the epoch's newest head is a v2 head signed
+    /// since `registryTurn` began, the one whose assignment recorded its release; else, walking back from
+    /// the turn in effect over turns whose latest assignment is neither latched nor a promotion, the member
+    /// of the first that is; in a turn the signer epoch began in, the member a skip passed holding the keys,
+    /// or its member; else the source of `registryTurn`.
     function _keyHolder() internal view returns (address holder) {
-        bytes32 release = logHeads.headRelease(vault.signerEpoch());
-        if (release != 0) return schedule.releaseCandidate(release);
+        uint64 epoch = vault.signerEpoch();
+        uint64 first = schedule.registryTurn();
+        bytes32 release = logHeads.headRelease(epoch);
+        (,, uint64 signedAt,,) = logHeads.heads(epoch);
+        if (release != 0 && signedAt >= uint256(schedule.boundary(first)) * 1000) {
+            return schedule.releaseCandidate(release);
+        }
+        uint64 since = vault.signerSince();
         (uint64 at, OperatorSchedule.Turn memory walked) = schedule.turnAt(uint64(block.timestamp));
         while (true) {
             (uint64 latchedAt,,,,) = logHeads.latches(at, walked.position);
-            if (walked.reason == 2 || latchedAt != 0) return walked.candidate;
+            if (walked.reason == REASON_PROMOTED || latchedAt != 0) return walked.candidate;
+            if (since >= schedule.boundary(at)) {
+                holder = schedule.skippedHolder(epoch);
+                return holder == address(0) ? walked.candidate : holder;
+            }
             holder = walked.source;
+            if (at == first) return holder;
             at = walked.prior;
-            if (at == 0) return holder;
             walked = schedule.turnOf(at);
         }
     }

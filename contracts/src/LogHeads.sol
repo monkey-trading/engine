@@ -25,7 +25,8 @@ import {Vault} from "./Vault.sol";
 /// latest head's `postedAt`. Otherwise heads are hourly `engine.log-head.v1` anchors.
 /// @notice The first head binding a turn's current assignment latches it: once, immutably, the
 /// block time, signer epoch, member, release and generation. Each epoch's newest v2 head's release
-/// names the enclave holding the keys, whichever assignment it binds.
+/// names the enclave holding the keys, whichever assignment it binds, and `keyHolder` names that
+/// enclave's candidate for the schedule's skips and promotions.
 /// Trust: the same single accepted operator dependency as the vault's checkpoints — the attested
 /// enclave key the vault names. There is no admin: the vault reference is immutable, and a new
 /// vault deployment pairs with a new LogHeads.
@@ -79,6 +80,9 @@ contract LogHeads {
 
     uint8 private constant LIVE = 0;
     uint8 private constant TIME_HALT = 2;
+
+    /// @dev `OperatorSchedule.Turn.reason` for a promotion, as the schedule numbers it.
+    uint8 private constant REASON_PROMOTED = 2;
 
     /// The newest posted head per signer epoch; empty until the first post of that epoch.
     mapping(uint64 epoch => Head) public heads;
@@ -199,6 +203,46 @@ contract LogHeads {
 
     function _checkSigner(bytes32 digest, bytes calldata signature) private view {
         if (ECDSA.recover(digest, signature) != vault.checkpointSigner()) revert InvalidSigner();
+    }
+
+    /// @notice The address whose key signed `digest` with `signature`, with no message prefix; zero for a
+    /// malformed signature or one with a high `s`. The schedule checks standby vouches with it.
+    function recover(bytes32 digest, bytes calldata signature) external pure returns (address signer) {
+        (signer,,) = ECDSA.tryRecover(digest, signature);
+    }
+
+    /// @notice The candidate whose enclave holds the vault's signer epoch's keys while a turn of the registry's
+    /// schedule names the operator, zero when nothing says. While the epoch's newest head is a v2 head its
+    /// enclave signed since the schedule's `registryTurn` began, however late it was relayed, it is the
+    /// candidate whose assignment, release move or naming as a draw's source last recorded the head's release
+    /// (`releaseCandidate`). Otherwise no member has taken the keys in the epoch since then, so they are where
+    /// it found them: walking back from the turn in effect over turns whose latest assignment no head latched
+    /// and no promotion made, the member of the first turn reached whose latest assignment one did; in a turn
+    /// the epoch began in, the member the vault's timelock installed as the operator the registry named, which
+    /// a skip that moved the turn on since recorded (`skippedHolder`); else the source of `registryTurn`, where
+    /// the walk ends. One step per turn run with no head, each at a cost that does not grow with the turn's
+    /// revisions.
+    function keyHolder() external view returns (address holder, uint64 epoch) {
+        OperatorSchedule schedule = vault.registry().schedule();
+        epoch = vault.signerEpoch();
+        uint64 first = schedule.registryTurn();
+        bytes32 release = headRelease[epoch];
+        if (release != 0 && heads[epoch].signedAt >= uint256(schedule.boundary(first)) * 1000) {
+            return (schedule.releaseCandidate(release), epoch);
+        }
+        uint64 since = vault.signerSince();
+        (uint64 turn, OperatorSchedule.Turn memory named) = schedule.turnAt(uint64(block.timestamp));
+        while (named.reason != REASON_PROMOTED && latches[turn][named.position].at == 0) {
+            if (since >= schedule.boundary(turn)) {
+                holder = schedule.skippedHolder(epoch);
+                return (holder == address(0) ? named.candidate : holder, epoch);
+            }
+            holder = named.source;
+            if (turn == first) return (holder, epoch);
+            turn = named.prior;
+            named = schedule.turnOf(turn);
+        }
+        return (named.candidate, epoch);
     }
 
     /// @dev Reverts unless the head extends the epoch's held head: its parent is the held head, and
