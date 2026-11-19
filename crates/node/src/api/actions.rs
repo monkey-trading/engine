@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use axum::extract::{ConnectInfo, State};
 use axum::{Extension, Json};
+use engine_core::Engine;
 use engine_core::access::{AccessDeposit, AccessEvidence, EligibilityRequest, SourceFailure};
 use engine_core::command::{
     CancelAllRequest, CancelRequest, CloseAllRequest, Command, OrderRequest, PositionLevelsRequest, WithdrawalRequest,
@@ -14,6 +15,7 @@ use engine_core::eip712::{
     position_levels_hash, withdrawal_hash,
 };
 use engine_core::event::Event;
+use engine_core::types::{AccountId, MarketId};
 use tracing::field::display;
 use tracing::{Span, debug};
 
@@ -42,7 +44,12 @@ pub(super) async fn place_order(
     let cmd = if s.access_enforced() {
         let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = order_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
-        let kind = if req.reduce_only { SlotKind::Reducing } else { SlotKind::Opening };
+        let kind = if req.reduce_only {
+            let (account, market) = (req.account, req.market);
+            reducing_slot(&s, move |engine| holds_position(engine, account, market)).await?
+        } else {
+            SlotKind::Opening
+        };
         let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
         Command::AccessOrder { request: req, evidence }
     } else {
@@ -104,7 +111,10 @@ pub(super) async fn close_all(
         .await?;
     let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
     let hash = close_all_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
-    let evidence = api_screen(&s, peer, req.account, hash, SlotKind::Reducing).await?;
+    let (account, markets) = (req.account, req.closes.iter().map(|close| close.market).collect::<Vec<_>>());
+    let held = move |engine: &Engine| markets.iter().any(|&market| holds_position(engine, account, market));
+    let kind = reducing_slot(&s, held).await?;
+    let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
     let cmd = Command::AccessCloseAll { request: req, evidence };
     Ok(Json(s.submit(cmd).await?))
 }
@@ -129,8 +139,10 @@ pub(super) async fn set_position_levels(
         .await?;
     let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
     let hash = position_levels_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
-    // A level arranges a close, so it takes a slot as a close does, the reserve included.
-    let evidence = api_screen(&s, peer, req.account, hash, SlotKind::Reducing).await?;
+    // A level arranges a close, so it takes a slot as a close does.
+    let (account, market) = (req.account, req.market);
+    let kind = reducing_slot(&s, move |engine| holds_position(engine, account, market)).await?;
+    let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
     Ok(Json(s.submit(Command::AccessSetPositionLevels { request: req, evidence }).await?))
 }
 
@@ -224,7 +236,9 @@ pub(super) async fn withdraw(
     let cmd = if access {
         let auth = auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = withdrawal_hash(&signature_domain(&s), b.account, b.amount, auth.nonce, auth.expires_at);
-        let evidence = api_screen(&s, peer, b.account, hash, SlotKind::Reducing).await?;
+        let account = b.account;
+        let kind = reducing_slot(&s, move |engine| engine.withdrawable(account).is_positive()).await?;
+        let evidence = api_screen(&s, peer, b.account, hash, kind).await?;
         Command::AccessWithdraw { request: b, evidence, payout_available: s.payouts_enabled }
     } else {
         Command::Withdraw { account: b.account, amount: b.amount, auth }
@@ -257,6 +271,26 @@ pub(super) async fn attest_eligibility(
     let hash = eligibility_hash(&signature_domain(&s), request.account, request.class, auth.nonce, auth.expires_at);
     let evidence = api_screen(&s, peer, request.account, hash, SlotKind::Declaration).await?;
     Ok(Json(s.submit(Command::AttestEligibility { request, evidence }).await?))
+}
+
+/// The slot a request that claims to reduce risk takes: one that may be the reserve's (`Reducing`) when
+/// `can_reduce` holds on the API's engine copy, and otherwise one outside it, as an order's (`Opening`).
+/// Error cases:
+/// - the sequencer has stopped
+async fn reducing_slot(
+    s: &ApiState,
+    can_reduce: impl FnOnce(&Engine) -> bool + Send + 'static,
+) -> Result<SlotKind, ApiError> {
+    if s.read(can_reduce).await? {
+        return Ok(SlotKind::Reducing);
+    }
+    debug!("request takes a slot outside the screening reserve: the account has nothing it reduces");
+    Ok(SlotKind::Opening)
+}
+
+/// Whether `account` holds a position in `market`.
+fn holds_position(engine: &Engine, account: AccountId, market: MarketId) -> bool {
+    engine.accounts().get(&account).is_some_and(|held| !held.position(market).qty.is_zero())
 }
 
 /// The address a request's client is counted under, when its connection has one.

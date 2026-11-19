@@ -53,8 +53,8 @@ fn the_template_holds_what_a_production_build_requires() {
     let fresh = cfg.api.fresh_accounts;
     assert_eq!((fresh.shared.per_minute.get(), fresh.shared.burst.get()), (60, 120));
     assert_eq!((fresh.per_client.per_minute.get(), fresh.per_client.burst.get()), (12, 6));
-    // Its screening shares and reserve are within what a production build allows.
-    cfg.access.as_ref().expect("[access]").refuse_dev_screening_shares(true).expect("the production screening shares");
+    // Its screening slots, shares and reserve are within what a production build allows.
+    cfg.access.as_ref().expect("[access]").refuse_dev_screening_slots(true).expect("the production screening slots");
     // A production build reads secrets only from a delivered bundle.
     let sealing = cfg.tee.sealing.as_ref().expect("[tee.sealing]");
     assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");

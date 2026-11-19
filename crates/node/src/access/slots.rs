@@ -1,7 +1,8 @@
 //! The API's screening slots: how many requests may wait on the access source at once, in all, for
-//! one account and for one client, with a reserve that only requests reducing risk may take, and one
-//! slot for a signed request however many copies of it arrive. Each request takes its slot on its own
-//! task, so the count is shared rather than owned by one task, as the API's other limits are.
+//! one account and for one client, with a reserve that only requests reducing risk may take, one of
+//! its slots at a time for an account, and one slot for a signed request however many copies of it
+//! arrive. Each request takes its slot on its own task, so the count is shared rather than owned by
+//! one task, as the API's other limits are.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -18,10 +19,11 @@ use crate::limits::{SHARED_CAP_FULL, ThrottledAlert, client_key};
 /// What a request takes a slot as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlotKind {
-    /// A close (a reduce-only order), a close-all, a position's take profit and stop loss, a withdrawal
-    /// or a payout reissue: any free slot, the reserve included.
+    /// A close, a close-all, a position's take profit and stop loss or a withdrawal that the API's engine
+    /// copy shows can reduce risk, or a reissue of an unpaid payout the sequencer holds: any free slot,
+    /// the reserve included while its account holds none of the reserve's.
     Reducing,
-    /// Any other order, or a dev deposit: a free slot outside the reserve.
+    /// Any other request but a declaration: a free slot outside the reserve.
     Opening,
     /// A declaration: as `Opening`, while declarations hold fewer than half the slots, rounded up.
     Declaration,
@@ -67,7 +69,8 @@ pub(crate) struct ScreeningSlots {
     declarations_full: ThrottledAlert,
 }
 
-/// The slots held, in all, by declarations, per account, per client, and per request.
+/// The slots held, in all, by declarations, per account, per client, and per request, and the accounts
+/// holding a slot taken from the reserve.
 #[derive(Default)]
 struct Held {
     total: usize,
@@ -75,12 +78,15 @@ struct Held {
     accounts: HashMap<AccountId, usize>,
     clients: HashMap<IpAddr, usize>,
     requests: HashSet<B256>,
+    reserve: HashSet<AccountId>,
 }
 
 /// One request's slot, given back when it is dropped.
 pub(crate) struct ScreeningSlot<'a> {
     slots: &'a ScreeningSlots,
     claim: Claim,
+    /// Taken while every slot outside the reserve was held.
+    reserved: bool,
 }
 
 impl Drop for ScreeningSlot<'_> {
@@ -94,6 +100,9 @@ impl Drop for ScreeningSlot<'_> {
             release(&mut held.clients, client);
         }
         held.requests.remove(&self.claim.request);
+        if self.reserved {
+            held.reserve.remove(&self.claim.account);
+        }
     }
 }
 
@@ -118,13 +127,16 @@ impl ScreeningSlots {
     /// - a copy of the request holds a slot: `Duplicate`
     /// - its account or its client holds its share: `Share`
     /// - it is a declaration, and declarations hold their half: `Declarations`
-    /// - every slot it may take is held: `Full`
+    /// - every slot it may take is held, the reserve's too once its account holds one of them: `Full`
     pub(crate) fn take(&self, claim: Claim) -> Result<ScreeningSlot<'_>, SlotRefusal> {
         let claim = Claim { client: claim.client.map(client_key), ..claim };
+        let mut reserved = false;
         let refused = {
             let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
             let refused = self.refusal(&held, &claim);
             if refused.is_none() {
+                // Past every slot outside the reserve, the slot is one of the reserve's.
+                reserved = held.total >= self.total - self.reserved;
                 held.total += 1;
                 held.declarations += usize::from(claim.kind == SlotKind::Declaration);
                 *held.accounts.entry(claim.account).or_default() += 1;
@@ -132,10 +144,13 @@ impl ScreeningSlots {
                     *held.clients.entry(client).or_default() += 1;
                 }
                 held.requests.insert(claim.request);
+                if reserved {
+                    held.reserve.insert(claim.account);
+                }
             }
             refused
         };
-        let Some(refusal) = refused else { return Ok(ScreeningSlot { slots: self, claim }) };
+        let Some(refusal) = refused else { return Ok(ScreeningSlot { slots: self, claim, reserved }) };
         debug!(?refusal, kind = ?claim.kind, "screening slot refused");
         match refusal {
             SlotRefusal::Full => self.full.raise(&"screening slots"),
@@ -149,8 +164,8 @@ impl ScreeningSlots {
     fn refusal(&self, held: &Held, claim: &Claim) -> Option<SlotRefusal> {
         let holds = |count: Option<&usize>, share: usize| count.is_some_and(|count| *count >= share);
         let room = match claim.kind {
-            SlotKind::Reducing => self.total,
-            SlotKind::Opening | SlotKind::Declaration => self.total - self.reserved,
+            SlotKind::Reducing if !held.reserve.contains(&claim.account) => self.total,
+            SlotKind::Reducing | SlotKind::Opening | SlotKind::Declaration => self.total - self.reserved,
         };
         if held.requests.contains(&claim.request) {
             Some(SlotRefusal::Duplicate)
@@ -241,6 +256,35 @@ mod tests {
         }
         let _reserve: Vec<_> = (7..=8).map(|n| slots.take(claim(n, n, n, SlotKind::Reducing)).unwrap()).collect();
         assert_eq!(slots.take(claim(9, 9, 9, SlotKind::Reducing)).err(), Some(SlotRefusal::Full));
+    }
+
+    #[test]
+    fn an_account_holds_one_slot_of_the_reserve_at_a_time() {
+        let slots = pool(8, 3, 8, 2);
+        let _opening: Vec<_> = (1..=6).map(|n| slots.take(claim(n, n, n, SlotKind::Opening)).unwrap()).collect();
+        let first = slots.take(claim(7, 7, 7, SlotKind::Reducing)).unwrap();
+        // Within its share, the account's second request finds only the slots outside the reserve held.
+        assert_eq!(slots.take(claim(7, 7, 17, SlotKind::Reducing)).err(), Some(SlotRefusal::Full));
+        let other = slots.take(claim(8, 8, 8, SlotKind::Reducing)).unwrap();
+        drop(first);
+        let _again = slots.take(claim(7, 7, 17, SlotKind::Reducing)).unwrap();
+        // A slot outside the reserve is not one of the reserve's: account 1 still takes one.
+        drop(other);
+        let _own = slots.take(claim(1, 1, 11, SlotKind::Reducing)).unwrap();
+    }
+
+    #[test]
+    fn a_reducing_slot_outside_the_reserve_is_not_one_of_the_reserves() {
+        let slots = pool(8, 3, 8, 2);
+        // While the pool has room, account 7's close takes a slot outside the reserve.
+        let ordinary = slots.take(claim(7, 7, 7, SlotKind::Reducing)).unwrap();
+        let _opening: Vec<_> = (1..=5).map(|n| slots.take(claim(n, n, n, SlotKind::Opening)).unwrap()).collect();
+        // Once the rest are held, its next close takes one of the reserve's, and its third none.
+        let _reserved = slots.take(claim(7, 7, 17, SlotKind::Reducing)).unwrap();
+        assert_eq!(slots.take(claim(7, 7, 27, SlotKind::Reducing)).err(), Some(SlotRefusal::Full));
+        // Giving back the slot outside the reserve leaves the account holding the reserve's.
+        drop(ordinary);
+        assert_eq!(slots.take(claim(7, 7, 27, SlotKind::Reducing)).err(), Some(SlotRefusal::Full));
     }
 
     #[test]

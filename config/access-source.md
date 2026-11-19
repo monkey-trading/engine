@@ -199,16 +199,22 @@ keys' included, hold at most `access.max_in_flight_per_account` of them, and one
 `access.max_in_flight_per_client`, an IPv6 client counted by its /64; a request past its share gets
 429 with `Retry-After`. A copy of a signed request still being screened gets 409
 `the same request is already being screened` and takes no slot. `access.reserved_in_flight` of the
-slots are kept for closes (reduce-only orders), close-alls, a position's take-profit and stop-loss
-requests, withdrawals and payout reissues, which may take any free slot; other orders and declarations take only the rest. A request that finds every slot
-it may take held gets 503 `screening is at capacity` with `Retry-After`, uses no nonce, and
-`api_screening_slots_full` is a Warning raised at most once a minute while this lasts. Declarations
+slots are kept for requests that can reduce risk: a reduce-only order or a take-profit and stop-loss
+request in a market where the API's copy of the engine state shows the account holds a position, a
+close-all naming at least one such market, a withdrawal while that copy shows the account has
+withdrawable cash, and a reissue of a payout the sequencer holds unpaid. Such a request may take any
+free slot, the reserve's included, but an account holds at most one of the reserved slots at a time.
+Every other request, including a reduce-only order from an account with no position in its market,
+takes only the rest. A request that finds every slot it may take held gets 503 `screening is at capacity` with
+`Retry-After`, uses no nonce, and `api_screening_slots_full` is a Warning raised at most once a
+minute while this lasts. Declarations
 hold at most half the slots, rounded up, and the reserve must be below half of them, rounded down, so
 however many declarations arrive, orders keep a slot; `access.max_in_flight` must be at least 2 for
 that to hold. A declaration past that gets 503 `declaration screening is at capacity` with
 `Retry-After`, and uses no nonce, and `api_declaration_slots_full` is a Warning raised at most once a
-minute while this lasts. A production build refuses a share above 2 per account or 4 per client, and
-a reserve below 2.
+minute while this lasts. A production build refuses fewer slots than 68 for each second of
+`access.timeout` (136 at 2 s, ten times launch flow's screened requests held for the whole timeout), a
+share above 2 per account or 4 per client, and a reserve below 2.
 
 A declaration or session-key request from a never-credited account takes one token from its client's
 share, `api.fresh_accounts.per_client`, and one from a budget all clients share,

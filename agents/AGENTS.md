@@ -167,8 +167,9 @@ an index: load only the rule whose hint matches the current action.
   under `secret_missing`; a rotation needs a restart and says so; an approved upgrade moves the bundle,
   an election moves none), the
   access-source screening (`access.rs`, signed decisions with bounded HTTP reads; `access/slots.rs`, the
-  API's screening slots: a share per account and per client, a reserve for closes and withdrawals, and one
-  slot per signed request),
+  API's screening slots: a share per account and per client, a reserve for the requests the API's engine
+  copy shows can reduce risk (`api/actions.rs`), one of its slots at a time per account, one slot per
+  signed request, and a production floor of 68 slots a second of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
   byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the

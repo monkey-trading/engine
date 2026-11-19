@@ -486,12 +486,19 @@ requests and session-key requests are not screened.
 
 Each request holds one of a limited number of screening slots while the source answers. One
 account's requests, including its session keys', and one client's requests may hold only a share of
-the slots. A request past its share is refused with 429 and `Retry-After`. Some slots are kept for
-requests that reduce risk: reduce-only orders, close-all requests, take profit and stop loss
-requests, withdrawals and payout reissues. Declarations may hold at most half of the slots. A
-request that finds every slot it may take in use is refused with 503 `screening is at capacity`, or
-`declaration screening is at capacity` for a declaration, with `Retry-After`. Neither refusal uses
-the nonce.
+the slots. A request past its share is refused with 429 and `Retry-After`. Declarations may hold at
+most half of the slots.
+
+Some slots are kept for requests that the account's state shows can reduce risk when the request
+arrives: a reduce-only order or a take profit and stop loss request in a market where the account
+holds a position, a close-all request naming at least one such market, a withdrawal while the
+account has cash it can withdraw, and a payout reissue. An account holds at most one of the kept
+slots at a time. Any other request, including a reduce-only order in a market where the account
+holds no position, takes one of the other slots.
+
+A request that finds every slot it may take in use is refused with 503 `screening is at capacity`,
+or `declaration screening is at capacity` for a declaration, with `Retry-After`. Neither refusal
+uses the nonce.
 
 ### Size, time and connection limits
 

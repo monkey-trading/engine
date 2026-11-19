@@ -14,6 +14,7 @@ mod portfolio_margin;
 mod pre_deposit;
 mod pre_deposit_budgets;
 mod reissue;
+mod screening_reserve;
 mod screening_slots;
 mod session_keys;
 mod source;

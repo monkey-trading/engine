@@ -11,6 +11,9 @@ use serde::Deserialize;
 
 use crate::config::SecretUrl;
 
+/// Ten times launch flow's screened requests a second, rounded up: a production build's screening slots
+/// carry this many for as long as the source may take to answer (`timeout`).
+const PRODUCTION_SCREENED_PER_SECOND: u128 = 68;
 /// The most screening slots a production build lets one account's requests, and one client's, hold
 /// at once, and the fewest it must keep for closes and withdrawals.
 const PRODUCTION_PER_ACCOUNT: usize = 2;
@@ -34,8 +37,9 @@ pub struct AccessSection {
     pub max_in_flight_per_account: NonZeroUsize,
     /// How many of them one client's requests may hold, for every account it acts for.
     pub max_in_flight_per_client: NonZeroUsize,
-    /// How many of them only closes, close-alls, take-profit and stop-loss requests, withdrawals and
-    /// payout reissues may take.
+    /// How many of them only requests that can reduce risk may take: closes, close-alls and take-profit
+    /// and stop-loss requests in a market where the account holds a position, withdrawals while it has
+    /// withdrawable cash, and reissues of an unpaid payout; one at a time for an account.
     pub reserved_in_flight: usize,
 }
 
@@ -71,15 +75,23 @@ impl AccessSection {
         Ok(())
     }
 
-    /// Refuses, when `production` is set, screening shares above the production values or a reserve
-    /// below it, so no one account or client holds more than its share and closes and withdrawals
-    /// keep slots that orders cannot take.
+    /// Refuses, when `production` is set, fewer screening slots than ten times launch flow fills over the
+    /// timeout, shares above the production values or a reserve below it, so that a few accounts or
+    /// clients cannot hold every slot, and closes and withdrawals keep slots that orders cannot take.
     /// Error cases:
-    /// - `production` is set and a share is above its production value, or the reserve below its own
-    pub fn refuse_dev_screening_shares(&self, production: bool) -> anyhow::Result<()> {
+    /// - `production` is set and the slots are fewer than `PRODUCTION_SCREENED_PER_SECOND` a second of
+    ///   `timeout`, a share is above its production value, or the reserve below its own
+    pub fn refuse_dev_screening_slots(&self, production: bool) -> anyhow::Result<()> {
         if !production {
             return Ok(());
         }
+        let least = (PRODUCTION_SCREENED_PER_SECOND * self.timeout.as_nanos()).div_ceil(1_000_000_000);
+        ensure!(
+            self.max_in_flight.get() as u128 >= least,
+            "a production build needs access.max_in_flight at least {least}, {PRODUCTION_SCREENED_PER_SECOND} a second \
+             of access.timeout, and the config sets {}",
+            self.max_in_flight
+        );
         for (key, share, ceiling) in [
             ("max_in_flight_per_account", self.max_in_flight_per_account.get(), PRODUCTION_PER_ACCOUNT),
             ("max_in_flight_per_client", self.max_in_flight_per_client.get(), PRODUCTION_PER_CLIENT),
@@ -156,28 +168,34 @@ mod tests {
 
     // Runs in the production lane too, which filters on `production_build`.
     #[test]
-    fn a_production_build_refuses_screening_shares_beyond_its_values() {
-        let config = |account: usize, client: usize, reserved: usize| {
+    fn a_production_build_refuses_screening_slots_beyond_its_values() {
+        let config = |slots: usize, account: usize, client: usize, reserved: usize| {
             toml::from_str::<AccessSection>(
                 &VALID
-                    .replace("max_in_flight=2", "max_in_flight=8")
+                    .replace("timeout='1s'", "timeout='2s'")
+                    .replace("max_in_flight=2", &format!("max_in_flight={slots}"))
                     .replace("per_account=1", &format!("per_account={account}"))
                     .replace("per_client=1", &format!("per_client={client}"))
                     .replace("reserved_in_flight=0", &format!("reserved_in_flight={reserved}")),
             )
             .unwrap()
         };
-        let at_values = config(2, 4, 2);
+        let at_values = config(136, 2, 4, 2);
         at_values.validate().unwrap();
-        at_values.refuse_dev_screening_shares(true).unwrap();
+        at_values.refuse_dev_screening_slots(true).unwrap();
+        // The slots follow the timeout, to the nanosecond: 68 a second of it, rounded up.
+        let mut slower = config(136, 2, 4, 2);
+        slower.timeout = Duration::new(2, 1);
         for (beyond, key) in [
-            (config(3, 4, 2), "max_in_flight_per_account at most 2"),
-            (config(2, 5, 2), "max_in_flight_per_client at most 4"),
-            (config(2, 4, 1), "reserved_in_flight at least 2"),
+            (config(135, 2, 4, 2), "max_in_flight at least 136"),
+            (slower, "max_in_flight at least 137"),
+            (config(136, 3, 4, 2), "max_in_flight_per_account at most 2"),
+            (config(136, 2, 5, 2), "max_in_flight_per_client at most 4"),
+            (config(136, 2, 4, 1), "reserved_in_flight at least 2"),
         ] {
             beyond.validate().unwrap();
-            beyond.refuse_dev_screening_shares(false).unwrap();
-            let error = beyond.refuse_dev_screening_shares(true).unwrap_err().to_string();
+            beyond.refuse_dev_screening_slots(false).unwrap();
+            let error = beyond.refuse_dev_screening_slots(true).unwrap_err().to_string();
             assert!(error.contains(key), "{key}: {error}");
         }
     }
