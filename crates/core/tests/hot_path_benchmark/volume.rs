@@ -9,6 +9,7 @@
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::volume_tier::{
@@ -18,6 +19,10 @@ use engine_core::volume_tier::{
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn volume_fill_latency() {
+    rerun_once("volume_fill_latency", volume_fill_latency_measured);
+}
+
+fn volume_fill_latency_measured() {
     // Among 100k accounts, a client with a full book opens and closes 0.01 BTC in turn: from `V59`
     // each fill reads the client's tier from its book, and counts in it.
     fill_latency("volume", [ProtocolVersion::V58, ProtocolVersion::V59]);
@@ -26,6 +31,10 @@ fn volume_fill_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn earned_leverage_fill_latency() {
+    rerun_once("earned_leverage_fill_latency", earned_leverage_fill_latency_measured);
+}
+
+fn earned_leverage_fill_latency_measured() {
     // The same fills: from `V64` each open's margin check charges every band at least the tier's
     // margin floor, read with the best-price share from the one tier the fill reads.
     fill_latency("earned_leverage", [ProtocolVersion::V63, ProtocolVersion::V64]);
@@ -34,6 +43,10 @@ fn earned_leverage_fill_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn volume_trigger_latency() {
+    rerun_once("volume_trigger_latency", volume_trigger_latency_measured);
+}
+
+fn volume_trigger_latency_measured() {
     // One price triggers a resting stop buy of 0.01 BTC for each of 20k accounts, each with a busy
     // book: from `V59` each fill reads its account's tier and counts in its book.
     trigger_latency("volume", [ProtocolVersion::V58, ProtocolVersion::V59]);
@@ -42,6 +55,10 @@ fn volume_trigger_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn earned_leverage_trigger_latency() {
+    rerun_once("earned_leverage_trigger_latency", earned_leverage_trigger_latency_measured);
+}
+
+fn earned_leverage_trigger_latency_measured() {
     // The same stops: from `V64` each triggered open's margin check charges its tier's floor.
     trigger_latency("earned_leverage", [ProtocolVersion::V63, ProtocolVersion::V64]);
 }

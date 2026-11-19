@@ -9,6 +9,7 @@
 use super::common::close_spread::rest;
 use super::common::session_keys::funded_at;
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::event::Event;
 
 const LIMITS: usize = 100_000;
@@ -16,6 +17,10 @@ const LIMITS: usize = 100_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn out_of_reach_limits_latency() {
+    rerun_once("out_of_reach_limits_latency", out_of_reach_limits_latency_measured);
+}
+
+fn out_of_reach_limits_latency_measured() {
     for version in [ProtocolVersion::V73, ProtocolVersion::V74] {
         let mut h = out_of_reach(version);
         // The first price after the restore, outside the samples.

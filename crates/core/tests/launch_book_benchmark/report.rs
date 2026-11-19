@@ -51,7 +51,7 @@ pub fn noted(name: &str, us: u128, budget_us: u128) {
     println!("LAUNCH bar {name} us={us} bar_us={budget_us} {verdict}");
 }
 
-/// The budgets exceeded so far.
+/// The budgets exceeded since the last call, which it forgets, so a run measured again starts clean.
 pub fn exceeded() -> Vec<String> {
-    OVER.lock().expect("budget notes").clone()
+    std::mem::take(&mut *OVER.lock().expect("budget notes"))
 }

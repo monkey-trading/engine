@@ -13,6 +13,7 @@ use super::common::events::only_fill;
 use super::common::portfolio::{genesis_with_grid, group, member, pairs};
 use super::common::weekend::{GOLD, OIL, OIL_WEEKEND_BPS, chicago, client};
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::Fixed;
 use engine_core::account::Position;
 use engine_core::event::Event;
@@ -44,6 +45,10 @@ const V81: ProtocolVersion = ProtocolVersion::V81;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_price_detection_latency() {
+    rerun_once("portfolio_price_detection_latency", portfolio_price_detection_latency_measured);
+}
+
+fn portfolio_price_detection_latency_measured() {
     // One BTC-USD price among 100k holders of a two-market group and an ungrouped position, at a 50%
     // floor share, beside the plain book's `concentrated_100k`: no account closes out.
     let (_, reference) = detect(&mut fixture(COUNT, true, false), BTC, "100", "100.0001");
@@ -61,6 +66,10 @@ fn portfolio_price_detection_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_price_execution_latency() {
+    rerun_once("portfolio_price_execution_latency", portfolio_price_execution_latency_measured);
+}
+
+fn portfolio_price_execution_latency_measured() {
     // The same book, a BTC-USD price that takes a fifth of the accounts below their portfolio level.
     let (engine, targets) = build(&crypto(V81, 5_000), COUNT, Standing::Near(1_000));
     let bytes = serde_json::to_vec(&engine).expect("fixture encoding");
@@ -75,6 +84,10 @@ fn portfolio_price_execution_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_large_group_latency() {
+    rerun_once("portfolio_large_group_latency", portfolio_large_group_latency_measured);
+}
+
+fn portfolio_large_group_latency_measured() {
     // Accounts each holding twenty shares of one group, ten long and ten short, at a 50% floor share, so
     // a close-out's step scores candidates over twenty members. `SHARE_ACCOUNTS` accounts.
     let spec = shares(20);
@@ -109,6 +122,10 @@ fn portfolio_large_group_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_rollover_latency() {
+    rerun_once("portfolio_rollover_latency", portfolio_rollover_latency_measured);
+}
+
+fn portfolio_rollover_latency_measured() {
     // A day's tick over the portfolio book: every account checked after the day's financing. `V79` on the
     // same book with every account keyed, then `V81` with every account between its levels, which the
     // close-out index cannot key, with no close-out (`SAMPLES` days each), and with a fifth of the
@@ -138,6 +155,10 @@ fn portfolio_rollover_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_weekend_latency() {
+    rerun_once("portfolio_weekend_latency", portfolio_weekend_latency_measured);
+}
+
+fn portfolio_weekend_latency_measured() {
     // The first command past Friday's Globex close over 100k holders of oil long and gold short as one
     // group, oil with its weekend margin and gold with none: oil's gap starts, and every account is valued
     // at the requirement in full over it, from `V81` the portfolio requirement and before it the
@@ -169,6 +190,10 @@ fn portfolio_weekend_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_stops_latency() {
+    rerun_once("portfolio_stops_latency", portfolio_stops_latency_measured);
+}
+
+fn portfolio_stops_latency_measured() {
     // One BTC-USD price triggers a sell stop for 20k of 100k accounts, each closing one leg of a hedged
     // pair: at `V79` nothing follows the fills; from `V81` each of the 20k is checked once they are done,
     // and, at a 1% floor share, the lone ETH-USD and AAPL positions left need more than the pair did, so

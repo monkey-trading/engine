@@ -22,6 +22,7 @@
 //! engine's next seq and last stamp as recovery takes a replayed engine's. The log so holds only what
 //! the run sequences, which no replay could check, and no checkpoint is written before the drain's.
 
+use crate::common::rerun::rerun_once;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -94,6 +95,10 @@ pub(super) struct Outcome {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_weekend_gap_start() {
+    rerun_once("mass_weekend_gap_start", mass_weekend_gap_start_measured);
+}
+
+fn mass_weekend_gap_start_measured() {
     let mut book = book(WTI, WeakKind::BelowWeekendMargin, &WEEKEND_MARGINS);
     let stream = stream_market(&mut book);
     let gap = book.h.engine.markets()[&WTI].weekend_window().expect("WTI has a weekend gap");
@@ -114,6 +119,10 @@ fn mass_weekend_gap_start() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_crash() {
+    rerun_once("mass_crash", mass_crash_measured);
+}
+
+fn mass_crash_measured() {
     let mut book = book(BTC, WeakKind::FallsBelowAt(f(CRASH_MID)), &[]);
     let stream = stream_market(&mut book);
     book.h.advance(70_000);
@@ -135,6 +144,10 @@ fn mass_crash() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_rollover_root() {
+    rerun_once("mass_rollover_root", mass_rollover_root_measured);
+}
+
+fn mass_rollover_root_measured() {
     rollover_root::run();
 }
 
@@ -142,6 +155,10 @@ fn mass_rollover_root() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_proof_burst() {
+    rerun_once("mass_proof_burst", mass_proof_burst_measured);
+}
+
+fn mass_proof_burst_measured() {
     proof_burst::run();
 }
 

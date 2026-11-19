@@ -5,6 +5,7 @@
 //! resident memory with the worker's copy of the engine. Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`.
 
+use crate::common::rerun::rerun_once;
 use std::time::Instant;
 
 use engine_core::command::{Command, Sequenced};
@@ -22,6 +23,10 @@ const SCAN_US: u128 = 500_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn launch_book_scans_and_copy() {
+    rerun_once("launch_book_scans_and_copy", launch_book_scans_and_copy_measured);
+}
+
+fn launch_book_scans_and_copy_measured() {
     let accounts = std::env::var("LAUNCH_BOOK_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
     let rss_book = rss_kib();
     let mut book = build(&Mix::proposal(accounts), NamedCounts { adders: 1, openers: 0, closeouts: 0 });

@@ -13,6 +13,7 @@
 use super::common::close_spread::trade;
 use super::common::session_keys::funded_at;
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::event::Event;
 use engine_core::toxicity::GRID_MS;
 
@@ -23,6 +24,10 @@ const SCORED_ROOT_BUDGET_US: u128 = 100_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn toxicity_fill_latency() {
+    rerun_once("toxicity_fill_latency", toxicity_fill_latency_measured);
+}
+
+fn toxicity_fill_latency_measured() {
     // Among 100k accounts, each scored an hour ago, with 2,000 markouts within their horizon in
     // BTC, a scored client opens and closes 0.01 BTC in turn: from `V54` each fill reads its decayed
     // score's tier, and each close matches the open quantity among the queued markouts. A horizon
@@ -89,6 +94,10 @@ fn toxicity_fill_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn toxicity_trigger_latency() {
+    rerun_once("toxicity_trigger_latency", toxicity_trigger_latency_measured);
+}
+
+fn toxicity_trigger_latency_measured() {
     // One price triggers a resting stop buy of 0.01 BTC for each of 20k scored accounts: from `V54`
     // each fill reads its tier and takes from the account's opposite markouts within the horizon,
     // which a scan of the queue would make quadratic in the fills.

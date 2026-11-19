@@ -14,6 +14,7 @@ pub mod launch_book;
 pub mod levels;
 pub mod portfolio;
 pub mod reference;
+pub mod rerun;
 pub mod session_keys;
 pub mod spreads;
 pub mod stress;

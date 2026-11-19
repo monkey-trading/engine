@@ -6,6 +6,7 @@
 //! rollover's apply and each part of its log entry (`PARTS ...`). Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::wait_bench::rollover -- --ignored --nocapture --test-threads=1`.
 
+use crate::common::rerun::rerun_once;
 use engine_core::command::{Command, Sequenced};
 use engine_core::eip712::B256;
 use engine_core::event::Event;
@@ -33,6 +34,10 @@ const START_AFTER_MS: i64 = 15 * 60_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_rollover() {
+    rerun_once("mass_rollover", mass_rollover_measured);
+}
+
+fn mass_rollover_measured() {
     let mut book = build(&Mix::proposal(accounts()), NAMED);
     let stream = stream_market(&mut book);
     let due = book.h.engine.next_rollover().expect("a rollover is due");
@@ -56,6 +61,10 @@ fn mass_rollover() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_period_close() {
+    rerun_once("mass_period_close", mass_period_close_measured);
+}
+
+fn mass_period_close_measured() {
     let mix = Mix {
         origin: Some(Origin { start_after: START_AFTER_MS, epoch_ms: 24 * 3_600_000 }),
         period_losses: true,

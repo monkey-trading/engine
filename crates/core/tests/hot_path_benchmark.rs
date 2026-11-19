@@ -53,6 +53,7 @@ mod toxicity;
 #[path = "hot_path_benchmark/volume.rs"]
 mod volume;
 
+use common::rerun::rerun_once;
 use std::time::Instant;
 
 use chrono::NaiveDateTime;
@@ -103,6 +104,10 @@ fn hold_fill(name: &str, p50: u128, p99: u128, earlier_p50: Option<u128>) {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn command_latency() {
+    rerun_once("command_latency", command_latency_measured);
+}
+
+fn command_latency_measured() {
     for (name, count, concentrated, resting, rollover) in [
         ("dispersed_1k", 1_000, false, false, false),
         ("dispersed_100k", 100_000, false, false, false),
@@ -158,6 +163,10 @@ fn command_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn period_finalisation_latency() {
+    rerun_once("period_finalisation_latency", period_finalisation_latency_measured);
+}
+
+fn period_finalisation_latency_measured() {
     // Every account lost in the open emission period, so the tick at its end allocates to each.
     let count = 100_000;
     let mut h = Harness::emitting(1_000_000_000_000_000_000_000);
@@ -192,6 +201,10 @@ fn period_finalisation_latency() {
 #[test]
 #[ignore = "benchmark: run in an isolated CPU window"]
 fn first_command_after_a_long_gap_latency() {
+    rerun_once("first_command_after_a_long_gap_latency", first_command_after_a_long_gap_latency_measured);
+}
+
+fn first_command_after_a_long_gap_latency_measured() {
     // A market holding quotes across a year-long sequencer gap that ends in an open session: from
     // `V33` the held-quote closure check covers only the freshness window after the last command and
     // the gap's end, so the first command back does not walk every minute of the gap.
@@ -209,6 +222,10 @@ fn first_command_after_a_long_gap_latency() {
 #[test]
 #[ignore = "benchmark: run in an isolated CPU window"]
 fn first_command_after_a_far_past_stamp_latency() {
+    rerun_once("first_command_after_a_far_past_stamp_latency", first_command_after_a_far_past_stamp_latency_measured);
+}
+
+fn first_command_after_a_far_past_stamp_latency_measured() {
     // A stamp 2.9 million days past the last rollover, the farthest the engine accepts: from `V33`
     // the command catches up on a bounded batch of rollovers and is deferred.
     let mut h = halted();
@@ -303,6 +320,10 @@ fn halted() -> Harness {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn batch_command_latency() {
+    rerun_once("batch_command_latency", batch_command_latency_measured);
+}
+
+fn batch_command_latency_measured() {
     // Each sample is its own account, holding a position in every launch market and a full set of
     // resting orders, among 100k accounts, under the latest rules. A signed, screened cancel-all or
     // close-all is built outside the timed region, so the timing is the engine's apply of it,

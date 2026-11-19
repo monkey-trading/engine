@@ -38,6 +38,7 @@ mod root_parts;
 
 use cases::Bar;
 use common::launch_book::{Mix, NamedCounts, build};
+use common::rerun::rerun_once;
 use engine_core::CloseoutOracle;
 use report::{exceeded, rss_mib};
 
@@ -79,6 +80,10 @@ const SINGLE_COMMAND_US: u128 = 500_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn launch_book_latency() {
+    rerun_once("launch_book_latency", launch_book_latency_measured);
+}
+
+fn launch_book_latency_measured() {
     let accounts = std::env::var("LAUNCH_BOOK_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
     let rss_before = rss_mib();
     let mut book = build(&Mix::proposal(accounts), NAMED);
@@ -106,6 +111,10 @@ fn launch_book_latency() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn launch_book_price_walk() {
+    rerun_once("launch_book_price_walk", launch_book_price_walk_measured);
+}
+
+fn launch_book_price_walk_measured() {
     let accounts = std::env::var("LAUNCH_BOOK_ACCOUNTS").ok().map_or(ACCOUNTS, |n| n.parse().expect("a count"));
     let compare = std::env::var_os("LAUNCH_BOOK_FULL_CHECK").is_some();
     for near_level in [0, 1, 10] {

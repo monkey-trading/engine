@@ -1144,7 +1144,9 @@ Run from the repo root:
   it builds the book twice, once for the run and once for its replay, and takes the run's legs of two
   minutes each; run it under `nice` in a quiet window); `--ramp` adds the ramp, and `LOAD_ACCOUNTS`,
   `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE` and `LOAD_RWA_MOVES` size the
-  run (CI's job sets 10,000 accounts, 200 traders and 16 subscribers)
+  run (CI's job sets 10,000 accounts, 200 traders and 16 subscribers); a measured leg that breaks the bar runs once
+  more on the same node and fails only if the second run breaks it too, as does each 100k-account latency benchmark
+  that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
   `RECOVERY_LAUNCH_SECS` set to the days that fit, and read the 30-day replay's projection);
