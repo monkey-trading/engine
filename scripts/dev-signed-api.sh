@@ -122,6 +122,20 @@ max_drift="$(awk -F'"' '/^max_drift = / { print $2 }' "$root/config/dev.toml")"
 [[ "$max_drift" =~ ^[0-9]+s$ ]] || fail "expected time.max_drift in whole seconds, got '$max_drift'"
 ready_within="$(( ${max_drift%s} + 15 ))"
 
+# Waits until the node signs an answer. A restarted node serves its recovered markets before its first
+# trusted time sample, and signs only once trusted time bounds the host clock, so an answer asked for
+# earlier is unsigned.
+wait_until_signed() {
+  local started
+  started="$(date +%s)"
+  until curl -sk -D "$work/signed.headers" -o /dev/null -H "X-Engine-Challenge: $(challenge)" "$api/v1/markets" 2>/dev/null \
+    && grep -qi '^x-engine-time:' "$work/signed.headers"; do
+    (( $(date +%s) - started <= ${ready_within} )) || fail "no signed answer within ${ready_within}s of boot"
+    kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
+    sleep 0.2
+  done
+}
+
 step "run the node and wait for genesis"
 "$engine" run --config "$work/node.toml" > "$work/node.log" 2>&1 &
 node_pid=$!
@@ -131,6 +145,7 @@ until [[ "$(curl -sk "$api/v1/markets" 2>/dev/null | jq 'if type == "array" then
   kill -0 "$node_pid" 2>/dev/null || fail "the node exited"
   sleep 0.2
 done
+wait_until_signed
 
 step "read the enclave address from the attestation"
 signer="$(curl -sfk "$api/v1/attestation" | jq -r .enclave_address)"
