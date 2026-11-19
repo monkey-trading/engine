@@ -193,6 +193,8 @@ impl Node {
         });
         let mut seq = Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::generate()), stream_tx, withdrawals_tx)
             .expect("fresh sequencer");
+        // As the node runs it: a batch's fsync is off the thread that stamps the next price.
+        seq.pipeline_log_syncs().expect("log sync thread");
         if version == ProtocolVersion::LATEST {
             seq.activate_protocol().expect("protocol activation");
         } else {
