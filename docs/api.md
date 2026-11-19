@@ -553,7 +553,7 @@ specification and its state.
 | `min_order_notional` | The smallest value, in US dollars, of an order that opens or increases a position. |
 | `contracts` | For a market priced from futures, the contracts it rolls through. |
 | `markout_floor_bps` | The least value, in basis points as a decimal string, of the typical short-term price move in whose units the toxicity score measures trades. |
-| `weekend_margin_bps`, `weekend_margin` | The margin rate over the market's weekend gap, and when it next applies, as described below. Both are absent for a market without a weekend margin. |
+| `weekend_margin_bps`, `weekend_margin` | The margin rate over the market's weekend gap, and when it next applies, as described below. Both are absent for a market without a weekend margin. The production trading settings give no market a weekend margin. |
 | `min_level_distance_bps` | How far beyond the closing price a take profit or stop loss must lie. |
 | `open` | Whether the market's exchange is open now. |
 | `reduce_only` | Whether the market accepts only trades that reduce a position, by its own setting or because every market is reduce-only. |
@@ -731,7 +731,7 @@ prices.
 | `closeouts` | For each position, where its market must move for the account to fall below its close-out level, as described below. |
 | `close_fees` | By market, the position's opening time `opened_at`, the profit fee `fee_bps` that closing it now would pay on a gain, and `falls_at`, when that rate next falls, or `null` once it has reached the base rate. |
 | `volume` | The account's volume tier and its progress, as described below. |
-| `weekend_margins` | By market, for each position in a market with a weekend margin: the market's `weekend_margin` fields and `required`, the margin requirement the account must meet over the gap at the current prices. Absent when there is none. |
+| `weekend_margins` | By market, for each position in a market with a weekend margin: the market's `weekend_margin` fields and `required`, the margin requirement the account must meet over the gap at the current prices. Absent when there is none. The production trading settings give no market a weekend margin, so the production trading server leaves the field out of every account. |
 | `levels` | By market, each position's `take_profit` and `stop_loss`. A level that is not set is left out, and the field is absent while no position has one. |
 | `portfolio_margin` | Present only on a server configured with `[portfolio_margin]`, as described below. |
 

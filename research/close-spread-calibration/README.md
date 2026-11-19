@@ -243,9 +243,9 @@ and acquisition scripts are not committed.
   3 has a wider first band, so fewer of its positions do. The count in `reversal_summary` of
   positions whose closing charge exceeds the ceiling is therefore tier 2's. No ceiling or floor
   depends on the band's width, because the floor uses only the first band's rate.
-- The sweep margins each position at its market's normal margin. The engine requires at least a
-  market's weekend margin over its weekend gap, so a gap across a weekend leaves the house less bad
-  debt than the sweep shows.
+- The sweep margins each position at its market's normal margin across every gap. The engine does
+  the same, because no launch market carries a weekend margin. A gap across a weekend therefore
+  leaves the house as much bad debt as the sweep shows.
 - The house-loss trigger raises a market to stress level 2 earlier, and changes no level's spread,
   so the floor's widest stress minimum is unchanged. Each volume tier's margin floor raises the
   initial requirement for opening a position, and changes no spread on closing and no close-out

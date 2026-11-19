@@ -27,6 +27,11 @@ const DEPLOYMENT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbook
 /// trade, and four daily rollovers (22:00 UTC) fall before the weekend's gap.
 pub const BOOK_TIME: Millis = 1_794_841_200_000;
 
+/// Weekend margins for the cases that exercise `V60`'s weekend close-out, which the production genesis
+/// gives no market: US Tech 100 1%, Japan 225 and silver 1.5%, and WTI 7.5%, the rates
+/// `research/launch-caps` measured.
+pub const WEEKEND_MARGINS: [(MarketId, i64); 4] = [(21, 100), (25, 150), (31, 150), (32, 750)];
+
 /// The `[genesis]` section of a node config, as far as the engine reads it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,17 +85,19 @@ fn load() -> File {
 /// initialisations at the launch deployment's values, whose time origin is still ahead. The clock is
 /// at `BOOK_TIME`.
 pub fn production_harness() -> Harness {
-    production_harness_at(ProtocolVersion::LATEST, None, BOOK_TIME, false)
+    production_harness_at(ProtocolVersion::LATEST, None, BOOK_TIME, false, &[])
 }
 
 /// `production_harness` at `version`, with emissions' period 0 and staking's epoch 0 at `origin` (its
 /// start after the book's clock and its epoch length) in place of the deployment's, the clock at `at`,
-/// and with `always_open` every market listed as trading around the clock, with no weekend margin.
+/// each market in `weekend_margins` listed with its weekend margin, and with `always_open` every market
+/// listed as trading around the clock, with no weekend margin.
 pub fn production_harness_at(
     version: ProtocolVersion,
     origin: Option<Origin>,
     at: Millis,
     always_open: bool,
+    weekend_margins: &[(MarketId, i64)],
 ) -> Harness {
     let genesis = load().genesis;
     let mut h = Harness::empty();
@@ -99,7 +106,10 @@ pub fn production_harness_at(
     h.admin(AdminCommand::SetOperator(operator()));
     h.admin(AdminCommand::ActivateProtocol { version });
     h.admin(AdminCommand::SetParams(genesis.params));
-    for market in genesis.markets {
+    for mut market in genesis.markets {
+        if let Some((_, bps)) = weekend_margins.iter().find(|(id, _)| *id == market.id) {
+            market.weekend_margin_bps = *bps;
+        }
         // A market open around the clock has no weekend gap to hold a margin over.
         let market = match always_open {
             true => MarketSpec { schedule: Schedule::AlwaysOpen, weekend_margin_bps: 0, ..market },

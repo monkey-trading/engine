@@ -126,7 +126,7 @@ pub fn build(mix: &Mix, counts: NamedCounts) -> Book {
     let began = Instant::now();
     let named_total = counts.adders + counts.openers + counts.closeouts;
     assert!(mix.accounts >= named_total, "the named accounts are part of the book");
-    let mut h = production_harness_at(mix.version, mix.origin, mix.at, mix.always_open);
+    let mut h = production_harness_at(mix.version, mix.origin, mix.at, mix.always_open, &mix.weekend_margins);
     publish_benchmarks(&mut h);
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }));
     let ids: Vec<MarketId> = h.engine.markets().keys().copied().collect();

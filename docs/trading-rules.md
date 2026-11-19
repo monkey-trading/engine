@@ -232,23 +232,21 @@ exposure past its limit, which is the larger of a share of the house's net asset
 floor. The floors range from $3.16 million for each share to $31.6 million for BTC-USD, with $61
 million across all markets.
 
-### Weekend margin
+### Market closures
 
-Four markets can move sharply across their weekend closures, so their margin rises over any closure
-of 40 hours or more. Each margin band in these markets charges at least the weekend rate below.
+Margins do not change with the time of day or week. No market charges a higher margin before or
+during a weekend or holiday closure. No limit on new positions or withdrawals applies ahead of a
+closure, and no position is closed out because its market is about to close.
 
-| Market | Weekend margin |
-| --- | --- |
-| WTI | 7.5% |
-| JP225 | 1.5% |
-| XAG-USD | 1.5% |
-| US100 | 1% |
+A price can move while its market is closed. When the market reopens, its first price may leave an
+account below its close-out level, or with a loss larger than its balance. The account is then
+closed out at the prices available after the reopening, as described above, and the house bears any
+loss beyond the account's balance. The house manages this risk through its spreads and its exposure
+limits.
 
-The weekend margin applies from two hours before the closure until the market reopens. During that
-time, opening or increasing a position in any market, and making a withdrawal, must leave your
-equity at or above the weekend requirement. When the closure begins, an account below the weekend
-requirement has its positions in that market closed out at the last price, largest loss first, until
-the account meets the requirement.
+The engine can apply a weekend margin, which is a higher margin over a market's closures of 40 hours
+or more. No market carries one. A weekend margin can be added to a market only after seven days'
+public notice.
 
 ## Deposits, withdrawals and the exit
 

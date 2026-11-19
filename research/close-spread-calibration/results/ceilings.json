@@ -1,7 +1,7 @@
 {
   "inputs": {
-    "genesis_inventory": "3b3634f45e0fdad784199f300dc362dd5d89f5f14cc45252f78173af9c1e7127",
-    "genesis_file_informational": "dc3f6d60ce6618908df2e4c18d5b585ab73fadf2e5b8707bb201d667016ae12f",
+    "genesis_inventory": "1cb6d3fc29eec527183cb9aa0b3a21f9fcc770b0bd4b777cf1eb543c9f9ef761",
+    "genesis_file_informational": "fbed46cc61015471933958964c2380c6051df4e13cf7e5a72cbc9c005c755e17",
     "bars": "d742bab6c751e97338bbb82d7801f22aec3a5bed7d01904b7dcdd9ed076ec522",
     "catalogue.py": "90bda1cc31a5b885318a7d475a4095c464ee589f79fec7b78028fa9294ae1f9c",
     "derive/markets.py": "32629c08a2adcb27109f4dddd529828ccc81421fd583245e673d9108d1edd428",

@@ -6,7 +6,8 @@
 //! today's full check; and one encoded and restored at random points, so its index is rebuilt. The
 //! commands walk prices with jumps in every market and FX market, let quotes age out, cross market
 //! hours, trade, rest stops and limits, deposit and withdraw, roll over with financing, and cross the
-//! weekend gap of oil, silver, US Tech 100 and Japan 225, whose close-out the index also serves.
+//! weekend gap of oil, silver, US Tech 100 and Japan 225, listed with `WEEKEND_MARGINS`, whose close-out
+//! the index also serves.
 //! Every command's events are equal across the three, and so are their state roots at each restore
 //! and at the end. The generated sessions must close accounts out on a price and at the gap, and
 //! the index must cross ranges on prices and FX indexes, move headrooms, key accounts, carry its
@@ -22,6 +23,7 @@ use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest, Seque
 use engine_core::eip712;
 use engine_core::event::Event;
 use engine_core::price::SourceQuote;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Side};
 use engine_core::{CloseoutCoverage, CloseoutOracle, Engine, Fixed};
 use proptest::collection::vec;
@@ -29,7 +31,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 
 use crate::common::close_spread::{attest, evidence, fund, source_key};
-use crate::common::launch_book::{benchmark_batch, price_command, production_harness};
+use crate::common::launch_book::{BOOK_TIME, WEEKEND_MARGINS, benchmark_batch, price_command, production_harness_at};
 use crate::common::session_keys::{HOUR_MS, trade_cmd};
 use crate::common::{BTC, Client, Harness};
 
@@ -198,10 +200,10 @@ fn steps() -> impl Strategy<Value = Vec<Step>> {
 }
 
 impl Run {
-    /// The production genesis with every market priced, `openings`' accounts declared, funded and
-    /// trading, and the engine copied into the full-check and restored engines.
+    /// The production genesis with `WEEKEND_MARGINS` and every market priced, `openings`' accounts
+    /// declared, funded and trading, and the engine copied into the full-check and restored engines.
     fn open(openings: &[Opening]) -> Self {
-        let mut h = production_harness();
+        let mut h = production_harness_at(ProtocolVersion::LATEST, None, BOOK_TIME, false, &WEEKEND_MARGINS);
         h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 400 * HOUR_MS }));
         let mids: BTreeMap<MarketId, Fixed> = MARKETS.iter().map(|(id, mid, _)| (*id, mid.parse().unwrap())).collect();
         let others: Vec<MarketId> = h.engine.markets().keys().copied().filter(|id| !mids.contains_key(id)).collect();

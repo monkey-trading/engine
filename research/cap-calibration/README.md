@@ -484,7 +484,8 @@ The stage writes `results/retained_nav.csv`, `results/retained_stability.csv` an
   200:1 margins of oil, silver and indices, past the 10:1 margin of shares across earnings, and past
   the 1% margin of BTC-USD and ETH-USD. The hourly model shows no crypto bad debt, because it fills
   a crypto close-out at its trigger. The measure on trade data is in
-  [BTC-USD and ETH-USD at 100:1](#btc-usd-and-eth-usd-at-1001).
+  [BTC-USD and ETH-USD at 100:1](#btc-usd-and-eth-usd-at-1001). Launch keeps every margin constant
+  across closures, with no weekend margin, so the house carries this gap risk.
 - **The utilisation level.** At 100:1 no level below 9500 bps keeps the fire rate within its bounds
   on the floors that matter at launch, as [Stress triggers](#stress-triggers) shows.
 

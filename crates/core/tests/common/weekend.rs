@@ -27,11 +27,11 @@ use crate::common::{
 pub const OIL: MarketId = 32;
 /// The gold market, a second market on the same hours.
 pub const GOLD: MarketId = 30;
-/// WTI's launch weekend margin: 7.5%.
+/// The weekend margin `research/launch-caps` measured for WTI: 7.5%.
 pub const OIL_WEEKEND_BPS: i64 = 750;
 /// An index quoted in yen, converted at USD-JPY's index, listed with Japan 225's id.
 pub const NIKKEI: MarketId = 25;
-/// Japan 225's launch weekend margin: 1.5%.
+/// The weekend margin `research/launch-caps` measured for Japan 225: 1.5%.
 pub const NIKKEI_WEEKEND_BPS: i64 = 150;
 
 /// CME Globex hours in Chicago: Sunday 17:00 to Friday 16:00, with a daily 16:00-17:00 break, and

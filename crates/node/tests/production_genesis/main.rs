@@ -177,6 +177,8 @@ fn the_production_genesis_applies_the_launch_decisions() {
             _ => assert!(first_band > 50, "{symbol}"),
         }
         assert!(market.margin_tiers.windows(2).all(|w| w[0].bps < w[1].bps), "{symbol}");
+        // Margins are constant (#913, the owner's decision of 2026-11-19): no weekend margin.
+        assert_eq!(market.weekend_margin_bps, 0, "{symbol}");
         // House caps are dev's for the same market or asset class, except SOL-USD's 10%.
         let class_caps: Vec<i64> =
             dev.markets.iter().filter(|d| d.asset_class == market.asset_class).map(|d| d.house_cap_bps).collect();
