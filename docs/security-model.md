@@ -101,9 +101,13 @@ Known limits:
   then refused until it refills. A wallet with a pending deposit declares outside those budgets,
   against a budget of its own.
 - The API's screening slots are shared in the same way. Each account and each client address holds
-  at most its share, and closing positions and withdrawing keep a reserve that orders opening
-  positions, and declarations, cannot take. A client with enough addresses can still hold every slot
-  while the source is answering.
+  at most its share, a production trading server has at least 68 slots for each second of the
+  source's timeout, and a reserve of them goes only to requests that the account's current state
+  shows can reduce risk, such as closing a position it holds or withdrawing cash it has, one at a
+  time for an account. A client can still hold every slot while the source is answering if it has
+  enough addresses and credited accounts: at the production values and a source that takes its full
+  2 seconds, 68 accounts behind 34 addresses, two of the accounts holding a position or withdrawable
+  cash.
 - A hold for a confirmed sanction has no automatic release or refund.
 - Jurisdiction screening uses the address of the connection's peer or, behind a configured
   pass-through proxy, the client address in the proxy's PROXY protocol header. The host's network

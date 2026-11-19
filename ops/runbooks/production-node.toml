@@ -527,10 +527,14 @@ endpoint = "https://screening.example.com/v1/{screening_key}" # REPLACE
 timeout = "2s" # OWNER
 max_age = "30s" # OWNER
 max_response_bytes = 4096
-max_in_flight = 8 # OWNER
+# Requests waiting on the source at once: ten times launch flow's screened requests, 68 a second
+# rounded up, each held for the whole `timeout`. A production build refuses fewer than 68 a second of
+# `timeout`.
+max_in_flight = 136
 # Of those slots, the most one account's requests, or one client's, may hold, and how many only
-# closes, close-alls, take-profit and stop-loss requests, withdrawals and payout reissues may take; a
-# production build refuses shares above these values and a smaller reserve.
+# requests the account's state shows can reduce risk may take, one at a time for an account: closes,
+# close-alls, take-profit and stop-loss requests, withdrawals and payout reissues. A production build
+# refuses shares above these values and a smaller reserve.
 max_in_flight_per_account = 2
 max_in_flight_per_client = 4
 reserved_in_flight = 2

@@ -182,7 +182,11 @@ pub(super) fn requests_per_second(multiple: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::*;
+    use crate::config::AccessSection;
+    use crate::load_scenario::venues::template;
 
     #[test]
     fn quantiles_take_the_nearest_rank() {
@@ -198,5 +202,22 @@ mod tests {
     fn launch_flow_sends_its_fills_as_two_fifths_of_its_requests() {
         assert!((requests_per_second(1.0) - 9.25).abs() < 1e-9);
         assert!((requests_per_second(10.0) - 92.5).abs() < 1e-9);
+    }
+
+    /// Orders and close-alls are screened, cancels and cancel-alls are not, so ten times launch flow
+    /// sends 67 screened requests a second. Held for the source's whole timeout, they fit in the
+    /// production template's screening slots, and a production build refuses any fewer.
+    #[test]
+    fn the_production_screening_slots_hold_ten_times_launch_flow_for_the_whole_timeout() {
+        let screened = (MARKET_ORDERS + LIMIT_ORDERS) as f64 + BATCHES as f64 / 2.0;
+        let per_second = requests_per_second(10.0) * screened / 100.0;
+        assert!((per_second - 67.0625).abs() < 1e-9, "{per_second}");
+        let access: AccessSection = template()["access"].clone().try_into().expect("the template's [access]");
+        let in_flight = per_second * access.timeout.as_secs_f64();
+        assert!(access.max_in_flight.get() as f64 >= in_flight, "{} slots for {in_flight}", access.max_in_flight);
+        access.refuse_dev_screening_slots(true).expect("the template's slots");
+        let fewer = NonZeroUsize::new(in_flight.ceil() as usize - 1).expect("a slot");
+        let short = AccessSection { max_in_flight: fewer, ..access };
+        assert!(short.refuse_dev_screening_slots(true).is_err(), "{fewer} slots for {in_flight}");
     }
 }

@@ -19,7 +19,7 @@ use super::session_keys::registration;
 use super::*;
 use crate::trusted_time::tests::logs::Logs;
 
-/// The screening slots, shares and reserve of `ops/runbooks/production-node.toml`.
+/// The screening shares and reserve of `ops/runbooks/production-node.toml`, in eight slots a test fills.
 const PRODUCTION_SLOTS: &str =
     "max_in_flight=8\nmax_in_flight_per_account=2\nmax_in_flight_per_client=4\nreserved_in_flight=2";
 
@@ -179,7 +179,7 @@ async fn an_order_refused_for_want_of_a_screening_slot_is_told_to_retry_and_rais
 /// A node with the production genesis's request rates by tier (2, 5, 10 and 20 a second), the
 /// production template's `api.request_bursts` (2 seconds of the rate for the account and 2 for its
 /// session keys), buckets that refill in real time as production's do, and production's screening
-/// slots.
+/// shares and reserve in eight slots.
 async fn production_like(name: &str) -> Node {
     let mut genesis = dev_config().genesis;
     let tiers = [(0, 25, 2), (100_000, 50, 5), (400_000, 100, 10), (10_000_000, 250, 20)];
@@ -196,9 +196,9 @@ async fn production_like(name: &str) -> Node {
     node
 }
 
-/// Gives `node` production's screening slots, shares and reserve, against the same source, with a
-/// timeout long enough that a screening the source holds stays in flight however slow the machine.
-fn production_slots(node: &mut Node) {
+/// Gives `node` production's screening shares and reserve in eight slots, against the same source, with
+/// a timeout long enough that a screening the source holds stays in flight however slow the machine.
+pub(super) fn production_slots(node: &mut Node) {
     let address = node.source.lock().unwrap().address;
     let config: AccessSection = toml::from_str(&format!(
         "source='{}'\nendpoint='http://{address}'\ntimeout='60s'\nmax_age='1s'\nmax_response_bytes=4096\n{PRODUCTION_SLOTS}",
@@ -210,7 +210,7 @@ fn production_slots(node: &mut Node) {
 }
 
 /// Holds the source's answers about `wallets` until the returned gate gives permits.
-fn hold(node: &Node, wallets: &[&SigningKey]) -> Arc<Semaphore> {
+pub(super) fn hold(node: &Node, wallets: &[&SigningKey]) -> Arc<Semaphore> {
     let gate = Arc::new(Semaphore::new(0));
     node.source.lock().unwrap().hold = Some((wallets.iter().map(|wallet| address(wallet)).collect(), gate.clone()));
     gate
@@ -218,7 +218,13 @@ fn hold(node: &Node, wallets: &[&SigningKey]) -> Arc<Semaphore> {
 
 /// A BTC market order of 0.01 for `account`, signed by `signer` with `nonce` and told apart by
 /// `client_id`: a buy, or with `close` a reduce-only sell.
-fn signed_order(account: &SigningKey, signer: &SigningKey, nonce: u64, client_id: u64, close: bool) -> Value {
+pub(super) fn signed_order(
+    account: &SigningKey,
+    signer: &SigningKey,
+    nonce: u64,
+    client_id: u64,
+    close: bool,
+) -> Value {
     let mut request: OrderRequest = serde_json::from_value(order(account, nonce)).unwrap();
     (request.client_id, request.reduce_only) = (client_id, close);
     if close {
@@ -230,14 +236,18 @@ fn signed_order(account: &SigningKey, signer: &SigningKey, nonce: u64, client_id
 }
 
 /// Whether `events` hold a fill.
-fn fills(events: &Value) -> bool {
+pub(super) fn fills(events: &Value) -> bool {
     events.as_array().is_some_and(|events| events.iter().any(|event| event["type"] == "fill"))
 }
 
 /// Polls `requests` until the source has been asked at least `first` times in all and no further
 /// request has reached it for 300 ms, so every one of them the node admitted is waiting on the
 /// source. Returns the answers instead if they all come first.
-async fn until_in_flight<T>(node: &Node, requests: &mut Pin<Box<impl Future<Output = T>>>, first: usize) -> Option<T> {
+pub(super) async fn until_in_flight<T>(
+    node: &Node,
+    requests: &mut Pin<Box<impl Future<Output = T>>>,
+    first: usize,
+) -> Option<T> {
     tokio::select! {
         answers = requests => Some(answers),
         () = async {
