@@ -42,7 +42,7 @@ use engine_core::types::{MarketId, Millis};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::now_ms;
-use crate::common::launch_book::{Mix, NamedCounts, build};
+use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::load_scenario::node::Node;
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
 use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, guarded, judge, print, tolerate, unmeasured};
@@ -75,6 +75,10 @@ const RWA_MOVES: f64 = 2.0;
 /// How far before the wall clock the book's clock is, so the node's first stamp comes after its
 /// last, which the book's own commands run some 75 seconds past it.
 const BOOK_LEAD_MS: Millis = 10 * 60 * 1_000;
+/// How long after the wall clock the book's emissions and staking start, and an epoch's length, so no
+/// period or epoch closes in a run, whatever date it is run on.
+const BOOK_START_AFTER_WALL_MS: Millis = 24 * 60 * 60 * 1_000;
+const BOOK_EPOCH_MS: Millis = 24 * 60 * 60 * 1_000;
 /// The busy share at which the ramp stops: past it, the sequencer's queue only grows.
 const SATURATED: f64 = 0.9;
 /// How long the generator may go without a line: a leg, its drain and its subscribers' start.
@@ -104,9 +108,16 @@ fn dev_scenario_load() {
     runtime.block_on(run());
 }
 
+/// The book's mix at the wall clock `now`: its clock `BOOK_LEAD_MS` behind, its emissions and staking
+/// starting a day ahead of `now` and not at the deployment's start, which may be in the past.
+fn book_mix(now: Millis, accounts: usize) -> Mix {
+    let origin = Origin { start_after: BOOK_LEAD_MS + BOOK_START_AFTER_WALL_MS, epoch_ms: BOOK_EPOCH_MS };
+    Mix { at: now - BOOK_LEAD_MS, always_open: true, origin: Some(origin), ..Mix::proposal(accounts) }
+}
+
 /// The run.
 async fn run() {
-    let mix = Mix { at: now_ms() - BOOK_LEAD_MS, always_open: true, ..Mix::proposal(env("LOAD_ACCOUNTS", ACCOUNTS)) };
+    let mix = book_mix(now_ms(), env("LOAD_ACCOUNTS", ACCOUNTS));
     let traders = env("LOAD_TRADERS", TRADERS);
     let counts = NamedCounts { adders: 1, openers: traders as usize, closeouts: 0 };
     let mut book = build(&mix, counts);
@@ -317,5 +328,21 @@ fn conclude(runs: &[Run]) {
             if failed.iter().any(|why| why.contains("order_to_fill_us p50")) { "broken" } else { "held" },
         );
         assert!(failed.is_empty(), "{} broke the launch bar, order-to-fill p50 held to its guard: {failed:?}", run.leg);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The deployment's start, 2027-01-01, is behind the clock, as it is for a run after it.
+    const AFTER_DEPLOYMENT_START_MS: Millis = 1_800_000_000_000;
+
+    #[test]
+    fn the_book_builds_at_a_clock_past_the_deployments_start() {
+        let counts = NamedCounts { adders: 1, openers: 1, closeouts: 0 };
+        let book = build(&book_mix(AFTER_DEPLOYMENT_START_MS, 200), counts);
+        let emissions = book.h.engine.emissions().expect("emissions are initialised");
+        assert!(emissions.schedule.start_ms > AFTER_DEPLOYMENT_START_MS, "emissions start ahead of the clock");
     }
 }
