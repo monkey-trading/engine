@@ -97,7 +97,7 @@ pub(super) async fn upgrade_with_rotation_on(
         "the upgrade changed the signer epoch"
     );
     let signers = [engine_core::types::AccountId(signer.into())].into_iter().collect();
-    let replayed = crate::sequencer::replay_path_with_attested(&dir.join("log"), None, signers)?;
+    let replayed = crate::sequencer::replay_path_with_attested(&dir.join("log"), None, signers, Default::default())?;
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq > tip),
         "the upgrade's log has no checkpoint past A's final one"

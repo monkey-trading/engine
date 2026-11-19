@@ -21,7 +21,8 @@ const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: Acc
 async fn a_replica_fed_entry_by_entry_equals_a_full_replay() {
     let dir = scratch_dir("live-replica-equals-replay");
     sequence_ticks(&dir, 20).await;
-    let mut replayed = crate::sequencer::replay_path_with_attested(&dir, Some(DOMAIN), [signer()].into()).unwrap();
+    let mut replayed =
+        crate::sequencer::replay_path_with_attested(&dir, Some(DOMAIN), [signer()].into(), Default::default()).unwrap();
     let mut replica = LiveReplay::new(DOMAIN, [signer()].into());
     for entry in log_entries(&dir) {
         replica.apply(&entry).unwrap();
@@ -95,7 +96,8 @@ async fn a_replica_starts_only_under_the_key_that_signed_its_last_checkpoint() {
 async fn a_restart_and_a_replicas_start_retain_every_prefix_the_sequencer_retains() {
     let dir = scratch_dir("live-replica-ring");
     sequence_ticks(&dir, PrefixRing::CAPACITY + 16).await;
-    let replayed = crate::sequencer::replay_path_with_attested(&dir, Some(DOMAIN), [signer()].into()).unwrap();
+    let replayed =
+        crate::sequencer::replay_path_with_attested(&dir, Some(DOMAIN), [signer()].into(), Default::default()).unwrap();
     let oldest = replayed.engine.last_seq().unwrap() + 1 - PrefixRing::CAPACITY as u64;
     let started = live(&dir).into_log(writer(&dir), None, signer(), None).unwrap().prefix_ring();
     for (ring, start) in [(&replayed.prefix_ring, "the restart"), (&started, "the replica's start")] {

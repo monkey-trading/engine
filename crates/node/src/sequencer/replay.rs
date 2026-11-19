@@ -150,6 +150,13 @@ impl Replay {
         self.derived.get(seq).map(|derived| derived.rows.clone())
     }
 
+    /// Has the seals of the log at `path` checked ahead of this replay by `workers`, from the next
+    /// command it applies until it finishes (`Origin::check_ahead`).
+    pub(super) fn check_seals_ahead(&mut self, path: &std::path::Path, workers: crate::log::ReplayWorkers) {
+        let from = self.engine.last_seq().map_or(0, |seq| seq + 1);
+        self.origin.check_ahead(path, from, workers);
+    }
+
     /// Applies the log's next entry.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
@@ -374,6 +381,7 @@ impl Replay {
 
     /// What the entries applied so far replay to.
     pub(super) fn finish(mut self) -> Replayed {
+        self.origin.stop_checking_ahead();
         self.anchor_unheld();
         let recovery_base = match self.recovery_origin {
             None => Some(RecoveryBase::Ungated),
@@ -446,6 +454,8 @@ pub fn replay(entries: &[LogEntry]) -> anyhow::Result<Replayed> {
 
 #[cfg(test)]
 pub(super) mod accounting_tests;
+#[cfg(test)]
+mod ahead_tests;
 #[cfg(test)]
 mod auth_tests;
 mod authorities;

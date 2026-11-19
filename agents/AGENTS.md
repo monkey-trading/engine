@@ -181,8 +181,12 @@ an index: load only the rule whose hint matches the current action.
   signed request, and a production floor of 68 slots a second of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
   byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
-  replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the
-  refund of the vault's deposit at an id through the receipt the root holds there),
+  replay`, each whole replay's command seals (`engine replay`'s, recovery's, the log-head prefix pass's, a member's
+  replica build's and a taken copy's) checked ahead on `node.replay_workers` threads or `--replay-workers`, one per
+  core by default, by a second reader of the log's files, the replay taking a verdict only for the seal and link it
+  computed and applying each command once its own seal is checked (`log/seals_ahead.rs`, `Origin::check_ahead`,
+  `sequencer/replay/ahead_tests.rs`), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
+  log, or with `--deposit` the refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
   `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), `/v1/positions/levels` and an order's `take_profit` and `stop_loss` (from `V79`, `api/actions.rs`), screened and admitted as close-all is, the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
@@ -1149,7 +1153,8 @@ Run from the repo root:
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
   `RECOVERY_LAUNCH_SECS` set to the days that fit, and read the 30-day replay's projection);
   `RECOVERY_ACCOUNTS`, `RECOVERY_TRADERS`, `RECOVERY_LAUNCH_SECS`, `RECOVERY_TEN_TIMES_SECS`,
-  `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and half an hour of flow)
+  `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and half an hour of flow),
+  and `RECOVERY_REPLAY_WORKERS` bounds the threads that check seals ahead of each replay (one per core)
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

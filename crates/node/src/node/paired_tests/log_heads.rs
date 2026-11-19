@@ -43,6 +43,7 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
             None,
             None,
             Some(seq),
+            Default::default(),
         )
         .unwrap()
         .replayed;
@@ -92,6 +93,7 @@ async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
             None,
             None,
             capture,
+            Default::default(),
         )
         .unwrap()
         .replayed;

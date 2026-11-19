@@ -439,6 +439,7 @@ pub(super) fn replay(node: &Node) -> anyhow::Result<()> {
         &node.dir.join("log"),
         Some(CheckpointDomain { chain_id: 31337, vault: AccountId(node.chain.vault.into()) }),
         Some(node.chain.signer),
+        Default::default(),
     )?;
     ensure!(
         replayed.engine.protocol_version() == engine_core::protocol::ProtocolVersion::LATEST,

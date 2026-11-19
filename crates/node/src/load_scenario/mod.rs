@@ -167,7 +167,8 @@ async fn run() {
     node.stop().await.expect("the node drains");
     drop(venues);
     let rebuilt = build(&mix, counts).h.engine;
-    let replayed = crate::sequencer::replay::replay_path_from(rebuilt, &log_dir, signer).expect("the log replays");
+    let replayed = crate::sequencer::replay::replay_path_from(rebuilt, &log_dir, signer, Default::default())
+        .expect("the log replays");
     println!(
         "LOAD replay commands={} checkpoints={}: the run's log replays to its roots from the book",
         replayed.commands, replayed.checkpoints

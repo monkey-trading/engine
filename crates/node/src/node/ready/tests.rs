@@ -104,6 +104,7 @@ async fn run_member(
     let follower = Follower::open_pinned(
         &log,
         4,
+        Default::default(),
         domain,
         signer,
         [signer].into(),

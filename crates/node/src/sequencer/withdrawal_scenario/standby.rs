@@ -322,7 +322,7 @@ pub(super) async fn standby_takes_over() -> anyhow::Result<()> {
 
     // The log verifies across the change of signer, given each signer.
     let signers: std::collections::BTreeSet<_> = [node.chain.signer, AccountId(b_enclave.0.0)].into_iter().collect();
-    let replayed = replay_path_with_attested(&b_log, None, signers.clone())?;
+    let replayed = replay_path_with_attested(&b_log, None, signers.clone(), Default::default())?;
     ensure!(replayed.checkpoint_signers == signers, "the replay did not name both signers");
     println!(
         "PASS: the liveness rule promotes the standby, the limited setSigner installs only the \

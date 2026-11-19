@@ -85,6 +85,7 @@ async fn dev_scenario_resume_between_messages_of_one_seq_and_replay_the_archive(
         &archive,
         None,
         Some(engine_core::types::AccountId(crate::tee::EnclaveKey::test_key().address())),
+        Default::default(),
     )
     .unwrap();
     assert_eq!(replayed.engine.last_seq(), manifest.segments.last().map(|s| s.last_seq));

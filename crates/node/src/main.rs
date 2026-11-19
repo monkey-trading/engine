@@ -3,6 +3,7 @@
 //! or a response or stream connection the attested enclave signed, or signs and submits an
 //! operator's admin command.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -12,7 +13,7 @@ use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
-use engine_node::log::CheckpointDomain;
+use engine_node::log::{CheckpointDomain, ReplayWorkers};
 use engine_node::{
     ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
     ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
@@ -81,6 +82,9 @@ enum Cmd {
         /// vendor roots. Test and private chains verify against this; release chains do not need it.
         #[arg(long)]
         root: Option<PathBuf>,
+        /// Threads that check command seals ahead of the replay; one per core when unset.
+        #[arg(long)]
+        replay_workers: Option<NonZeroUsize>,
     },
     /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
     /// at a vault deposit id, from a published log alone, against the root of its checkpoint at
@@ -242,8 +246,10 @@ fn main() -> anyhow::Result<()> {
             processor,
             kds,
             root,
+            replay_workers,
         } => {
             init_logging("info")?;
+            let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             anyhow::ensure!(
                 attestation.len() == release.len(),
@@ -269,16 +275,17 @@ fn main() -> anyhow::Result<()> {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?
-                    .block_on(replay_path_with_custody(&path, &cfg, signer))?
+                    .block_on(replay_path_with_custody(&path, &cfg, signer, workers))?
             } else if verified.len() > 1 {
                 engine_node::replay_path_with_attested(
                     &path,
                     domain,
                     verified.iter().map(|v| v.enclave_address).collect(),
+                    workers,
                 )?
             } else {
                 let trusted = engine_node::reconcile_signer(signer, verified.first())?;
-                replay_path_with_trust(&path, domain, trusted)?
+                replay_path_with_trust(&path, domain, trusted, workers)?
             };
             if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;

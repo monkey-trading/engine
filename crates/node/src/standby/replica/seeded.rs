@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use engine_core::types::AccountId;
 
-use crate::log::{CheckpointDomain, LogEntry};
+use crate::log::{CheckpointDomain, LogEntry, ReplayWorkers};
 use crate::sequencer::replay::LiveReplay;
 use crate::standby::Follower;
 use crate::standby::replica::{Records, recording};
@@ -16,14 +16,13 @@ impl Follower {
     /// Error cases:
     /// - see `open_pinned`
     pub(crate) fn open_seeded(
-        dir: &std::path::Path,
-        segment_commands: u64,
+        copy: (&std::path::Path, u64, ReplayWorkers),
         (domain, enclave, signers): (CheckpointDomain, AccountId, BTreeSet<AccountId>),
         records: Records,
         base: impl Fn() -> engine_core::Engine,
         observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let fresh = || recording(LiveReplay::seeded(domain, signers.clone(), base()), &records);
-        Self::open_with(dir, segment_commands, (domain, enclave, signers.clone()), fresh, None, observe)
+        Self::open_with(copy, (domain, enclave, signers.clone()), fresh, None, observe)
     }
 }

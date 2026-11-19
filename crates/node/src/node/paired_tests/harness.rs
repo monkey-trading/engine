@@ -60,7 +60,10 @@ impl CheckpointChain for NoChain {
 pub(crate) fn audit_root(cfg: &NodeConfig) -> [u8; 32] {
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
     let signer = AccountId(EnclaveKey::test_key().address());
-    replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer)).unwrap().engine.state_root()
+    replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer), Default::default())
+        .unwrap()
+        .engine
+        .state_root()
 }
 
 /// Uses independent signer pins supplied by the mock attestation test key, never cache metadata.

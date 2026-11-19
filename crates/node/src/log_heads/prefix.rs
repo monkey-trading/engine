@@ -19,7 +19,7 @@ use engine_core::types::{AccountId, Millis};
 use tracing::error;
 
 use super::Head;
-use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog, Stop};
+use crate::log::{self, CheckpointDomain, LogEntry, ReplayWorkers, SegmentedLog, Stop};
 use crate::sequencer::origin::Origin;
 
 /// Marks a posted-head refusal below the snapshot base: the candidate loop must not treat it as a
@@ -57,6 +57,7 @@ pub(crate) struct Verified {
 /// - the command prefix differs from the certified one, a rejected cache without a posted head
 /// - with a posted head, the posted digest or the command prefix differs: a `Rollback` (the
 ///   Critical names the cause)
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn verify(
     dir: &Path,
     domain: CheckpointDomain,
@@ -65,8 +66,10 @@ pub(crate) fn verify(
     anchor: Option<u64>,
     base: u64,
     certified_prefix: [u8; 32],
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Verified> {
     let mut origin = Origin::new(Some(domain), Some(signer));
+    origin.check_ahead(dir, 0, workers);
     let mut command_prefix = [0u8; 32];
     let mut previous = None;
     let (mut posted_prefix, mut anchor_ts, mut base_prefix) = (None, None, None);
@@ -321,5 +324,18 @@ mod tests {
         let error = verify(&dir, DOMAIN, signer, Some(posted), None, 1, command_prefix).unwrap_err();
         assert!(!error.is::<Rollback>(), "a seal failure is a plain refusal, not a digest mismatch: {error:#}");
         assert!(format!("{error:#}").contains("prefix"), "{error:#}");
+    }
+
+    /// `super::verify` with one seal check worker per core.
+    fn verify(
+        dir: &Path,
+        domain: CheckpointDomain,
+        signer: AccountId,
+        posted: Option<Head>,
+        anchor: Option<u64>,
+        base: u64,
+        certified_prefix: [u8; 32],
+    ) -> anyhow::Result<Verified> {
+        super::verify(dir, domain, signer, posted, anchor, base, certified_prefix, ReplayWorkers::default())
     }
 }

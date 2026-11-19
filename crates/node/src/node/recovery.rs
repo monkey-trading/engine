@@ -155,6 +155,7 @@ pub(super) async fn read_log_and_history_authorities(
         Some(sink),
         Some(stats.clone()),
         capture.map(|posted| posted.seq),
+        cfg.node.replay_workers,
     )
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // A replay that never moved a mark still resets: the cache must not serve another log's rows.

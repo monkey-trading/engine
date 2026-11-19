@@ -256,6 +256,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         None,
         None,
         None,
+        Default::default(),
     )
     .unwrap();
     let cfg = SequencerConfig { checkpoint_parent: parent, ..node.config() };
@@ -302,6 +303,7 @@ fn rotation_requires_accepted_historical_signers_and_reissues_with_the_current_e
         None,
         None,
         None,
+        Default::default(),
     )
     .expect("epoch2 reissue on epoch1 root survives another rotation without an epoch2 checkpoint");
     let (withdrawals, mut signed) = mpsc::unbounded_channel();

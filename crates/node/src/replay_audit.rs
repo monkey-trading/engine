@@ -9,7 +9,7 @@ use engine_core::types::AccountId;
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, SignerHistory, View, accepted_history};
 use crate::config::{CustodyProvider, NodeConfig};
-use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SegmentedLog};
+use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, ReplayWorkers, SegmentedLog};
 use crate::sequencer::Replayed;
 
 /// The independently authenticated finalized prefix used by one complete replay pass.
@@ -19,11 +19,17 @@ struct AuditTrust {
     authorities: SignerHistory,
 }
 
-/// Verifies a public log against configured custody and an independently trusted current signer.
+/// Verifies a public log against configured custody and an independently trusted current signer, its
+/// command seals checked ahead of the replay by `workers`.
 /// Error cases:
 /// - custody configuration, canonical RPC reads, accepted history, or the log fails verification
 /// - the supplied signer differs from finalized custody, or the log omits its finalized anchor
-pub async fn replay_path_with_custody(path: &Path, cfg: &NodeConfig, signer: AccountId) -> anyhow::Result<Replayed> {
+pub async fn replay_path_with_custody(
+    path: &Path,
+    cfg: &NodeConfig,
+    signer: AccountId,
+    workers: ReplayWorkers,
+) -> anyhow::Result<Replayed> {
     ensure!(cfg.custody.provider == CustodyProvider::Evm, "custody-backed audit requires EVM custody");
     let checkpoints = cfg.checkpoints.as_ref().context("custody-backed audit requires [checkpoints]")?;
     let evm = cfg.custody.evm.as_ref().context("custody-backed audit requires [custody.evm]")?;
@@ -32,10 +38,11 @@ pub async fn replay_path_with_custody(path: &Path, cfg: &NodeConfig, signer: Acc
         vault: cfg.custody.vault.parse().context("custody audit vault address")?,
     };
     let chain = CheckpointRpc::read_only(checkpoints, domain, evm.usdc, evm.finality_tag, evm.confirmations)?;
-    replay_with_chain(path, &chain, domain, signer).await
+    replay_with_chain(path, &chain, domain, signer, workers).await
 }
 
-/// Builds independently authenticated trust before applying the log through ordinary strict replay.
+/// Builds independently authenticated trust before applying the log through ordinary strict replay,
+/// its command seals checked ahead by `workers`.
 /// Error cases:
 /// - finalized custody, accepted history, or the complete replay pass fails verification
 async fn replay_with_chain(
@@ -43,9 +50,10 @@ async fn replay_with_chain(
     chain: &impl CheckpointChain,
     domain: CheckpointDomain,
     signer: AccountId,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
     let trust = build_trust(path, chain, domain, signer).await?;
-    crate::sequencer::replay_path_with_authorities(path, domain, signer, trust.parent, trust.authorities)
+    crate::sequencer::replay_path_with_authorities(path, domain, signer, trust.parent, trust.authorities, workers)
 }
 
 /// Authenticates the finalized anchor and the signed-parent chain to it at one canonical block.

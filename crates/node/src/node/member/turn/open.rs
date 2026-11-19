@@ -53,12 +53,14 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()), Some(rows));
         let stopping = &self.stopping;
         let pins = (posted, keep);
-        let follower = Follower::open_pinned(dir, segment_commands, domain, enclave, signers, kept, pins, |entry| {
-            anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
-            history.observe(entry);
-            Ok(())
-        })
-        .map_err(|e| e.context(CopyRefused))?;
+        let workers = self.cfg.node.replay_workers;
+        let follower =
+            Follower::open_pinned(dir, segment_commands, workers, domain, enclave, signers, kept, pins, |entry| {
+                anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
+                history.observe(entry);
+                Ok(())
+            })
+            .map_err(|e| e.context(CopyRefused))?;
         self.metrics.full_replays.inc_by(follower.replays());
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))

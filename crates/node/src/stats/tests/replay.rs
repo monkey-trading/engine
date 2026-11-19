@@ -34,6 +34,7 @@ async fn recovery_rebuilds_the_record_the_sequencer_built() {
         None,
         Some(rebuilt.clone()),
         None,
+        Default::default(),
     )
     .unwrap();
     assert_eq!(rebuilt.dump(), live.dump());

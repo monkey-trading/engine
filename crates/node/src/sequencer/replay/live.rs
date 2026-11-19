@@ -124,6 +124,17 @@ impl LiveReplay {
         self.replay.sample_marks_with(sink);
     }
 
+    /// Has the seals of the copy at `path` checked ahead of the replica by `workers`, from the next command
+    /// it applies, until `stop_checking_seals_ahead` (`Replay::check_seals_ahead`).
+    pub(crate) fn check_seals_ahead(&mut self, path: &std::path::Path, workers: crate::log::ReplayWorkers) {
+        self.replay.check_seals_ahead(path, workers);
+    }
+
+    /// Checks each later seal as its command applies, stopping the checks ahead.
+    pub(crate) fn stop_checking_seals_ahead(&mut self) {
+        self.replay.origin.stop_checking_ahead();
+    }
+
     /// Applies the copy's next entry, as recovery's replay checks it (see `Replay::apply`).
     /// Error cases:
     /// - the entry fails replay; the replica may then hold part of it and must be rebuilt

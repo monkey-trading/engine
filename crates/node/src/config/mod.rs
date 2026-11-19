@@ -28,6 +28,8 @@ use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
 
+use crate::log::ReplayWorkers;
+
 mod benchmarks;
 mod collateral;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
@@ -170,6 +172,10 @@ pub struct NodeSection {
     #[serde(with = "humantime_serde")]
     pub tick: Duration,
     pub auth: AuthMode,
+    /// Threads that check command seals ahead of a replay of the log or a copy of it: recovery's, a
+    /// member's replica build and a taken copy's check. One per core this process may use when unset.
+    #[serde(default)]
+    pub replay_workers: ReplayWorkers,
 }
 
 #[derive(Debug, Deserialize)]
