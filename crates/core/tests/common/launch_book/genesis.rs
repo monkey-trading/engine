@@ -140,9 +140,14 @@ pub fn production_harness_at(
 /// The batch of a 4.3% rate, effective today, for each benchmark the listings name, so a rollover
 /// charges financing.
 pub fn benchmark_batch(h: &Harness) -> AdminCommand {
-    let today = h.engine.benchmark_date(h.ts);
+    benchmark_batch_on(&h.engine, h.ts)
+}
+
+/// `benchmark_batch` for `engine`'s listings, effective on the day of `ts`.
+pub fn benchmark_batch_on(engine: &engine_core::Engine, ts: Millis) -> AdminCommand {
+    let today = engine.benchmark_date(ts);
     let names: std::collections::BTreeSet<String> =
-        h.engine.markets().values().map(|m| m.spec.financing.benchmark.clone()).collect();
+        engine.markets().values().map(|m| m.spec.financing.benchmark.clone()).collect();
     let rates = names
         .iter()
         .map(|benchmark| BenchmarkRate {
@@ -163,7 +168,12 @@ pub fn publish_benchmarks(h: &mut Harness) {
 /// The command quoting `market` from two venues at `mid`, stamped `ts` and naming the front contract
 /// of a market priced from futures.
 pub fn price_command(h: &Harness, market: MarketId, mid: &str, ts: Millis) -> Command {
-    let contract = h.engine.markets()[&market].spec.contracts.iter().rfind(|c| c.from.timestamp_millis() <= ts);
+    price_command_on(&h.engine, market, mid, ts)
+}
+
+/// `price_command` for `market` as `engine` lists it.
+pub fn price_command_on(engine: &engine_core::Engine, market: MarketId, mid: &str, ts: Millis) -> Command {
+    let contract = engine.markets()[&market].spec.contracts.iter().rfind(|c| c.from.timestamp_millis() <= ts);
     let contract = contract.map(|c| c.contract.clone());
     let quotes = (0..2)
         .map(|venue| SourceQuote {

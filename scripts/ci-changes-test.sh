@@ -21,7 +21,7 @@ feeds="toxicity loss_trigger rwa_feeds cme_feeds share_feeds venue_load node_loa
 anvil="vault_deposits daily_rotation short_turns"
 prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protocol batch_orders ct_watch \
   snapshot_restart signed_api production_secrets log_heads"
-node="$prebuilt $anvil $feeds scenario_tests attestation_verifier acme engine_build"
+node="$prebuilt $anvil $feeds scenario_tests attestation_verifier recovery_scale acme engine_build"
 api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests node_load engine_build"
 every="rust contracts image agent_scripts merge_approval ci_changes $node wasm_verifier"
 
@@ -60,27 +60,29 @@ for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crate
 done
 for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/turn.rs crates/node/src/seed_relay/mod.rs \
   crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs; do
-  case_ pull_request "rust $anvil log_heads scenario_tests engine_build" "$rotation"
+  case_ pull_request "rust $anvil log_heads scenario_tests recovery_scale engine_build" "$rotation"
 done
 for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
   crates/node/src/withdrawals.rs crates/node/src/sequencer/payouts.rs; do
-  case_ pull_request "rust vault_deposits scenario_tests production_secrets log_heads engine_build" "$custody"
+  case_ pull_request "rust vault_deposits scenario_tests production_secrets log_heads recovery_scale engine_build" \
+    "$custody"
 done
 case_ pull_request "rust vault_deposits $api" crates/node/src/access.rs crates/node/src/api/state.rs
 case_ pull_request "rust vault_deposits $api" crates/node/src/api/stream/quotes/mod.rs crates/node/src/limits/mod.rs
 case_ pull_request "rust $api" crates/node/src/api/account.rs crates/node/src/tls/mod.rs
 case_ pull_request "rust attestation_verifier $api" crates/node/src/api/attestation.rs
-case_ pull_request "rust snapshot_restart engine_build" crates/node/src/snapshot/mod.rs
+case_ pull_request "rust recovery_scale $api" crates/node/src/api/stream/mod.rs
+case_ pull_request "rust snapshot_restart recovery_scale engine_build" crates/node/src/snapshot/mod.rs
 case_ pull_request "rust production_secrets engine_build" crates/node/src/secrets/mod.rs
 case_ pull_request "rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch engine_build" \
   crates/node/src/verify/mod.rs
 case_ pull_request "rust image attestation_verifier wasm_verifier signed_api ct_watch engine_build" crates/verify/src/lib.rs
-case_ pull_request "rust scenario_tests dashboard_data metrics_alerts snapshot_restart node_load engine_build" \
+case_ pull_request "rust scenario_tests dashboard_data metrics_alerts snapshot_restart node_load recovery_scale engine_build" \
   crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs crates/node/src/metrics/latency.rs
 case_ pull_request "rust metrics_alerts alert_outbox ct_watch production_secrets engine_build" crates/node/src/alerts/mod.rs
 case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch signed_api engine_build" \
   crates/node/src/admin/mod.rs
-case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier" crates/node/src/test_support/mod.rs
+case_ pull_request "rust $anvil $feeds scenario_tests attestation_verifier recovery_scale" crates/node/src/test_support/mod.rs
 case_ pull_request "rust $anvil" crates/node/src/custody/tests/election_scenario.rs crates/node/src/log_check/tests.rs
 case_ pull_request "rust scenario_tests" crates/node/src/api/access_tests/spreads.rs crates/core/tests/hot_path_benchmark.rs
 case_ pull_request "rust scenario_tests" crates/core/tests/launch_book_benchmark.rs
@@ -89,13 +91,16 @@ case_ pull_request "rust scenario_tests" crates/node/src/stats/launch_bench.rs
 case_ pull_request "rust scenario_tests" crates/core/tests/mass_events_benchmark.rs crates/core/tests/mass_events_benchmark/closeouts.rs
 case_ pull_request "rust scenario_tests" crates/node/src/sequencer/wait_bench/mass.rs
 case_ pull_request "rust scenario_tests" crates/node/src/stats/bench.rs
-case_ pull_request "rust scenario_tests node_load" config/production-genesis.toml
-case_ pull_request "rust scenario_tests node_load" research/cap-calibration/data/derived/market_mix.csv
-case_ pull_request "rust scenario_tests node_load" crates/core/tests/common/launch_book/build.rs
-case_ pull_request "rust node_load" crates/node/src/load_scenario/mod.rs crates/node/src/load_scenario/generator/traders.rs
-case_ pull_request "rust scenario_tests node_load" crates/node/src/sequencer/seeded.rs
+case_ pull_request "rust scenario_tests node_load recovery_scale" config/production-genesis.toml
+case_ pull_request "rust scenario_tests node_load recovery_scale" research/cap-calibration/data/derived/market_mix.csv
+case_ pull_request "rust scenario_tests node_load recovery_scale" crates/core/tests/common/launch_book/build.rs
+case_ pull_request "rust node_load recovery_scale" crates/node/src/load_scenario/mod.rs \
+  crates/node/src/load_scenario/generator/traders.rs
+case_ pull_request "rust scenario_tests node_load recovery_scale" crates/node/src/sequencer/seeded.rs
+case_ pull_request "rust recovery_scale" crates/node/src/sequencer/recovery_scale/mod.rs \
+  crates/node/src/sequencer/recovery_scale/flow.rs
 case_ pull_request "rust node_load" ops/runbooks/production-node.toml
-case_ pull_request "rust vault_deposits scenario_tests node_load" ops/runbooks/production-deployment.toml
+case_ pull_request "rust vault_deposits scenario_tests node_load recovery_scale" ops/runbooks/production-deployment.toml
 case_ pull_request "rust" config/ct-watch.toml
 case_ pull_request "rust attestation_verifier" crates/node/src/verify/tests/mod.rs
 case_ pull_request "rust short_turns" crates/core/tests/short_turns.rs
@@ -108,6 +113,7 @@ case_ pull_request "toxicity" scripts/dev-toxicity.sh
 case_ pull_request "signed_api engine_build" scripts/dev-status-notice.sh
 case_ pull_request "venue_load" scripts/dev-venue-load.sh
 case_ pull_request "node_load" scripts/dev-load.sh
+case_ pull_request "recovery_scale" scripts/dev-recovery-scale.sh
 case_ pull_request "share_feeds" scripts/dev-share-feeds.sh
 case_ pull_request "scenario_tests" scripts/dev-holding-fee.sh
 case_ pull_request "ct_watch contracts $anvil production_secrets log_heads engine_build" \

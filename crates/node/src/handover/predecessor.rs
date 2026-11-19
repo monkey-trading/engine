@@ -467,7 +467,7 @@ fn unconfirmed(why: &str) -> Served {
 }
 
 mod assignment;
-mod checks;
+pub(super) mod checks;
 pub(crate) use checks::no_weaker;
 mod secrets;
 mod tail;

@@ -486,6 +486,8 @@ mod metrics_tests;
 #[cfg(test)]
 mod pace_tests;
 #[cfg(test)]
+mod recovery_scale;
+#[cfg(test)]
 mod resting_bench;
 #[cfg(test)]
 mod rollover_tests;

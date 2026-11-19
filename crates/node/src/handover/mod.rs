@@ -75,6 +75,8 @@ pub(crate) use evidence::Evidence;
 pub(crate) mod hostname;
 pub(crate) use hostname::check_operator_hostname;
 mod predecessor;
+#[cfg(test)]
+pub(crate) use predecessor::checks::{tail_over, tail_room};
 pub(crate) use predecessor::{DrainReply, Predecessor, no_weaker};
 mod published;
 pub(crate) use published::Published;

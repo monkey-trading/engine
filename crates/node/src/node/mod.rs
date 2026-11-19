@@ -30,7 +30,7 @@ mod liveness;
 #[cfg(test)]
 pub(crate) use liveness::forget;
 pub(crate) mod log_check;
-mod marks;
+pub(crate) mod marks;
 pub(crate) mod member;
 use member::{Ended, Handed};
 pub(crate) mod ready;

@@ -213,7 +213,7 @@ impl Sequencer {
         signer: Option<AccountId>,
         parent: Option<crate::log::CheckpointParent>,
         authorities: crate::checkpoints::SignerHistory,
-        mut observe: impl FnMut(&LogEntry),
+        observe: impl FnMut(&LogEntry),
         marks: Option<crate::history::marks::MarkSink>,
         stats: Option<crate::stats::Stats>,
         capture: Option<u64>,
@@ -224,6 +224,20 @@ impl Sequencer {
         if let Some(seq) = capture {
             replay.capture_link_at(seq);
         }
+        Self::replay_log(replay, dir, observe, marks, stats)
+    }
+
+    /// Reads the log in `dir` through `replay`, as recovery reads a whole log: each mark handed to
+    /// `marks`, each command recorded into `stats`, and `observe` seeing each entry first.
+    /// Error cases:
+    /// - the log cannot be read, or fails its manifest check or replay
+    pub(super) fn replay_log(
+        mut replay: Replay,
+        dir: &Path,
+        mut observe: impl FnMut(&LogEntry),
+        marks: Option<crate::history::marks::MarkSink>,
+        stats: Option<crate::stats::Stats>,
+    ) -> anyhow::Result<ReplayedLog> {
         if let Some(sink) = marks {
             replay.sample_marks_with(sink);
         }

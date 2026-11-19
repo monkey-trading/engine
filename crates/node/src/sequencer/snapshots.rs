@@ -95,7 +95,7 @@ impl Sequencer {
 
     /// The recovery facts at the checkpoint just written: concrete outstanding work, accounting,
     /// deferred withdrawals, and the finalized base.
-    fn recovery_context(&self, base: snapshot::RecoveryBase) -> RecoveryContext {
+    pub(super) fn recovery_context(&self, base: snapshot::RecoveryBase) -> RecoveryContext {
         RecoveryContext {
             commands: self.next_seq,
             command_prefix: self.command_prefix,
@@ -114,7 +114,7 @@ impl Sequencer {
     /// recovery facts it had when written. No command has been applied since.
     /// Error cases:
     /// - engine encoding or recovery context validation fails
-    fn snapshot_payload(
+    pub(super) fn snapshot_payload(
         &self,
         checkpoint: Checkpoint,
         progress: snapshot::Progress,
