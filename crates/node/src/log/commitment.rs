@@ -9,11 +9,22 @@ use std::io::{self, Write};
 
 use crate::log::CommandEntry;
 
-/// Commits to the canonical typed command and its complete logged event vector.
+/// Commits to the canonical typed command, its complete logged event vector and its seal, the seal
+/// spelt as its writer spells it (`CommandSeal::respelt`): every copy of one history commits alike,
+/// and the writer's own entries commit to the bytes it wrote.
 /// Error cases:
-/// - canonical command encoding fails
+/// - canonical command encoding fails, or the seal's signature is not 65 bytes of hex
 pub(crate) fn command_digest(command: &CommandEntry) -> anyhow::Result<[u8; 32]> {
-    digest_of(command)
+    match command.seal.as_ref().map(|seal| seal.respelt()).transpose()?.flatten() {
+        Some(seal) => digest_of(&CommandEntry { seal: Some(seal), ..command.clone() }),
+        None => digest_of(command),
+    }
+}
+
+/// Whether `a` and `b` are the same command, as the command prefix reads them: one whose seal a copy
+/// spells otherwise is its writer's. A command whose identity cannot be computed is no other's.
+pub(crate) fn same_command(a: &CommandEntry, b: &CommandEntry) -> bool {
+    a == b || matches!((command_digest(a), command_digest(b)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// The command identity over `entry`, a command entry as it serializes, whose canonical bytes stream
@@ -149,5 +160,28 @@ mod tests {
         assert_ne!(previous, changed);
         assert_ne!(extend_command_prefix([0; 32], previous), extend_command_prefix([0; 32], changed));
         assert_ne!(extend_command_prefix([0; 32], changed), extend_command_prefix(previous, changed));
+    }
+
+    /// A command whose seal a copy spells in upper case is its writer's, as the history index's progress
+    /// check and the command prefix read it; another command is not.
+    #[test]
+    fn a_command_spelt_otherwise_is_the_same_command() {
+        let key = crate::tee::EnclaveKey::test_key();
+        let domain = crate::log::CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
+        let command = |seq: u64| {
+            let mut command = CommandEntry {
+                seal: None,
+                sequenced: Sequenced { seq, ts: 0, cmd: Command::Tick },
+                events: Some(Vec::new()),
+            };
+            command.seal = Some(key.seal_command(domain, B256::from([seq as u8; 32])));
+            command
+        };
+        let mut respelt = command(1);
+        let seal = respelt.seal.as_mut().unwrap();
+        seal.signature = format!("0x{}", seal.signature.trim_start_matches("0x").to_uppercase());
+        assert_ne!(respelt, command(1), "the copy spells the seal as its writer does");
+        assert!(same_command(&respelt, &command(1)), "a respelt seal makes another command");
+        assert!(!same_command(&command(2), &command(1)), "another command is the same");
     }
 }

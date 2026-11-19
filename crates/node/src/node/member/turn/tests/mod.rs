@@ -44,6 +44,7 @@ const OWN: Millis = 3_000_000;
 /// The boundary of the turn after this member's, another member's.
 const AFTER: Millis = 4_000_000;
 
+mod copies;
 mod episodes;
 mod following;
 mod moved;

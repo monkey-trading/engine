@@ -146,6 +146,73 @@ fn hardware_evidence_verifies_against_the_vendor_chain_and_binds_its_data() {
     assert!(err.to_string().contains("mock enclaves only"), "{err:#}");
 }
 
+/// Every signer epoch the vault records is read, however many, so a copy's replay accepts the seals of
+/// each; a count past the bound, or an epoch whose read fails, is refused rather than read in part, and a
+/// chain without lifecycle evidence names its current signer only.
+#[tokio::test]
+async fn every_recorded_signer_epoch_is_read() {
+    let signer_of = |epoch: u64| {
+        let mut address = [0u8; 20];
+        address[12..].copy_from_slice(&epoch.to_be_bytes());
+        AccountId(address)
+    };
+    let observed = |epochs: u64| crate::checkpoints::Observation {
+        view: crate::checkpoints::View::Finalized,
+        state: crate::checkpoints::VaultState {
+            height: 10,
+            signer: signer_of(epochs),
+            checkpoint: None,
+            balance: engine_core::Fixed::ZERO,
+            deposits: 0,
+            deposited: engine_core::Fixed::ZERO,
+            distributions_paid: engine_core::Fixed::ZERO,
+        },
+        lifecycle: Some(crate::checkpoints::LifecycleEvidence {
+            height: 10,
+            block_hash: engine_core::eip712::B256::repeat_byte(10),
+            signer: signer_of(epochs),
+            signer_epoch: epochs,
+            withdrawals_paused: false,
+            total_withdrawn: engine_core::Fixed::ZERO,
+            checkpoint_seq: None,
+            checkpoint_root: None,
+            approvals: Vec::new(),
+        }),
+    };
+    let epochs = Epochs(Box::new(move |epoch| Some(signer_of(epoch))));
+    let signers = vault_signers(&epochs, &observed(300)).await.unwrap();
+    assert_eq!(signers, (1..=300).map(signer_of).collect(), "a recorded epoch's signer is missing");
+    let refused = vault_signers(&epochs, &observed(MAX_SIGNER_EPOCHS + 1)).await.unwrap_err();
+    assert!(refused.to_string().contains("signer epochs"), "{refused:#}");
+    let failing = Epochs(Box::new(move |epoch| (epoch != 2).then(|| signer_of(epoch))));
+    let failed = vault_signers(&failing, &observed(3)).await.unwrap_err();
+    assert!(format!("{failed:#}").contains("epoch 2"), "a failed read left its signer out: {failed:#}");
+    let unproven = crate::checkpoints::Observation { lifecycle: None, ..observed(3) };
+    let unread = Epochs(Box::new(|_| None));
+    assert_eq!(vault_signers(&unread, &unproven).await.unwrap(), [signer_of(3)].into(), "no lifecycle evidence");
+}
+
+/// A chain whose every signer epoch reads back the signer the test names for it, or fails where it names none.
+struct Epochs(Box<dyn Fn(u64) -> Option<AccountId> + Send + Sync>);
+
+impl CheckpointChain for Epochs {
+    async fn state(&self, _view: crate::checkpoints::View) -> anyhow::Result<crate::checkpoints::VaultState> {
+        anyhow::bail!("this chain reads no vault state")
+    }
+
+    async fn post(&self, _checkpoint: &crate::log::Checkpoint) -> anyhow::Result<()> {
+        anyhow::bail!("this chain posts nothing")
+    }
+
+    async fn epoch_signers(
+        &self,
+        _at: &crate::checkpoints::Observation,
+        epochs: &[u64],
+    ) -> anyhow::Result<Vec<AccountId>> {
+        epochs.iter().map(|epoch| (self.0)(*epoch).with_context(|| format!("epoch {epoch} unread"))).collect()
+    }
+}
+
 /// A chain whose handover source and named hostname the test holds.
 struct Registry {
     source: crate::checkpoints::HandoverSource,

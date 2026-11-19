@@ -338,6 +338,16 @@ sequence number for each signer epoch, which is the period during which one sign
 the vault. Each post names the previously accepted head it extends, so a longer divergent copy
 cannot replace the anchor without containing it.
 
+The digest reads each instruction's seal as the 65 bytes that its signature holds, however a copy
+writes them, so a copy of the log holds its writer's digest. A trading server takes a copy of another
+trading server's log when a successor restores it from an archive or a predecessor, when a rotation
+member follows the operator, and when a standby takes over. It refuses the copy if an instruction
+that a checkpoint covers carries no seal, or a seal by a key that the vault never recorded. An
+instruction of that kind after the copy's last checkpoint is refused by a handover's and a
+takeover's replay. A member's replica instead keeps those instructions in
+`<log_dir>.unaccepted-<seq>`, raises the Critical alert `copy_tail_unaccepted`, and cuts the copy back
+to its last checkpoint. The operator's stream then refills the copy.
+
 Before a restarted trading server writes anything, it reads the posted head through the custody RPC
 quorum. It refuses to start on a log that lacks that head, and raises the Critical alert
 `log_rollback`, naming the missing range or the sequence number whose digest differs. A posted head
@@ -413,7 +423,7 @@ Known limits:
   a copy of the log, does compare. It takes an instruction only when its seal continues the copy and
   is the followed enclave's, or one that a checkpoint in the copy names, so history sealed before a
   handover still extends it. Each stream it resumes must first repeat the copy's last instruction
-  exactly.
+  exactly, with each signature and signer compared as the bytes it holds.
 - When the operator's log no longer holds what the standby copied, the standby raises the Critical
   alert `operator_log_rollback` through its own alert routing, naming the range, and keeps its copy
   unchanged to restore from. The signs are a signed heartbeat behind the copy, a repeated

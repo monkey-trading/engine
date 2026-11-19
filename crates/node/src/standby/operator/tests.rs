@@ -114,7 +114,7 @@ async fn a_promotion_replays_the_copy_against_the_vaults_signers_under_rotation(
     let origins = ["http://127.0.0.1:9".to_owned()];
     let finalize = async |dir: &std::path::Path, signers| {
         let copied = super::super::chain::Chain::new(domain, signer);
-        super::super::finalize(&archive, signers, &origins, dir, &takeover, copied).await
+        super::super::finalize(&archive, (domain, signers), &origins, dir, &takeover, copied).await
     };
     finalize(&dir, signers).await.expect("a copy the vault's signer signed was refused");
 

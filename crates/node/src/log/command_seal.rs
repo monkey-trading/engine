@@ -77,6 +77,22 @@ pub(crate) fn seal_digest(domain: CheckpointDomain, link: B256) -> [u8; 32] {
 }
 
 impl CommandSeal {
+    /// This seal spelt as its writer spells it, when it is spelt otherwise: the signature as the 65
+    /// bytes it parses to, `0x`-prefixed lower-case hex (`EnclaveKey::sign_digest`). `None` when it
+    /// already is; the signer and domain are typed, so their spelling is already the writer's.
+    /// Error cases:
+    /// - the signature is not 65 bytes of hex
+    pub(crate) fn respelt(&self) -> anyhow::Result<Option<Self>> {
+        let written = self.signature.strip_prefix("0x").is_some_and(|digits| {
+            digits.len() == 2 * 65 && digits.bytes().all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f'))
+        });
+        if written {
+            return Ok(None);
+        }
+        let signature: Signature = self.signature.parse().context("command origin signature")?;
+        Ok(Some(Self { signature: format!("0x{}", hex::encode(signature)), ..self.clone() }))
+    }
+
     /// Verifies cryptographic origin; recovery separately pins the authorized signer.
     /// Error cases:
     /// - the signer or signature is invalid for this link and deployment

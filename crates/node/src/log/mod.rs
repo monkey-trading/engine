@@ -13,7 +13,7 @@ pub(crate) mod command_seal;
 pub use command_seal::CommandSeal;
 mod checked;
 mod commitment;
-pub(crate) use commitment::{PrefixRing, command_digest, extend_command_prefix};
+pub(crate) use commitment::{PrefixRing, command_digest, extend_command_prefix, same_command};
 mod encoded;
 pub(crate) use encoded::{EncodedCommand, encode_events};
 mod truncate;

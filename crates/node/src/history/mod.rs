@@ -327,7 +327,8 @@ impl HistoryCheck {
         if let (LogEntry::Command(command), Ok((_, Some(last)))) = (entry, &self.opened)
             && command.sequenced.seq == last.sequenced.seq
         {
-            self.found = Some(command == last);
+            // The same command however its seal is spelt, as the command prefix reads it.
+            self.found = Some(crate::log::same_command(command, last));
         }
     }
 

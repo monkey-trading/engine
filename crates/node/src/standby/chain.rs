@@ -1,8 +1,9 @@
 //! Whether the operator's stream extends the standby's copy. The enclave seals every command over
 //! `command_link`, a hash chain that restarts at each checkpoint, so the link after the copy's last
 //! entry pins the copy's history. A resumed stream starts at the copy's last command and must
-//! repeat it, and the entries after it, exactly; every later command must be sealed, over the link
-//! that extends the copy, by the followed enclave or one a checkpoint the copy holds names — the
+//! repeat it, and the entries after it, exactly, their hex signatures and signer read as bytes.
+//! Every later command must be sealed, over the link that extends the copy, by the followed
+//! enclave or one a checkpoint the copy holds names — the
 //! history a handover re-seals under a new key still counts. A signed heartbeat naming a head
 //! behind the copy, a repeat that differs, or an entry that does not chain means the operator's
 //! log no longer holds the copy's history. The copy then takes nothing more, and stays as it is.
@@ -171,7 +172,7 @@ impl Chain {
                 self.repeat = None;
                 return self.check(offset, entry);
             };
-            if offset != *expected || entry != copied {
+            if offset != *expected || !repeats(copied, entry) {
                 let copy = self.head().expect("a repeat has a tail");
                 let seen = if offset == *expected {
                     format!("its entry at {expected} differs from the copy's")
@@ -261,12 +262,51 @@ pub(super) fn rollback_of(error: &anyhow::Error) -> Option<&Rollback> {
     error.chain().find_map(|cause| cause.downcast_ref::<Rollback>())
 }
 
-/// Whether a streamed checkpoint may enter the copy: its signature must recover to the signer it
-/// names, over the digest its own fields name. Returns the admitted signer.
+/// Whether `repeated`, an entry the operator streams again, is the copy's `copied`: the same entry,
+/// its hex signatures and signer compared as the bytes they hold, as replay reads them, and a
+/// checkpoint with or without the deployment it names, which replay reads from the log when it is
+/// absent and the signature binds either way. The archive a copy was backfilled from may spell them
+/// otherwise, or leave the deployment out; a checkpoint's root replay reads as written
+/// (`admit_checkpoint`).
+fn repeats(copied: &LogEntry, repeated: &LogEntry) -> bool {
+    copied == repeated || spelt(copied) == spelt(repeated)
+}
+
+/// `entry` with its hex signatures and signer spelt as its writer spells them, a command's seal as the
+/// command prefix reads it (`CommandSeal::respelt`).
+fn spelt(entry: &LogEntry) -> LogEntry {
+    let respelt = |text: &str| {
+        hex::decode(text.strip_prefix("0x").unwrap_or(text))
+            .map_or_else(|_| text.to_owned(), |bytes| format!("0x{}", hex::encode(bytes)))
+    };
+    let mut entry = entry.clone();
+    match &mut entry {
+        LogEntry::Command(command) => {
+            if let Some(seal) = command.seal.as_ref().and_then(|seal| seal.respelt().ok().flatten()) {
+                command.seal = Some(seal);
+            }
+        }
+        LogEntry::Checkpoint(checkpoint) => {
+            checkpoint.signature = respelt(&checkpoint.signature);
+            checkpoint.signer = respelt(&checkpoint.signer);
+            checkpoint.domain = None;
+        }
+        LogEntry::Withdrawal(withdrawal) => withdrawal.signature = respelt(&withdrawal.signature),
+    }
+    entry
+}
+
+/// Whether a streamed checkpoint may enter the copy: its root must be spelt as the writer spells it,
+/// `0x` and lower-case hex, which replay compares as written, and its signature must recover to the
+/// signer it names, over the digest its own fields name. Returns the admitted signer.
 /// Error cases:
-/// - the named signer does not parse, the root or signature is malformed, the signature recovers
-///   to no key, or it recovers to another enclave than the entry names
+/// - the root is spelt otherwise, the named signer does not parse, the root or signature is
+///   malformed, the signature recovers to no key, or it recovers to another enclave than the entry names
 fn admit_checkpoint(checkpoint: &Checkpoint, domain: &CheckpointDomain) -> anyhow::Result<AccountId> {
+    let written = checkpoint.root.strip_prefix("0x").is_some_and(|digits| {
+        digits.len() == 64 && digits.bytes().all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f'))
+    });
+    anyhow::ensure!(written, "its checkpoint root {} is not spelt as replay reads it", checkpoint.root);
     let named = checkpoint.signer.parse::<AccountId>().context("its checkpoint names no signer")?;
     let recovered = checkpoint_signer(checkpoint, domain).context("its checkpoint signature checks nothing")?;
     anyhow::ensure!(named == recovered, "its checkpoint signature recovers to another enclave than it names");

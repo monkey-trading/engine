@@ -5,12 +5,17 @@ mod alerts;
 mod copy;
 pub(crate) mod events;
 mod readers;
+mod rewrite;
 mod scratch;
 mod staking_rpc;
 pub use alerts::{capture_alerts, capture_alerts_and_resolutions, capture_field};
 pub use copy::copy_dir;
 pub use events::every_event;
 pub use readers::{marks_reader, stats};
+pub use rewrite::{
+    drop_last_checkpoint, drop_last_checkpoint_domain, rewrite_command, rewrite_last_checkpoint_signer, unprefixed,
+    upper_case, upper_case_seal,
+};
 pub use scratch::{keep_scratch, scratch_dir, scratch_path};
 pub use staking_rpc::staking_rpc;
 

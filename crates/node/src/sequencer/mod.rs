@@ -13,11 +13,11 @@ mod marks;
 pub(crate) mod origin;
 mod recovery;
 pub(crate) mod replay;
-pub(crate) use replay::replay_path_with_authorities;
 pub use replay::{
     Replayed, ReplayedLog, replay, replay_path, replay_path_in_domain, replay_path_with_attested,
     replay_path_with_trust, replay_with_signer,
 };
+pub(crate) use replay::{replay_copy, replay_path_with_authorities};
 mod checkpoints;
 pub use crate::root_worker::ClaimAnswer;
 use checkpoints::publish::After;

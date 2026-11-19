@@ -5,8 +5,9 @@ use super::*;
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Opens the copy, bootstrapping an empty one from `operator`'s archive when given, and builds its
-    /// replica by one replay, authenticated against every signer the vault recorded, with the
-    /// dashboard record and the history index's check beside it, and the latest posted head pinned.
+    /// replica by one replay, or two when it cuts an unaccepted tail back (`Follower::replays`),
+    /// authenticated against every signer the vault recorded, with the dashboard record and the history
+    /// index's check beside it, and the latest posted head pinned.
     /// Error cases:
     /// - the archive, the vault, the history index or the copy cannot be read, or the copy does not
     ///   replay (`CopyRefused`)
@@ -58,7 +59,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             Ok(())
         })
         .map_err(|e| e.context(CopyRefused))?;
-        self.metrics.full_replays.inc();
+        self.metrics.full_replays.inc_by(follower.replays());
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))
     }

@@ -607,7 +607,7 @@ member's trading server.
 | --- | --- |
 | `release_superseded` at a turn's boundary | [After your turn](#after-your-turn) |
 | `handover_tip_not_on_log` or `handover_tail_lagged` | [If the take is refused](#if-the-take-is-refused) |
-| `standby_follow_failed`, `operator_log_rollback`, `replica_diverged` or `member_follow_blocked` | [Between your turns](#between-your-turns) |
+| `standby_follow_failed`, `operator_log_rollback`, `replica_diverged`, `copy_tail_unaccepted` or `member_follow_blocked` | [Between your turns](#between-your-turns) |
 | `log_check_pending`, `log_check_unattributable` or `log_check_unavailable` | [Withdrawals and the boundary's log check](#withdrawals-and-the-boundarys-log-check) |
 | `turn_refused` | [A turn the engine refused](#a-turn-the-engine-refused) |
 
@@ -726,6 +726,7 @@ again.
 | `standby_follow_failed` | The trading server could not follow the operator's stream. It resolves the operator in effect again before its next stint, and pages only once five minutes have passed since the turn in effect began, the time that turn's member has to take the keys and come up. | Check that the operator in effect is reachable at its registered hostname. If the alert persists, follow [Run the standby](standby.md#run-the-standby). |
 | `operator_log_rollback` | The operator's log no longer holds entries that your copy holds, or the latest posted log head names another history than your copy holds at that seq. | Keep your copy, and tell the owner. |
 | `replica_diverged` | An entry that the operator in effect sealed does not replay on your replica. Your copy does not take it, and the trading server rebuilds the replica and retries each poll. | Check the operator's published log with `engine replay`. |
+| `copy_tail_unaccepted` | Your copy held instructions after its last checkpoint that no accepted key sealed. The alert's `seq` names the first, and its `key` names the key that sealed it, or `none`. The trading server copied them to `<log_dir>.unaccepted-<seq>` and cut the copy back to its last checkpoint, and the operator's stream refills it. | Keep the set-aside files for the owner. If `key` is a key whose promotion a reorganisation removed, the tail is an orphaned promotion's, and the promoted trading server raises `promotion_reorged`. Otherwise, an archive mirror that served your copy, or your host, forged it. |
 | `member_follow_blocked` | One step of following has failed two polls in a row. The alert's `step` names it. | Check that step's source, as the list below describes. |
 
 The steps that `member_follow_blocked` names, and the source to check for each, are these:
@@ -735,7 +736,10 @@ The steps that `member_follow_blocked` names, and the source to check for each, 
 - `resolve_operator` resolves the operator in effect. Check the registry's hostname for the
   operator.
 - `open_copy` opens the copy and replays it into the replica. Check the copy's disk, with
-  `engine replay --log`.
+  `engine replay --log`. When the error says that an instruction a checkpoint covers carries no seal
+  by an accepted signer, an archive mirror or your host altered the copy, which `engine replay`
+  accepts. Move the copy aside so that the trading server rebuilds it from the archive, or leave it
+  for your turn's whole-log take.
 - `read_posted_head` reads the latest posted log head. Check the `LogHeads` reads.
 - `pin_posted_head` pins a posted head that the replica passed without keeping. It needs a later
   posted head.

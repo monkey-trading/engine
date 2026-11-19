@@ -157,6 +157,9 @@ const MAX_SEGMENT_BYTES: u32 = 64 << 20;
 pub(crate) const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the successor waits for the keys: the predecessor's drain and its vendor fetch.
 pub(crate) const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
+/// The most signer epochs `vault_signers` reads, one call each: far past any deployment's history, whose
+/// epochs only a promotion or the timelock's `setSigner` adds.
+const MAX_SIGNER_EPOCHS: u64 = 1 << 16;
 
 /// The report data a successor's quote binds: the connection's challenge, its public key, its
 /// config's hash and the newest protocol version its build `reads`, for this deployment.
@@ -393,20 +396,30 @@ pub(crate) async fn resolve_source(vault: &impl CheckpointChain) -> anyhow::Resu
 
 /// Every signer the vault has recorded, for authenticating the restored log: the current signer
 /// and each immutable signer epoch at the same finalized observation, as normal recovery uses. A
-/// log spanning a signer rotation replays as readily as a single-epoch one.
+/// log spanning a signer rotation replays as readily as a single-epoch one. Every epoch is read, so a
+/// read that fails fails here rather than leaving a signer out, whose commands a copy would then refuse
+/// or cut back.
 /// Error cases:
-/// - the vault's signer epochs cannot be read
+/// - the vault records more than `MAX_SIGNER_EPOCHS` signer epochs, or an epoch's signer cannot be read
 pub(crate) async fn vault_signers(
     vault: &impl CheckpointChain,
     at: &crate::checkpoints::Observation,
 ) -> anyhow::Result<std::collections::BTreeSet<engine_core::types::AccountId>> {
     let mut signers = std::collections::BTreeSet::from([at.state.signer]);
-    let epochs = at.lifecycle.as_ref().map(|lifecycle| lifecycle.signer_epoch).unwrap_or(1);
-    for epoch in 1..=epochs.min(256) {
-        // Chains without canonical lifecycle evidence contribute the current signer only.
-        if let Ok(more) = vault.epoch_signers(at, &[epoch]).await {
-            signers.extend(more);
-        }
+    // A chain without canonical lifecycle evidence names its current signer, and what an adapter that
+    // needs no evidence reads for the first epoch.
+    let Some(lifecycle) = at.lifecycle.as_ref() else {
+        signers.extend(vault.epoch_signers(at, &[1]).await.unwrap_or_default());
+        return Ok(signers);
+    };
+    let epochs = lifecycle.signer_epoch;
+    ensure!(
+        epochs <= MAX_SIGNER_EPOCHS,
+        "the vault records {epochs} signer epochs, more than the {MAX_SIGNER_EPOCHS} a copy's replay reads"
+    );
+    for epoch in 1..=epochs {
+        let named = vault.epoch_signers(at, &[epoch]).await;
+        signers.extend(named.with_context(|| format!("reading the vault's signer of epoch {epoch}"))?);
     }
     Ok(signers)
 }
@@ -421,7 +434,7 @@ pub(crate) async fn vault_signers(
 /// before the predecessor stops.
 /// Error cases:
 /// - the archive fails its integrity checks (`ArchiveIntegrity`), or the restored copy does not replay
-///   against `signers`
+///   against `signers`, every command sealed by one of them
 pub(crate) async fn sync_predecessor_log(
     cfg: &NodeConfig,
     source: &Source,
@@ -434,6 +447,8 @@ pub(crate) async fn sync_predecessor_log(
     let client =
         crate::standby::archive::archive_client(section.is_some_and(|handover| handover.danger_accept_invalid_certs))?;
     let dir = cfg.node.log_dir.as_path();
+    // A cut a crash interrupted is finished before the archive extends the copy (see `take_with`).
+    crate::standby::finish_cut(dir)?;
     let fetch = if !dir.join(crate::log::MANIFEST).exists() {
         crate::standby::archive::bootstrap_archive(&client, &origins, dir).await
     } else {
@@ -457,8 +472,10 @@ pub(crate) async fn sync_predecessor_log(
     }
     // A poisoned copy must surface now, not after the predecessor has stopped: archive bytes were
     // only hash-checked against the server's own manifest, and this replay, of the whole restored
-    // copy, is the authenticity check, as the standby's cold start does.
-    crate::sequencer::replay_path_with_attested(dir, None, signers).context("the restored log copy does not replay")?;
+    // copy, is the authenticity check, as the standby's cold start does. It requires every seal,
+    // so the copy's command prefix is the predecessor's.
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
+    crate::sequencer::replay_copy(dir, domain, signers).context("the restored log copy does not replay")?;
     metrics.full_replays.inc();
     info!("the restored log copy replays to its tip");
     Ok(())

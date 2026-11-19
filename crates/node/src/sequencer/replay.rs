@@ -108,6 +108,14 @@ impl Replay {
         let origin = crate::sequencer::origin::Origin::with_attested(domain, attested.clone());
         Self { attested: Some(attested), domain, trusted_signer: None, origin, ..Self::default() }
     }
+
+    /// `with_attested` in `domain`, for a copy of another node's log: every command must also carry a
+    /// seal, by one of `attested` once a checkpoint covers it; a tail no checkpoint covers is the caller's
+    /// to refuse or drop (`Origin::copy`).
+    pub(super) fn copy(domain: CheckpointDomain, attested: BTreeSet<AccountId>) -> Self {
+        let origin = crate::sequencer::origin::Origin::copy(domain, attested.clone());
+        Self { origin, ..Self::with_attested(Some(domain), attested) }
+    }
     /// Adds `signer` to the attested signers, for checkpoints, typed withdrawals and command seals
     /// alike: a key the vault named after the set was read (#595's promotion), which the caller
     /// authenticated. No effect on a replay pinned to one authority.
@@ -422,7 +430,7 @@ impl Replay {
 
 #[cfg(test)]
 pub(crate) use paths::replay_path_from;
-pub(crate) use paths::replay_path_with_authorities;
+pub(crate) use paths::{replay_copy, replay_path_with_authorities};
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
