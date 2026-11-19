@@ -299,6 +299,114 @@ contract ExitUnfinalisedTest is ExitTest {
         assertEq(usdc.balanceOf(dave), 0);
     }
 
+    /// Alice's balance is 80 below her 150 of unfinalised principal: credits at ids 0 and 1 the vault
+    /// holds, and an orphaned one at id 3 it never received. Anyone may preview her claim,
+    /// before the exit and after she has registered, and it is what registering comes to: 20. It
+    /// registers nothing, and refuses credits out of order or another account's.
+    function testAnyoneMayPreviewTheClaimRegistrationGivesBeforeAndDuringTheExit() public {
+        _deposit(alice, alice, 60e6);
+        _deposit(alice, alice, 40e6);
+        _deposit(bob, bob, 10e6);
+        ExitVerifier.ExitTerms memory terms = _addTerms(3, 0, 0, 0, 0, 110e6 * UNIT, new uint64[](0));
+        ExitVerifier.AccountState memory a = _addUnfinalised(alice, 70e6 * UNIT, 150e6 * UNIT);
+        ExitVerifier.ReceiptLeaf[] memory credits = new ExitVerifier.ReceiptLeaf[](3);
+        credits[0] = _addCredit(bytes("first"), 0, alice, alice, 60e6 * UNIT);
+        credits[1] = _addCredit(bytes("second"), 1, alice, alice, 40e6 * UNIT);
+        credits[2] = _addCredit(bytes("orphaned"), 3, alice, alice, 50e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory other = _addCredit(bytes("bob's"), 2, bob, bob, 10e6 * UNIT);
+        bytes32 root = _post();
+        for (uint256 i; i < 3; ++i) {
+            credits[i] = _proven(credits[i], CREDIT);
+        }
+        a = _withAccountProof(alice, a);
+        ExitVerifier verifier = vault.exitVerifier();
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+
+        vm.prank(makeAddr("wallet"));
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, credits), 20e6);
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, _one(credits[0])), 0, "60 of 80 short");
+        assertFalse(verifier.exitRegistered(alice), "a preview registers nothing");
+        ExitVerifier.ReceiptLeaf[] memory swapped = new ExitVerifier.ReceiptLeaf[](2);
+        (swapped[0], swapped[1]) = (credits[1], credits[0]);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, swapped);
+        (swapped[0], swapped[1]) = (credits[0], credits[0]);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, swapped);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(other, CREDIT)));
+        a.balance += 1;
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, credits);
+        a.balance -= 1;
+
+        _startExit(terms);
+        vault.registerExit(alice, a, positions, markets);
+        assertEq(vault.exitClaims(alice), 0, "her equity alone is 80 short, which only the preview sees past");
+        vault.registerExitCredits(alice, credits);
+        assertEq(vault.exitClaims(alice), 20e6);
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, credits), 20e6, "it still checks after");
+    }
+
+    /// A preview refuses the account's own credit unless its leaf proves: a changed amount, a wrong
+    /// sibling, or its pending leaf offered as a credit.
+    function testAPreviewRefusesAnAccountsOwnCreditWhoseLeafDoesNotProve() public {
+        _deposit(alice, alice, 60e6);
+        _addTerms(1, 0, 0, 0, 0, 60e6 * UNIT, new uint64[](0));
+        ExitVerifier.AccountState memory a = _addUnfinalised(alice, 60e6 * UNIT, 60e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory credit = _addCredit(bytes("alice's"), 0, alice, alice, 60e6 * UNIT);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(bytes("pending"), 0, alice, alice, 60e6 * UNIT);
+        bytes32 root = _post();
+        a = _withAccountProof(alice, a);
+        ExitVerifier verifier = vault.exitVerifier();
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(credit, CREDIT))), 60e6);
+
+        ExitVerifier.ReceiptLeaf memory forged = _proven(credit, CREDIT);
+        forged.amount += 1;
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(forged));
+        // `_proven` hands back the same struct, so the amount is put back before the sibling is changed.
+        forged.amount -= 1;
+        forged = _proven(forged, CREDIT);
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, _one(forged)), 60e6);
+        forged.siblings[0] = bytes32(uint256(forged.siblings[0]) ^ 1);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(forged));
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(pending, PENDING)));
+    }
+
+    /// Every read a wallet makes of an account's exit proof answers an `eth_call` with no sender, whose
+    /// caller is the zero address: the terms, the claim's preview, an approval, a queued request, a
+    /// distribution and a pending deposit's receipt.
+    function testAWalletReadsEveryPartOfAnExitProofFromAnyAddress() public {
+        _deposit(alice, alice, 100e6);
+        ExitVerifier.ExitTerms memory terms = _addTerms(1, 1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
+        ExitVerifier.AccountState memory a = _addAccount(alice, 100e6 * UNIT);
+        ExitVerifier.Approval memory approval = _addApproval(alice, 5e6, 1);
+        ExitVerifier.QueuedWithdrawal memory queued = _addQueued(alice, 3e6 * UNIT, 7);
+        _addDistribution(alice, 2e6);
+        ExitVerifier.ReceiptLeaf memory pending = _addPending(bytes("pending"), 1, alice, alice, 10e6 * UNIT);
+        bytes32 root = _post();
+        ExitVerifier verifier = vault.exitVerifier();
+        (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
+        a = _withAccountProof(alice, a);
+        vm.startPrank(address(0));
+        assertTrue(verifier.provesTerms(root, terms, _siblings(keccak256(abi.encodePacked(uint8(24))))));
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, new ExitVerifier.ReceiptLeaf[](0)), 100e6);
+        assertTrue(
+            verifier.provesApproval(root, approval, _siblings(keccak256(abi.encodePacked(uint8(32), alice, uint64(1)))))
+        );
+        assertTrue(verifier.provesQueued(root, queued, _siblings(keccak256(abi.encodePacked(uint8(33), uint64(7))))));
+        assertTrue(
+            verifier.provesDistribution(root, alice, 2e6, _siblings(keccak256(abi.encodePacked(uint8(13), alice))))
+        );
+        (bool proven,) = verifier.provesReceipt(root, _proven(pending, PENDING), PENDING);
+        assertTrue(proven);
+        vm.stopPrank();
+    }
+
     /// The verifier keeps each account's running equity for the vault, which alone may change it.
     function testOnlyTheVaultRegistersClaimsThroughTheVerifier() public {
         ExitVerifier verifier = vault.exitVerifier();

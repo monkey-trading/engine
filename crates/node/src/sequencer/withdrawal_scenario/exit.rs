@@ -1,6 +1,7 @@
-//! The exit against the last posted root on the actual vault: proofs built from the stopped node's
-//! public log alone, the exit started once checkpoints stop, a claim registered and paid once, a
-//! deposit after the root refunded, and the house remainder released through the timelock.
+//! The exit against the last posted root on the actual vault: the API's proof checked as a wallet
+//! checks it and matched against the log's, proofs built from the stopped node's public log alone,
+//! the exit started once checkpoints stop, a claim registered and paid once, a deposit after the
+//! root refunded, and the house remainder released through the timelock.
 
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
 use engine_core::event::Event;
+use engine_core::merkle::ExitProof;
 use engine_core::types::Side;
 use serde_json::{Value, json};
 use tokio::time::{sleep, timeout};
@@ -16,6 +18,7 @@ use tokio::time::{sleep, timeout};
 use crate::exit::{ExitSubject, exit_bundle};
 use crate::log::LogEntry;
 use crate::sequencer::withdrawal_scenario::client::User;
+use crate::sequencer::withdrawal_scenario::exit_wallet::{accepted_root, registered_claim, wallet_check};
 use crate::sequencer::withdrawal_scenario::flows::{entries, last_seq};
 use crate::sequencer::withdrawal_scenario::node::Node;
 use crate::sequencer::withdrawal_scenario::rpc::{balanceOfCall, latestSeqCall};
@@ -31,11 +34,14 @@ sol! {
 }
 
 /// The house deposits 50 USDC and a trader 100, the trader buys BTC at 100 and the mark moves to
-/// 150, and a checkpoint covering that mark reaches the vault before the node stops. Another account
+/// 150, and a checkpoint covering that mark reaches the vault before the node stops. The trader's
+/// proof from the API, at a checkpoint the vault accepted, passes the verifier's reads a wallet makes,
+/// previews its equity, and is the proof the public log gives at that seq. Another account
 /// then deposits 20, which no posted root holds. With the proofs built from the log, the exit starts
 /// once the exit period passes; the trader registers its equity at the root's mark, once; the late
 /// deposit is refunded to its payer, once; and after the claim window the trader is paid its claim,
-/// once, and the timelock releases the rest, leaving the vault empty.
+/// once, and the timelock releases the rest, leaving the vault empty. Once registered, the wallet's
+/// check of the proof still previews the registered claim.
 /// Error cases:
 /// - any node, chain, proof or balance step differs from the above
 pub(super) async fn exit_against_the_last_posted_root() -> anyhow::Result<()> {
@@ -61,12 +67,22 @@ pub(super) async fn exit_against_the_last_posted_root() -> anyhow::Result<()> {
     })
     .await
     .context("a checkpoint covering the moved mark reaching the vault")??;
+    let served = served_proof(&node, &trader).await?;
+    let previewed = wallet_check(&node.chain, trader.account, &served).await?;
+    let served_equity =
+        served.account.as_ref().and_then(|held| held.equity()).context("the served account's equity")?;
+    ensure!(
+        previewed == U256::from(served_equity.raw().max(0) / 1_000),
+        "the verifier previews {previewed} for the served proof, whose equity is {served_equity}"
+    );
     node.stop().await?;
     // Draining may post one more checkpoint; the exit proves against whichever the vault holds last.
     let posted = node.chain.read(node.chain.vault, latestSeqCall {}).await?;
     node.chain.deposit(late.address(), 20, false).await?;
 
     let log = node.dir.join("log");
+    let from_log = exit_bundle(&log, served.seq, ExitSubject::Account(trader.account))?;
+    ensure!(from_log.account.as_ref() == Some(&served), "the API's proof is not the one the public log gives");
     let bundle = exit_bundle(&log, posted, ExitSubject::Account(trader.account))?;
     let proof = bundle.account.as_ref().context("the trader's exit proof")?;
     let account = proof.account.as_ref().context("the trader's account proof")?;
@@ -88,6 +104,10 @@ pub(super) async fn exit_against_the_last_posted_root() -> anyhow::Result<()> {
         "the registered claim is not the account's equity at the root's marks"
     );
     node.chain.duplicate_reverts(register.clone()).await?;
+    let rechecked = wallet_check(&node.chain, trader.account, proof).await?;
+    ensure!(rechecked == claim, "a wallet's check once registered previews {rechecked}, the vault registered {claim}");
+    let counted = registered_claim(&node.chain, owner).await?;
+    ensure!(counted == claim, "the verifier counts {counted} of the account's claim, the vault registered {claim}");
     let refund = refundDepositCall { id: U256::from(2) }.abi_encode();
     node.chain.send(node.chain.relayer, node.chain.vault, refund.clone()).await?;
     ensure!(balance(&node, late.address()).await? == U256::from(20_000_000), "the late deposit was not refunded");
@@ -115,6 +135,25 @@ pub(super) async fn exit_against_the_last_posted_root() -> anyhow::Result<()> {
         equity
     );
     Ok(())
+}
+
+/// The trader's exit proof as the API serves it, once the vault has accepted the checkpoint it is
+/// at: the API answers at the node's newest checkpoint, which may still be on its way to the vault.
+/// Error cases:
+/// - no answer the vault has accepted arrives in time, or one does not decode
+async fn served_proof(node: &Node, trader: &User) -> anyhow::Result<ExitProof> {
+    let path = format!("/v1/accounts/{}/exit", trader.address());
+    timeout(LOADED_WAIT, async {
+        loop {
+            let proof: ExitProof = serde_json::from_value(node.client.get(&path).await?)?;
+            if accepted_root(&node.chain, proof.seq).await? != B256::ZERO {
+                return anyhow::Ok(proof);
+            }
+            sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .context("an exit proof from the API at a checkpoint the vault accepted")?
 }
 
 /// Moves the chain's clock on by `seconds` and mines a block at it.
