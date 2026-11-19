@@ -81,6 +81,9 @@ pub(crate) async fn take_with(
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let platform = sealer.platform()?;
     let dir = cfg.node.log_dir.as_path();
+    // A cut a crash interrupted is finished before the take reads the copy's tip and writes onto it: once
+    // the confirmation stops the predecessor, a marker left behind would cut the handed-over tail.
+    crate::standby::finish_cut(dir)?;
     let log_tip = manifest_tip(dir);
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
     let bound = Bound::read(assignments, &release).await?;
@@ -207,8 +210,9 @@ pub(super) async fn ask(
 
 /// Takes the whole segments the keys name (`tails`) past the copy's listed tip `log_tip` into the
 /// log in `dir`, each checked against its listing and chained to the one before, then requires the
-/// whole log to replay, authenticated against every signer the vault recorded, to the handed-over
-/// checkpoint: the confirmation ends the predecessor, so an invalid transfer must be caught here.
+/// whole log to replay, authenticated against every signer the vault recorded and every command sealed
+/// by one of them, to the handed-over checkpoint: the confirmation ends the predecessor, so an invalid
+/// transfer, or a copy whose command prefix is not the predecessor's, must be caught here.
 /// The replay counts in `metrics.full_replays`.
 /// Error cases:
 /// - a segment is missing, differs from its listing, breaks the chain, or cannot be written
@@ -233,8 +237,7 @@ pub(super) async fn take_segments(
     if tails.is_empty() {
         info!("the predecessor handed no log segments over: the restored log already reaches the head");
     }
-    let replayed = crate::sequencer::replay_path_with_attested(dir, Some(domain), signers)
-        .context("the restored log does not replay")?;
+    let replayed = crate::sequencer::replay_copy(dir, domain, signers).context("the restored log does not replay")?;
     metrics.full_replays.inc();
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq == head.seq && cp.root == head.root),

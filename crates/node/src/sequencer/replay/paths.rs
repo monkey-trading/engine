@@ -111,9 +111,29 @@ pub fn replay_path_with_attested(
     domain: Option<CheckpointDomain>,
     attested: BTreeSet<AccountId>,
 ) -> anyhow::Result<Replayed> {
+    replay_attested(path, Replay::with_attested(domain, attested.clone()), attested)
+}
+
+/// Replays a copy of another node's log, which an archive or a predecessor supplied, as
+/// `replay_path_with_attested` does in `domain`, and every command must carry a seal by one of
+/// `attested` (`Replay::copy`, and `require_attested` for the tail no checkpoint covers): a copy that
+/// dropped or replaced a seal is refused, so a copy that replays commits to its writer's cumulative
+/// command prefix.
+/// Error cases:
+/// - as `replay_path_with_attested`, or a command carries no seal by one of `attested`
+pub(crate) fn replay_copy(
+    path: &Path,
+    domain: CheckpointDomain,
+    attested: BTreeSet<AccountId>,
+) -> anyhow::Result<Replayed> {
+    replay_attested(path, Replay::copy(domain, attested.clone()), attested)
+}
+
+/// Runs `replay`, an attested replay of `attested`, over the log at `path`.
+/// Error cases:
+/// - as `replay_path_with_attested`
+fn replay_attested(path: &Path, mut replay: Replay, attested_set: BTreeSet<AccountId>) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
-    let attested_set = attested.clone();
-    let mut replay = Replay::with_attested(domain, attested);
     if found.is_dir() {
         SegmentedLog::open(path, |entry| replay.apply(&entry))?;
     } else {

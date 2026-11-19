@@ -20,10 +20,15 @@ pub(crate) struct Origin {
     /// Independently attested signers a pure audit accepts in place of one pinned authority.
     attested: Option<BTreeSet<AccountId>>,
     first_untrusted: Option<u64>,
+    /// The key that sealed the command at `first_untrusted`, if it carries a seal.
+    first_untrusted_by: Option<AccountId>,
     /// Legacy staking references were not in the SMT; checkpoint root coverage cannot attest them.
     unbound_staking: Option<u64>,
     historical_staking: Option<(u64, CheckpointDomain, AccountId)>,
     authorized_signers: BTreeSet<AccountId>,
+    /// A copy of another node's log: every command a checkpoint covers must carry a seal by an accepted
+    /// signer, as its writer wrote it (see `copy`).
+    copy: bool,
 }
 
 impl Origin {
@@ -36,6 +41,18 @@ impl Origin {
     /// authority: a command is trusted when its seal is any of them.
     pub(crate) fn with_attested(domain: Option<CheckpointDomain>, attested: BTreeSet<AccountId>) -> Self {
         Self { domain, attested: Some(attested), ..Self::default() }
+    }
+
+    /// `with_attested` in `domain`, for a copy of another node's log, which an archive or a predecessor
+    /// supplied: every command must carry a seal by one of `attested` unless it is in the copy's tail,
+    /// which no checkpoint covers. The writer seals every command, and a seal is part of the command's
+    /// identity in the cumulative command prefix, so a copy that dropped or replaced one a checkpoint
+    /// covers is refused rather than taken with another prefix than its writer's. A tail from a command
+    /// with no seal, or one by a key not accepted (`first_untrusted`), is the caller's to refuse, as a
+    /// handover and a takeover do (`require_attested`), or to cut back to the last checkpoint, as a
+    /// follower's replica does, for the stream to refill.
+    pub(crate) fn copy(domain: CheckpointDomain, attested: BTreeSet<AccountId>) -> Self {
+        Self { copy: true, ..Self::with_attested(Some(domain), attested) }
     }
 
     /// Checks a present seal before applying a command and retains every uncovered span.
@@ -53,8 +70,9 @@ impl Origin {
                 None => self.signer == Some(seal.signer) && self.domain == Some(seal.domain),
             };
         }
-        if !trusted {
-            self.first_untrusted.get_or_insert(command.sequenced.seq);
+        if !trusted && self.first_untrusted.is_none() {
+            self.first_untrusted = Some(command.sequenced.seq);
+            self.first_untrusted_by = command.seal.as_ref().map(|seal| seal.signer);
         }
         let staking_trusted = trusted
             || command
@@ -88,6 +106,7 @@ impl Origin {
     /// Advances only after every existing checkpoint authority and parent check passed.
     /// Error cases:
     /// - the checkpoint root is malformed, or its authenticated deployment conflicts
+    /// - in a copy, it covers a command sealed by no accepted signer
     pub(crate) fn checkpoint(
         &mut self,
         checkpoint: &Checkpoint,
@@ -100,6 +119,13 @@ impl Origin {
                 self.domain.is_none_or(|previous| previous == domain),
                 "command origin checkpoint deployment mismatch"
             );
+            if let Some(seq) = self.first_untrusted.filter(|_| self.copy) {
+                bail!(
+                    "the command at seq {seq} carries no seal by an accepted signer, and the checkpoint at seq {} \
+                     covers it: a copy must hold every seal its writer wrote",
+                    checkpoint.seq
+                );
+            }
             self.authorized_signers.insert(checkpoint.signer.parse()?);
             if let Some((seq, sealed_domain, signer)) = self.historical_staking.take()
                 && (sealed_domain != domain || !self.authorized_signers.contains(&signer))
@@ -107,9 +133,16 @@ impl Origin {
                 self.unbound_staking.get_or_insert(seq);
             }
             self.domain = Some(domain);
-            self.first_untrusted = None;
+            (self.first_untrusted, self.first_untrusted_by) = (None, None);
         }
         Ok(())
+    }
+
+    /// The first command since the last authenticated checkpoint that carries no seal by an accepted
+    /// signer, if any, with the key that sealed it, if one did: in a copy, where its tail that no accepted
+    /// signer vouches for starts (see `copy`).
+    pub(crate) fn first_untrusted(&self) -> Option<(u64, Option<AccountId>)> {
+        self.first_untrusted.map(|seq| (seq, self.first_untrusted_by))
     }
 
     /// Adds `signer` to the attested authority: the standby key a promotion made the vault's signer,
@@ -287,5 +320,57 @@ mod tests {
         };
         origin.checkpoint(&checkpoint, domain, true).unwrap();
         origin.require_recovery(domain, current_signer).unwrap();
+    }
+
+    /// A copy of another node's log refuses a command with no seal, or one sealed by a key it does not
+    /// accept, once a checkpoint covers it; a tail no checkpoint covers, an accepted signer's command
+    /// after it or not, is left to the caller, which `first_untrusted` names with its first sealer, and
+    /// which a handover's or a takeover's replay refuses and a follower's replica cuts back.
+    #[test]
+    fn a_copy_refuses_a_missing_or_foreign_seal_once_a_checkpoint_covers_it() {
+        let (writer, foreign) = (EnclaveKey::test_key(), EnclaveKey::generate());
+        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
+        let accepted: BTreeSet<_> = [AccountId(writer.address())].into();
+        let sealed = |origin: &Origin, seq: u64, key: Option<&EnclaveKey>| {
+            let mut entry = command(seq);
+            entry.seal = key.map(|key| key.seal_command(domain, command_link(origin.link, &entry).unwrap()));
+            entry
+        };
+        let checkpoint = Checkpoint {
+            parent: None,
+            seq: 1,
+            root: format!("0x{}", hex::encode([1; 32])),
+            signature: String::new(),
+            signer: writer.address_hex(),
+            domain: Some(domain),
+            deferred_withdrawals: false,
+        };
+        for (case, key) in [("no seal", None), ("a foreign seal", Some(&foreign))] {
+            let mut origin = Origin::copy(domain, accepted.clone());
+            origin.command(&sealed(&origin, 0, Some(&writer)), ProtocolVersion::LATEST).unwrap();
+            let second = sealed(&origin, 1, key);
+            origin
+                .command(&second, ProtocolVersion::LATEST)
+                .unwrap_or_else(|e| panic!("{case}: refused uncovered: {e:#}"));
+            let sealer = key.map(|key| AccountId(key.address()));
+            assert_eq!(origin.first_untrusted(), Some((1, sealer)), "{case}: the tail's start or its sealer");
+            // The uncovered tail opens a follower's replica, and a handover's or takeover's replay refuses it.
+            assert!(origin.require_attested(&accepted).is_err(), "{case}: an uncovered foreign tail passed");
+            let refused = origin.checkpoint(&checkpoint, domain, true).unwrap_err();
+            assert!(refused.to_string().contains("seq 1 carries no seal by an accepted signer"), "{case}: {refused:#}");
+        }
+        // A foreign seal an accepted signer's command follows is still the copy's uncovered tail.
+        let mut origin = Origin::copy(domain, accepted.clone());
+        origin.command(&sealed(&origin, 0, Some(&foreign)), ProtocolVersion::LATEST).unwrap();
+        origin.command(&sealed(&origin, 1, Some(&writer)), ProtocolVersion::LATEST).unwrap();
+        assert_eq!(origin.first_untrusted(), Some((0, Some(AccountId(foreign.address())))), "the tail's start");
+        assert!(origin.require_attested(&accepted).is_err(), "an uncovered foreign seal passed");
+        // The writer's own seals pass, covered or not.
+        let mut origin = Origin::copy(domain, accepted.clone());
+        for seq in 0..2 {
+            origin.command(&sealed(&origin, seq, Some(&writer)), ProtocolVersion::LATEST).unwrap();
+        }
+        origin.checkpoint(&checkpoint, domain, true).unwrap();
+        origin.require_attested(&accepted).unwrap();
     }
 }

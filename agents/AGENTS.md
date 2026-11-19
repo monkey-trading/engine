@@ -311,7 +311,14 @@ an index: load only the rule whose hint matches the current action.
   against the vault's finalized commitment before history writes, plus authenticated withdrawal
   authorization replay, bounded finalized claim polling, immutable signer-epoch history independent
   of approval-root history, command-origin seals checked before writable recovery
-  (`log/command_seal.rs`, `sequencer/origin.rs`), bounded FIFO reissue scheduling
+  (`log/command_seal.rs`, `sequencer/origin.rs`), a copy of another node's log (a handover's, a
+  replica's, a takeover's) refused when a command a checkpoint covers carries no seal by an accepted
+  signer (every epoch the vault recorded, the enclave `[standby]` names with rotation off, and for a
+  replica the followed enclave, the keys named since finality and admitted keys;
+  `sequencer::replay_copy`), a replica that keeps an uncovered tail with no such seal aside, pages
+  Critical `copy_tail_unaccepted` and cuts it back to its last checkpoint behind a `takeover.json`
+  marker that every reader of a copy finishes first (`standby/cut.rs`), a seal counted in the command
+  prefix as the bytes it holds, bounded FIFO reissue scheduling
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
   From #594, the boundary's log check (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):

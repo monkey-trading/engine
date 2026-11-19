@@ -66,6 +66,12 @@ impl MarkFold {
         }
     }
 
+    /// Forgets every folded mark, keeping the retentions and what is staged: a replica rebuilt from the
+    /// copy's start folds its marks again, and none of a tail it dropped.
+    pub(crate) fn restart(&mut self) {
+        (self.buckets, self.newest) = Default::default();
+    }
+
     /// Holds `staged`, the provider history a following member fetched, beside the folded marks.
     pub(crate) fn stage(&mut self, staged: Staged) {
         self.staged = staged;

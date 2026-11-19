@@ -2,10 +2,10 @@
 
 use super::*;
 
-/// Writes a one-segment log running `0..=seq`, signed by `key`, and returns its head: the
-/// commands apply to a real engine, whose state root the fixture's final checkpoint carries,
-/// signed as real checkpoints are, so the handover's replay checks pass against fixture logs as
-/// they do against real ones.
+/// Writes a one-segment log running `0..=seq`, sealed and signed by `key`, and returns its head: the
+/// commands apply to a real engine, whose state root the fixture's final checkpoint carries, each
+/// command sealed and the checkpoint signed as real ones are, so the handover's replay checks pass
+/// against fixture logs as they do against real ones.
 pub(super) fn write_log_tail(dir: &std::path::Path, seq: u64, key: &crate::tee::EnclaveKey) -> Head {
     write_log_through(dir, &[seq], key)
 }
@@ -18,6 +18,8 @@ pub(super) fn write_log_through(dir: &std::path::Path, checkpoints: &[u64], key:
     let mut text = String::new();
     let mut engine = engine_core::Engine::new();
     let (seq, mut root) = (*checkpoints.last().expect("a head"), engine.state_root());
+    let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
+    let mut link = engine_core::eip712::B256::default();
     for n in 0..=seq {
         let mut entry = CommandEntry {
             sequenced: Sequenced { seq: n, ts: 1_000 + n as i64, cmd: Command::Tick },
@@ -25,13 +27,14 @@ pub(super) fn write_log_through(dir: &std::path::Path, checkpoints: &[u64], key:
             seal: None,
         };
         entry.events = Some(engine.apply(&entry.sequenced).unwrap());
+        link = crate::log::command_seal::command_link(link, &entry).unwrap();
+        entry.seal = Some(key.seal_command(domain, link));
         text.push_str(&serde_json::to_string(&LogEntry::Command(entry)).unwrap());
         text.push('\n');
         if !checkpoints.contains(&n) {
             continue;
         }
         root = engine.state_root();
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) };
         let checkpoint: Checkpoint = serde_json::from_value(serde_json::json!({
             "seq": n,
             "root": format!("0x{}", hex::encode(root)),
@@ -40,6 +43,7 @@ pub(super) fn write_log_through(dir: &std::path::Path, checkpoints: &[u64], key:
             "domain": { "chain_id": domain.chain_id, "vault": format!("{:#x}", alloy::primitives::Address::from(domain.vault.0)) },
         }))
         .unwrap();
+        link = crate::log::command_seal::checkpoint_link(&checkpoint).unwrap();
         text.push_str(&serde_json::to_string(&LogEntry::Checkpoint(checkpoint)).unwrap());
         text.push('\n');
     }

@@ -2,6 +2,7 @@
 //! the test sets and a node that answers the request to stop sequencing.
 
 mod assignment;
+mod copies;
 mod entries;
 use entries::{checkpoint, command, publish};
 mod fold;

@@ -58,10 +58,12 @@ pub(crate) struct LiveReplay {
 impl LiveReplay {
     /// An empty replica of a log in `domain`, accepting checkpoints, typed withdrawals and command
     /// seals from the `attested` signers: the vault's recorded signers, as a follower spans every
-    /// signer epoch the log does.
+    /// signer epoch the log does. The copy is another node's log, so every command a checkpoint covers
+    /// must carry a seal by one of them (`Replay::copy`); a follower cuts back a tail no checkpoint covers
+    /// that holds another seal or none (`Follower::open_pinned`).
     pub(crate) fn new(domain: CheckpointDomain, attested: BTreeSet<AccountId>) -> Self {
         Self {
-            replay: Replay::with_attested(Some(domain), attested),
+            replay: Replay::copy(domain, attested),
             checkpoints: BTreeMap::new(),
             complete: true,
             links: VecDeque::new(),
@@ -201,6 +203,12 @@ impl LiveReplay {
     /// The seq of the last command applied.
     pub(crate) fn last_seq(&self) -> Option<u64> {
         self.replay.engine.last_seq()
+    }
+
+    /// The first command of the replica's tail that no accepted signer sealed, if any, with the key that
+    /// sealed it, if one did (`Origin::copy`).
+    pub(crate) fn unaccepted_from(&self) -> Option<(u64, Option<AccountId>)> {
+        self.replay.origin.first_untrusted()
     }
 
     /// The key that sealed the last command, if it was sealed.

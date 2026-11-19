@@ -12,7 +12,9 @@ use crate::log::{Checkpoint, CommandEntry, CommandSeal, LogEntry, SegmentedLog};
 use crate::sequencer::StreamMsg;
 use crate::standby::tests::{DOMAIN, copy_log, cut_back, ticks};
 use crate::tee::EnclaveKey;
-use crate::test_support::{log_entries, log_messages, scratch_dir};
+use crate::test_support::{
+    log_entries, log_messages, rewrite_command, rewrite_last_checkpoint_signer, scratch_dir, upper_case_seal,
+};
 
 #[tokio::test]
 async fn an_operator_that_carries_on_extends_the_copy() {
@@ -39,6 +41,38 @@ async fn an_operator_that_carries_on_extends_the_copy() {
     // The links the copy computed from its files are the ones the sequencer sealed.
     let whole = chain_of(&operator);
     assert_eq!((copied.head(), copied.link), (whole.head(), whole.link));
+}
+
+/// A copy whose last command's seal and last checkpoint's signer an archive spelt otherwise than the
+/// operator wrote them, and whose last checkpoint it left without its deployment, holds the operator's
+/// history: the stream's repeat of them confirms the copy, and the operator's later entries extend it.
+#[tokio::test]
+async fn an_operator_repeating_a_tail_the_copy_spells_otherwise_extends_the_copy() {
+    let operator = scratch_dir("chain-spelt-tail");
+    ticks(&operator, 5).await;
+    let copy = scratch_dir("chain-spelt-tail-copy");
+    copy_log(&operator, &copy);
+    let last = chain_of(&copy).resume_seq();
+    rewrite_command(&copy, last, upper_case_seal);
+    let respelt = rewrite_last_checkpoint_signer(&copy);
+    crate::test_support::drop_last_checkpoint_domain(&copy);
+    assert_ne!(log_entries(&copy), log_entries(&operator), "the copy spells nothing otherwise");
+    let mut copied = chain_of(&copy);
+    ticks(&operator, 3).await;
+
+    copied.begin();
+    let mut repeated = Vec::new();
+    for (offset, entry) in streamed(&operator, copied.resume_seq()) {
+        match copied.check(offset, &entry) {
+            Ok(Step::Repeated) => repeated.push(entry),
+            Ok(Step::Extends(link)) => copied.extend(offset, entry, link),
+            Err(rollback) => panic!("the operator's repeat of {offset} paged a rollback: {}", rollback.evidence),
+        }
+    }
+    let spelt_checkpoint = respelt.seq >= last;
+    assert!(repeated.len() > usize::from(spelt_checkpoint), "the stream repeated too little of the copy's tail");
+    assert!(copied.confirmed());
+    assert_eq!(copied.head(), chain_of(&operator).head());
 }
 
 #[tokio::test]
@@ -342,6 +376,33 @@ async fn a_checkpoint_whose_signature_recovers_to_another_enclave_is_refused() {
     let refused = copied.check(at, &entry).unwrap_err();
     assert!(refused.evidence.contains("another enclave"), "{}", refused.evidence);
     assert_eq!(copied.head(), Some(head), "the refused checkpoint left the copy as it was");
+}
+
+/// A checkpoint whose root is spelt otherwise than the writer spells it, though its signature recovers
+/// to the signer it names, is refused: replay reads the root as written, so a copy that took it would
+/// not replay.
+#[tokio::test]
+async fn a_checkpoint_whose_root_is_spelt_otherwise_is_refused() {
+    let followed = EnclaveKey::test_key();
+    let mut copied = Chain::new(DOMAIN, AccountId(followed.address()));
+    let signature = followed.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, 0, &[0xab; 32]);
+    extend(&mut copied, sealed(EnclaveKey::test_key(), 0, B256::default()));
+    let head = copied.head().unwrap();
+    for (case, root) in [("upper case", "AB".repeat(32)), ("no prefix", "ab".repeat(32))] {
+        let root = if case == "no prefix" { root } else { format!("0x{root}") };
+        let entry = LogEntry::Checkpoint(Checkpoint {
+            parent: None,
+            seq: 0,
+            root,
+            signature: signature.clone(),
+            signer: format!("0x{}", hex::encode(followed.address())),
+            domain: Some(DOMAIN),
+            deferred_withdrawals: false,
+        });
+        let refused = copied.check(offset_of(Some(head), &entry).unwrap(), &entry).unwrap_err();
+        assert!(refused.evidence.contains("is not spelt as replay reads it"), "{case}: {}", refused.evidence);
+        assert_eq!(copied.head(), Some(head), "{case}: the refused checkpoint changed the copy");
+    }
 }
 
 /// A tick command at `seq` sealed by `key` over `link`.

@@ -38,6 +38,8 @@ use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
 mod chain;
+mod cut;
+pub(crate) use cut::{cut_marked, finish as finish_cut};
 mod follow;
 use chain::{Chain, rollback_of};
 pub(crate) use follow::ReplicaRefused;
@@ -50,7 +52,7 @@ mod replica;
 pub(crate) use replica::Follower;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, SegmentedLog, truncate_to_checkpoint};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, MANIFEST, Manifest, SegmentedLog};
 use crate::node::member::turn::COMING_UP;
 use crate::telemetry::Telemetry;
 
@@ -153,7 +155,9 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 drop(writer);
                 let signers = operator::takeover_signers(cfg, standby, &chain).await;
                 let finalized = match signers {
-                    Ok(signers) => finalize(&archive, signers, &operator.origins(), dir, &takeover, copied).await,
+                    Ok(signers) => {
+                        finalize(&archive, (domain, signers), &operator.origins(), dir, &takeover, copied).await
+                    }
                     Err(e) => Err(e),
                 };
                 if let Err(e) = finalized {
@@ -253,12 +257,12 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     }
 }
 
-/// Opens the copy for appends, with `empty` taking its entries as the copy's chain, repairing an
-/// interrupted takeover first: a crash during finalization leaves a `takeover.json` marker, and
-/// re-running the truncation is idempotent, so the next start finishes the surgery before
-/// following again.
+/// Opens the copy for appends, with `empty` taking its entries as the copy's chain, finishing an
+/// interrupted cut first: a crash during a takeover's or a replica's cut leaves a `takeover.json`
+/// marker (`cut`), and re-running the truncation is idempotent, so the next start finishes the
+/// surgery before following again.
 /// Error cases:
-/// - the copy cannot be opened, or its links computed, and no takeover marker repairs it
+/// - the copy cannot be opened, or its links computed, or a marked cut cannot be finished
 fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyhow::Result<(LogWriter, Chain)> {
     open_copy_replayed(dir, segment_commands, empty, || (), |_, _| Ok(())).map(|(writer, copied, ())| (writer, copied))
 }
@@ -284,31 +288,21 @@ fn open_copy_replayed<R>(
         })?;
         anyhow::Ok((log.into_writer(segment_commands, manifest_tx)?, copied, replayed))
     };
-    match open(dir) {
-        Ok(opened) => Ok(opened),
-        Err(e) => {
-            let marker = dir.join("takeover.json");
-            let bytes = std::fs::read(&marker).map_err(|_| e)?;
-            let takeover: Takeover =
-                serde_json::from_slice(&bytes).context("parsing the interrupted takeover marker")?;
-            crate::log::truncate_to_checkpoint(dir, takeover.seq, &takeover.root)
-                .context("repairing the interrupted takeover")?;
-            std::fs::remove_file(&marker).context("removing the takeover marker")?;
-            open(dir).context("opening the repaired copy")
-        }
-    }
+    cut::finish(dir)?;
+    open(dir)
 }
 
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the
 /// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
-/// that extend `copied`, then replays the whole copy against `signers`, requires that checkpoint
-/// and truncates the copy after it, dropping the unsigned tail.
+/// that extend `copied`, then replays the whole copy in `domain` against `signers`, every command
+/// sealed by one of them, requires that checkpoint and truncates the copy after it, dropping the
+/// unsigned tail.
 /// Error cases:
 /// - the archive refresh fails hard, the copy does not replay against `signers`, or it holds no
 ///   checkpoint at the vault's latest
 async fn finalize(
     archive: &reqwest::Client,
-    signers: std::collections::BTreeSet<AccountId>,
+    (domain, signers): (CheckpointDomain, std::collections::BTreeSet<AccountId>),
     origins: &[String],
     dir: &std::path::Path,
     takeover: &Takeover,
@@ -327,9 +321,9 @@ async fn finalize(
     // The whole copy must replay before any history is dropped: archive-fetched bytes were only
     // hash-checked against the server's own manifest, and this catches a forged prefix here
     // rather than after the timelock installs this enclave. Withdrawals verify against `signers`,
-    // the keys that signed this copy's payouts (`operator::takeover_signers`).
-    crate::sequencer::replay_path_with_attested(dir, None, signers)
-        .context("the copy does not replay; refusing to truncate it")?;
+    // the keys that signed this copy's payouts (`operator::takeover_signers`), and every command must
+    // carry one's seal, so the copy's command prefix is the one the operator posted heads of.
+    crate::sequencer::replay_copy(dir, domain, signers).context("the copy does not replay; refusing to truncate it")?;
     // The resume point is the latest checkpoint in the published log that the outgoing key
     // signed and that extends the vault's latest root: the anchor itself, then every later
     // checkpoint of the copy that continues the outgoing key's signed parent chain. Checkpoints
@@ -337,17 +331,8 @@ async fn finalize(
     // node continues, and dropping them could conflict with a relay of the same signatures.
     let resume = resume_checkpoint(dir, takeover)?;
     // The marker makes the surgery resumable: a crash from here is repaired on restart.
-    let marker = dir.join("takeover.json");
-    std::fs::write(
-        &marker,
-        serde_json::to_string(&Takeover { seq: resume.0, root: resume.1.clone(), signer: takeover.signer })
-            .context("encoding the takeover marker")?,
-    )
-    .context("writing the takeover marker")?;
-    std::fs::File::open(&marker)?.sync_all().context("syncing the takeover marker")?;
-    truncate_to_checkpoint(dir, resume.0, &resume.1).context("truncating the copy at the takeover")?;
-    std::fs::remove_file(dir.join("takeover.json")).context("removing the takeover marker")?;
-    Ok(())
+    cut::cut_marked(dir, &Takeover { seq: resume.0, root: resume.1, signer: takeover.signer })
+        .context("truncating the copy at the takeover")
 }
 
 /// The latest published checkpoint the outgoing key signed that extends the vault's latest root:
@@ -362,9 +347,11 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
     SegmentedLog::open(dir, |entry| {
         if let LogEntry::Checkpoint(checkpoint) = &entry {
             let root = checkpoint.root.to_lowercase();
+            // The signer as replay reads it: a copy may spell an address in either case.
+            let by_takeover_signer = checkpoint.signer.parse::<AccountId>().ok() == Some(takeover.signer);
             match &tip {
                 None if checkpoint.seq == takeover.seq && root == takeover.root.to_lowercase() => {
-                    if checkpoint.signer != takeover.signer.to_string() {
+                    if !by_takeover_signer {
                         bail!(
                             "the anchor checkpoint at seq {} is signed by {}, not the vault's {}",
                             checkpoint.seq,
@@ -375,7 +362,7 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
                     found_anchor = true;
                     tip = Some((checkpoint.seq, root));
                 }
-                Some((seq, parent_root)) if checkpoint.signer == takeover.signer.to_string() => {
+                Some((seq, parent_root)) if by_takeover_signer => {
                     if let Some(parent) = &checkpoint.parent
                         && parent.has_checkpoint
                         && parent.seq == *seq
@@ -486,5 +473,7 @@ pub(super) fn sha256(bytes: &[u8]) -> String {
     hex::encode(sha2::Sha256::digest(bytes))
 }
 
+#[cfg(test)]
+mod copies_tests;
 #[cfg(test)]
 mod tests;

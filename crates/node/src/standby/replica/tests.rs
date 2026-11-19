@@ -318,7 +318,93 @@ async fn a_reopened_copy_takes_the_next_page_sealed_by_a_recorded_signer() {
     assert_eq!(log_entries(&dir), log_entries(&operator));
 }
 
+/// A copy cut back over commands a recorded signer other than the followed enclave sealed after its last
+/// checkpoint, as a promoted epoch's before its first checkpoint, takes them again from the followed
+/// operator's stream, at the open that cut it and at any later one: every open admits the recorded
+/// signers, as a tail does.
+#[tokio::test]
+async fn a_cut_copy_takes_the_commands_it_dropped_again_from_the_stream() {
+    let operator = scratch_dir("replica-cut-refill-operator");
+    crate::standby::tests::ticks(&operator, 10).await;
+    let uncovered = |dir: &std::path::Path| {
+        let entries = log_entries(dir);
+        let from = entries.iter().rposition(|entry| matches!(entry, LogEntry::Checkpoint(_))).unwrap();
+        let seqs = entries[from..].iter().filter_map(|entry| match entry {
+            LogEntry::Command(command) => Some(command.sequenced.seq),
+            _ => None,
+        });
+        seqs.collect::<Vec<_>>()
+    };
+    while uncovered(&operator).len() < 3 {
+        crate::test_support::drop_last_checkpoint(&operator);
+    }
+    let tail = uncovered(&operator);
+    let (promoted, forger) = (EnclaveKey::generate(), EnclaveKey::generate());
+    // Each command after a dropped checkpoint was sealed over it: the tail is sealed again, its first
+    // command by the promoted key and the rest by the followed enclave.
+    reseal(&operator, &promoted, &tail[..1]);
+    reseal(&operator, &EnclaveKey::test_key(), &tail[1..]);
+    let copy = scratch_dir("replica-cut-refill-copy");
+    crate::standby::tests::copy_log(&operator, &copy);
+    reseal(&copy, &forger, &tail[tail.len() - 1..]);
+    let recorded: std::collections::BTreeSet<_> = [signer(), AccountId(promoted.address())].into();
+    let open = || Follower::open(&copy, SEGMENT_COMMANDS, DOMAIN, signer(), recorded.clone(), None, |_| {}).unwrap();
+    for reopened in [false, true] {
+        let mut follower = open();
+        assert_eq!(follower.replica().last_seq(), Some(tail[0] - 1), "the copy was not cut back to its checkpoint");
+        refill(&mut follower, &operator, &tail, reopened);
+    }
+}
+
+/// Streams the log in `operator` to `follower` from the copy's resume point, as a follow stint's chain checks
+/// it, requiring every command of `tail` to extend the copy.
+fn refill(follower: &mut Follower, operator: &std::path::Path, tail: &[u64], reopened: bool) {
+    follower.copied.begin();
+    let (mut previous, mut extended) = (None, Vec::new());
+    for entry in log_entries(operator) {
+        let offset = offset_of(previous, &entry).unwrap();
+        previous = Some(offset);
+        if offset.seq < follower.copied.resume_seq() {
+            continue;
+        }
+        let seq = offset.seq;
+        match follower.copied.check(offset, &entry) {
+            Ok(Step::Extends(link)) => {
+                extended.push(seq);
+                follower.copied.extend(offset, entry, link);
+            }
+            Ok(_) => {}
+            Err(refused) => panic!("reopened {reopened}: the stream's refill at seq {seq} was refused: {refused:?}"),
+        }
+    }
+    assert!(
+        tail.iter().all(|seq| extended.contains(seq)),
+        "reopened {reopened}: the refill took {extended:?} of {tail:?}"
+    );
+}
+
 // ── Helpers ──
+
+/// Seals the commands at `seqs` of the log in `dir` with `key`, in order, each over the link before it.
+fn reseal(dir: &std::path::Path, key: &EnclaveKey, seqs: &[u64]) {
+    for seq in seqs {
+        let mut link = B256::default();
+        for entry in log_entries(dir) {
+            match entry {
+                LogEntry::Command(command) if command.sequenced.seq == *seq => break,
+                LogEntry::Command(command) => link = crate::log::command_seal::command_link(link, &command).unwrap(),
+                LogEntry::Checkpoint(checkpoint) => {
+                    link = crate::log::command_seal::checkpoint_link(&checkpoint).unwrap()
+                }
+                LogEntry::Withdrawal(_) => {}
+            }
+        }
+        crate::test_support::rewrite_command(dir, *seq, |command| {
+            command.seal =
+                Some(key.seal_command(DOMAIN, crate::log::command_seal::command_link(link, command).unwrap()));
+        });
+    }
+}
 
 /// The test sequencer's enclave, which seals and signs its log.
 fn signer() -> AccountId {

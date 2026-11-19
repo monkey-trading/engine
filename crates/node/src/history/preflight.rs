@@ -133,7 +133,8 @@ impl HistoryPlan {
         if let (LogEntry::Command(command), Ok(Some(last))) = (entry, &self.progress)
             && command.sequenced.seq == last.sequenced.seq
         {
-            self.found = Some(command == last);
+            // The same command however its seal is spelt, as the command prefix reads it.
+            self.found = Some(crate::log::same_command(command, last));
         }
     }
 
