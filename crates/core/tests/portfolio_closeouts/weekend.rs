@@ -171,3 +171,62 @@ fn a_hedged_group_with_both_markets_on_a_weekend_margin_closes_whole_at_the_gaps
     }
     assert!(h.engine.accounts()[&a.account].positions.is_empty());
 }
+
+#[test]
+fn a_groups_later_member_is_scored_at_the_nav_the_gap_starts_earlier_fills_leave() {
+    // Oil and gold are one group, both with a weekend margin, and Nikkei is alone: all three gaps start at
+    // Friday's close. BTC's rise puts the house about $50 behind on the day, so level 2, whose loss
+    // threshold is zero, is what a close-out pays at the NAV now, in both members' markets (each stored at
+    // level 0). Closing gold gives the house its spread and puts it ahead, so oil's close pays level 0:
+    // scored at the NAV gold's fill leaves, the pair restores the requirement and closes, gold before oil.
+    // Scored at the NAV before the step, oil's close would pay level 2, the pair would not restore it, and
+    // Nikkei, which does, would close alone.
+    let mut h = commodity_gap_book("16600");
+    let events = at_the_gap(&mut h);
+    let closed: Vec<MarketId> =
+        fills(&events).into_iter().filter(|fill| fill.liquidation).map(|fill| fill.market).collect();
+    assert_eq!(closed, vec![GOLD, OIL], "{events:?}");
+    let spreads: Vec<i64> = fills(&events).iter().map(|fill| fill.spread_bps).collect();
+    assert!(spreads[0] > spreads[1], "gold pays level 2, oil level 0: {spreads:?}");
+}
+
+/// A holder of the oil and gold group, $200k each way, and $1m of Nikkei, on `funds`, and a second holder
+/// whose BTC the house is behind on by about $50 once oil, gold and Nikkei have gone stale, 2 s before
+/// Friday's close.
+fn commodity_gap_book(funds: &str) -> Harness {
+    use common::USDJPY;
+    use common::house_loss::{level_two, loss};
+    use common::portfolio::{group, member, params_with};
+    use common::weekend::{NIKKEI, genesis_with_params, globex};
+    use engine_core::params::{StressLevel, StressTrigger};
+    let grid =
+        PortfolioGrid { groups: vec![group("commodities", 100, vec![member(OIL, "1", 20), member(GOLD, "0.9", 20)])] };
+    let mut params = params_with(grid);
+    let trigger = Some(StressTrigger { house_loss: Some(Fixed::ZERO), ..StressTrigger::default() });
+    params.stress_levels.push(StressLevel { trigger, ..level_two() });
+    let mut h = genesis_with_params(V81, globex(vec![]), OIL_WEEKEND_BPS, OIL_WEEKEND_BPS, params);
+    let a = client(&mut h, 1, funds);
+    let b = client(&mut h, 2, "1000000");
+    for (market, price) in [(OIL, "70"), (GOLD, "2000"), (USDJPY, "150"), (NIKKEI, "38000"), (BTC, "100000")] {
+        h.price(market, price);
+    }
+    only_fill(&trade(&mut h, &a, OIL, Side::Buy, "2850", "70"));
+    only_fill(&trade(&mut h, &a, GOLD, Side::Sell, "100", "2000"));
+    only_fill(&trade(&mut h, &a, NIKKEI, Side::Buy, "4000", "38000"));
+    only_fill(&trade(&mut h, &b, BTC, Side::Buy, "5", "100000"));
+    h.advance_to(friday_close() - 5_000);
+    for (market, price) in [(OIL, "70"), (GOLD, "2000"), (USDJPY, "150"), (NIKKEI, "38000")] {
+        h.price(market, price);
+    }
+    let behind = loss(&h);
+    h.advance_to(friday_close() - 2_000);
+    let btc = f("100000") + (f("50") - behind).div_int(5);
+    h.price(BTC, &btc.to_string());
+    h
+}
+
+/// The first command after Friday's close, which starts every gap.
+fn at_the_gap(h: &mut Harness) -> Vec<Event> {
+    h.advance_to(friday_close() + 1_000);
+    h.cmd(Command::Tick)
+}
