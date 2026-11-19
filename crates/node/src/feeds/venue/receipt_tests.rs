@@ -2,31 +2,39 @@
 //! carried to the sequencer with it; a repeat sent to refresh a held quote is timed from its send.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use engine_core::types::Millis;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use crate::clock::now_ms;
 use crate::feeds::venue::quiet_tests::{SYMBOL, at, feed_with_rules};
 use crate::feeds::venue::quotes::Pending;
 use crate::sequencer::Request;
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_sequenced_quote_carries_its_books_receipt_and_a_refreshed_repeat_its_send() {
     let (mut feed, mut rx) = feed_with_rules(true);
-    // A repeat refreshes 20 ms after the quote it repeats, so the test waits briefly.
+    // The wall clock `emit` reads moves with the paused monotonic clock, so no wait is real and no
+    // pause of the test thread moves either.
+    let (wall, started) = (now_ms(), Instant::now());
+    feed.wall = Arc::new(move || wall + started.elapsed().as_millis() as Millis);
+    // A repeat refreshes 20 ms after the quote it repeats.
     feed.max_age.insert(1, 40);
     let mut buffered = BTreeMap::from([(SYMBOL.to_owned(), Pending::default())]);
     // A new mid whose book was read 7 ms ago goes with that receipt.
     let read = std::time::Instant::now() - Duration::from_millis(7);
-    pending(&mut buffered).add(at(100, now_ms() - 10), now_ms()).unwrap();
+    pending(&mut buffered).add(at(100, wall - 10), wall).unwrap();
     pending(&mut buffered).note_received(read);
     assert_eq!(feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap(), None);
     assert_eq!(received(&mut rx), Some(read));
-    // A repeat of that mid waits for its refresh, and goes timed from its send, not its read.
-    pending(&mut buffered).add(at(100, now_ms()), now_ms()).unwrap();
+    // A repeat of that mid waits for its refresh, due 10 ms on, and goes timed from its send, not its read.
+    pending(&mut buffered).add(at(100, wall), wall).unwrap();
     pending(&mut buffered).note_received(read);
     let wake = feed.emit(&mut buffered, &mut BTreeMap::new()).await.unwrap().expect("a timer for the repeat");
+    assert_eq!(wake - Instant::now(), Duration::from_millis(10), "the refresh falls due 20 ms after the first quote");
     assert_eq!(received(&mut rx), None, "the repeat waits");
     tokio::time::sleep_until(wake).await;
     let released = std::time::Instant::now();
