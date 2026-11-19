@@ -229,13 +229,24 @@ async fn a_release_between_batches_counts_as_the_threads_busy_time() {
             assert!(first.is_pending(), "{label}: the sequencer waits with the sync held");
             permits.send(Verdict::Pass).unwrap();
             let done = shared.done.lock().unwrap();
-            let (_done, waited) = shared.ready.wait_timeout_while(done, SYNC_WAIT, |done| done.is_empty()).unwrap();
+            let (done, waited) = shared.ready.wait_timeout_while(done, SYNC_WAIT, |done| done.is_empty()).unwrap();
+            drop(done);
             assert!(!waited.timed_out(), "{label}: the sync thread reports the sync");
+            // The sync thread wakes the wait just after it reports, so a request sent at once could be
+            // taken first: the wait is polled, with no request, until it has taken the release.
+            let released = tokio::time::Instant::now() + SYNC_WAIT;
+            while !shared.done.lock().unwrap().is_empty() {
+                assert!(tokio::time::Instant::now() < released, "{label}: the wait takes the release");
+                let polled = std::future::poll_fn(|cx| std::task::Poll::Ready(next.as_mut().poll(cx))).await;
+                assert!(polled.is_pending(), "{label}: nothing is taken with no request");
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
         }
         tx.send(query()).await.unwrap();
         let taken = timeout(SYNC_WAIT, next).await.expect("the sync finished");
         assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
-        assert!((busy.get() - spent - 0.007).abs() < 1e-9, "{label}: the release counts as busy time");
+        let counted = busy.get() - spent;
+        assert!((counted - 0.007).abs() < 1e-9, "{label}: the release counts as busy time, not {counted} s");
     }
 }
 

@@ -437,6 +437,8 @@ mod tests {
         let late = behind.subscribers[1].clone();
         let drained = Instant::now() + Duration::from_millis(500);
         let catching = tokio::spawn(async move { behind.await_streams(ended, drained).await });
+        // The wait has looked once, with two subscribers behind, before the late one catches up.
+        tokio::time::sleep(Duration::from_millis(50)).await;
         late.lock().unwrap().newest_stamp = Some(ended + 5);
         let left = tokio::time::timeout(Duration::from_secs(10), catching).await.expect("in time").expect("the task");
         assert_eq!(left, 1, "the subscriber that took a later command catches up; the one at the end does not");
