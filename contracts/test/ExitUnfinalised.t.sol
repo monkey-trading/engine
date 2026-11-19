@@ -366,7 +366,10 @@ contract ExitUnfinalisedTest is ExitTest {
         forged.amount += 1;
         vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
         verifier.previewClaim(root, alice, a, positions, markets, _one(forged));
-        forged = _proven(credit, CREDIT);
+        // `_proven` hands back the same struct, so the amount is put back before the sibling is changed.
+        forged.amount -= 1;
+        forged = _proven(forged, CREDIT);
+        assertEq(verifier.previewClaim(root, alice, a, positions, markets, _one(forged)), 60e6);
         forged.siblings[0] = bytes32(uint256(forged.siblings[0]) ^ 1);
         vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
         verifier.previewClaim(root, alice, a, positions, markets, _one(forged));

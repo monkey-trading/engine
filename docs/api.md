@@ -1193,7 +1193,9 @@ state root of the latest checkpoint:
 | `unfinalised_credits` | The account's credited deposits that were not yet final, in increasing deposit id. |
 
 A wallet checks the proofs before keeping them. It first checks that the vault's `checkpointRoots`
-holds the proof's `root` at its `seq`. Then it checks them with the vault's `ExitVerifier`:
+holds the proof's `root` at its `seq`. While it holds no root there, the checkpoint is still on its way
+to the vault, so the wallet keeps its last checked proof and asks again later. Then it checks the
+proofs with the vault's `ExitVerifier`:
 
 - `previewClaim` values what the account's equity and its matched credits register, without
   registering anything, before the exit and during it.

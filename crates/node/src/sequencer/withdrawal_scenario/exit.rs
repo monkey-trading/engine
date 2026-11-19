@@ -104,11 +104,10 @@ pub(super) async fn exit_against_the_last_posted_root() -> anyhow::Result<()> {
         "the registered claim is not the account's equity at the root's marks"
     );
     node.chain.duplicate_reverts(register.clone()).await?;
-    ensure!(
-        wallet_check(&node.chain, trader.account, proof).await? == claim
-            && registered_claim(&node.chain, owner).await? == claim,
-        "a wallet's check of its proof, once registered, does not preview the registered claim"
-    );
+    let rechecked = wallet_check(&node.chain, trader.account, proof).await?;
+    ensure!(rechecked == claim, "a wallet's check once registered previews {rechecked}, the vault registered {claim}");
+    let counted = registered_claim(&node.chain, owner).await?;
+    ensure!(counted == claim, "the verifier counts {counted} of the account's claim, the vault registered {claim}");
     let refund = refundDepositCall { id: U256::from(2) }.abi_encode();
     node.chain.send(node.chain.relayer, node.chain.vault, refund.clone()).await?;
     ensure!(balance(&node, late.address()).await? == U256::from(20_000_000), "the late deposit was not refunded");

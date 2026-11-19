@@ -198,12 +198,9 @@ contract ExitVerifier {
         for (uint256 i; i < credits.length; ++i) {
             ReceiptLeaf calldata credit = credits[i];
             if (i > 0 && credit.depositId <= credits[i - 1].depositId) revert InvalidAccountProof();
-            if (credit.account != account || !_provesReceipt(root, credit, UNFINALISED_CREDIT_LEAF)) {
-                revert InvalidAccountProof();
-            }
-            if (_recorded(credit)) equity += credit.amount;
+            equity += _creditPrincipal(root, account, credit);
         }
-        return equity > 0 ? uint256(equity / USDC_UNIT) : 0;
+        return _usdcClaim(equity);
     }
 
     /// @notice Counts `credits`, unfinalised credit leaves of the registered `account` at `root`, each
@@ -226,11 +223,8 @@ contract ExitVerifier {
         for (uint256 i; i < credits.length; ++i) {
             ReceiptLeaf calldata credit = credits[i];
             if (creditCounted[credit.depositId]) continue;
-            if (credit.account != account || !_provesReceipt(root, credit, UNFINALISED_CREDIT_LEAF)) {
-                revert InvalidAccountProof();
-            }
+            held += _creditPrincipal(root, account, credit);
             creditCounted[credit.depositId] = true;
-            if (_recorded(credit)) held += credit.amount;
         }
         return _claim(account, held);
     }
@@ -318,9 +312,28 @@ contract ExitVerifier {
     function _claim(address account, int256 added) private returns (uint256 grown) {
         int256 equity = exitEquity[account] + added;
         exitEquity[account] = equity;
-        uint256 total = equity > 0 ? uint256(equity / USDC_UNIT) : 0;
+        uint256 total = _usdcClaim(equity);
         grown = total - exitClaimed[account];
         exitClaimed[account] = total;
+    }
+
+    /// @dev The USDC base units `equity` raw units come to as a claim: floored at zero and rounded down.
+    function _usdcClaim(int256 equity) private pure returns (uint256) {
+        return equity > 0 ? uint256(equity / USDC_UNIT) : 0;
+    }
+
+    /// @dev The principal `credit`, an unfinalised credit leaf of `account` at `root`, adds to its
+    /// equity: its amount where the vault's records match its deposit, and nothing where they do not.
+    /// Reverts with `InvalidAccountProof` when it is another account's or does not prove.
+    function _creditPrincipal(bytes32 root, address account, ReceiptLeaf calldata credit)
+        private
+        view
+        returns (int256)
+    {
+        if (credit.account != account || !_provesReceipt(root, credit, UNFINALISED_CREDIT_LEAF)) {
+            revert InvalidAccountProof();
+        }
+        return _recorded(credit) ? int256(credit.amount) : int256(0);
     }
 
     /// @dev Whether `leaf` proves against `root` under the leaf kind `kind`, keyed by its reference.
