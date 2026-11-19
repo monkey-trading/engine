@@ -205,6 +205,8 @@ struct VenueFeed {
     /// The books a ping's answer may re-date (see `standing`).
     standing: StandingBooks,
     report: status::Report,
+    /// The wall clock `emit` judges a quote's age by, in milliseconds: the host's, but for a test's.
+    wall: Arc<dyn Fn() -> Millis + Send + Sync>,
 }
 
 impl VenueFeed {
@@ -256,6 +258,7 @@ impl VenueFeed {
             delayed: false,
             standing: StandingBooks::default(),
             report: status::Report::default(),
+            wall: Arc::new(now_ms),
         }
     }
 
@@ -453,16 +456,6 @@ impl VenueFeed {
             return schedule.is_open(first) && schedule.is_open(last);
         }
         schedule.open_throughout(first, last)
-    }
-
-    /// Every symbol held back from the engine: unlisted, unnamed, or idle.
-    fn held(&self) -> BTreeSet<String> {
-        self.held_back.values().flatten().chain(&self.idle).cloned().collect()
-    }
-
-    /// Whether `symbol` is held back from the engine (see `held`).
-    fn is_held(&self, symbol: &str) -> bool {
-        self.idle.contains(symbol) || self.held_back.values().any(|held| held.contains(symbol))
     }
 
     /// Whether any symbol should be quoting at host time `now`: one the engine takes, whose market

@@ -2,7 +2,7 @@
 //! the emit timer that releases what the budget held back and refreshes a quote whose mid has not
 //! moved.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -13,7 +13,6 @@ use tracing::debug;
 use engine_core::command::Command;
 use engine_core::types::Millis;
 
-use crate::clock::now_ms;
 use crate::feeds::venue::quotes::{Verdict, record, refresh_after, verdict};
 use crate::feeds::venue::{Pending, VenueFeed};
 use crate::sequencer::Request;
@@ -52,7 +51,7 @@ impl VenueFeed {
         buffered: &mut BTreeMap<String, Pending>,
         spent: &mut BTreeMap<String, Instant>,
     ) -> anyhow::Result<Option<Instant>> {
-        let now = now_ms();
+        let now = (self.wall)();
         let interval = self.timing.interval;
         let mut wake: Option<Instant> = None;
         for (symbol, quotes) in buffered.iter_mut() {
@@ -149,6 +148,16 @@ impl VenueFeed {
 }
 
 impl VenueFeed {
+    /// Every symbol held back from the engine: unlisted, unnamed, or idle.
+    pub(super) fn held(&self) -> BTreeSet<String> {
+        self.held_back.values().flatten().chain(&self.idle).cloned().collect()
+    }
+
+    /// Whether `symbol` is held back from the engine (see `held`).
+    pub(super) fn is_held(&self, symbol: &str) -> bool {
+        self.idle.contains(symbol) || self.held_back.values().any(|held| held.contains(symbol))
+    }
+
     /// When the bound on the age of `symbol`'s quote stamped `ts` runs out, read without consuming
     /// it (see `delay`), if one is noted.
     fn peek_not_after(&self, symbol: &str, ts: Millis) -> Option<std::time::Instant> {
