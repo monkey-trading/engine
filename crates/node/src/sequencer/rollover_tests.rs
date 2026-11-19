@@ -21,7 +21,7 @@ use crate::history::authenticated::Index;
 use crate::history::derived::{DerivedRows, Deriver, RowsStore};
 use crate::history::{Page, PageQuery};
 use crate::log::{CheckpointDomain, CommandEntry, Manifest};
-use crate::sequencer::history_rebuild::rebuild_history_prefix;
+use crate::sequencer::history_rebuild::{rebuild_history_prefix, rebuild_history_view};
 use crate::sequencer::margin_tests::{market_order, prices, sequenced};
 use crate::sequencer::pipeline::{BATCH_CHARGE, MAX_IN_FLIGHT_BYTES};
 use crate::sequencer::replay::LiveReplay;
@@ -244,8 +244,30 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     let replayed = crate::sequencer::replay(&log_entries(&rig.dir)).unwrap();
     let tip = (at, replayed.engine.now(), replayed.command_prefix);
     let (domain, signer) = (CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) }, rig.signer());
-    rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, &mut index, &AtomicBool::new(false)).unwrap();
+    let rows = RowsStore::new(&rebuilt, RETENTION.as_millis() as i64);
+    rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, &rows, &mut index, &AtomicBool::new(false)).unwrap();
     assert_eq!(listed(index.page(query()).unwrap()), expected, "rebuilt");
+    // Each rebuild writes the rollover's rows file, which the financing read proves its rows from.
+    let proves = |rows: &RowsStore| {
+        let entries = log_entries(&rig.dir);
+        let derived = rows.derived(&command_at(&entries, at)).unwrap().expect("a rows file");
+        let [aggregate] = &derived.aggregates[..] else { panic!("one rollover") };
+        ChargesTree::new(derived.rows_of(aggregate)).root() == aggregate.root
+    };
+    assert!(proves(&rows), "the prefix rebuild stored the rows");
+    let strict = scratch_dir("rollover-history-strict");
+    std::fs::create_dir_all(&strict).unwrap();
+    let mut index = Index::empty(
+        Store::create(strict.join("history.sqlite")).unwrap(),
+        [0x34; 32],
+        i64::try_from(RETENTION.as_millis()).unwrap(),
+    )
+    .unwrap();
+    let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
+    log_entries(&rig.dir).iter().for_each(|entry| fingerprint.observe(entry).unwrap());
+    let (view, rows) = (published_manifest(&rig.dir).borrow().clone(), RowsStore::new(&strict, 1_000_000));
+    rebuild_history_view(&rig.dir, view, &fingerprint.finish(), domain, Some(signer), &rows, &mut index).unwrap();
+    assert!(proves(&rows), "the strict rebuild stored the rows");
 }
 
 /// A rotation member's replica writes each rollover's rows to the history's store as it applies them, so its

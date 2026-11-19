@@ -5,7 +5,7 @@
 //! stamp, its row count and its rows. The host holds the files, so a reader takes a file's rows only once
 //! they give the aggregates the log holds for the command (`Derived::checked`). The files sit in
 //! `<history.dir>/financing/`, about 18 MB a rollover at 440k positions. A rebuild of an authenticated
-//! history generation takes its rows from its own replay and leaves the files as they are.
+//! history generation writes the rows of its own replay (`keep`), which rewrites a damaged file.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -17,6 +17,7 @@ use engine_core::Fixed;
 use engine_core::financing::FinancingRow;
 use engine_core::types::{AccountId, Millis};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tracing::warn;
 
 use crate::history::derived::{Derived, aggregates};
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset};
@@ -60,6 +61,17 @@ impl RowsStore {
         self.write(seq, ts, rows, true)
     }
 
+    /// Writes the rows a replay derived for the command at `seq` stamped `ts`, as the history's rebuilds
+    /// and a replica's replay do, leaving a file that already holds them. A failure is a Warning and
+    /// leaves the rows to the next replay.
+    pub(crate) fn keep(&self, seq: u64, ts: Millis, rows: &[FinancingRow]) {
+        if !self.holds(seq, ts, rows)
+            && let Err(e) = self.record_unsynced(seq, ts, rows)
+        {
+            warn!(alert = "financing_rows_unstored", seq, "the financing read cannot prove these rows: {e:#}");
+        }
+    }
+
     /// `record`, without syncing the file or its directory: for rows a crash may lose, because the replay
     /// that derived them runs again and `holds` finds the file missing or short. A file the crash tore is
     /// rejected on read, as the host's changes are.
@@ -69,6 +81,10 @@ impl RowsStore {
 
     fn write(&self, seq: u64, ts: Millis, rows: &[FinancingRow], sync: bool) -> anyhow::Result<()> {
         fs::create_dir_all(&self.dir).with_context(|| format!("creating {}", self.dir.display()))?;
+        // The history, a repair's rebuild and a replica each hold a store on this directory, and a write's
+        // prune removes partial files, so one writes at a time.
+        let guard = File::create(self.dir.join(".lock")).with_context(|| format!("locking {}", self.dir.display()))?;
+        guard.lock().with_context(|| format!("locking {}", self.dir.display()))?;
         let mut bytes = Vec::with_capacity(HEADER + ROW * rows.len());
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&ts.to_be_bytes());
@@ -132,11 +148,12 @@ impl RowsStore {
             return Ok(Some(derived.clone()));
         }
         // A command with no file, as most are, costs no read of the log.
-        if !self.path(seq).try_exists()? {
+        if !self.path(seq).try_exists().with_context(|| format!("looking for {}", self.path(seq).display()))? {
             return Ok(None);
         }
-        let mut reader = LogReader::open(dir, Offset::start_of(seq), manifest)?;
-        while let Some((_, entry)) = reader.next_entry()? {
+        let context = || format!("reading the log at seq {seq} for its rows file");
+        let mut reader = LogReader::open(dir, Offset::start_of(seq), manifest).with_context(context)?;
+        while let Some((_, entry)) = reader.next_entry().with_context(context)? {
             let LogEntry::Command(command) = entry else { continue };
             ensure!(command.sequenced.seq == seq, "the log reads seq {} at {seq}", command.sequenced.seq);
             let derived = self.derived(&command)?;
@@ -161,7 +178,8 @@ impl RowsStore {
         };
         let len = HEADER + ROW * expected;
         // Bounded by the logged count before a byte is read, so a host's file cannot size the read.
-        ensure!(file.metadata()?.len() == len as u64, "{} is not {expected} rows long", path.display());
+        let size = file.metadata().with_context(|| format!("reading the size of {}", path.display()))?.len();
+        ensure!(size == len as u64, "{} is not {expected} rows long", path.display());
         let mut bytes = vec![0; len];
         file.read_exact(&mut bytes).with_context(|| format!("reading {}", path.display()))?;
         ensure!(&bytes[..8] == MAGIC, "{} is not a rows file", path.display());

@@ -4,7 +4,7 @@ use anyhow::{Result, ensure};
 use engine_core::types::{AccountId, Millis};
 
 use crate::history::authenticated::Index;
-use crate::history::derived::Taken;
+use crate::history::derived::{RowsStore, Taken};
 use crate::log::{CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::Replay;
@@ -49,7 +49,8 @@ impl ReplayedLog {
     }
 }
 
-/// Uses the first pass's actual byte commitments, never a newly loaded unsigned manifest.
+/// Uses the first pass's actual byte commitments, never a newly loaded unsigned manifest, and writes each
+/// command's derived rows to `rows`.
 /// Error cases:
 /// - checked rereading, strict replay, exact history updates or full-prefix comparison fails
 pub(crate) fn rebuild_history_view(
@@ -58,6 +59,7 @@ pub(crate) fn rebuild_history_view(
     expected: &crate::history::rebuild::ReplayFingerprint,
     domain: CheckpointDomain,
     signer: Option<AccountId>,
+    rows: &RowsStore,
     index: &mut Index,
 ) -> Result<()> {
     let mut reader =
@@ -70,6 +72,9 @@ pub(crate) fn rebuild_history_view(
         fingerprint.observe(&entry)?;
         if let LogEntry::Command(command) = entry {
             let derived = replay.derived_at(command.sequenced.seq);
+            if let Some(derived) = &derived {
+                rows.keep(command.sequenced.seq, command.sequenced.ts, derived);
+            }
             batch.push(Taken { command, derived });
             if batch.len() == REBUILD_BATCH {
                 index.ingest_taken(&batch)?;
@@ -81,7 +86,8 @@ pub(crate) fn rebuild_history_view(
     expected.verify(&fingerprint.finish())
 }
 
-/// Rebuilds only into a fresh unpublished generation, never from the damaged SQL rows.
+/// Rebuilds only into a fresh unpublished generation, never from the damaged SQL rows, and writes each
+/// command's derived rows to `rows`.
 /// Error cases:
 /// - strict replay, source IO, a verified history update or the exact expected prefix check fails
 pub(crate) fn rebuild_history_prefix(
@@ -89,6 +95,7 @@ pub(crate) fn rebuild_history_prefix(
     domain: CheckpointDomain,
     signer: Option<AccountId>,
     expected: (u64, Millis, [u8; 32]),
+    rows: &RowsStore,
     index: &mut Index,
     stopped: &AtomicBool,
 ) -> Result<()> {
@@ -102,7 +109,11 @@ pub(crate) fn rebuild_history_prefix(
         if let LogEntry::Command(command) = entry {
             let seq = command.sequenced.seq;
             ensure!(seq <= expected.0, "repair source skipped its required command");
-            batch.push(Taken { derived: replay.derived_at(seq), command });
+            let derived = replay.derived_at(seq);
+            if let Some(derived) = &derived {
+                rows.keep(seq, command.sequenced.ts, derived);
+            }
+            batch.push(Taken { derived, command });
             if seq == expected.0 {
                 index.ingest_taken(&batch)?;
                 reached = true;

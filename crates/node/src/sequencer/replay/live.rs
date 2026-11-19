@@ -10,7 +10,6 @@ use std::sync::Arc;
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
-use tracing::warn;
 
 use crate::checkpoints::Work;
 use crate::history::derived::RowsStore;
@@ -142,14 +141,8 @@ impl LiveReplay {
             LogEntry::Command(command) => {
                 if let Some(store) = &self.rows
                     && let Some(rows) = self.replay.derived_at(command.sequenced.seq)
-                    && !store.holds(command.sequenced.seq, command.sequenced.ts, &rows)
-                    && let Err(e) = store.record_unsynced(command.sequenced.seq, command.sequenced.ts, &rows)
                 {
-                    warn!(
-                        alert = "financing_rows_unstored",
-                        seq = command.sequenced.seq,
-                        "the financing read cannot prove these rows: {e:#}"
-                    );
+                    store.keep(command.sequenced.seq, command.sequenced.ts, &rows);
                 }
                 let link = Link {
                     seq: command.sequenced.seq,

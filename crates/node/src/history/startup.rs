@@ -11,6 +11,7 @@ use tracing::warn;
 use crate::authenticated::Store;
 use crate::config::{HistorySection, SnapshotSection};
 use crate::history::authenticated::{Head, Index};
+use crate::history::derived::RowsStore;
 use crate::history::rebuild::ReplayFingerprint;
 use crate::history::runtime::{self, Replacement};
 use crate::log::CheckpointDomain;
@@ -127,6 +128,7 @@ impl Plan {
                     &prefix,
                     self.domain,
                     self.signer,
+                    &RowsStore::new(&self.history.dir, self.history.retention_ms()?),
                     &mut index,
                 )?;
                 log.verify_history_tip(&index.head())?;
@@ -189,8 +191,9 @@ impl Plan {
         let domain = self.domain;
         let signer = self.signer;
         let repair_lifecycle = lifecycle.clone();
+        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?);
         let rebuild: runtime::Rebuild = Box::new(move |expected, stopped| {
-            rebuild_generation(&repair_lifecycle, &log_dir, domain, signer, expected, stopped)
+            rebuild_generation(&repair_lifecycle, &log_dir, domain, signer, &rows, expected, stopped)
         });
         let config = runtime::Config { snapshots: producer, domain, key, lifecycle, catalog_store: catalog_id };
         let runtime = runtime::Runtime::new(current, pins, config, rebuild)?;
@@ -206,6 +209,7 @@ fn rebuild_generation(
     log_dir: &std::path::Path,
     domain: CheckpointDomain,
     signer: Option<engine_core::types::AccountId>,
+    rows: &RowsStore,
     expected: &Head,
     stopped: &AtomicBool,
 ) -> Result<Replacement> {
@@ -224,6 +228,7 @@ fn rebuild_generation(
             domain,
             signer,
             (seq, expected.last_ts().context("complete repair head lacks time")?, expected.command_prefix),
+            rows,
             &mut index,
             stopped,
         )?;
