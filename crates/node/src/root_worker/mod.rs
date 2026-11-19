@@ -68,6 +68,9 @@ pub(crate) enum Work {
     /// Panics on the worker's thread, for a test of the sequencer stopping with it.
     #[cfg(test)]
     Panic,
+    /// Holds the worker's thread until the sender sends or drops, for a test of what waits on it.
+    #[cfg(test)]
+    Hold(Receiver<()>),
 }
 
 /// A proof read against the newest released version, which the sequencer forwards from the API.
@@ -268,6 +271,17 @@ impl RootWorker {
     pub(crate) fn panic_switch(&self) -> impl FnOnce() + Send + 'static {
         let tx = self.tx.clone();
         move || _ = tx.send(Message::Work(Work::Panic))
+    }
+
+    /// Holds the worker's thread once it reaches this, with everything sent after it waiting, until the
+    /// returned sender sends or drops, for a test of what waits on the worker.
+    /// Error cases:
+    /// - the worker has stopped
+    #[cfg(test)]
+    pub(crate) fn hold(&self) -> anyhow::Result<Sender<()>> {
+        let (release, held) = channel();
+        self.send(Work::Hold(held))?;
+        Ok(release)
     }
 
     /// Units of leaf writes sent that the worker has yet to finish.

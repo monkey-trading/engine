@@ -12,6 +12,9 @@ use crate::log::{CheckpointDomain, CheckpointParent};
 use crate::sequencer::payouts::BACKLOG_WINDOW;
 use crate::test_support::{TRADER, deposit, withdraw};
 
+/// How long the settle must still be waiting while the worker holds the proof it waits for.
+const HELD: Duration = Duration::from_millis(500);
+
 /// Custody's finalized view: the checkpoint at `checkpoint` posted, signed by `signer`, and the
 /// trader's `approvals`, each with its seq and whether it was claimed.
 fn evidence(signer: AccountId, checkpoint: &Checkpoint, approvals: &[(u64, u64, bool)]) -> LifecycleEvidence {
@@ -133,8 +136,10 @@ fn a_payout_release_waits_only_for_proofs_at_checkpoints_the_vault_has_posted() 
     node.seq.flush().expect("the log flushes");
     node.seq.start_root_worker().expect("the worker takes the tree");
     let posted = node.seq.last_seq().expect("the approval is checkpointed");
-    // A proof asked at the posted checkpoint is waited for, and one at a later checkpoint the worker
-    // has yet to answer, as behind a rollover's writes, is not.
+    // A proof asked at the posted checkpoint is waited for, held back on the worker until the settle has
+    // started, and one at a later checkpoint the worker has yet to answer, as behind a rollover's
+    // writes, is not.
+    let release = node.seq.roots.worker.hold().expect("the worker takes the hold");
     node.seq.prove_payouts(posted, vec![(TRADER, 1)]).expect("the worker takes the ask");
     node.seq.roots.proving.insert(posted + 1, 1);
     let (settled, done) = std::sync::mpsc::channel();
@@ -143,6 +148,9 @@ fn a_payout_release_waits_only_for_proofs_at_checkpoints_the_vault_has_posted() 
         _ = settled.send(());
         (node, outcome)
     });
+    let held = done.recv_timeout(HELD);
+    assert!(held.is_err(), "the release returned before the posted checkpoint's proof was answered");
+    drop(release);
     done.recv_timeout(WAIT).expect("the release waits for no proof at a checkpoint the vault has not posted");
     let (node, outcome) = settling.join().expect("the settle returns");
     outcome.expect("the worker answers");
