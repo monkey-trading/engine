@@ -76,6 +76,18 @@ pub(super) struct Holding {
     pub positions: BTreeMap<MarketId, Side>,
 }
 
+impl Holding {
+    /// Whether a request of `kind` has something to act on: a resting order to cancel, a position to
+    /// close.
+    pub(super) fn acts_on(&self, kind: Kind) -> bool {
+        match kind {
+            Kind::Cancel | Kind::CancelAll => !self.resting.is_empty(),
+            Kind::CloseAll => !self.positions.is_empty(),
+            Kind::Market | Kind::Limit => true,
+        }
+    }
+}
+
 /// One request the scheduler hands a client: which of its traders sends it, what it is, and when it
 /// was due.
 #[derive(Debug)]
@@ -141,6 +153,15 @@ impl Trader {
             "registration answered {status}: {events}"
         );
         Ok(())
+    }
+
+    /// Turns a cancel or close-all into a market order when what it acts on is gone: an earlier reply
+    /// emptied the holding after the scheduler handed the job out, and the engine would reject the
+    /// request, which the figures would count as the node refusing it.
+    fn settle(&self, job: &mut Job) {
+        if !self.holding.lock().expect("a holding").acts_on(job.kind) {
+            job.kind = Kind::Market;
+        }
     }
 
     /// The path and body of `job`, signed by the session key at its next nonce.
@@ -350,8 +371,9 @@ impl Client {
     /// time the client took to sign it: a wait behind the client's previous request counts, and so
     /// does the scheduler's lateness, which `late` counts; the client's own signing does not. A
     /// reply with a rejection in it is refused, as one with any status but 200 is.
-    async fn send(&mut self, http: &mut Http, job: Job) {
+    async fn send(&mut self, http: &mut Http, mut job: Job) {
         let trader = &mut self.traders[job.trader];
+        trader.settle(&mut job);
         let late = job.dispatched.duration_since(job.due) > LATE;
         let signing = Instant::now();
         let (path, body) = trader.request(&job, &self.units);
@@ -382,6 +404,40 @@ impl Client {
         samples.fills += fills;
         if job.kind == Kind::Market && fills > 0 {
             samples.order_to_fill_us.push(waited);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cancel_or_close_all_whose_target_is_gone_goes_out_as_a_market_order() {
+        let mut trader = Trader::new(1);
+        let units = BTreeMap::from([(2, Fixed::from_int(50))]);
+        let job =
+            |kind| Job { trader: 0, kind, market: 2, side: Side::Buy, due: Instant::now(), dispatched: Instant::now() };
+        for kind in [Kind::Cancel, Kind::CancelAll, Kind::CloseAll] {
+            let mut gone = job(kind);
+            trader.settle(&mut gone);
+            assert_eq!(gone.kind, Kind::Market, "{kind:?} with nothing to act on");
+            assert_eq!(trader.request(&gone, &units).0, "/v1/orders");
+        }
+        {
+            let mut holding = trader.holding.lock().unwrap();
+            holding.resting.push(7);
+            holding.positions.insert(2, Side::Sell);
+        }
+        for (kind, path) in [
+            (Kind::Cancel, "/v1/orders/cancel"),
+            (Kind::CancelAll, "/v1/orders/cancel-all"),
+            (Kind::CloseAll, "/v1/positions/close-all"),
+        ] {
+            let mut held = job(kind);
+            trader.settle(&mut held);
+            assert_eq!(held.kind, kind, "{kind:?} with a target");
+            assert_eq!(trader.request(&held, &units).0, path);
         }
     }
 }
