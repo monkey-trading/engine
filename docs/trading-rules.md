@@ -221,11 +221,30 @@ initial margin requirement. The initial requirement uses the bands above, with e
 at least 5% at volume tier 0 and 2% at tier 1. These floors limit leverage to 20 times and 50 times
 respectively.
 
-The close-out level is half of the margin requirement at the market's own bands. If your equity
-falls below the close-out level, the engine closes your largest losing position that can be traded.
-The engine continues with the next largest losing position until your equity is back above the
-close-out level. A position in a market that is closed or has no price waits until the market can be
-traded again. Any loss beyond your balance is borne by the house, not by you.
+Some markets move together, so positions in them can offset each other. These markets form offset
+groups, each with a floor share:
+
+| Group | Markets | Floor share |
+| --- | --- | --- |
+| FX | EUR-USD, GBP-USD, AUD-USD | 70% |
+| Metals | XAU-USD, XAG-USD | 80% |
+| US indices | US500, US100, US30 | 70% |
+
+Within a group, each position counts its value times the market's loading, the share of the group's
+moves it follows. The part of the long side that is offset by the short side, and the same part of
+the short side, is matched. Matched exposure takes a credit off its margin: the margin less an
+allowance for each market's own move and for the cost of closing the position, but never more than
+the margin less its floor share. Exposure that offsets nothing keeps its full margin, so this
+portfolio requirement is never above the margin at the market's bands.
+
+The close-out level is half of the portfolio requirement. If your equity falls below the close-out
+level, the engine closes one position or group at a time. It closes the one whose closing restores
+your equity with the least value closed or, if none would, the one that improves your standing the
+most for each dollar closed. The positions in a group are closed together while all of them can be
+traded. A position in a market that is closed or has no price waits until the market can be traded
+again, and the other positions in its group close on their own. After any trade, triggered order or
+close-all, your account is checked for close-out once all of that request's trades are done. Any
+loss beyond your balance is borne by the house, not by you.
 
 The house also limits its own exposure. An order is rejected if it would take the house's net
 exposure past its limit, which is the larger of a share of the house's net asset value and a fixed
@@ -246,7 +265,8 @@ limits.
 
 The engine can apply a weekend margin, which is a higher margin over a market's closures of 40 hours
 or more. No market carries one. A weekend margin can be added to a market only after seven days'
-public notice.
+public notice. A market given one would raise only its own margin over its closures, and each offset
+group would keep its credit.
 
 ## Deposits, withdrawals and the exit
 

@@ -10,8 +10,8 @@
 //! in none: a pass over every holder took 13,929 / 15,899 us p50 / max of 30 passes for
 //! `Engine::equity_and_margin`, 139 ns a holder, and 63,064 / 68,601 us for `Engine::portfolio_margin`,
 //! 630 ns a holder, about 4.5 times the per-position requirement, which also sums equity. The figures do
-//! not separate the group's exact credit, worked in 512-bit integers, from the rest of the pass. Nothing
-//! on the sequencer reads the portfolio requirement.
+//! not separate the group's exact credit, worked in wide integers, from the rest of the pass. From `V81`
+//! close-outs read the portfolio requirement, and `hot_path_benchmark`'s `portfolio` cases time it there.
 
 mod common;
 
@@ -94,11 +94,12 @@ fn grid() -> PortfolioGrid {
         market,
         loading: f(loading),
         residual_shock_bps: 20,
-        weekend_residual_shock_bps: 20,
+        max_residual_shock_bps: 20,
     };
     let crypto = OffsetGroup {
         name: "crypto".into(),
         floor_share_bps: 5_000,
+        max_floor_share_bps: 5_000,
         members: vec![member(BTC, "1"), member(ETH, "1.25")],
     };
     let grid = PortfolioGrid { groups: vec![crypto] };

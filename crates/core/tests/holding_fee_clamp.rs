@@ -111,6 +111,7 @@ fn notice_curve(h: &mut Harness, curve: Vec<CurvePoint>) {
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
     };
     assert!(applied(&h.operate(AdminCommand::AnnounceParams(notice))));

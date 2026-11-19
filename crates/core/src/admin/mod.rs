@@ -13,14 +13,14 @@
 use crate::auth::auth_failure;
 use crate::command::{AdminCommand, AdminRequest};
 use crate::deposits::legacy_chain_reference;
-use crate::engine::{Engine, MarketState};
+use crate::engine::Engine;
 use crate::event::Event;
-use crate::futures::FuturesState;
 use crate::params::{DEFAULT_MAX_RESTING_ORDERS, MAX_BENCHMARK_BPS};
 use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
 mod activation;
+mod listing;
 mod quote_currency;
 
 impl Engine {
@@ -90,6 +90,11 @@ impl Engine {
     ///   loosening a listed market's price rules without a notice or past its launch rules
     /// - `SetNotice` and `ClearNotice` with any error case of `Engine::set_notice` and `Engine::clear_notice`
     /// - from `V79`, `UpsertMarket` naming no minimum level distance, or moving one past its bounds
+    /// - `SetParams` naming a portfolio grid that does not fit the markets listed, and `UpsertMarket` that
+    ///   would leave a group's listed members on different asset classes or schedules, or one quoted outside
+    ///   USD (`PortfolioGrid::check_listings`); from `V81`, `SetParams` changing the grid outside its launch
+    ///   bounds or without a notice (`Engine::check_grid_change`); `RelistMarkets` with any error case of
+    ///   `Engine::relist_markets`
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in
@@ -127,6 +132,7 @@ impl Engine {
                     self.check_rate_changes(params, voted)?;
                 }
                 self.check_restricted_levels(params)?;
+                self.check_grid_listings(&params.portfolio_grid)?;
                 let before = self.baseline_params().filter(|_| bounded);
                 self.next_rollover = Some(self.rescheduled_rollover(&params.rollover));
                 self.params = Some(params.clone());
@@ -143,94 +149,8 @@ impl Engine {
                     self.check_all_closeouts(events);
                 }
             }
-            AdminCommand::UpsertMarket(spec) => {
-                spec.validate()?;
-                self.check_corporate_listing(spec)?;
-                self.check_listing_ceilings(spec)?;
-                self.check_markout_floor(spec)?;
-                self.check_level_distance_listing(spec)?;
-                if spec.schedule.has_exceptions() && self.protocol_version < ProtocolVersion::V4 {
-                    return Err(format!("dated closures and special sessions need protocol {:?}", ProtocolVersion::V4));
-                }
-                if !spec.contracts.is_empty() && self.protocol_version < ProtocolVersion::V21 {
-                    return Err(format!("futures contracts need protocol {:?}", ProtocolVersion::V21));
-                }
-                self.check_quote_currency(spec)?;
-                if self.protocol_version >= ProtocolVersion::V35 {
-                    self.check_priceable(spec)?;
-                }
-                self.check_held_benchmark(spec)?;
-                self.check_weekend_listing(spec, voted)?;
-                let change = self.check_listing_change(spec, voted)?;
-                if let Some(params) = self.params.as_ref().filter(|_| self.protocol_version >= ProtocolVersion::V13) {
-                    params.check_divergence_reachable(spec)?;
-                }
-                // Before any benchmark has a rate, as in a genesis that leaves every rate to the feed,
-                // a listing may name any; after, a new name must be one with a rate.
-                let benchmark = &spec.financing.benchmark;
-                let named =
-                    self.markets.get(&spec.id).is_none_or(|market| market.spec.financing.benchmark != *benchmark);
-                if self.protocol_version >= ProtocolVersion::V14
-                    && named
-                    && (!self.benchmarks.is_empty()
-                        || (self.protocol_version >= ProtocolVersion::V18 && !self.benchmark_history.is_empty()))
-                    && !self.benchmarks.contains_key(benchmark)
-                    && !(self.protocol_version >= ProtocolVersion::V18
-                        && self.benchmark_history.contains_key(benchmark))
-                {
-                    return Err(format!("benchmark {benchmark} has no rate"));
-                }
-                let currency_changed =
-                    self.markets.get(&spec.id).is_some_and(|market| market.spec.quote_currency != spec.quote_currency);
-                let futures = match self.markets.get(&spec.id) {
-                    Some(market) => market.relisted(spec)?,
-                    None => FuturesState::listed(spec, self.now),
-                };
-                self.end_unpriced_interval(spec.id);
-                match self.markets.get_mut(&spec.id) {
-                    Some(market) => {
-                        // An FX mark belongs to the currency it was taken for.
-                        if market.spec.quote_currency != spec.quote_currency {
-                            market.fx_mark = None;
-                        }
-                        let old_max_age_ms = market.spec.price_rules.max_age_ms;
-                        market.spec = spec.clone();
-                        market.futures = futures;
-                        // From `V33`, a quote stale under the old limit stays stale: a raised limit
-                        // must not bring it back to pricing.
-                        if self.protocol_version >= ProtocolVersion::V33 && spec.price_rules.max_age_ms > old_max_age_ms
-                        {
-                            market.drop_quotes_older_than(self.now, old_max_age_ms);
-                        }
-                    }
-                    None => {
-                        self.markets.insert(spec.id, MarketState { futures, ..MarketState::new(spec.clone()) });
-                    }
-                }
-                self.end_unpriced_interval(spec.id);
-                self.rebase(Some(spec.id));
-                self.settle_listing_change(spec, change);
-                self.relist_weekend(spec.id, events);
-                self.refresh_session(spec.id, events);
-                // A new listing for a market others convert at can change what its index converts
-                // at, so it is their price update too, before any close-out runs.
-                let converts_here = |market: &MarketState| {
-                    market.spec.id != spec.id && market.spec.quote_currency.fx_market() == Some(spec.id)
-                };
-                let reprices = self.protocol_version >= ProtocolVersion::V7
-                    && self.params.is_some()
-                    && self.markets.values().any(converts_here);
-                if self.protocol_version >= ProtocolVersion::V12 {
-                    // A new quote currency drops the FX mark, which a market that converts at its own
-                    // index takes back from its own index only when it is processed.
-                    self.advance_markets((reprices || currency_changed).then_some(spec.id), events);
-                } else if reprices {
-                    self.reprice(spec.id, events);
-                }
-                if self.protocol_version >= ProtocolVersion::V6 && self.params.is_some() {
-                    self.check_closeouts(spec.id, events);
-                }
-            }
+            AdminCommand::UpsertMarket(spec) => self.upsert_market(spec, voted, events)?,
+            AdminCommand::RelistMarkets { specs } => self.relist_markets(specs, voted, events)?,
             AdminCommand::SetBenchmarkRate { benchmark, annual_bps } => {
                 if !(-MAX_BENCHMARK_BPS..=MAX_BENCHMARK_BPS).contains(annual_bps) {
                     return Err(format!("benchmark rate {annual_bps}bps out of range"));

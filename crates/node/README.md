@@ -89,8 +89,7 @@ default. Every section refuses keys it does not know.
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |
 | `[history]`, `[stats]`, `[snapshots]` | The history index and price history cache, dashboard retention, and recovery snapshots |
 | `[metrics]`, `[alerts]` | The metrics listener and alert routing to webhooks |
-| `[portfolio_margin]` | The offset groups of the portfolio margin read |
-| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start |
+| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters |
 
 [`config/dev.toml`](../../config/dev.toml) runs everything against local simulations.
 [`config/anvil.toml`](../../config/anvil.toml) runs custody against the vault on a local Anvil

@@ -19,7 +19,8 @@
 //! notice may name a new volume tier table, within its launch bounds (`volume_tier`). From `V62` new
 //! stress parameters keep each launch house loss threshold at its level or above, at most its launch
 //! value (`house_loss`). From `V76` a notice may name a new rollover time (`rollover`) and new corporate
-//! action bounds (`corporate::CorporateBounds`).
+//! action bounds (`corporate::CorporateBounds`). From `V81` a notice may name a new portfolio grid,
+//! moving only its shocks and floor shares up within their launch bounds (`portfolio`).
 
 use std::collections::BTreeMap;
 
@@ -32,6 +33,7 @@ use crate::house_loss::LossTrigger;
 use crate::listing_bounds::{LaunchBands, ListingNotice};
 use crate::market::MarketSpec;
 use crate::params::{MAX_RATE_BPS, ProtocolParams, Rollover, StressLevel};
+use crate::portfolio::{PortfolioGrid, spend_grid_notice};
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::ScoreTier;
 use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
@@ -80,6 +82,9 @@ pub struct ParamsNotice {
     /// From `V76`, new corporate action bounds, left out of the encoding when none are named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corporate_bounds: Option<CorporateBounds>,
+    /// From `V81`, a new portfolio grid, left out of the encoding when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub portfolio_grid: Option<PortfolioGrid>,
     /// The sequenced time the new values may apply from.
     pub effective_at: Millis,
 }
@@ -168,6 +173,10 @@ pub struct OperatorBounds {
     /// together; recording one drops those ex a week or more before it is scheduled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub capped_dividends: Vec<CappedDividend>,
+    /// From `V81`, the portfolio grid in force when parameters are first set under `V81` or when it
+    /// activates over them, empty or not, which fixes every later grid's groups and bounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_grid: Option<PortfolioGrid>,
 }
 
 impl OperatorBounds {
@@ -188,6 +197,7 @@ impl ParamsNotice {
             && self.volume_tiers.is_none()
             && self.rollover.is_none()
             && self.corporate_bounds.is_none()
+            && self.portfolio_grid.is_none()
     }
 }
 
@@ -229,6 +239,7 @@ impl Engine {
     /// - a volume tier table `Engine::check_volume_tier_notice` refuses
     /// - a rollover or corporate bounds `Engine::check_rollover_notice` or
     ///   `Engine::check_corporate_bounds_notice` refuses
+    /// - a portfolio grid `Engine::check_grid_notice` refuses
     /// - an effective time less than seven days after the sequenced time, or past the latest stamp
     pub(crate) fn announce_params(&mut self, notice: &ParamsNotice) -> Result<(), String> {
         self.require_bounds_protocol("a parameter notice")?;
@@ -255,6 +266,7 @@ impl Engine {
         self.check_volume_tier_notice(notice.volume_tiers.as_deref())?;
         self.check_rollover_notice(notice.rollover.as_ref())?;
         self.check_corporate_bounds_notice(notice.corporate_bounds.as_ref())?;
+        self.check_grid_notice(notice.portfolio_grid.as_ref())?;
         if notice.names_nothing() {
             return Err("a parameter notice names no rate".into());
         }
@@ -357,6 +369,7 @@ impl Engine {
     /// - a changed volume tier table that fails `Engine::check_volume_tier_change`
     /// - a changed rollover or corporate bounds that fail `Engine::check_rollover_change` or
     ///   `Engine::check_corporate_bounds_change`
+    /// - a changed portfolio grid that fails `Engine::check_grid_change`
     pub(crate) fn check_rate_changes(&self, params: &ProtocolParams, voted: bool) -> Result<(), String> {
         let Some(current) = &self.baseline_params() else { return Ok(()) };
         // Recorded with the first parameters under `V35`, or at its activation over them.
@@ -396,6 +409,7 @@ impl Engine {
         self.check_volume_tier_change(params, current, voted)?;
         self.check_rollover_change(&params.rollover, &current.rollover, voted)?;
         self.check_corporate_bounds_change(&params.corporate_bounds, &current.corporate_bounds, voted)?;
+        self.check_grid_change(&params.portfolio_grid, &current.portfolio_grid, voted)?;
         let stress = StressSettings::of(params);
         if self.protocol_version >= ProtocolVersion::V62 && params.stress_levels != current.stress_levels {
             self.check_loss_triggers_kept(&params.stress_levels)?;
@@ -412,10 +426,10 @@ impl Engine {
         }
     }
 
-    /// After new parameters apply: records the launch rates, score tiers, curve, volume tiers and
-    /// corporate bounds if these are the first, and spends the notice of each rate, of the stress
-    /// parameters, of the score tiers, of the profit fee curve, of the volume tier table, of the rollover
-    /// and of the corporate bounds, that changed.
+    /// After new parameters apply: records the launch rates, score tiers, curve, volume tiers, corporate
+    /// bounds and portfolio grid if these are the first, and spends the notice of each rate, of the
+    /// stress parameters, of the score tiers, of the profit fee curve, of the volume tier table, of the
+    /// rollover, of the corporate bounds and of the portfolio grid, that changed.
     pub(crate) fn settle_rate_changes(&mut self, before: Option<&ProtocolParams>, params: &ProtocolParams) {
         self.record_launch_rates();
         self.record_launch_score_tiers();
@@ -423,6 +437,7 @@ impl Engine {
         self.record_launch_volume_tiers();
         self.record_launch_loss_triggers();
         self.record_launch_corporate_bounds();
+        self.record_launch_grid();
         let Some(before) = before else { return };
         let tiers = &params.toxicity.score_tiers;
         let spends_tiers = *tiers != before.toxicity.score_tiers;
@@ -450,6 +465,7 @@ impl Engine {
         if params.corporate_bounds != before.corporate_bounds && notice.corporate_bounds.as_ref() == bounds {
             notice.corporate_bounds = None;
         }
+        spend_grid_notice(notice, &before.portfolio_grid, &params.portfolio_grid);
         if notice.names_nothing() {
             self.operator_bounds.notice = None;
         }

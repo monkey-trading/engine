@@ -22,7 +22,13 @@ pub(super) fn weak_cash(
         WeakKind::FallsBelowAt(price) => {
             let level = engine.params().expect("params").closeout_level_bps;
             let (equity, margin) = engine.equity_and_margin(&bare, Some((market, *price, None)));
-            margin.mul_bps(level) - equity - Fixed::ONE
+            // Under a grid close-outs read the portfolio requirement: the per-position one less the
+            // credit of the groups the account holds, which no move of an ungrouped market changes.
+            let credit = engine.portfolio_rules().map_or(Fixed::ZERO, |grid| {
+                assert!(grid.group_of(market).is_none(), "a grouped weak market moves its group's credit");
+                engine.equity_and_margin(&bare, None).1 - engine.portfolio_margin(&bare, grid)
+            });
+            (margin - credit).mul_bps(level) - equity - Fixed::ONE
         }
         WeakKind::BelowWeekendMargin => engine.equity_and_margin(&bare, None).1,
     }

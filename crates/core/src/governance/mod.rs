@@ -148,7 +148,8 @@ pub struct Restriction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Limit {
-    /// The least close-out level, and the most the total house cap and its floor may be.
+    /// The least close-out level, the most the total house cap and its floor may be, and from `V81` the
+    /// least floor share of each named offset group.
     Params {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         closeout_level_bps: Option<i64>,
@@ -156,6 +157,8 @@ pub enum Limit {
         house_total_cap_bps: Option<i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         house_total_cap_floor: Option<Fixed>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        floor_shares: Option<BTreeMap<String, i64>>,
     },
     /// A listed market's least margin bands, and the most its house cap and floor may be.
     Market {
@@ -174,12 +177,15 @@ pub enum Limit {
 }
 
 /// The parameters' restricted fields.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ParamsBaseline {
     pub closeout_level_bps: i64,
     pub house_total_cap_bps: i64,
     pub house_total_cap_floor: Fixed,
+    /// Each offset group's floor share, by name; left out of the encoding while the grid names none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub floor_shares: BTreeMap<String, i64>,
 }
 
 /// A market's restricted fields.
@@ -276,11 +282,12 @@ pub fn is_governed(command: &AdminCommand) -> bool {
 
 impl Engine {
     /// Whether a normal vote may carry `command` under the rules in force: a governed command
-    /// (`is_governed`), and from `V76` a corporate action.
+    /// (`is_governed`), from `V76` a corporate action, and from `V81` a relisting of several markets.
     pub(crate) fn votes_carry(&self, command: &AdminCommand) -> bool {
         is_governed(command)
             || (self.protocol_version >= ProtocolVersion::V76
                 && matches!(command, AdminCommand::ScheduleCorporateAction(_)))
+            || (self.protocol_version >= ProtocolVersion::V81 && matches!(command, AdminCommand::RelistMarkets { .. }))
     }
 
     /// The mirrored votes.
@@ -422,14 +429,18 @@ impl Engine {
         self.admin(&voted.command, true, events)
     }
 
-    /// `keccak256` of what `command` replaces, for a `SetParams` or `UpsertMarket`: the baseline
-    /// parameters, or the market's baseline spec, `null` while it is unlisted.
+    /// `keccak256` of what `command` replaces, for a `SetParams`, `UpsertMarket` or `RelistMarkets`: the
+    /// baseline parameters, or each market's baseline spec, `null` while it is unlisted.
     fn basis_of(&self, command: &AdminCommand) -> Option<B256> {
         // Parameters and specs serialise: their fields are maps, lists, strings and integers.
         let hash = |value: serde_json::Result<Vec<u8>>| keccak256(value.expect("the baseline serialises"));
         match command {
             AdminCommand::SetParams(_) => Some(hash(serde_json::to_vec(&self.baseline_params()))),
             AdminCommand::UpsertMarket(spec) => Some(hash(serde_json::to_vec(&self.baseline_spec(spec.id)))),
+            AdminCommand::RelistMarkets { specs } => {
+                let baselines: Vec<_> = specs.iter().map(|spec| self.baseline_spec(spec.id)).collect();
+                Some(hash(serde_json::to_vec(&baselines)))
+            }
             _ => None,
         }
     }

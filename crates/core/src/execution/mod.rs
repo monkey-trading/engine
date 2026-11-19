@@ -30,7 +30,7 @@ use crate::toxicity::FillMark;
 use crate::types::{AccountId, MarketId, OrderId, Side};
 use crate::volume_tier::AccountBands;
 
-use self::validation::{closing, growth, profit_fee};
+use self::validation::{closing, growth};
 
 /// What the live price is checked against before filling.
 #[derive(Clone, Copy)]
@@ -222,13 +222,16 @@ impl Engine {
         Ok(self.book(&exec, priced))
     }
 
-    /// Records a fill, from `V79` removes the levels of a position it closed or turned (`levels`), and
-    /// writes off any balance the account can no longer cover.
+    /// Records a fill, from `V79` removes the levels of a position it closed or turned (`levels`), writes
+    /// off any balance the account can no longer cover, and from `V81`, while a grid applies, notes the
+    /// account of a fill but a close-out's for the check once the command's fills are done
+    /// (`Engine::note_filled`).
     pub(crate) fn after_fill(&mut self, fill: Fill, cause: FillCause, events: &mut Vec<Event>) {
         let (account, market, side, qty, position) = (fill.account, fill.market, fill.side, fill.qty, fill.position);
         events.push(Event::Fill(fill));
         self.settle_levels(account, market, position - side.signed(qty), position, cause, events);
         self.settle_bad_debt(account, events);
+        self.note_filled(account, cause);
     }
 
     /// The next order id; ids are never reused.
@@ -451,6 +454,7 @@ mod risk;
 use risk::HouseTotals;
 mod trigger;
 mod validation;
+pub(crate) use validation::profit_fee;
 
 #[cfg(test)]
 mod tests;

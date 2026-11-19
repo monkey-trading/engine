@@ -38,6 +38,8 @@ pub struct CloseoutCoverage {
     pub relevels: u64,
     /// Keys moved to a market's new bands, weekend margin or currency.
     pub rebands: u64,
+    /// Refreshes that took up a new grid or a grouped market's new close-spread ceiling, from `V81`.
+    pub regrids: u64,
     pub keys: u64,
     /// Keyed holders a weekend gap's close-out did not value.
     pub weekend_skips: u64,
@@ -66,6 +68,7 @@ impl CloseoutCoverage {
             Noted::HeadroomMove => &mut self.headroom_moves,
             Noted::Relevel => &mut self.relevels,
             Noted::Reband => &mut self.rebands,
+            Noted::Regrid => &mut self.regrids,
             Noted::Keyed => &mut self.keys,
             Noted::WeekendSkip => &mut self.weekend_skips,
             Noted::WeekendRevaluation => &mut self.weekend_revaluations,
@@ -111,11 +114,11 @@ impl Engine {
         assert!(named.iter().all(|account| full.contains(account)), "the index named a non-holder: {below:?}");
         for account in full.iter().filter(|account| !named.contains(account)) {
             assert!(
-                self.next_closeout(*account, level_bps).is_none(),
+                !self.closes_out(*account, level_bps),
                 "the index skipped {account:?}, which the full check closes out"
             );
         }
-        let untradeable = below.iter().filter(|account| self.next_closeout(**account, level_bps).is_none()).count();
+        let untradeable = below.iter().filter(|account| !self.closes_out(**account, level_bps)).count();
         let coverage = &mut self.closeout_index.coverage;
         coverage.skipped_calls += (full.len() - named.len()) as u64;
         coverage.below_untradeable += untradeable as u64;
@@ -134,11 +137,11 @@ impl Engine {
         );
         for account in full.iter().filter(|account| !candidates.contains(account)) {
             assert!(
-                self.next_weekend_closeout(*account, closing, at).is_none(),
+                !self.weekend_closes_out(*account, closing, at),
                 "the index skipped {account:?}, which the weekend close-out closes out"
             );
         }
-        let closed = candidates.iter().filter(|account| self.next_weekend_closeout(**account, closing, at).is_some());
+        let closed = candidates.iter().filter(|account| self.weekend_closes_out(**account, closing, at));
         let closed = closed.count() as u64;
         let coverage = &mut self.closeout_index.coverage;
         coverage.skipped_calls += (full.len() - candidates.len()) as u64;
@@ -225,13 +228,16 @@ impl Engine {
         }
     }
 
-    /// Whether `acct` is below `level_bps` of its requirement as `next_closeout` judges it, from the
-    /// engine's own valuation.
+    /// Whether `acct` is below `level_bps` of its requirement as `next_closeout` judges it, or from
+    /// `V81`, while a grid applies, `next_portfolio_step`, from the engine's own valuation.
     fn full_below(&self, acct: &Account, level_bps: i64) -> bool {
-        let (equity, margin) = if self.protocol_version >= ProtocolVersion::V6 {
-            self.equity_and_margin_at(acct, |id, market, pos| {
-                self.tradeable_index(id).unwrap_or((market.mark.unwrap_or(pos.entry), market.fx_mark))
-            })
+        let valued = |id: MarketId, market: &crate::engine::MarketState, pos: &crate::account::Position| {
+            self.tradeable_index(id).unwrap_or((market.mark.unwrap_or(pos.entry), market.fx_mark))
+        };
+        let (equity, margin) = if let Some(grid) = self.portfolio_rules() {
+            self.equity_and_portfolio_requirement(acct, grid, crate::portfolio::Basis::Market, &[], valued)
+        } else if self.protocol_version >= ProtocolVersion::V6 {
+            self.equity_and_margin_at(acct, valued)
         } else {
             self.equity_and_margin(acct, None)
         };

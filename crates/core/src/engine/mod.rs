@@ -10,7 +10,7 @@
 //! withdrawals in `withdrawal.rs`, MONKEY staking and USDC distributions in `staking.rs`, and the
 //! elected operator key in `election.rs`, and an account's equity and margin in `margin.rs`.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 mod house;
 mod margin;
@@ -233,6 +233,10 @@ pub struct Engine {
     /// The accounts a close-out check must close out; built at recovery, at an activation, or first used.
     #[serde(skip)]
     pub(crate) closeout_index: crate::closeout_index::CloseoutIndex,
+    /// From `V81`, the accounts a fill but a close-out's touched in the command being applied, which the
+    /// command checks for close-out once its fills are done (`Engine::check_filled_accounts`).
+    #[serde(skip)]
+    pub(crate) filled_accounts: BTreeSet<AccountId>,
     /// The state tree as of the last root under `V9`, or what remains of it once a node has taken it.
     #[serde(skip)]
     pub(crate) tree: Tree,
@@ -268,6 +272,7 @@ impl Engine {
         if sequenced.ts > MAX_STAMP_MS {
             return Err(SequenceError::StampOutOfRange { seq: sequenced.seq, got: sequenced.ts });
         }
+        debug_assert!(self.filled_accounts.is_empty(), "each command checks the accounts its fills touched");
         self.ensure_hot_indexes();
         self.derived = Vec::new();
         self.last_seq = Some(sequenced.seq);
@@ -337,12 +342,15 @@ impl Engine {
             // corporate boundary to the next admitted command, which the node holds until the
             // dated snapshot is in.
             if activation || matches!(early_outcome, Some(Event::AdminRejected { .. })) {
+                self.check_filled_accounts(None, &mut events);
                 events.extend(early_outcome);
                 return Ok(events);
             }
             // From `V33` a gap of more than `MAX_CATCH_UP_BOUNDARIES` boundaries defers the command,
-            // reporting the outcome of a benchmark batch already applied above.
+            // reporting the outcome of a benchmark batch already applied above. The boundaries it walked
+            // may have filled triggered orders and levels, whose accounts it checks first.
             let Some(margin) = self.run_corporate_timeline(last_now, sequenced.ts, &mut events) else {
+                self.check_filled_accounts(None, &mut events);
                 events.extend(early_outcome);
                 return Ok(events);
             };
@@ -447,6 +455,7 @@ impl Engine {
         if !corporate && benchmark_batch && events.contains(&Event::AdminApplied) {
             self.run_rollovers(&mut events);
         }
+        self.check_filled_accounts(Some(&sequenced.cmd), &mut events);
         self.refresh_all_stress(&sequenced.cmd, &mut events);
         // After the command, so a price arriving at the horizon is the one marked against.
         self.process_markouts();

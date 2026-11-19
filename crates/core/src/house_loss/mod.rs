@@ -193,10 +193,15 @@ impl Engine {
     /// market's level, and from `V67` at least the level the house's loss sets at the NAV now. Nothing
     /// is recorded, so the market's level, its cooldown and its events are as another trigger left them.
     pub(crate) fn close_out_stress_level(&self, market: MarketId) -> usize {
+        self.close_out_stress_level_at(market, self.house_nav())
+    }
+
+    /// `close_out_stress_level` at house NAV `nav`.
+    pub(crate) fn close_out_stress_level_at(&self, market: MarketId, nav: Fixed) -> usize {
         let level = self.markets[&market].stress.level;
         match self.params.as_ref() {
             Some(params) if self.protocol_version >= ProtocolVersion::V67 => {
-                level.max(loss_level(&params.stress_levels, self.house_loss_at(self.house_nav())))
+                level.max(loss_level(&params.stress_levels, self.house_loss_at(nav)))
             }
             _ => level,
         }

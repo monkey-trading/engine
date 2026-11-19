@@ -126,7 +126,7 @@ pub(super) fn closing(current: Fixed, delta: Fixed) -> (Fixed, Fixed) {
 
 /// Losers pay nothing; winners pay `fee_bps` of realised profit, rounded up from `V5` and truncated
 /// before it.
-pub(super) fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {
+pub(crate) fn profit_fee(realised: Fixed, fee_bps: i64, version: ProtocolVersion) -> Fixed {
     if !realised.is_positive() {
         Fixed::ZERO
     } else if version >= ProtocolVersion::V5 {

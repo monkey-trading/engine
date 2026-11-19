@@ -151,6 +151,7 @@ fn the_production_genesis_applies_the_launch_decisions() {
             stress_levels: dev.params.stress_levels.clone(),
             toxicity,
             volume_tiers,
+            portfolio_grid: dev.params.portfolio_grid.clone(),
             ..production.params.clone()
         },
         dev.params

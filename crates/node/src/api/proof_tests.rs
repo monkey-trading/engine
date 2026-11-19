@@ -323,7 +323,6 @@ impl Node {
             stats: crate::test_support::stats(),
             emission_budget: None,
             staking_terms: None,
-            portfolio_margin: None,
             status: Default::default(),
             collateral: None,
             listing: Default::default(),

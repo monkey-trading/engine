@@ -12,6 +12,7 @@ use engine_core::market::MarketSpec;
 use engine_core::notice::check_notice_text;
 use engine_core::operator_bounds::{ParamsNotice, StressSettings};
 use engine_core::params::ProtocolParams;
+use engine_core::portfolio::PortfolioGrid;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::spread_tier::check_spread_tiers;
 
@@ -20,7 +21,7 @@ use crate::admin::{AdminAction, input};
 impl AdminAction {
     /// The admin command this action sends.
     /// Error cases:
-    /// - a spec or parameters file cannot be read, does not parse, or fails validation
+    /// - a spec, grid or parameters file cannot be read, does not parse, or fails validation
     /// - notice text `check_notice_text` refuses
     pub(super) fn command(self) -> anyhow::Result<AdminCommand> {
         Ok(match self {
@@ -30,6 +31,9 @@ impl AdminAction {
                 AdminCommand::ScheduleCorporateAction(action)
             }
             AdminAction::UpsertMarket { file } => AdminCommand::UpsertMarket(read_spec(&file)?),
+            AdminAction::RelistMarkets { files } => AdminCommand::RelistMarkets {
+                specs: files.iter().map(|file| read_spec(file)).collect::<Result<_, _>>()?,
+            },
             AdminAction::SetParams { file } => AdminCommand::SetParams(read_params(&file)?),
             AdminAction::SetBenchmarkRate { benchmark, annual_bps } => {
                 AdminCommand::SetBenchmarkRate { benchmark, annual_bps }
@@ -52,6 +56,7 @@ impl AdminAction {
                 volume_tiers_from,
                 rollover_from,
                 corporate_bounds_from,
+                portfolio_grid,
                 effective_at,
             } => {
                 let stress = stress_from.map(|file| read_params(&file).map(|params| StressSettings::of(&params)));
@@ -60,6 +65,7 @@ impl AdminAction {
                 let volume_tiers = volume_tiers_from.map(|file| read_params(&file).map(|params| params.volume_tiers));
                 let rollover = rollover_from.map(|file| read_params(&file).map(|params| params.rollover));
                 let bounds = corporate_bounds_from.map(|file| read_params(&file).map(|params| params.corporate_bounds));
+                let grid = portfolio_grid.map(|file| read_grid(&file));
                 AdminCommand::AnnounceParams(ParamsNotice {
                     profit_fee_bps,
                     closeout_level_bps,
@@ -69,6 +75,7 @@ impl AdminAction {
                     volume_tiers: volume_tiers.transpose()?,
                     rollover: rollover.transpose()?,
                     corporate_bounds: bounds.transpose()?,
+                    portfolio_grid: grid.transpose()?,
                     effective_at: effective_at.timestamp_millis(),
                 })
             }
@@ -139,6 +146,16 @@ fn read_spec(file: &Path) -> anyhow::Result<MarketSpec> {
     Ok(spec)
 }
 
+/// The offset grid in `file`, a TOML file holding `groups = [...]`, checked for structure.
+/// Error cases:
+/// - a file that cannot be read or parsed
+/// - a grid that fails `PortfolioGrid::validate`
+fn read_grid(file: &Path) -> anyhow::Result<PortfolioGrid> {
+    let grid: PortfolioGrid = input::read_toml(file)?;
+    grid.validate().map_err(anyhow::Error::msg).with_context(|| file.display().to_string())?;
+    Ok(grid)
+}
+
 /// The parameters in `file`, checked as the node, which runs the latest version, would apply them.
 /// Error cases:
 /// - a file that cannot be read or parsed
@@ -157,3 +174,7 @@ fn read_params(file: &Path) -> anyhow::Result<ProtocolParams> {
 #[cfg(test)]
 #[path = "level_tests.rs"]
 mod level_tests;
+
+#[cfg(test)]
+#[path = "portfolio_tests.rs"]
+mod portfolio_tests;

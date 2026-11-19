@@ -360,6 +360,12 @@ pub enum AdminCommand {
     },
     /// From `V78`, signed: removes the notice in force.
     ClearNotice,
+    /// From `V81`, signed or voted: relists every market named at once, all or nothing, each as
+    /// `UpsertMarket` would, with weekend scheduling and close-outs once after all of them: how an
+    /// offset group's calendar changes.
+    RelistMarkets {
+        specs: Vec<MarketSpec>,
+    },
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and

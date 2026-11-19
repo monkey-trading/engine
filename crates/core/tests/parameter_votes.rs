@@ -227,6 +227,7 @@ fn while_rotation_is_on_the_operators_and_the_nodes_governed_commands_are_refuse
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at: h.ts + NOTICE_MS,
     });
     let markup = AdminCommand::AnnounceMarkup { market: BTC, markup_bps: 300, effective_at: h.ts + NOTICE_MS };
@@ -487,6 +488,8 @@ mod listing;
 mod notice;
 #[path = "parameter_votes/operator_bounds.rs"]
 mod operator_bounds;
+#[path = "parameter_votes/portfolio.rs"]
+mod portfolio;
 #[path = "parameter_votes/rotation.rs"]
 mod rotation;
 #[path = "parameter_votes/toxicity.rs"]

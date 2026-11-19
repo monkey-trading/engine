@@ -53,7 +53,6 @@ async fn serve_history_signing(history: Reader, signing: Arc<crate::api::Signing
         stats: crate::test_support::stats(),
         emission_budget: None,
         staking_terms: None,
-        portfolio_margin: None,
         status: Default::default(),
         collateral: None,
         listing: Default::default(),

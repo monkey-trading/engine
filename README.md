@@ -92,9 +92,14 @@ Margin is shared across all the positions in your account. Each market sets its 
 percentage of position value, rising in bands as the position grows. On BTC-USD and ETH-USD, the
 margin on the first $2 million is 1%, which allows leverage of up to 100 times from volume tier 2.
 
-The close-out level is half of the margin requirement. If your equity falls below the close-out
-level, the engine closes your largest losing position that can be traded, and then the next, until
-your equity recovers. Any loss beyond your balance is borne by the house, not by you.
+Markets that move together, such as the US index futures, form offset groups. Positions that offset
+each other within a group lower the margin a close-out reads: the part of a group's positions that
+offsets the other side takes a credit, never more than a set share of its margin, and the rest keeps
+its full margin. Opening a position still needs each market's own margin. The close-out level is half
+of this portfolio requirement. If your equity falls below it, the engine closes, one step at a time,
+the position or group whose closing restores your equity with the least value closed, or else the one
+that improves your standing most for each dollar closed, keeping a group's positions together while
+all of them can be traded. Any loss beyond your balance is borne by the house, not by you.
 
 Margins do not change with the time of day or week. They do not rise before a weekend or holiday
 closure, and no position is closed out because its market is about to close. When a market reopens

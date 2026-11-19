@@ -137,6 +137,7 @@ fn notice(volume_tiers: Vec<VolumeTier>, effective_at: Millis) -> AdminCommand {
         volume_tiers: Some(volume_tiers),
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
     })
 }

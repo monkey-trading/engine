@@ -50,6 +50,7 @@ fn notice(fee: Option<i64>, level: Option<i64>, effective_at: Millis) -> AdminCo
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
         score_tiers: None,
     })

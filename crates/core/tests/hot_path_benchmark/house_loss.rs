@@ -32,16 +32,24 @@ fn house_loss_latency() {
         let mut h = fixture(version);
         let client = Client::new(1);
         let (mut prices, mut fills) = (Vec::with_capacity(SAMPLES), Vec::with_capacity(2 * SAMPLES));
-        for sample in 0..SAMPLES {
+        // `SAMPLES` untimed rounds first: building and decoding the fixture leaves the allocator work on
+        // the memory it freed, which lands in whichever command first triggers it, about a millisecond on
+        // Linux, at a round any change to the fixture's allocations moves.
+        for sample in 0..2 * SAMPLES {
             h.advance(1);
             let mid = if sample % 2 == 0 { "100010" } else { "100000" };
             let began = Instant::now();
             h.price(BTC, mid);
-            prices.push(began.elapsed().as_micros());
+            let timed = sample >= SAMPLES;
+            if timed {
+                prices.push(began.elapsed().as_micros());
+            }
             for side in [Side::Buy, Side::Sell] {
                 let began = Instant::now();
                 let events = trade(&mut h, &client, BTC, side, "0.01", mid);
-                fills.push(began.elapsed().as_micros());
+                if timed {
+                    fills.push(began.elapsed().as_micros());
+                }
                 assert!(events.iter().any(|e| matches!(e, Event::Fill(_))), "{sample}: {events:?}");
             }
         }

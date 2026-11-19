@@ -1,5 +1,5 @@
 //! The portfolio margin dev scenario: the account read gives each account's portfolio requirement
-//! under the dev config's fixture group, BTC-USD and ETH-USD, beside its per-position margin, through
+//! under the dev genesis's fixture group, BTC-USD and ETH-USD, beside its per-position margin, through
 //! the signed order routes on deterministic time, each answer verified as `engine verify-response`
 //! verifies it. A pair long BTC and short ETH takes its matched exposure's credit, staying above the
 //! group's floor share of its bands; BTC alone keeps its bands; both reads follow a 2% move in BTC; and
@@ -7,9 +7,10 @@
 
 use engine_core::types::MarketId;
 
+mod closeouts;
+
 use super::spreads::{fill_event, price};
 use super::*;
-use crate::api::account::PortfolioMargin;
 use crate::verify::{Expected, SentRequest, parse_challenge_arg, verify_response_files};
 
 const BTC: MarketId = 1;
@@ -21,8 +22,7 @@ type Group<'a> = (&'a [MarketId], &'a str, &'a str, &'a str, &'a str, &'a str);
 
 #[tokio::test(flavor = "multi_thread")]
 async fn dev_scenario_a_hedged_pair_reads_a_portfolio_requirement_below_its_bands() {
-    let mut node = Node::start("portfolio-margin-dev-scenario", true).await;
-    serve_grid(&mut node, dev_config().portfolio_margin.expect("the dev config names a fixture group"));
+    let node = Node::start("portfolio-margin-dev-scenario", true).await;
     let (a, b) = (key(0x91), key(0x92));
     let (wallet_a, wallet_b) = (eip712::address(a.verifying_key()), eip712::address(b.verifying_key()));
     node.onboard(&a).await;
@@ -65,69 +65,6 @@ async fn dev_scenario_a_hedged_pair_reads_a_portfolio_requirement_below_its_band
     let read = verified(&node, &mut answers, wallet_a).await;
     assert_eq!(read["margin"], "10200", "{read}");
     assert_eq!(read["portfolio_margin"], requirement("10200", "5100", lone));
-}
-
-#[tokio::test]
-async fn a_grid_that_does_not_fit_the_listings_gives_no_portfolio_requirement_and_warns() {
-    let (_guard, mut alerts) = crate::test_support::capture_alerts();
-    let mut node = Node::start("portfolio-margin-misfit", true).await;
-    // EUR-USD, an FX market on its own hours, in the crypto group.
-    let mut grid = dev_config().portfolio_margin.expect("the dev config names a fixture group");
-    grid.groups[0].members[1].market = 10;
-    serve_grid(&mut node, grid);
-    let a = key(0x93);
-    node.onboard(&a).await;
-    let read = node.get(&format!("/v1/accounts/{}", eip712::address(a.verifying_key()))).await;
-    assert_eq!((read.get("portfolio_margin"), &read["margin"]), (None, &json!("0")), "{read}");
-    let warned =
-        std::iter::from_fn(|| alerts.try_recv().ok()).find(|alert| alert["alert"] == "portfolio_grid_mismatch");
-    let warned = warned.expect("the read raises the alert");
-    assert_eq!(warned["level"], "WARN");
-    assert!(warned["message"].contains("markets 1 and 10 differ"), "{warned:?}");
-}
-
-#[test]
-fn a_misfit_grid_warns_and_the_next_newer_read_it_fits_ends_the_warning() {
-    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
-    let portfolio = PortfolioMargin::new(dev_config().portfolio_margin.expect("the dev config names a fixture group"));
-    let taken = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>| {
-        std::iter::from_fn(|| rx.try_recv().ok()).count()
-    };
-    // The first read the grid fits ends an episode a run before may have left open, and only it.
-    portfolio.report(Some(1), None);
-    portfolio.report(Some(1), None);
-    assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (0, 1));
-    // A misfit read warns, keyed by the name alone, and the next fitting read ends it, once.
-    let misfit = Some("group crypto: markets 1 and 10 differ in asset class or schedule");
-    portfolio.report(Some(2), misfit);
-    portfolio.report(Some(2), misfit);
-    portfolio.report(Some(3), None);
-    portfolio.report(Some(3), None);
-    assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (2, 1));
-    // A fitting read of an older engine, finishing after a misfit read of a newer one, ends nothing.
-    portfolio.report(Some(5), misfit);
-    portfolio.report(Some(4), None);
-    assert_eq!((taken(&mut alerts), taken(&mut resolutions)), (1, 0));
-    portfolio.report(Some(6), None);
-    assert_eq!(taken(&mut resolutions), 1);
-}
-
-#[test]
-fn a_node_started_without_a_grid_ends_an_episode_a_run_with_one_left_open() {
-    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
-    let mut cfg = dev_config();
-    assert!(PortfolioMargin::configured(&cfg).is_some());
-    assert!(std::iter::from_fn(|| resolutions.try_recv().ok()).next().is_none());
-    cfg.portfolio_margin = None;
-    assert!(PortfolioMargin::configured(&cfg).is_none());
-    assert_eq!(std::iter::from_fn(|| resolutions.try_recv().ok()).count(), 1);
-    assert!(alerts.try_recv().is_err());
-}
-
-/// Serves `node`'s API with `grid` as its `[portfolio_margin]`.
-fn serve_grid(node: &mut Node, grid: engine_core::portfolio::PortfolioGrid) {
-    node.state.portfolio_margin = Some(Arc::new(PortfolioMargin::new(grid)));
-    node.app = router(node.state.clone()).layer(Extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9)))));
 }
 
 /// The read's `portfolio_margin`: the same requirement at the market's and at initial bands, as the

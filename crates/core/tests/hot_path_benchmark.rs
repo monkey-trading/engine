@@ -42,6 +42,8 @@ mod common;
 mod house_loss;
 #[path = "hot_path_benchmark/levels.rs"]
 mod levels;
+#[path = "hot_path_benchmark/portfolio.rs"]
+mod portfolio;
 #[path = "hot_path_benchmark/resting_reach.rs"]
 mod resting_reach;
 #[path = "hot_path_benchmark/toxicity.rs"]

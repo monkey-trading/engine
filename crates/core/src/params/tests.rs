@@ -34,6 +34,7 @@ pub(crate) fn params() -> ProtocolParams {
         profit_fee_curve: vec![],
         volume_tiers: vec![],
         corporate_bounds: Default::default(),
+        portfolio_grid: Default::default(),
     }
 }
 

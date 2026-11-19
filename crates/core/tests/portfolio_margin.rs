@@ -1,10 +1,10 @@
 //! Portfolio margin as a read (`portfolio`), through `Engine::apply`: a hedged book's matched exposure
 //! gets its group's credit, never more than `1 - φ` of its bands; a lone position, and every position
 //! that offsets nothing, keeps its per-position requirement exactly, in every market and at every
-//! size and tier; the initial requirement takes the tier floor in each band, a group's weekend shocks
-//! over its members' weekend gap, where a market with no weekend rate takes no credit, and no credit for
-//! a group with a member that cannot trade; the offsets add up to what the requirement saves; and a
-//! grid that does not fit the listings is refused.
+//! size and tier; the initial requirement takes the tier floor in each band, a market's weekend margin
+//! over its weekend window with its group keeping the credit, nothing more before a gap of markets with
+//! no weekend rate, and no credit for a group with a member that cannot trade; the offsets add up to what
+//! the requirement saves; and a grid that does not fit the listings is refused.
 
 mod common;
 
@@ -107,37 +107,31 @@ fn the_tier_floor_raises_each_band_and_the_credit_applies_at_every_tier() {
 }
 
 #[test]
-fn over_the_weekend_window_the_initial_requirement_takes_the_weekend_shocks() {
-    // From two hours before Friday's close oil's bands charge 7.5%: $69,500 per position. Gold, with
-    // no weekend rate, still matches $630k of oil but keeps its bands; oil's matched $47,250 of weekend
-    // bands are credited less its 4% weekend residual and closing cost, $28,350: $18,900. Maintenance
-    // keeps the normal shocks.
+fn over_the_weekend_window_the_initial_requirement_takes_the_weekend_margin_and_keeps_the_credit() {
+    // From two hours before Friday's close oil's bands charge 7.5%: $69,500 per position. The matched
+    // bands are gold's $7,000 and oil's $47,250 of weekend bands, against the same $9,310 grid charge as
+    // on Tuesday, so the credit is 70% of them, $37,975. Maintenance reads the market's bands.
     let (mut h, a) = book(0);
     h.advance_to(chicago(2026, 10, 23, 14, 30));
     reprice(&mut h, true);
     assert_eq!(h.engine.margin_standing(a.account).unwrap().initial_margin, f("69500"));
     let read = standing(&h, &a, &grid(3_000));
-    assert_eq!((read.margin, read.initial_margin), (f("20010"), f("50600")));
+    assert_eq!((read.margin, read.initial_margin), (f("20010"), f("31525")));
 }
 
 #[test]
-fn markets_with_no_weekend_margin_take_no_credit_over_their_groups_weekend_gap() {
-    // Oil and gold carry no weekend margin, so neither keeps a weekend window, yet from two hours
-    // before Friday's close until they reopen their matched parts keep their bands: no credit, where
-    // Tuesday's was $3,990. Their weekend residuals here are their normal ones, so only that rule
-    // removes it.
+fn markets_with_no_weekend_margin_keep_the_same_requirement_up_to_their_weekend_close() {
+    // Oil and gold carry no weekend margin, so neither keeps a weekend window: from two hours before
+    // Friday's close until it, the requirement and the group's $3,990 credit are Tuesday's.
     let (mut h, a) = book_on(genesis_with(0, 0));
-    let mut grid = grid(3_000);
-    grid.groups[0].members.iter_mut().for_each(|member| member.weekend_residual_shock_bps = 20);
-    assert_eq!(standing(&h, &a, &grid).initial_margin, f("20010"));
-    h.advance_to(chicago(2026, 10, 23, 14, 0) - 1);
-    reprice(&mut h, true);
-    assert_eq!(standing(&h, &a, &grid).initial_margin, f("20010"));
-    h.advance(1);
-    reprice(&mut h, true);
-    assert_eq!(h.engine.margin_standing(a.account).unwrap().initial_margin, f("24000"));
-    let read = standing(&h, &a, &grid);
-    assert_eq!((read.margin, read.initial_margin), (f("20010"), f("24000")));
+    let tuesday = standing(&h, &a, &grid(3_000));
+    assert_eq!((tuesday.margin, tuesday.initial_margin), (f("20010"), f("20010")));
+    for at in [chicago(2026, 10, 23, 14, 0), chicago(2026, 10, 23, 16, 0) - 1_000] {
+        h.advance_to(at);
+        reprice(&mut h, true);
+        assert_eq!(h.engine.margin_standing(a.account).unwrap().initial_margin, f("24000"));
+        assert_eq!(standing(&h, &a, &grid(3_000)), tuesday);
+    }
 }
 
 #[test]
@@ -277,8 +271,8 @@ fn the_requirement_lies_between_the_floor_shares_and_the_per_position_requiremen
 // ── Helpers ──
 
 /// The shocks `random_grid` reads: each group's floor share, each member's residual shock and its
-/// loading in tenths, and what the weekend adds to every residual.
-type Shocks = ([i64; 2], [i64; 4], [i64; 4], i64);
+/// loading in tenths.
+type Shocks = ([i64; 2], [i64; 4], [i64; 4]);
 
 /// A strategy for `Shocks`.
 fn shocks() -> impl Strategy<Value = Shocks> {
@@ -286,7 +280,6 @@ fn shocks() -> impl Strategy<Value = Shocks> {
         [1i64..=10_000, 1..=10_000],
         [0i64..=500, 0..=500, 0..=500, 0..=500],
         [-100i64..=99, -100..=99, -100..=99, -100..=99],
-        0i64..=1_000,
     )
 }
 
@@ -328,38 +321,38 @@ fn reprice(h: &mut Harness, gold: bool) {
     }
 }
 
-/// Oil and gold as one group under a floor share of `floor_share_bps`, gold loading 0.9: 0.2%
-/// residuals, 4% over the weekend window.
+/// Oil and gold as one group under a floor share of `floor_share_bps`, gold loading 0.9: 0.2% residuals.
 fn grid(floor_share_bps: i64) -> PortfolioGrid {
-    let weekend = |member: GroupMember| GroupMember { weekend_residual_shock_bps: 400, ..member };
     let group = OffsetGroup {
         name: "commodities".into(),
         floor_share_bps,
-        members: vec![weekend(member(OIL, "1", 20)), weekend(member(GOLD, "0.9", 20))],
+        max_floor_share_bps: floor_share_bps,
+        members: vec![member(OIL, "1", 20), member(GOLD, "0.9", 20)],
     };
     PortfolioGrid { groups: vec![group] }
 }
 
-/// A member with the same residual shock at all times.
+/// A member at `residual_shock_bps`, bounded there.
 fn member(market: MarketId, loading: &str, residual_shock_bps: i64) -> GroupMember {
-    GroupMember { market, loading: f(loading), residual_shock_bps, weekend_residual_shock_bps: residual_shock_bps }
+    GroupMember { market, loading: f(loading), residual_shock_bps, max_residual_shock_bps: residual_shock_bps }
 }
 
 /// A grid of BTC and ETH, and oil and gold, from `shocks`: each group's floor share, each member's
 /// residual shock, each member's loading in tenths (non-negative ones one tenth up, so none is zero),
-/// and what the weekend adds to every residual; no group at all when `empty`.
+/// and no group at all when `empty`.
 fn random_grid(shocks: &Shocks, empty: bool) -> PortfolioGrid {
-    let (floor_shares, residuals, loadings, weekend) = *shocks;
+    let (floor_shares, residuals, loadings) = *shocks;
     let markets = [BTC, ETH, OIL, GOLD];
     let member = |i: usize| GroupMember {
         market: markets[i],
         loading: Fixed::from_int(if loadings[i] < 0 { loadings[i] } else { loadings[i] + 1 }).div_int(10),
         residual_shock_bps: residuals[i],
-        weekend_residual_shock_bps: residuals[i] + weekend,
+        max_residual_shock_bps: residuals[i],
     };
     let group = |name: &str, g: usize| OffsetGroup {
         name: name.into(),
         floor_share_bps: floor_shares[g],
+        max_floor_share_bps: floor_shares[g],
         members: vec![member(2 * g), member(2 * g + 1)],
     };
     let groups = if empty { vec![] } else { vec![group("crypto", 0), group("commodities", 1)] };

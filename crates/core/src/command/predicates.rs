@@ -13,7 +13,7 @@ impl AdminCommand {
     /// Whether the operator may sign this command: listings, parameters, benchmark rates, stress
     /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
     /// parameter notices and operator rotations, from `V49` markup notices, from `V52` listing
-    /// notices, and from `V78` the status notice. The
+    /// notices, from `V78` the status notice, and from `V81` a relisting of several markets. The
     /// node alone sequences the others, from its config and build.
     pub fn is_operator_command(&self) -> bool {
         match self {
@@ -32,7 +32,8 @@ impl AdminCommand {
             | AdminCommand::RotateOperator { .. }
             | AdminCommand::AdoptCloseSpreadCeiling { .. }
             | AdminCommand::SetNotice { .. }
-            | AdminCommand::ClearNotice => true,
+            | AdminCommand::ClearNotice
+            | AdminCommand::RelistMarkets { .. } => true,
             AdminCommand::SetClientAuth(_)
             | AdminCommand::SetAccessPolicy(_)
             | AdminCommand::SetOperator(_)

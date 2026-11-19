@@ -84,6 +84,13 @@ pub enum AdminAction {
     ScheduleCorporateAction { file: PathBuf },
     /// List a market, or replace a listed market's spec and calendar, from a TOML market spec.
     UpsertMarket { file: PathBuf },
+    /// From V81, relist several markets at once, all or nothing, from TOML market specs, as an offset
+    /// group's calendar changes: each passes `upsert-market`'s checks, the parameters' grid is checked
+    /// over the result, and weekend scheduling and close-outs run once after all of them.
+    RelistMarkets {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+    },
     /// Replace the protocol parameters from a TOML file.
     SetParams { file: PathBuf },
     /// Set a benchmark rate, in bps a year. From protocol V46 it moves at most 300 bps a day from the
@@ -117,7 +124,7 @@ pub enum AdminAction {
     },
     /// Give notice of a new profit fee and/or close-out level (from V35), of new stress parameters
     /// (from V49), of new toxicity score tiers (from V54), of a new profit fee curve (from V55), and of a
-    /// new volume tier table (from V59): a `set-params` carrying them applies only from
+    /// new volume tier table (from V59), and of a new portfolio grid (from V81): a `set-params` carrying them applies only from
     /// `--effective-at`, at least seven days after the notice is logged, and the fee, the level and each
     /// tier's score and add-on must each stay within 50% of their launch values, from V55 with the fee
     /// at or above its launch value and the curve at or above its launch curve at every hold, and from
@@ -147,6 +154,11 @@ pub enum AdminAction {
         /// From V76, a TOML parameters file whose corporate action bounds a later `set-params` applies.
         #[arg(long)]
         corporate_bounds_from: Option<PathBuf>,
+        /// From V81, a TOML file holding `groups = [...]`, the offset grid a later `set-params` applies:
+        /// the launch grid's groups, members and loadings, with each residual shock and floor share from
+        /// its launch value up to its bound.
+        #[arg(long)]
+        portfolio_grid: Option<PathBuf>,
         /// When the new values may apply from, in RFC 3339 (`2027-01-01T00:00:00Z`).
         #[arg(long)]
         effective_at: DateTime<Utc>,

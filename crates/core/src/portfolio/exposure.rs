@@ -9,9 +9,10 @@
 //! per-position requirement, a `Fixed`. A leg's grid charge is its notional times at most 10^4 × 10^4
 //! plus 10^4 × 10^4 (`Engine::grid_charge`'s scale), below 2^155, and a side's below 2^187. So `credit`'s
 //! largest product, 10^4 × (bands × exposure × 10^8 + charge × exposure), is below 2^425, inside
-//! `U512`.
+//! `U512`. Each leg and each side's sums are below 2^223, so they are kept in `U256`, whose arithmetic is
+//! the cheaper, and widen only for the credit's products.
 
-use alloy_primitives::U512;
+use alloy_primitives::{U256, U512};
 
 use crate::Fixed;
 
@@ -29,23 +30,23 @@ pub(super) struct Leg {
     pub(super) bands: Fixed,
     /// Its grid charge, its own move and the cost of closing it, at `Fixed`'s scale times the charge
     /// scale `Exposure::credit` takes.
-    pub(super) charge: U512,
+    pub(super) charge: U256,
     /// Its own move, ρ × notional, at `Fixed`'s scale times 10^4.
-    pub(super) residual: U512,
+    pub(super) residual: U256,
 }
 
 /// One side, long or short, of a group's loading-weighted exposure: sums over its legs.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Side {
     /// Σ |β × qty × price|, at `Fixed`'s scale cubed.
-    exposure: U512,
-    bands: U512,
-    charge: U512,
-    residual: U512,
+    exposure: U256,
+    bands: U256,
+    charge: U256,
+    residual: U256,
 }
 
 /// A group's loading-weighted exposure for one account, its long and its short side summed apart.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Exposure {
     long: Side,
     short: Side,
@@ -55,13 +56,13 @@ impl Exposure {
     /// Adds `leg` to the side its loading-weighted exposure is on.
     pub(super) fn add(&mut self, leg: Leg) {
         const RANGE: &str = "within the range argument";
-        let magnitude = [leg.qty, leg.price, leg.loading].iter().fold(U512::from(1), |product, factor| {
-            product.checked_mul(U512::from(factor.raw().unsigned_abs())).expect(RANGE)
+        let magnitude = [leg.qty, leg.price, leg.loading].iter().fold(U256::from(1), |product, factor| {
+            product.checked_mul(U256::from(factor.raw().unsigned_abs())).expect(RANGE)
         });
         let negative = leg.qty.is_negative() ^ leg.price.is_negative() ^ leg.loading.is_negative();
         let side = if negative { &mut self.short } else { &mut self.long };
         side.exposure = side.exposure.checked_add(magnitude).expect(RANGE);
-        side.bands = side.bands.checked_add(wide(leg.bands)).expect(RANGE);
+        side.bands = side.bands.checked_add(U256::from(leg.bands.raw().unsigned_abs())).expect(RANGE);
         side.charge = side.charge.checked_add(leg.charge).expect(RANGE);
         side.residual = side.residual.checked_add(leg.residual).expect(RANGE);
     }
@@ -69,7 +70,7 @@ impl Exposure {
     /// Whether the net is below zero, and its magnitude at `Fixed`'s scale, rounded up.
     pub(super) fn net(&self) -> (bool, U512) {
         let short = self.short.exposure > self.long.exposure;
-        let magnitude = self.long.exposure.abs_diff(self.short.exposure);
+        let magnitude = U512::from(self.long.exposure.abs_diff(self.short.exposure));
         (short, ceil_div(magnitude, U512::from(SCALE_SQUARED)))
     }
 
@@ -77,7 +78,7 @@ impl Exposure {
     /// scale, rounded down.
     pub(super) fn matched(&self) -> U512 {
         let (smaller, _) = self.sides();
-        smaller.exposure * U512::from(2) / U512::from(SCALE_SQUARED)
+        U512::from(smaller.exposure) * U512::from(2) / U512::from(SCALE_SQUARED)
     }
 
     /// The matched exposure's worst loss over the grid, at `Fixed`'s scale, rounded up: each matched
@@ -85,11 +86,11 @@ impl Exposure {
     /// smaller to it.
     pub(super) fn worst_loss(&self) -> U512 {
         let (smaller, larger) = self.sides();
-        let (matched, whole) = (smaller.exposure, larger.exposure);
+        let (matched, whole) = (U512::from(smaller.exposure), U512::from(larger.exposure));
         if matched.is_zero() {
             return U512::ZERO;
         }
-        let loss = smaller.residual * whole + matched * larger.residual;
+        let loss = U512::from(smaller.residual) * whole + matched * U512::from(larger.residual);
         ceil_div(loss, whole * U512::from(BPS))
     }
 
@@ -99,14 +100,15 @@ impl Exposure {
     /// side is empty.
     pub(super) fn credit(&self, floor_share_bps: i64, charge_scale: U512) -> Fixed {
         let (smaller, larger) = self.sides();
-        let (matched, whole) = (smaller.exposure, larger.exposure);
+        let (matched, whole) = (U512::from(smaller.exposure), U512::from(larger.exposure));
         if matched.is_zero() {
             return Fixed::ZERO;
         }
+        let wide = |value: U256| U512::from(value);
         // The matched part's bands and grid charge, each times the larger side's exposure, the charge
         // at its own scale.
-        let bands = (smaller.bands * whole + matched * larger.bands) * charge_scale;
-        let charge = smaller.charge * whole + matched * larger.charge;
+        let bands = (wide(smaller.bands) * whole + matched * wide(larger.bands)) * charge_scale;
+        let charge = wide(smaller.charge) * whole + matched * wide(larger.charge);
         if bands <= charge {
             return Fixed::ZERO;
         }
@@ -123,8 +125,8 @@ impl Exposure {
 }
 
 /// A non-negative `Fixed` as a wide amount at its scale.
-pub(super) fn wide(amount: Fixed) -> U512 {
-    U512::from(amount.raw().unsigned_abs())
+pub(super) fn wide(amount: Fixed) -> U256 {
+    U256::from(amount.raw().unsigned_abs())
 }
 
 /// A wide amount as a `Fixed`, at most the largest one: a figure past it reads as it.

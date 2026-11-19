@@ -7,7 +7,9 @@
 //! commands walk prices with jumps in every market and FX market, let quotes age out, cross market
 //! hours, trade, rest stops and limits, deposit and withdraw, roll over with financing, and cross the
 //! weekend gap of oil, silver, US Tech 100 and Japan 225, listed with `WEEKEND_MARGINS`, whose close-out
-//! the index also serves.
+//! the index also serves. The production genesis names its offset grid, so from `V81` the books hold
+//! grouped FX, index and metals positions, every check reads the portfolio requirement, and after every
+//! command each account's lies between the lowest floor share of its per-position requirement and all of it.
 //! Every command's events are equal across the three, and so are their state roots at each restore
 //! and at the end. The generated sessions must close accounts out on a price and at the gap, and
 //! the index must cross ranges on prices and FX indexes, move headrooms, key accounts, carry its
@@ -441,7 +443,21 @@ impl Run {
         );
         self.closeouts += events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).count();
         self.h.log.push(sequenced);
+        self.check_requirements();
         events
+    }
+
+    /// Checks every account's portfolio requirement at the marks is at most its per-position one and at
+    /// least the lowest floor share of it, which the production grid's groups make a test on grouped books.
+    fn check_requirements(&self) {
+        let engine = &self.h.engine;
+        let grid = engine.portfolio_rules().expect("the production genesis names a grid");
+        let least = grid.groups.iter().map(|group| group.floor_share_bps).min().expect("groups");
+        for (account, acct) in engine.accounts().iter().filter(|(_, acct)| !acct.positions.is_empty()) {
+            let (_, portfolio) = engine.equity_and_closeout_requirement(acct);
+            let (_, bands) = engine.equity_and_margin(acct, None);
+            assert!(portfolio <= bands && portfolio >= bands.mul_bps(least), "{account:?}: {portfolio} of {bands}");
+        }
     }
 
     /// The three engines' state roots, which must be equal.
