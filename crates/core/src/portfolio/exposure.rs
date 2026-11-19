@@ -26,7 +26,7 @@ pub(super) struct Leg {
     pub(super) qty: Fixed,
     pub(super) price: Fixed,
     pub(super) loading: Fixed,
-    /// Its per-position requirement, or nothing for a leg whose matched part takes no credit.
+    /// Its per-position requirement at the basis's bands.
     pub(super) bands: Fixed,
     /// Its grid charge, its own move and the cost of closing it, at `Fixed`'s scale times the charge
     /// scale `Exposure::credit` takes.
