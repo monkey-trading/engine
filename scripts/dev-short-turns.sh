@@ -8,7 +8,10 @@
 # drawn for B and then C. At each of the two boundaries the turn's member takes the keys by itself and
 # logs TurnTaken, and its admin key signs while the previous turn's is refused; with C, the incumbent,
 # killed, the members' liveness callers promote the next member, whose node serves from its copy under
-# its standby key; and its log replays across the change of signer. It takes about twenty minutes.
+# its standby key; and its log replays across the change of signer. Each member prices the market from
+# a loopback venue stand-in, opening its connection a minute before its own turn: no node pages
+# market_no_price, the log shows no gap as long as alerts.no_price_after across either boundary, and the
+# promoted member prices within its start budget. It takes about twenty minutes.
 # Needs Anvil, Forge, Cargo, and installed Soldeer dependencies. No external RPC or keys are used.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

@@ -170,8 +170,9 @@ pub struct Sequencer {
     /// request dequeues — so nothing queued behind the detection is stamped or checkpointed.
     log_heads: Option<crate::log_heads::Publisher>,
     /// A checkpoint waiting for another member to confirm holding its seq, and whether it was
-    /// paced: nothing is stamped past that seq until it is written (`liveness`).
+    /// paced: nothing is stamped past that seq until it is written or, paced, given up (`liveness`).
     checkpoint_waits: Option<bool>,
+    paced_waits: liveness::PacedWaits,
     /// A handover's stop parked while its final checkpoint waits, and when the wait runs out.
     handover_waits: Option<(tokio::sync::oneshot::Sender<anyhow::Result<()>>, Instant)>,
 }

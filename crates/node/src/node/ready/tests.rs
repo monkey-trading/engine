@@ -136,7 +136,7 @@ async fn run_member(
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
     let marks = Default::default();
-    let start = Start { replica: Replica { follower, stats, history, marks }, store, ready, moved };
+    let start = Start { replica: Replica { follower, stats, history, marks }, store, ready, moved, feeds: None };
 
     let metrics = Arc::new(Metrics::new());
     let (_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());

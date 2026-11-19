@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use alloy::primitives::Address;
 use anyhow::{Context, ensure};
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use k256::ecdsa::SigningKey;
 use serde_json::json;
 use sha2::Digest as _;
@@ -26,6 +26,8 @@ use crate::test_support::{ANVIL_CONFIG, keep_scratch, scratch_dir};
 
 /// How long a node gets to serve its API after it starts.
 const SERVE_WAIT: Duration = Duration::from_secs(120);
+/// How long the scenario's one market counts a quote, from its venue stamp.
+pub(super) const MAX_AGE_MS: Millis = 3_000;
 
 /// What a member's config names: the chain and its contracts, the stand-ins, and the genesis staking
 /// start, which each copy of the log must share, and its checkpoint and log-head relayers: Anvil's
@@ -267,7 +269,7 @@ fn one_market(genesis: &mut serde_json::Value) -> anyhow::Result<()> {
     genesis["markets"].as_array_mut().context("genesis markets")?.truncate(1);
     let market = &mut genesis["markets"][0];
     market["price_rules"]["min_sources"] = 1_i64.into();
-    market["price_rules"]["max_age_ms"] = 3000_i64.into();
+    market["price_rules"]["max_age_ms"] = MAX_AGE_MS.into();
     market["house_cap_floor"] = "1000000".into();
     market["spread_tiers"] = json!([{ "tenth_bps": 10 }]);
     market["margin_tiers"][0]["bps"] = 990_i64.into();

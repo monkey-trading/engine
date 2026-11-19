@@ -41,6 +41,8 @@ impl VenueFeed {
     /// (see `quotes::verdict`): the engine's price depends on the mid and on the quote being
     /// fresh, so it is sequenced once the one the engine holds is `quotes::refresh_after` old,
     /// the newest repeat by then going, and a new mid never waits on a repeat.
+    /// While the feed holds its quotes back (see `live`), it sends nothing and keeps each symbol's
+    /// newest.
     /// Returns the next instant a held quote may sequence — the earliest the budget frees a symbol
     /// holding a quote, and when a waiting repeat falls due or its noted delay bound runs out —
     /// for the caller to re-arm the emit timer, or `None` when nothing waits.
@@ -51,6 +53,11 @@ impl VenueFeed {
         buffered: &mut BTreeMap<String, Pending>,
         spent: &mut BTreeMap<String, Instant>,
     ) -> anyhow::Result<Option<Instant>> {
+        // A feed holding its quotes back keeps each symbol's newest for when it goes live (see `live`).
+        if !self.live() {
+            self.keep_newest(buffered);
+            return Ok(None);
+        }
         let now = (self.wall)();
         let interval = self.timing.interval;
         let mut wake: Option<Instant> = None;

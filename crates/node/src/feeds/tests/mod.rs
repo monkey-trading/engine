@@ -29,6 +29,7 @@ mod toxicity;
 pub(crate) mod vendors;
 mod venue_load;
 mod venue_soak;
+mod warm;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

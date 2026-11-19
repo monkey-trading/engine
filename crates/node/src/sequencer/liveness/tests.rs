@@ -11,9 +11,12 @@ use crate::clock::test_clock::TestClock;
 use crate::liveness::Gate;
 use crate::log::{LogEntry, Manifest};
 use crate::log_heads::{Head, Hold, Publisher};
+use crate::sequencer::liveness::{DEFER_MAX, PACED_STALL};
 use crate::sequencer::{Request, Sequencer, SequencerConfig};
 use crate::tee::EnclaveKey;
-use crate::test_support::{CHECKPOINT_EVERY, log_entries, sample_around, scratch_dir, sequencer_config};
+use crate::test_support::{
+    CHECKPOINT_EVERY, capture_alerts_and_resolutions, log_entries, sample_around, scratch_dir, sequencer_config,
+};
 use crate::trusted_time::{NO_SAMPLE_GRACE, Sample};
 
 #[tokio::test]
@@ -23,7 +26,9 @@ async fn a_checkpoint_waits_for_a_member_to_confirm_its_seq_and_nothing_is_stamp
     gate.fence(false);
     gate.checked(true);
     gate.bound_stamps(u64::MAX);
-    let (seq, _hold) = sequencer(&dir, gate.clone());
+    // On a clock that stands still, so the paced checkpoint's wait never runs past its stall.
+    let clock = Arc::new(TestClock::at(1_800_000_000_000));
+    let (seq, _hold) = sequencer_at(&dir, gate.clone(), &clock);
     let (tx, rx) = mpsc::channel(64);
     let task = tokio::spawn(seq.run(rx));
     // Commands up to the first checkpoint's seq are stamped; its checkpoint waits for a confirmation.
@@ -51,6 +56,52 @@ async fn a_checkpoint_waits_for_a_member_to_confirm_its_seq_and_nothing_is_stamp
         .collect();
     assert_eq!(checkpoints.first(), Some(&due), "the checkpoint signed is at the confirmed seq");
     assert!(checkpoints.iter().all(|seq| *seq <= due + 1), "{checkpoints:?}");
+}
+
+/// A paced checkpoint no member confirms holds stamps for `PACED_STALL`, then is given up on with
+/// nothing signed, and stamping goes on: a member moving to follow a new operator, or confirmations
+/// lapsed at a boundary, cost no prices. Once paced checkpoints have been given up on for `DEFER_MAX`,
+/// the next holds every stamp, under Warning `checkpoint_deferred`, until a member confirms its seq,
+/// which writes it and resolves the alert.
+#[tokio::test]
+async fn a_paced_checkpoint_holds_stamps_for_its_stall_until_paced_ones_were_deferred_too_long() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let dir = scratch_dir("seq-liveness-paced-stall");
+    let gate = Gate::closed();
+    gate.fence(false);
+    gate.checked(true);
+    gate.bound_stamps(u64::MAX);
+    let clock = Arc::new(TestClock::at(1_800_000_000_000));
+    let (seq, _hold) = sequencer_at(&dir, gate.clone(), &clock);
+    let (tx, rx) = mpsc::channel(64);
+    let task = tokio::spawn(seq.run(rx));
+    let first = stamp_until_a_checkpoint_waits(&tx).await;
+    clock.advance(PACED_STALL - Duration::from_millis(1));
+    assert!(!submit(&tx).await, "the paced checkpoint gave up before its stall ran out");
+    clock.advance(Duration::from_millis(1));
+    assert!(submit(&tx).await, "the paced checkpoint held stamps past its stall");
+    let signed = |dir| log_entries(dir).into_iter().filter(|entry| matches!(entry, LogEntry::Checkpoint(_))).count();
+    assert_eq!(signed(&dir), 0, "a checkpoint was signed at seq {first} with no member's confirmation");
+    assert!(alerts.try_recv().is_err(), "a paced checkpoint given up on within the deferral alerted");
+
+    // Given up on for `DEFER_MAX`, the next paced checkpoint holds until a member confirms its seq.
+    clock.advance(DEFER_MAX);
+    let due = stamp_until_a_checkpoint_waits(&tx).await;
+    clock.advance(PACED_STALL * 4);
+    assert!(!submit(&tx).await, "a paced checkpoint deferred past the limit gave up again");
+    let alert = alerts.try_recv().expect("no alert once paced checkpoints were deferred past the limit");
+    assert_eq!(alert["alert"].as_str(), "checkpoint_deferred");
+    gate.confirm(due);
+    assert!(!submit(&tx).await, "the request that finds the confirmation is refused, then the checkpoint written");
+    assert!(submit(&tx).await, "sequencing resumes");
+    assert_eq!(
+        resolved.try_recv().expect("the alert was not resolved")["alert_resolved"].as_str(),
+        "checkpoint_deferred"
+    );
+    drop(tx);
+    task.await.unwrap().unwrap();
+    let at_due = log_entries(&dir).into_iter().any(|entry| matches!(entry, LogEntry::Checkpoint(c) if c.seq == due));
+    assert!(at_due, "no checkpoint at the confirmed seq {due}");
 }
 
 /// A fenced enclave, or one whose start check has not passed, signs no checkpoint, however far a
@@ -211,6 +262,16 @@ async fn last_seq(tx: &mpsc::Sender<Request>) -> u64 {
     });
     tx.send(Request::Query(query)).await.unwrap();
     answer.await.unwrap().unwrap()
+}
+
+/// Stamps ticks until a checkpoint waits, within `CHECKPOINT_EVERY` of the last, and returns its seq.
+async fn stamp_until_a_checkpoint_waits(tx: &mpsc::Sender<Request>) -> u64 {
+    let mut stamped = 0;
+    while submit(tx).await {
+        stamped += 1;
+        assert!(stamped <= CHECKPOINT_EVERY, "a checkpoint is due within {CHECKPOINT_EVERY} commands");
+    }
+    last_seq(tx).await
 }
 
 /// Submits a tick and reports whether it was stamped.

@@ -131,6 +131,16 @@ impl Services {
         })
     }
 
+    /// Whether any node has paged alert `alert` firing, whatever its severity and fields.
+    #[cfg(feature = "short-turns")]
+    pub fn paged_any(&self, alert: &str) -> bool {
+        self.pages
+            .lock()
+            .expect("alert pages lock")
+            .iter()
+            .any(|page| page["status"] == "firing" && page["alert"] == alert)
+    }
+
     /// Fails if a required local server exited; silent background failures cannot look healthy.
     pub fn check(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.tasks.iter().all(|task| !task.is_finished()), "a scenario server stopped");

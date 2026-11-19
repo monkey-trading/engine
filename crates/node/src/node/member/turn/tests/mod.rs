@@ -124,6 +124,8 @@ impl Fixture {
             answering: None,
             fallback: Default::default(),
             sends: Default::default(),
+            delivered: None,
+            warm: None,
         }
     }
 
