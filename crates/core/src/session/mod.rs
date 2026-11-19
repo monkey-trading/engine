@@ -164,6 +164,23 @@ impl Schedule {
         minutes.chain(edges).all(|at| self.is_open(at))
     }
 
+    /// The first stretch from `from`, ending by `until`, that this schedule has the venue open
+    /// throughout and `other` shuts it in at some instant, as its start and end; `None` if `other` has
+    /// the venue open wherever this one does in that time. Both are walked by `Schedule::next_change`,
+    /// so a dated edge between milliseconds, or at a local time the clocks repeat, counts where it
+    /// takes effect. Each minute of the span costs a check of each schedule, so callers bound it.
+    pub(crate) fn open_hours_shut_by(&self, other: &Schedule, from: Millis, until: Millis) -> Option<(Millis, Millis)> {
+        let mut at = from;
+        while at < until {
+            let end = self.next_change(at, until).unwrap_or(until);
+            if self.is_open(at) && (!other.is_open(at) || other.next_change(at, end - 1).is_some()) {
+                return Some((at, end));
+            }
+            at = end;
+        }
+        None
+    }
+
     /// Whether the schedule lists any dated closure or special session.
     pub fn has_exceptions(&self) -> bool {
         matches!(self, Schedule::Weekly { closures, special_sessions, .. }

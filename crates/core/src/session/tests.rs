@@ -310,6 +310,77 @@ fn a_long_closure_is_one_gap_to_its_reopening() {
 }
 
 #[test]
+fn open_hours_shut_by_finds_the_first_open_stretch_another_calendar_shuts() {
+    let (from, until) = (ny_ms(2026, 10, 20, 9, 0), ny_ms(2026, 10, 27, 9, 0));
+    let s = us_equities();
+    let tuesday = (ny_ms(2026, 10, 20, 9, 30), ny_ms(2026, 10, 20, 16, 0));
+    let thursday = (ny_ms(2026, 10, 22, 9, 30), ny_ms(2026, 10, 22, 16, 0));
+    // The same hours, and more hours, shut nothing.
+    assert_eq!(s.open_hours_shut_by(&s, from, until), None);
+    assert_eq!(s.open_hours_shut_by(&Schedule::AlwaysOpen, from, until), None);
+    let longer = us_equities_with(vec![], vec![period("2026-10-24 10:00", "2026-10-24 12:00")]);
+    assert_eq!(s.open_hours_shut_by(&longer, from, until), None);
+    // A closure of Thursday's last minute, or a half-minute halt, names Thursday's session.
+    let early = us_equities_with(vec![period("2026-10-22 15:59", "2026-10-22 16:00")], vec![]);
+    assert_eq!(s.open_hours_shut_by(&early, from, until), Some(thursday));
+    let halt = us_equities_with(vec![period("2026-10-22 13:00", "2026-10-22 13:00:30")], vec![]);
+    assert_eq!(s.open_hours_shut_by(&halt, from, until), Some(thursday));
+    // The other way round, the plain hours shut the Saturday session.
+    assert_eq!(
+        longer.open_hours_shut_by(&s, from, until),
+        Some((ny_ms(2026, 10, 24, 10, 0), ny_ms(2026, 10, 24, 12, 0)))
+    );
+    // A later open shuts the start of its session, and nothing after it; a closure from `until` on
+    // shuts nothing within the span.
+    let later = us_equities_with(vec![period("2026-10-20 09:30", "2026-10-20 10:00")], vec![]);
+    assert_eq!(s.open_hours_shut_by(&later, from, until), Some(tuesday));
+    assert_eq!(s.open_hours_shut_by(&later, tuesday.1, until), None);
+    let past = us_equities_with(vec![period("2026-10-27 09:30", "2026-10-27 16:00")], vec![]);
+    assert_eq!(s.open_hours_shut_by(&past, from, until), None);
+    // Around the clock, the span is one stretch.
+    assert_eq!(Schedule::AlwaysOpen.open_hours_shut_by(&s, from, until), Some((from, until)));
+}
+
+#[test]
+fn open_hours_shut_by_sees_a_closure_between_minutes_wherever_it_takes_effect() {
+    let (from, until) = (ny_ms(2026, 10, 20, 9, 0), ny_ms(2026, 10, 27, 9, 0));
+    let s = us_equities();
+    let thursday = (ny_ms(2026, 10, 22, 9, 30), ny_ms(2026, 10, 22, 16, 0));
+    // Halts starting a nanosecond past a minute or a second, each open at every minute boundary and at
+    // the millisecond each edge falls in.
+    let nano = |minute: u32, second: u32, nano: u32| {
+        NaiveDate::from_ymd_opt(2026, 10, 22).unwrap().and_hms_nano_opt(13, minute, second, nano).unwrap()
+    };
+    for (start, end) in [(nano(0, 0, 1), nano(0, 30, 0)), (nano(0, 10, 1), nano(0, 59, 999_000_000))] {
+        let halt = us_equities_with(vec![Period { from: start, to: end }], vec![]);
+        assert_eq!(s.open_hours_shut_by(&halt, from, until), Some(thursday), "{start}..{end}");
+    }
+    // A ten-second closure at 01:30:10 on 1 November, an hour New York's clocks repeat, in its second run
+    // only: the span runs from the first run's 01:50 to the second's 01:40, so its local ends are in the
+    // wrong order, and no minute boundary falls inside the closure.
+    let sunday = Schedule::Weekly {
+        tz: chrono_tz::America::New_York,
+        windows: vec![w("Sat 12:00", "Mon 12:00")],
+        closed_dates: vec![],
+        closures: vec![],
+        special_sessions: vec![],
+    };
+    let Schedule::Weekly { tz, windows, .. } = sunday.clone() else { unreachable!("weekly") };
+    let repeated = Schedule::Weekly {
+        tz,
+        windows,
+        closed_dates: vec![],
+        closures: vec![period("2026-11-01 01:30:10", "2026-11-01 01:30:20")],
+        special_sessions: vec![],
+    };
+    let utc = |h: u32, mi: u32| chrono::Utc.with_ymd_and_hms(2026, 11, 1, h, mi, 0).unwrap().timestamp_millis();
+    let (first_run, second_run) = (utc(5, 50), utc(6, 40));
+    let shut = sunday.open_hours_shut_by(&repeated, first_run, second_run);
+    assert_eq!(shut, Some((first_run, second_run)));
+    assert_eq!(sunday.open_hours_shut_by(&repeated, utc(6, 31), utc(7, 0)), None);
+}
+
+#[test]
 fn a_dated_edge_between_milliseconds_takes_effect_at_the_next_one() {
     // A Friday early close a nanosecond after noon shuts the market from the next millisecond.
     let noon = NaiveDate::from_ymd_opt(2026, 10, 23).unwrap().and_hms_nano_opt(12, 0, 0, 1).unwrap();

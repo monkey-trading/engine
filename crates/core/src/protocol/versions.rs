@@ -279,15 +279,14 @@ pub enum ProtocolVersion {
     /// parameters name none, and gives a market listed with no floor its asset class's: 0.1 bp for FX, bonds and rates,
     /// 0.5 bp for indices, and 1 bp for the rest.
     V54,
-    /// The profit fee falls with holding time (`holding_fee`): a realised gain pays the larger of
-    /// the base fee and the hold curve's fee at the hold of the slice it closes, the hold running
-    /// from the position's open time, which an add moves to the size-weighted average of now and
-    /// the open time raised to no earlier than now less the curve's last hold, and a flip restarts.
-    /// The base moves only from its launch value up to +50%, and the curve only to one at or above
-    /// its launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice.
-    /// Before it a curve in the parameters charges nothing; activation raises a base cut below its
-    /// launch value back to it, gives parameters that name no curve the default one, and gives each
-    /// held position the open time `activation - the curve's last hold`.
+    /// The profit fee falls with holding time (`holding_fee`): a realised gain pays the larger of the base fee and the
+    /// hold curve's fee at the hold of the slice it closes, the hold running from the position's open time, which an
+    /// add moves to the size-weighted average of now and the open time raised to no earlier than now less the curve's
+    /// last hold, and a flip restarts. The base moves only from its launch value up to +50%, and the curve only to one
+    /// at or above its launch curve at every hold, reaching at most 30 minutes, each after a seven-day notice. Before
+    /// it a curve in the parameters charges nothing; activation raises a base cut below its launch value back to it,
+    /// gives parameters that name no curve the default one, and gives each held position the open time `activation -
+    /// the curve's last hold`.
     V55,
     /// Parameter changes by stake-weighted operator vote (`governance`). While rotation is on, the governed parameters,
     /// listings, toxicity weighting, close-spread ceiling adoptions, the access policy and protocol activation change
@@ -313,18 +312,17 @@ pub enum ProtocolVersion {
     /// log across `V54` it is refused while such a listing's ceiling is below its launch close charge
     /// under the parameters as it converts them.
     V58,
-    /// Volume tiers (`volume_tier`): an account's tier is the highest whose threshold its counted volume
-    /// over the last 30 UTC days reaches, each day counting at most the threshold over the tier's day
-    /// divisor, and its first spread band in every market ends at its tier's share of the first bound,
-    /// at most the second, with no rate changed. Opening notional counts on the day it has been held
-    /// 60 s; a close takes the position's pending notional newest first, counting nothing for it, and
-    /// counts what it closes past it once the toxicity horizon has passed, unless a reopening at the
-    /// same index within it takes it back as a round trip; a close-out counts at once. The table moves
-    /// only after a seven-day notice or by a vote, keeping its launch tiers, thresholds and day
-    /// divisors at or above launch and shares at or below, with every market's spread at each tier from
-    /// that tier's launch spread to twice it. Activation, refused over a listing outside that bound, gives
-    /// parameters that name no table the launch table, starts every account at tier 0 with no counted
-    /// volume, and holds every position held then pending, counting nothing, for its first 60 s.
+    /// Volume tiers (`volume_tier`): an account's tier is the highest whose threshold its counted volume over the last
+    /// 30 UTC days reaches, each day counting at most the threshold over the tier's day divisor, and its first spread
+    /// band in every market ends at its tier's share of the first bound, at most the second, with no rate changed.
+    /// Opening notional counts on the day it has been held 60 s; a close takes the position's pending notional newest
+    /// first, counting nothing for it, and counts what it closes past it once the toxicity horizon has passed, unless a
+    /// reopening at the same index within it takes it back as a round trip; a close-out counts at once. The table moves
+    /// only after a seven-day notice or by a vote, keeping its launch tiers, thresholds and day divisors at or above
+    /// launch and shares at or below, with every market's spread at each tier from that tier's launch spread to twice
+    /// it. Activation, refused over a listing outside that bound, gives parameters that name no table the launch table,
+    /// starts every account at tier 0 with no counted volume, and holds every position held then pending, counting
+    /// nothing, for its first 60 s.
     V59,
     /// A market may carry a weekend margin (`weekend`): a rate each of its margin bands charges at least over its
     /// weekend gap, any closure of at least 40 hours by its calendar. From two hours before such a gap starts until the
@@ -373,14 +371,13 @@ pub enum ProtocolVersion {
     /// each tier of the table in force, and of its launch table, at least a floor by position: 500 bps
     /// at tier 0, 200 at tier 1 and none above; before it a floor a table names charges nothing.
     V64,
-    /// Votes govern only while a rotation set with members is in effect, as only its members can
-    /// propose, so until the first takes effect, and while an empty one is, the operator keeps its
-    /// bounded commands. A drawn turn names the operator from its boundary, not its mirror. Each
-    /// mirrored staking frontier carries the registry's turn state at that block, the boundary of the
-    /// turn naming the operator or none, which a turn the engine refused before `V65` gives no other
-    /// record of, and a passed proposal mirrored while a set is in effect and the engine sees no
-    /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted
-    /// turns held, and a log holding rotation sets counts rotation as on until the first frontier.
+    /// Votes govern only while a rotation set with members is in effect, as only its members can propose, so until the
+    /// first takes effect, and while an empty one is, the operator keeps its bounded commands. A drawn turn names the
+    /// operator from its boundary, not its mirror. Each mirrored staking frontier carries the registry's turn state at
+    /// that block, the boundary of the turn naming the operator or none, which a turn the engine refused before `V65`
+    /// gives no other record of, and a passed proposal mirrored while a set is in effect and the engine sees no
+    /// rotation shows such a turn from then. Activation takes the earliest boundary of the accepted turns held, and a
+    /// log holding rotation sets counts rotation as on until the first frontier.
     V65,
     /// Request and order limits (`volume_tier`): a volume tier may carry a resting-order limit and a
     /// request rate, each named for every tier or none. An account rests at most its tier's limit in
@@ -398,16 +395,15 @@ pub enum ProtocolVersion {
     /// staking frontier may name a drawn turn that has not started, up to a day after the block's time,
     /// where `V65` named only a turn begun by then.
     V67,
-    /// Tier benefits (`volume_tier`): a volume tier may carry a fee discount, a financing discount and an
-    /// emissions boost. A realised gain pays the larger of its hold curve's fee and the base fee less its
-    /// tier's discount at the close, rounded up to the bp; each rollover charges a position the markup
-    /// less its account's tier's discount, a negative markup as listed; and an account's weight in an
-    /// emission period, after its emission debt, grows by its tier's boost at the period's close before
-    /// the budget is shared. The benefits move only with the table, by a seven-day notice or a vote, none
-    /// above launch's and none falling with the tier, so a higher tier never pays more fee than a lower
-    /// one. Activation gives each tier of the table in force, and of its launch table, its position's
-    /// benefits: fee and financing discounts of 0, 0, 10% and 20%, and boosts of 0, 10%, 25% and 50%;
-    /// before it a table may name none.
+    /// Tier benefits (`volume_tier`): a volume tier may carry a fee discount, a financing discount and an emissions
+    /// boost. A realised gain pays the larger of its hold curve's fee and the base fee less its tier's discount at the
+    /// close, rounded up to the bp; each rollover charges a position the markup less its account's tier's discount, a
+    /// negative markup as listed; and an account's weight in an emission period, after its emission debt, grows by its
+    /// tier's boost at the period's close before the budget is shared. The benefits move only with the table, by a
+    /// seven-day notice or a vote, none above launch's and none falling with the tier, so a higher tier never pays more
+    /// fee than a lower one. Activation gives each tier of the table in force, and of its launch table, its position's
+    /// benefits: fee and financing discounts of 0, 0, 10% and 20%, and boosts of 0, 10%, 25% and 50%; before it a table
+    /// may name none.
     V68,
     /// A rollover reads an account's tier from only the volume that had counted by its own time, however
     /// many fills of the account a catch-up makes first, in this command or an earlier one it was deferred
@@ -496,4 +492,9 @@ pub enum ProtocolVersion {
     /// a notice or a vote moves only shocks and floor shares, up within their bounds; the fast path may raise a share.
     /// `RelistMarkets` relists several markets at once.
     V81,
+    /// A calendar change shuts a listed market only from seven days on, whatever its weekend margin and whether or not
+    /// it holds positions: unless a vote carries it, a relisting whose calendar shuts the market within seven days at
+    /// an instant its calendar in force has it open is refused (`listing_bounds`). Added hours, and a first listing's
+    /// calendar, meet no notice under it.
+    V82,
 }

@@ -80,7 +80,11 @@ again.
    `venue_symbol_silent` for that market.
 
 2. Check the market's calendar. A market that is closed on its calendar is not a fault, because the
-   alert covers open markets only.
+   alert covers open markets only. Then check whether the venue announced a closure for today. A
+   closure announced less than seven days ahead cannot go on the calendar, because a calendar change
+   closes a listed market only from seven days after it is logged, so the alert fires for the length
+   of such a closure. Once the venue's announcement confirms it, the alert is expected: go to step 5,
+   and add the closure to the calendar only for dates at least seven days ahead.
 
 3. If one vendor is down, wait for its reconnect, check its status page, and check your account with
    the vendor. If the vendor will be down for a long time, the owner decides whether to ship a

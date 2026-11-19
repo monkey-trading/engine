@@ -16,6 +16,11 @@
 //! force, fewer sources, a longer freshness bound or a wider divergence bound, apply only as a notice
 //! or a vote names them, and never looser in any rule than the market's launch rules: those in force
 //! when `V76` activates, or its first listing after. Tighter price rules apply at once.
+//!
+//! From `V82` a relisting's calendar shuts a listed market only from seven days on, unless a vote carries
+//! it: the new calendar has the market open at every instant before then that the calendar in force does,
+//! whatever its weekend margin and whether or not it holds positions, since one opened before the closure
+//! starts would meet it with no notice. A first listing takes any calendar.
 
 use std::iter::once;
 
@@ -27,8 +32,10 @@ use crate::close_spread::launch_close_charge_tenth_bps;
 use crate::engine::Engine;
 use crate::levels::check_level_distance_range;
 use crate::market::{MarketSpec, PriceRules, Tier, validate_tiers};
+use crate::operator_bounds::NOTICE_MS;
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
+use crate::session::Schedule;
 use crate::spread_tier::{SpreadTier, check_spread_tiers, validate_spread_tiers};
 use crate::types::{MarketId, Millis};
 
@@ -244,7 +251,8 @@ impl Engine {
     /// relisting changes a listed market's markup (from `V49`), its spread and margin bands (from
     /// `V52`), its weekend margin (from `V60`), price rules that loosen any rule (from `V76`) and its
     /// minimum level distance (from `V79`) only to the values its notice names, once that notice's time
-    /// has come. A `voted` relisting's notice is its vote's, and it is held to the bounds a notice is:
+    /// has come, and from `V82` shuts the market only from seven days on (`check_calendar_notice`). A
+    /// `voted` relisting's notice is its vote's, and it is held to the bounds a notice is:
     /// each changed band table within its market's launch bands, a weekend margin
     /// `MarketSpec::validate` admits, loosened price rules within the launch rules, and a distance from
     /// its launch value to twice it. Changes are measured from the baseline (`Engine::baseline_spec`).
@@ -261,6 +269,8 @@ impl Engine {
     ///   there or above twice it, a changed margin band table whose requirement at some notional is
     ///   below launch's, from `V76` loosened price rules looser in any rule than the launch rules, or
     ///   from `V79` a distance outside its launch value to twice it
+    /// - from `V82`, unless `voted`, a calendar that shuts a listed market within seven days at an
+    ///   instant its calendar in force has it open
     pub(crate) fn check_listing_change(&self, spec: &MarketSpec, voted: bool) -> Result<ListingChange, String> {
         check_spread_tiers(&spec.spread_tiers, spec.asset_class, self.protocol_version)?;
         let markup = self.check_markup_change(spec, voted)?;
@@ -323,6 +333,9 @@ impl Engine {
                 change.distance = true;
             }
         }
+        if self.protocol_version >= ProtocolVersion::V82 && !voted {
+            check_calendar_notice(spec.id, &listed.schedule, &spec.schedule, self.now)?;
+        }
         Ok(change)
     }
 
@@ -370,6 +383,30 @@ impl Engine {
             }
             Some(_) => Ok(()),
         }
+    }
+}
+
+/// Checks `schedule` shuts `market` only from `NOTICE_MS` after `now` on: at every instant before then
+/// that `in_force` has the market open, `schedule` has it open too. A shut market's quotes set no mark
+/// and its close-outs wait, so a closure sooner than that would freeze both with no notice. Hours added,
+/// and hours shut only from `NOTICE_MS` on, pass.
+/// Error cases:
+/// - an instant within `NOTICE_MS` of `now` that `in_force` has the market open and `schedule` shut
+fn check_calendar_notice(
+    market: MarketId,
+    in_force: &Schedule,
+    schedule: &Schedule,
+    now: Millis,
+) -> Result<(), String> {
+    if in_force == schedule {
+        return Ok(());
+    }
+    match in_force.open_hours_shut_by(schedule, now, now + NOTICE_MS) {
+        None => Ok(()),
+        Some((open, close)) => Err(format!(
+            "a calendar change may not shut market {market} within {} days in hours its calendar has it open, from {open} to {close}",
+            NOTICE_MS / 86_400_000
+        )),
     }
 }
 
