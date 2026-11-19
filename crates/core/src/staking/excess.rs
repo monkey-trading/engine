@@ -5,6 +5,12 @@ use crate::Fixed;
 use crate::engine::Engine;
 use crate::protocol::ProtocolVersion;
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only, per test thread: how many times `account_reserves` has walked the accounts.
+    pub(super) static RESERVE_WALKS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 impl Engine {
     /// What an epoch close at the current state would distribute, in USD before the whole-USDC
     /// rounding, or `None` before staking is initialised: house NAV and cash above the floor, less
@@ -26,7 +32,41 @@ impl Engine {
     /// approvals until funded. From `V75` the clients' parts are what their reversals would leave the
     /// house to bear (`reversal_shortfalls`). A close's work is `O(accounts + open positions + stakers)`.
     pub(super) fn excess_over(&self, floor: Fixed) -> Fixed {
+        self.excess_with(floor, self.account_reserves())
+    }
+
+    /// `excess_over` with the accounts' part already walked (`account_reserves`), which an epoch close
+    /// leaves as it was, so the closes one command makes in turn walk the accounts once.
+    pub(super) fn excess_with(&self, floor: Fixed, (reserved, uncollectible, principal): (i128, i128, i128)) -> Fixed {
         let nav = self.house_nav();
+        // Reversible principal and outstanding client gains must remain covered together.
+        // Cash debt is already in the independent funded-cash ceiling, so it is not deducted here.
+        let principal = if self.protocol_version >= ProtocolVersion::V30 { principal } else { 0 };
+        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(principal).saturating_sub(uncollectible));
+        let available_raw =
+            self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
+        let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {
+            available_raw.max(0)
+        } else {
+            available_raw
+        });
+        let available = if self.protocol_version >= ProtocolVersion::V31 {
+            available.min(self.withdrawal_cash.expect("V31 requires V22 capacity").max(Fixed::ZERO))
+        } else {
+            available
+        };
+        if self.protocol_version >= ProtocolVersion::V28 {
+            Fixed::from_raw(distributable_nav.raw().min(available.raw()).saturating_sub(floor.raw()).max(0))
+        } else {
+            (nav.min(available) - floor).max(Fixed::ZERO)
+        }
+    }
+
+    /// The part of `excess_over` that walks every account: the cash reserve, the NAV deduction and the
+    /// reversible principal, in raw `Fixed` units.
+    pub(super) fn account_reserves(&self) -> (i128, i128, i128) {
+        #[cfg(test)]
+        RESERVE_WALKS.set(RESERVE_WALKS.get() + 1);
         // The floor stays as house liquidity, and every principal still able to reverse stays
         // locked, exactly as `house_capital` and a reversal take it back: the house's unfinalised
         // deposits and, before `V75`, each client's whole, whose realised gains are therefore not
@@ -35,7 +75,7 @@ impl Engine {
         // clients' open positions sit underwater; the unrealised excess is not paid either.
         // TODO: maintain the account reserve incrementally before account-count growth makes
         // epoch close exceed its sequencing latency budget.
-        let (reserved, uncollectible, principal) = if self.protocol_version >= ProtocolVersion::V75 {
+        if self.protocol_version >= ProtocolVersion::V75 {
             self.reversal_shortfalls()
         } else if self.protocol_version >= ProtocolVersion::V28 {
             self.accounts.values().fold(
@@ -57,27 +97,6 @@ impl Engine {
             )
         } else {
             (self.accounts.values().map(|account| account.unfinalised_deposits).sum::<Fixed>().raw(), 0, 0)
-        };
-        // Reversible principal and outstanding client gains must remain covered together.
-        // Cash debt is already in the independent funded-cash ceiling, so it is not deducted here.
-        let principal = if self.protocol_version >= ProtocolVersion::V30 { principal } else { 0 };
-        let distributable_nav = Fixed::from_raw(nav.raw().saturating_sub(principal).saturating_sub(uncollectible));
-        let available_raw =
-            self.house_cash.raw().saturating_sub(self.unfinalised_house_deposits.raw()).saturating_sub(reserved);
-        let available = Fixed::from_raw(if self.protocol_version >= ProtocolVersion::V28 {
-            available_raw.max(0)
-        } else {
-            available_raw
-        });
-        let available = if self.protocol_version >= ProtocolVersion::V31 {
-            available.min(self.withdrawal_cash.expect("V31 requires V22 capacity").max(Fixed::ZERO))
-        } else {
-            available
-        };
-        if self.protocol_version >= ProtocolVersion::V28 {
-            Fixed::from_raw(distributable_nav.raw().min(available.raw()).saturating_sub(floor.raw()).max(0))
-        } else {
-            (nav.min(available) - floor).max(Fixed::ZERO)
         }
     }
 

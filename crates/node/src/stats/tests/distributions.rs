@@ -83,6 +83,30 @@ fn one_closes_allocations_do_not_leak_into_the_next() {
 }
 
 #[test]
+fn closes_in_one_command_each_record_only_their_own_allocations() {
+    // From V83 one command closes every held epoch in turn: the first pays, the later ones nothing.
+    let mut rig = Rig::staking();
+    let events = vec![
+        share(OTHER, 0, 10),
+        stakers(TRADER, 0, 90),
+        Event::DistributionEpochClosed {
+            epoch: 0,
+            nav: Fixed::from_int(1_500),
+            floor: Fixed::from_int(1_000),
+            excess: UsdcUnits(100),
+            allocated: UsdcUnits(100),
+        },
+    ];
+    close(&mut rig, T0 + 2 * 86_400_000, events, 1, 0);
+    let page = json(rig.stats.distributions(&rig.engine, None, 10).unwrap());
+    let (later, first) = (&page["epochs"][0], &page["epochs"][1]);
+    assert_eq!((first["epoch"].as_u64(), first["stakers"].as_u64()), (Some(0), Some(1)));
+    assert_eq!(first["stakers_usdc_units"], "90");
+    assert_eq!((later["epoch"].as_u64(), later["stakers"].as_u64()), (Some(1), Some(0)));
+    assert_eq!((later["stakers_usdc_units"].as_str(), &later["operator_shares"]), (Some("0"), &json!([])));
+}
+
+#[test]
 fn epochs_page_newest_first_and_the_cursor_continues_where_a_page_stopped() {
     let mut rig = Rig::staking();
     for epoch in 0..5 {

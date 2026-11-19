@@ -425,6 +425,8 @@ fn signed_by(key: &SigningKey, mut screening: Screening) -> Screening {
 
 #[path = "access/health.rs"]
 mod health;
+#[path = "access/reorganisations.rs"]
+mod reorganisations;
 #[path = "access/replacements.rs"]
 mod replacements;
 #[path = "access/rescreens.rs"]

@@ -505,10 +505,33 @@ the host's scan cursor cannot move them.
 When the quorum proves that a deposit was reversed before finality, the engine debits it once,
 raises a Critical alert, and runs the usual close-out, writing off against the house any loss on an
 account left with no positions. Positions without a price wait for one, and a negative house net
-asset value does not halt trading. A deposit included again in another block, with the same
-beneficiary and amount, moves to its replacement receipt in one step, even at a changed log index.
-Its cash nets out, no close-out runs, and a Critical alert is still raised. An orphaned deposit with
-no replacement up to the eligible head is debited.
+asset value does not halt trading. A deposit is treated as reversed only when the chain has dropped
+it: an orphaned deposit is debited only if no replacement appears up to the eligible head.
+
+A deposit that a reorganisation includes again in another block, with the same beneficiary and
+amount, moves to its replacement receipt, even at a changed log index or a changed vault deposit id.
+A reorganisation that includes another deposit ahead of credited ones shifts each of them to a later
+id. The trading server therefore applies all of one reorganisation's moves in a single command, in
+which every replaced receipt leaves its id before any replacement takes one. No deposit that is still
+on the chain is debited or closed out for holding an id that another deposit now has, and the engine
+refuses any credit or move that would land on an id a live receipt holds. Each moved deposit's cash
+nets out, and a Critical alert is still raised for each replaced receipt. The trading server
+sequences none of a reorganisation's changes until each orphaned deposit is either paired with its
+replacement or, once the scan reaches the eligible head, known to have been dropped.
+
+The chain can drop a deposit at the eligible head and include the same transaction again a few
+blocks later. In that case the reversal may have left the client's account below zero, and the house
+may have written that shortfall off, at once or after a market that could not trade reopened. The
+engine keeps each dropped deposit against its account and records every later write-off against that
+account. When the same deposit, with the same beneficiary and amount, is credited again, the engine
+repays the house, from its principal, the write-offs recorded since it was dropped that no other
+returning deposit has repaid. The client keeps no loss that the house absorbed while the deposit was
+missing, pays nothing for a write-off from before it was dropped, and repays each write-off once.
+
+A reversal opens a signing hold, under which no state root is signed until the next finalised custody
+frontier. The trading server sequences that frontier only after every change of the scan, so the
+deposits in a signed root always match the chain at that frontier. Any intermediate state between a
+reorganisation's first change and the next frontier is never committed to a signed root.
 
 Known limits:
 
@@ -616,6 +639,14 @@ state root. The mirror's frontier is the latest finalised block it has mirrored.
 epoch closes only once that frontier has passed the epoch's end, so no epoch's close pays a stake
 set that the mirror has not brought up to the epoch's end.
 
+Epochs close in turn. When the mirror falls behind and then catches up, each epoch whose end it has
+passed closes in order, at the stake set the mirror held when it passed that end, and no epoch is
+skipped. A holder that stakes after the mirror's first completed scan past an epoch's end is
+therefore paid nothing for that epoch. The
+operator's share of an epoch is split among operators by their sequenced time in office up to the
+epoch's end, however late the close runs, and the next epoch counts time in office from that end.
+An operator that holds back the mirror therefore gains no share by doing so.
+
 Known limits:
 
 - The staking contract keeps each staker's delegations as amounts, with no limit on how many
@@ -624,8 +655,11 @@ Known limits:
   back, one or two per call, before such an unstake fits in a block.
 - That cost falls only on the staker that chose the delegations, and no one else can add to them. A
   report that rests on it alone is not a new finding.
-- The host can delay a distribution by holding back the mirror, and an epoch that it holds back for
-  a day past its end is skipped.
+- The host can delay a distribution by holding back the mirror. The excess that a delayed close
+  pays is the amount the house holds above its floor when the close runs, so it includes what the
+  house earned during the delay, and it is paid to the stake set of the epoch that closes. The stake
+  set of a delayed close also includes the stakes that the mirror's first scan past the epoch's end
+  delivered, as it does for a prompt close.
 - The operator's share of each distribution is split among operators by their sequenced time in
   office. An incumbent whose host delays an elected successor's takeover therefore keeps earning the
   share through that delay.

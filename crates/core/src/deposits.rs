@@ -13,8 +13,12 @@ use crate::types::AccountId;
 mod cash;
 mod conflicts;
 mod legacy;
+mod reorganisation;
 mod replacement;
+mod write_offs;
 pub use legacy::{LegacyDeposit, legacy_chain_reference};
+pub use reorganisation::ReceiptMove;
+pub use write_offs::{ReversedDeposit, ReversedDeposits};
 
 /// The recipient of a vault deposit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,17 +247,8 @@ impl Engine {
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
         let receipt = update.subject();
-        let reference = receipt.reference();
-        if receipt.block_hash == B256::ZERO || receipt.tx_hash == B256::ZERO || receipt.block == u64::MAX {
-            return Err(DepositReject::InvalidReceipt);
-        }
-        if !receipt.amount.is_valid_input() {
-            return Err(DepositReject::InvalidAmount);
-        }
-        let recorded = self.deposits.get(&reference);
-        if recorded.is_some_and(|recorded| recorded.receipt != *receipt) {
-            return Err(DepositReject::ConflictingReceipt);
-        }
+        self.check_subject(receipt)?;
+        let recorded = self.deposits.get(&receipt.reference());
         if let DepositUpdate::Replace { observed_at_seq, replacement, replacement_reversed_at_seq, .. } = update {
             return self.replace_deposit(
                 receipt,
@@ -285,6 +280,7 @@ impl Engine {
             }
             self.move_deposit_cash(receipt, true, true)?;
             self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events)?;
+            self.repay_write_off(receipt, events);
             return Ok(());
         }
         if let DepositUpdate::Credit { .. } = update {
@@ -308,6 +304,7 @@ impl Engine {
             }
             self.move_deposit_cash(receipt, true, true)?;
             self.record_deposit(receipt, DepositStatus::Unfinalised, receipt.amount, None, events)?;
+            self.repay_write_off(receipt, events);
             return Ok(());
         }
         let recorded = recorded.ok_or(DepositReject::UnknownReceipt)?;
@@ -340,15 +337,31 @@ impl Engine {
             DepositUpdate::Reverse { .. } => {
                 self.move_deposit_cash(receipt, false, true)?;
                 self.record_deposit(receipt, DepositStatus::Reversed, -receipt.amount, None, events)?;
-                if let DepositBeneficiary::Trader { account } = receipt.beneficiary {
-                    self.close_out_after_balance_change(account, events);
-                }
+                self.close_out_after_reversal(receipt, events);
                 Ok(())
             }
             DepositUpdate::Credit { .. } | DepositUpdate::Reinstate { .. } | DepositUpdate::Replace { .. } => {
                 unreachable!("credit handled before checking an existing receipt")
             }
         }
+    }
+
+    /// Checks the receipt a transition acts on against itself and its record.
+    /// Error cases:
+    /// - a zero block or transaction hash, or the last block number
+    /// - an amount outside the protocol's input bounds
+    /// - a different receipt recorded under its reference
+    fn check_subject(&self, receipt: &DepositReceipt) -> Result<(), DepositReject> {
+        if receipt.block_hash == B256::ZERO || receipt.tx_hash == B256::ZERO || receipt.block == u64::MAX {
+            return Err(DepositReject::InvalidReceipt);
+        }
+        if !receipt.amount.is_valid_input() {
+            return Err(DepositReject::InvalidAmount);
+        }
+        if self.deposits.get(&receipt.reference()).is_some_and(|recorded| recorded.receipt != *receipt) {
+            return Err(DepositReject::ConflictingReceipt);
+        }
+        Ok(())
     }
 
     /// Refuses a second active receipt for the same transaction-local deposit.

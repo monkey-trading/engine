@@ -7,13 +7,14 @@ use anyhow::anyhow;
 use engine_core::access::receipt_access_deposit;
 use engine_core::command::Command;
 use engine_core::deposits::{
-    CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus, DepositUpdate, RecordedDeposit,
+    CustodyCheckpoint, DepositBeneficiary, DepositReceipt, DepositStatus, DepositUpdate, RecordedDeposit,
 };
 use engine_core::eip712::deposit_screening_hash;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::mpsc;
-use tracing::{Instrument, error, info, info_span};
+use tracing::{Instrument, debug, error, info, info_span};
 
 use crate::access::{ScreeningRequest, screen};
 use crate::custody::credit::{query, submit};
@@ -25,7 +26,9 @@ use crate::custody::usdc_to_fixed;
 use crate::sequencer::Request;
 
 mod revision;
-use revision::{observed_revision, refusal_stall, refused, replacement_update};
+mod transitions;
+use revision::{observed_revision, refusal_stall, refused};
+use transitions::raced_activation;
 
 impl<V: VaultReader> DepositWatcher<V> {
     /// Credits canonical confirmations, reconciles pending receipts, and releases final principal.
@@ -119,63 +122,32 @@ impl<V: VaultReader> DepositWatcher<V> {
         let scan = self.confirmed.scan.as_ref().expect("scan retained");
         let orphans = reconcile(&pending, &scan.canonical, &scan.hashes, to == eligible)?;
         let deferred = orphans.iter().any(|(_, orphaned)| *orphaned == Orphaned::Deferred);
-        // A startup activation may race this poll; the build's command format cannot follow a query.
-        let screened_replacements = self.access_enforced;
-        for (recorded, orphaned) in orphans {
-            let update = match orphaned {
-                Orphaned::Replaced(replacement) if screened_replacements => {
-                    let payer = self
-                        .confirmed
-                        .scan
-                        .as_ref()
-                        .expect("scan retained")
-                        .payers
-                        .get(&replacement.reference())
-                        .copied()
-                        .flatten();
-                    let update = replacement_update(tx, recorded, replacement.clone()).await?;
-                    let (subject, observed) = (update.subject().clone(), observed_revision(&update));
-                    let deposit = receipt_access_deposit(&replacement, payer);
-                    let request = ScreeningRequest {
-                        request_hash: deposit_screening_hash(&deposit),
-                        account: deposit.account,
-                        payer,
-                        peer: None,
-                    };
-                    let evidence = screen(self.access.as_deref(), &request).await;
-                    let events =
-                        submit(tx, Command::AccessCustodyReplacement { update: Box::new(update), payer, evidence })
-                            .await?;
-                    match refused(&events) {
-                        Some(DepositReject::ProtocolNotActive) => {
-                            return Err(PollError::unsettled(anyhow!(
-                                "canonical replacement awaits access protocol activation"
-                            )));
-                        }
-                        Some(reason) => {
-                            return Err(refusal_stall(
-                                tx,
-                                &subject,
-                                observed,
-                                &reason,
-                                "sequencer refused screened canonical replacement",
-                            )
-                            .await);
-                        }
-                        None => {}
-                    }
-                    continue;
-                }
-                Orphaned::Replaced(replacement) => replacement_update(tx, recorded, replacement).await?,
-                Orphaned::Reversed => DepositUpdate::Reverse {
-                    receipt: recorded.receipt.clone(),
-                    observed_at_seq: recorded.updated_at_seq,
-                },
-                Orphaned::Deferred => continue,
+        // From V83 the scan's transitions wait until every orphan is paired with its replacement or, at
+        // the eligible head, disproved, and its moves go as one command: a move or a credit landing on a
+        // waiting orphan's id is refused. An activation may race this read; whatever it refuses waits for
+        // the next poll.
+        let together =
+            query(tx, |engine| engine.protocol_version() >= ProtocolVersion::V83).await.map_err(PollError::Fatal)?;
+        if together {
+            if deferred {
+                let waiting = orphans.iter().filter(|(_, orphaned)| *orphaned == Orphaned::Deferred).count();
+                debug!(
+                    waiting,
+                    to,
+                    eligible,
+                    "a reorganisation's orphans wait for the eligible head; its moves and credits wait too"
+                );
+                return Ok(self.behind(from, eligible));
+            }
+            self.reorganise(tx, orphans).await?;
+            self.apply_confirmed_scan(tx).await?;
+        } else {
+            let applied = match self.transition_each(tx, orphans).await {
+                Ok(()) => self.apply_confirmed_scan(tx).await,
+                Err(error) => Err(error),
             };
-            sequence_update(tx, update).await?;
+            raced_activation(tx, applied).await?;
         }
-        self.apply_confirmed_scan(tx).await?;
         // An orphan still waiting for its replacement holds the finalised frontier below it. The
         // frontier ends the signing hold a reversal opens (`Accounting::reorganising`), so it follows
         // every transition of the scan.

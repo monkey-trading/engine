@@ -424,3 +424,35 @@ fn v75_keeps_the_houses_unfinalised_deposits_reserved_whole() {
         assert_eq!(engine.distributable_excess(), Some(expected), "gain {client_gain}, locked {house_locked}");
     }
 }
+
+#[test]
+fn from_v83_a_close_the_mirror_holds_walks_no_account_and_the_closes_it_releases_walk_once() {
+    let mut engine = Engine {
+        protocol_version: ProtocolVersion::V83,
+        now: 1_000,
+        withdrawal_cash: Some(Fixed::ZERO),
+        ..Engine::default()
+    };
+    engine.init_staking(&config(1_000)).unwrap();
+    let walks = || super::excess::RESERVE_WALKS.get();
+    let start = walks();
+    // Past the ends of epochs 0 and 1 with no frontier: nothing closes, and no account is walked.
+    let mut events = Vec::new();
+    engine.now = config(1_000).epoch_end(1);
+    engine.finalise_staking(&mut events);
+    assert!(events.is_empty(), "{events:?}");
+    assert_eq!(walks(), start);
+    // The frontier passes both ends: both close, in turn, on one walk.
+    let through = StakingCheckpoint { block: 1, block_hash: alloy_primitives::B256::ZERO, time: Some(engine.now) };
+    engine.staking.as_mut().unwrap().completed_through = Some(through);
+    engine.finalise_staking(&mut events);
+    let closed: Vec<u64> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::DistributionEpochClosed { epoch, .. } => Some(*epoch),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(closed, [0, 1]);
+    assert_eq!(walks(), start + 1);
+}

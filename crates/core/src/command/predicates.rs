@@ -49,8 +49,9 @@ impl AdminCommand {
 
 impl Command {
     /// Targets an activation that applies before an overdue epoch closes: one that validates staking
-    /// cash reserves (`V28` to `V31`), or `V75`, whose close waits for the staking mirror. One that
-    /// applies runs the close under its rules in the same command; a refused one leaves it pending.
+    /// cash reserves (`V28` to `V31`), `V75`, whose close waits for the staking mirror, or `V83`, whose
+    /// closes run in turn and split the operator's share to each epoch's end. One that applies runs the
+    /// close under its rules in the same command; a refused one leaves it pending.
     pub(crate) fn changes_staking_reserves(&self, current: ProtocolVersion) -> bool {
         let admin = match self {
             Self::Admin(admin) => admin,
@@ -69,6 +70,7 @@ impl Command {
             || (current < ProtocolVersion::V30 && target >= ProtocolVersion::V30)
             || (current < ProtocolVersion::V31 && target >= ProtocolVersion::V31)
             || (current < ProtocolVersion::V75 && target >= ProtocolVersion::V75)
+            || (current < ProtocolVersion::V83 && target >= ProtocolVersion::V83)
     }
 
     /// Whether this activates a protocol version, as the node sequences it or as a passed vote does.

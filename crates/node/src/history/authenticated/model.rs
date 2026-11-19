@@ -185,6 +185,7 @@ pub(super) fn event_kind(event: &Event) -> Result<u8> {
         Event::Fill(_) => "fill",
         Event::CloseOut { .. } => "close_out",
         Event::BadDebt { .. } => "bad_debt",
+        Event::WriteOffRepaid { .. } => "write_off_repaid",
         Event::Financing { .. } => "financing",
         Event::EmissionAllocated { .. } => "emission_allocated",
         Event::CustodyDepositChanged { .. } => "custody_deposit_changed",

@@ -801,7 +801,7 @@ event's own fields.
 `deposit_held`, `custody_deposit_changed`, `custody_deposit_rejected`, `eligibility_attested`,
 `eligibility_rejected`, `order_accepted`, `order_rejected`, `order_cancelled`, `fill`,
 `position_levels_set`, `position_level_triggered`, `position_levels_removed`, `close_out`,
-`bad_debt`, `financing`, `corporate_dividend`, `corporate_cash_in_lieu`, `withdrawal_queued`,
+`bad_debt`, `write_off_repaid`, `financing`, `corporate_dividend`, `corporate_cash_in_lieu`, `withdrawal_queued`,
 `withdrawal_queue_updated`, `withdrawal_approved`, `withdrawal_rejected`, `session_key_registered`,
 `session_key_revoked`, `session_key_rejected`, `emission_allocated`, `staked`, `unstaked`,
 `staking_rejected`, `distribution_allocated`, `operator_share_allocated` and

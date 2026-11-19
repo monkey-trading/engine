@@ -120,7 +120,15 @@ fn earns_to_the_end_of_its_turn(version: ProtocolVersion) {
     h.advance_to(ends + 2 * HOUR_MS);
     h.cmd(Command::Tick);
     assert_eq!(h.engine.operator().map(|operator| operator.address), Some(key()));
-    assert_eq!(office(&h), TimeInOffice { since: close_at, served: [(MEMBER, ends - close_at)].into_iter().collect() });
+    assert_eq!(
+        office(&h),
+        TimeInOffice {
+            since: close_at,
+            served: [(MEMBER, ends - close_at)].into_iter().collect(),
+            later: Vec::new(),
+            inherited_to: None
+        }
+    );
 }
 
 #[test]

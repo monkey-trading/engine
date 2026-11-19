@@ -53,7 +53,8 @@ impl Engine {
     }
 
     /// Writes off a flat account's negative balance against the house, and from `V19` records the
-    /// write-off in the account's emission period result.
+    /// write-off in the account's emission period result, and from `V83` counts it towards the account's
+    /// reversed deposits (`deposits::write_offs`).
     pub(crate) fn settle_bad_debt(&mut self, account: AccountId, events: &mut Vec<Event>) {
         let Some(acct) = self.accounts.get(&account) else { return };
         if acct.positions.is_empty() && acct.balance.is_negative() {
@@ -61,6 +62,7 @@ impl Engine {
             self.accounts.get_mut(&account).expect("found above").balance = Fixed::ZERO;
             self.house_cash -= amount;
             self.record_period_result(account, Fixed::ZERO, amount);
+            self.count_write_off(account, amount);
             events.push(Event::BadDebt { account, amount });
         }
     }

@@ -70,7 +70,7 @@ use crate::history::derived::Derived;
 use crate::log::{LogEntry, LogWriter, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::alerts::{
-    BenchmarkAlerts, DeficitAlert, LossAlert, alert_on, reinstated_receipt, resolve_reversal,
+    BenchmarkAlerts, DeficitAlert, LossAlert, alert_on, reinstated_receipts, resolve_reversal,
 };
 use crate::snapshot::{Progress, RecoveryBase};
 use crate::tee::EnclaveKey;
@@ -402,7 +402,7 @@ impl Sequencer {
             self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
         }
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
-        let reinstated = reinstated_receipt(&sequenced.cmd, &events);
+        let reinstated = reinstated_receipts(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
         self.report_marks(&sequenced, &events);
         self.log_check.applied(sequenced.seq, sequenced.ts, &events);
@@ -444,7 +444,7 @@ impl Sequencer {
                 }
             }
         }
-        if let Some(chain_ref) = reinstated {
+        for chain_ref in reinstated {
             resolve_reversal(&chain_ref);
         }
         if let Some(previous) = previous_benchmarks.filter(|_| events.contains(&Event::AdminApplied)) {

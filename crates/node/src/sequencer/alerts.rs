@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::command::Command;
-use engine_core::deposits::{DepositStatus, DepositUpdate};
+use engine_core::deposits::{DepositReceipt, DepositStatus, DepositUpdate, ReceiptMove};
 use engine_core::event::Event;
 use engine_core::{Engine, Fixed};
 use tokio::time::Instant;
@@ -167,25 +167,35 @@ fn resolve(condition: &mut Option<bool>, name: &str, benchmark: &str, message: &
     }
 }
 
-/// The reference of the receipt a command reinstated after its reversal, if it did: an exact
-/// reappearance, or a replacement that returns a reversed receipt to the chain.
-pub(super) fn reinstated_receipt(cmd: &Command, events: &[Event]) -> Option<String> {
-    let update = match cmd {
-        Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => update,
-        _ => return None,
+/// The references of the receipts a command reinstated after their reversal: an exact reappearance,
+/// or a replacement that returns a reversed receipt to the chain, from `V83` each of a reorganisation's.
+pub(super) fn reinstated_receipts(cmd: &Command, events: &[Event]) -> Vec<String> {
+    let updates = match cmd {
+        Command::CustodyDeposit(update) | Command::AccessCustodyReplacement { update, .. } => {
+            vec![update.as_ref().clone()]
+        }
+        Command::CustodyReorganisation { moves } => moves.iter().map(ReceiptMove::update).collect(),
+        _ => return Vec::new(),
     };
-    let receipt = match update.as_ref() {
-        DepositUpdate::Reinstate { receipt, .. } => receipt,
-        DepositUpdate::Replace { replacement, replacement_reversed_at_seq: Some(_), .. } => replacement,
-        _ => return None,
-    };
-    events
+    let live: BTreeMap<String, &DepositReceipt> = events
         .iter()
-        .any(|event| {
-            matches!(event, Event::CustodyDepositChanged { receipt: changed, status: DepositStatus::Unfinalised, .. }
-                if changed == receipt)
+        .filter_map(|event| match event {
+            Event::CustodyDepositChanged { receipt, status: DepositStatus::Unfinalised, .. } => {
+                Some((receipt.reference(), receipt))
+            }
+            _ => None,
         })
-        .then(|| receipt.reference())
+        .collect();
+    updates
+        .iter()
+        .filter_map(|update| match update {
+            DepositUpdate::Reinstate { receipt, .. } => Some(receipt),
+            DepositUpdate::Replace { replacement, replacement_reversed_at_seq: Some(_), .. } => Some(replacement),
+            _ => None,
+        })
+        .filter(|receipt| live.get(&receipt.reference()).is_some_and(|changed| changed == receipt))
+        .map(DepositReceipt::reference)
+        .collect()
 }
 
 /// Ends the reversal episode of a reinstated receipt; no other transition can have raised it.

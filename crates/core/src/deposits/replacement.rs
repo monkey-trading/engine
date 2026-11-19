@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 
 use crate::Fixed;
 use crate::access::{CreditScreening, UncreditedReceipt};
-use crate::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
+use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::protocol::ProtocolVersion;
@@ -18,6 +18,7 @@ impl Engine {
     /// - the replacement is invalid, at or below the finalised frontier, or not the same
     ///   transaction-local deposit with the same beneficiary and amount
     /// - the replacement is recorded but not reversed at the named revision
+    /// - from `V83`, another live receipt holds the replacement's vault id
     pub(super) fn replace_deposit(
         &mut self,
         orphan: &DepositReceipt,
@@ -27,13 +28,47 @@ impl Engine {
         screening: CreditScreening<'_>,
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
+        if !self.check_replacement(orphan, observed_at_seq, replacement, replacement_reversed_at_seq)? {
+            return Ok(());
+        }
+        let uncredited = self.deposits.get(&orphan.reference()).expect("checked above").uncredited;
+        self.reverse_conflicting_receipts(replacement, Some(&orphan.reference()), events)?;
+        if self.protocol_version >= ProtocolVersion::V26 {
+            return self.replace_screened_deposit(orphan, replacement, uncredited, screening, events);
+        }
+        if let Some(uncredited) = uncredited {
+            // The replacement is the same funded deposit, so it keeps the orphan's refusal.
+            self.record_deposit(orphan, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events)?;
+            self.track_uncredited(orphan, uncredited, false);
+            self.record_deposit(replacement, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
+            self.track_uncredited(replacement, uncredited, true);
+            return Ok(());
+        }
+        self.record_deposit(orphan, DepositStatus::Reversed, -orphan.amount, None, events)?;
+        self.record_deposit(replacement, DepositStatus::Unfinalised, replacement.amount, None, events)?;
+        Ok(())
+    }
+
+    /// Checks a move of `orphan`, live at revision `observed_at_seq`, to `replacement`, without changing
+    /// anything: `false` when the move has already applied, so a redelivery is a no-op.
+    /// Error cases:
+    /// - the orphan is unknown, or not live at the observed revision
+    /// - the replacement is invalid, at or below the finalised frontier, or not the same
+    ///   transaction-local deposit with the same beneficiary and amount
+    /// - the replacement is recorded but not reversed at the named revision
+    pub(super) fn check_replacement(
+        &self,
+        orphan: &DepositReceipt,
+        observed_at_seq: u64,
+        replacement: &DepositReceipt,
+        replacement_reversed_at_seq: Option<u64>,
+    ) -> Result<bool, DepositReject> {
         let recorded = self.deposits.get(&orphan.reference()).ok_or(DepositReject::UnknownReceipt)?;
-        let uncredited = recorded.uncredited;
         let current = self.deposits.get(&replacement.reference());
         if recorded.status == DepositStatus::Reversed
             && current.is_some_and(|d| d.receipt == *replacement && d.status != DepositStatus::Reversed)
         {
-            return Ok(());
+            return Ok(false);
         }
         if recorded.status != DepositStatus::Unfinalised || recorded.updated_at_seq != observed_at_seq {
             return Err(DepositReject::SettledReceipt);
@@ -61,21 +96,7 @@ impl Engine {
             (None, Some(_)) => return Err(DepositReject::UnknownReceipt),
             (Some(_), _) => return Err(DepositReject::SettledReceipt),
         }
-        self.reverse_conflicting_receipts(replacement, Some(&orphan.reference()), events)?;
-        if self.protocol_version >= ProtocolVersion::V26 {
-            return self.replace_screened_deposit(orphan, replacement, uncredited, screening, events);
-        }
-        if let Some(uncredited) = uncredited {
-            // The replacement is the same funded deposit, so it keeps the orphan's refusal.
-            self.record_deposit(orphan, DepositStatus::Reversed, Fixed::ZERO, Some(uncredited), events)?;
-            self.track_uncredited(orphan, uncredited, false);
-            self.record_deposit(replacement, DepositStatus::Unfinalised, Fixed::ZERO, Some(uncredited), events)?;
-            self.track_uncredited(replacement, uncredited, true);
-            return Ok(());
-        }
-        self.record_deposit(orphan, DepositStatus::Reversed, -orphan.amount, None, events)?;
-        self.record_deposit(replacement, DepositStatus::Unfinalised, replacement.amount, None, events)?;
-        Ok(())
+        Ok(true)
     }
 
     /// Replaces a receipt without transient cash removal; an authenticated unchanged payer retains
@@ -90,12 +111,7 @@ impl Engine {
         screening: CreditScreening<'_>,
         events: &mut Vec<Event>,
     ) -> Result<(), DepositReject> {
-        let known_payer = self.deposits.get(&orphan.reference()).and_then(|recorded| recorded.payer);
-        let retained_credit = old.is_none() && known_payer.is_some() && known_payer == screening.payer;
-        let new = self.terminal_receipt_hold(replacement).or_else(|| {
-            self.receipt_refusal(replacement, screening)
-                .filter(|refused| !retained_credit || refused.reason.holds_deposit())
-        });
+        let new = self.replacement_refusal(orphan, replacement, screening);
         if old.is_none() != new.is_none() {
             self.move_deposit_cash(replacement, new.is_none(), true)?;
         }
@@ -121,12 +137,30 @@ impl Engine {
             self.track_uncredited(replacement, new, true);
             self.announce_uncredited(replacement, new, events);
         }
-        if old.is_none()
-            && new.is_some()
-            && let DepositBeneficiary::Trader { account } = replacement.beneficiary
-        {
-            self.close_out_after_balance_change(account, events);
+        match (old, new) {
+            (Some(_), None) => self.repay_write_off(replacement, events),
+            (None, Some(_)) => self.close_out_after_reversal(replacement, events),
+            _ => {}
         }
         Ok(())
+    }
+
+    /// What keeps `replacement`'s principal out of cash, if anything: a terminal hold on its deposit, or
+    /// its screening's refusal, which a credited orphan's authenticated payer, unchanged, overrides
+    /// unless the refusal holds the deposit.
+    pub(super) fn replacement_refusal(
+        &self,
+        orphan: &DepositReceipt,
+        replacement: &DepositReceipt,
+        screening: CreditScreening<'_>,
+    ) -> Option<UncreditedReceipt> {
+        let recorded = self.deposits.get(&orphan.reference());
+        let known_payer = recorded.and_then(|recorded| recorded.payer);
+        let credited = recorded.is_some_and(|recorded| recorded.uncredited.is_none());
+        let retained_credit = credited && known_payer.is_some() && known_payer == screening.payer;
+        self.terminal_receipt_hold(replacement).or_else(|| {
+            self.receipt_refusal(replacement, screening)
+                .filter(|refused| !retained_credit || refused.reason.holds_deposit())
+        })
     }
 }

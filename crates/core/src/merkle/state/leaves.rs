@@ -46,6 +46,7 @@ impl Engine {
             toxicity_scores,
             markout_spreads,
             volumes,
+            reversed_deposits,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -212,6 +213,7 @@ impl Engine {
         );
         updates.extend(self.toxicity_leaves(toxicity_scores, markout_spreads).into_iter().map(hashed));
         updates.extend(self.volume_leaves(volumes).into_iter().map(hashed));
+        updates.extend(self.reversed_deposit_leaves(reversed_deposits).into_iter().map(hashed));
         updates
     }
 }

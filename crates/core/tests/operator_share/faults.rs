@@ -329,3 +329,92 @@ fn a_replay_reaches_the_same_root_and_haircut() {
     assert_eq!(replayed.state_root(), h.engine.state_root());
     assert_eq!(replayed.distribution(CANDIDATE), h.engine.distribution(CANDIDATE));
 }
+
+#[test]
+fn from_v83_a_held_close_cuts_each_epoch_by_the_haircut_over_its_own_time() {
+    let mut h = at(ProtocolVersion::V83, 1_000_000_000);
+    h.admin(AdminCommand::SetFaultProof(FaultProofConfig { contract: CONTRACT, penalty: PENALTY }));
+    switch(&mut h, true);
+    seat(&mut h, 1, CANDIDATE, key());
+    h.cmd(Command::Tick);
+    assert_eq!(h.engine.operator_candidate(), Some(CANDIDATE));
+    let config = h.engine.staking().expect("staking is initialised").config;
+    let start = config.epoch_end(config.epochs_elapsed(h.ts));
+    h.advance_to(start);
+    finalised(&mut h, start);
+    assert_eq!(allocated(&h.cmd(Command::Tick)), UsdcUnits(0));
+    stake(&mut h, STAKER_A, 1);
+    prove(&mut h, CANDIDATE, 7);
+    // The candidate's host holds the close twelve hours into the next epoch, which those hours belong
+    // to, under the haircut as it then stood.
+    let end = start + DAY_MS;
+    h.advance_to(end + 12 * HOUR_MS);
+    h.cmd(Command::Tick);
+    finalised(&mut h, end);
+    let events = h.cmd(Command::Tick);
+    // Over its own day the haircut falls from 50% to 45%: the candidate keeps 52.5% of the fifth.
+    assert_eq!(parts(&events), (vec![(CANDIDATE, 105_000_000)], vec![(CANDIDATE, 95_000_000)]));
+    earn(&mut h);
+    let next = end + DAY_MS;
+    h.advance_to(next);
+    finalised(&mut h, next);
+    let events = h.cmd(Command::Tick);
+    // Over the next day, the held hours included, it falls from 45% to 40%: 57.5% of the fifth is kept.
+    let fifth = excess_of(&events) / 5;
+    let (allocated, withheld) = parts(&events);
+    let [(account, amount)] = allocated[..] else { panic!("one part: {events:?}") };
+    let kept = fifth * 5_750 / 10_000;
+    assert_eq!(account, CANDIDATE);
+    assert!(amount <= kept && kept - amount <= 1, "{amount} against {kept}");
+    assert_eq!(withheld, vec![(CANDIDATE, fifth - amount)]);
+}
+
+#[test]
+fn from_v83_a_stint_held_past_the_next_epochs_end_withholds_only_its_own_part_in_each() {
+    let mut h = at(ProtocolVersion::V83, 1_000_000_000);
+    h.admin(AdminCommand::SetFaultProof(FaultProofConfig { contract: CONTRACT, penalty: PENALTY }));
+    switch(&mut h, true);
+    seat(&mut h, 1, CANDIDATE, key());
+    h.cmd(Command::Tick);
+    let config = h.engine.staking().expect("staking is initialised").config;
+    let start = config.epoch_end(config.epochs_elapsed(h.ts));
+    h.advance_to(start);
+    finalised(&mut h, start);
+    assert_eq!(allocated(&h.cmd(Command::Tick)), UsdcUnits(0));
+    stake(&mut h, STAKER_A, 1);
+    prove(&mut h, CANDIDATE, 7);
+    // The candidate's host holds the close a day and a half past the end, so one stint runs through the
+    // whole next epoch and twelve hours into the one after; the mirror then passes one end at a time.
+    let end = start + DAY_MS;
+    h.advance_to(end + 36 * HOUR_MS);
+    h.cmd(Command::Tick);
+    finalised(&mut h, end);
+    let events = h.cmd(Command::Tick);
+    assert_eq!(parts(&events), (vec![(CANDIDATE, 105_000_000)], vec![(CANDIDATE, 95_000_000)]));
+    earn(&mut h);
+    finalised(&mut h, end + DAY_MS);
+    let events = h.cmd(Command::Tick);
+    // Over the next epoch's own day the haircut falls from 45% to 40%: 57.5% of the fifth is kept, and
+    // the twelve hours after it withhold nothing from this close.
+    let fifth = excess_of(&events) / 5;
+    let (allocated, withheld) = parts(&events);
+    let [(account, amount)] = allocated[..] else { panic!("one part: {events:?}") };
+    let kept = fifth * 5_750 / 10_000;
+    assert_eq!(account, CANDIDATE);
+    assert!(amount <= kept && kept - amount <= 1, "{amount} against {kept}");
+    assert_eq!(withheld, vec![(CANDIDATE, fifth - amount)]);
+    // The twelve hours carried into the epoch after keep their haircut, which falls from 40% to 35% over
+    // that epoch's day: 62.5% of the fifth is kept.
+    earn(&mut h);
+    let last = end + 2 * DAY_MS;
+    h.advance_to(last);
+    finalised(&mut h, last);
+    let events = h.cmd(Command::Tick);
+    let fifth = excess_of(&events) / 5;
+    let (allocated, withheld) = parts(&events);
+    let [(account, amount)] = allocated[..] else { panic!("one part: {events:?}") };
+    let kept = fifth * 6_250 / 10_000;
+    assert_eq!(account, CANDIDATE);
+    assert!(amount <= kept && kept - amount <= 1, "{amount} against {kept}");
+    assert_eq!(withheld, vec![(CANDIDATE, fifth - amount)]);
+}

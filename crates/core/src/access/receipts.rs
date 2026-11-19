@@ -201,6 +201,7 @@ impl Engine {
                 self.track_uncredited(&recorded.receipt, pending, false);
                 self.record_deposit(&recorded.receipt, recorded.status, recorded.receipt.amount, None, events)
                     .expect("restoring a settled receipt's credit meets no live conflict");
+                self.repay_write_off(&recorded.receipt, events);
             }
             Err(reason) if reason.holds_deposit() => {
                 let held = UncreditedReceipt { payer: deposit.payer, reason };

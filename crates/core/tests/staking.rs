@@ -182,3 +182,6 @@ mod unfinalised_deposits;
 
 #[path = "staking/mirror_frontier.rs"]
 mod mirror_frontier;
+
+#[path = "staking/held_closes.rs"]
+mod held_closes;

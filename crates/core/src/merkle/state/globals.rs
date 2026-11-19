@@ -101,6 +101,7 @@ impl Engine {
             legacy_deposits: _,
             custody_checkpoint,
             unfinalised_house_deposits,
+            reversed_deposits: _,
             global_stress_floor,
             next_order_id,
             next_rollover,

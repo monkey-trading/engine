@@ -1,7 +1,7 @@
 //! One-live-receipt-per-deposit-id resolution for the exit's id-keyed refunds.
 
 use crate::Fixed;
-use crate::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
+use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::protocol::ProtocolVersion;
@@ -10,9 +10,13 @@ impl Engine {
     /// Reverses every other live receipt above the finalised frontier at `receipt`'s deposit id, so
     /// the new canonical receipt holds the id alone. From `V38` the exit refunds pending deposits
     /// by id, which two live receipts at one id would alias. A settled (finalised) conflict refuses
-    /// the new receipt: finality is final, and the custody adapter must resolve the collision.
+    /// the new receipt: finality is final, and the custody adapter must resolve the collision. From
+    /// `V83` any conflict refuses it: a receipt still canonical at another id moves there in the same
+    /// reorganisation (`reorganise_deposits`), and one the chain dropped reverses by its own `Reverse`,
+    /// so none is reversed for holding an id another claims.
     /// Error cases:
     /// - a conflicting receipt is finalised, or its credited principal can no longer be removed
+    /// - from `V83`, any other live receipt holds the id
     pub(super) fn reverse_conflicting_receipts(
         &mut self,
         receipt: &DepositReceipt,
@@ -34,6 +38,9 @@ impl Engine {
             // it here would unwind its cash a second time.
             if exclude.is_some_and(|excluded| excluded == reference) {
                 continue;
+            }
+            if self.protocol_version >= ProtocolVersion::V83 {
+                return Err(DepositReject::ConflictingReceipt);
             }
             self.reverse_live_receipt(&reference, events)?;
         }
@@ -94,9 +101,7 @@ impl Engine {
                     None,
                     events,
                 )?;
-                if let DepositBeneficiary::Trader { account } = recorded.receipt.beneficiary {
-                    self.close_out_after_balance_change(account, events);
-                }
+                self.close_out_after_reversal(&recorded.receipt, events);
                 Ok(())
             }
         }

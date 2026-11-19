@@ -31,7 +31,7 @@ use crate::benchmark::BenchmarkHistory;
 use crate::close_spread::PendingCeiling;
 use crate::command::{Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
-use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit};
+use crate::deposits::{CustodyCheckpoint, LegacyDeposit, RecordedDeposit, ReversedDeposits};
 use crate::election::OperatorElection;
 use crate::emissions::{EmissionLedger, Emissions, PeriodResult, TokenUnits};
 use crate::event::Event;
@@ -144,6 +144,10 @@ pub struct Engine {
     /// House principal awaiting Ethereum finality.
     #[serde(default, skip_serializing_if = "Fixed::is_zero")]
     pub(crate) unfinalised_house_deposits: Fixed,
+    /// From `V83`, each account's deposits whose principal a reversal took, and what the house has written
+    /// off against it since, until those deposits are credited again (`deposits::write_offs`).
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) reversed_deposits: TrackedMap<AccountId, ReversedDeposits>,
     /// Unapproved physical payout capacity from V22; initialized once from conserved cash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) withdrawal_cash: Option<Fixed>,
@@ -396,6 +400,7 @@ impl Engine {
                 }
                 Command::CustodyFinalised(checkpoint) => self.advance_custody_checkpoint(*checkpoint, &mut events),
                 Command::CustodyDeposit(update) => self.update_deposit(update, CreditScreening::default(), &mut events),
+                Command::CustodyReorganisation { moves } => self.reorganise_deposits(moves, &mut events),
                 Command::Withdraw { account, amount, auth } => {
                     self.withdraw(*account, *amount, auth.as_ref(), None, &mut events)
                 }

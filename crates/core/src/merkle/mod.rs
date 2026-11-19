@@ -67,6 +67,8 @@ pub use open_time::{open_time_hash, open_time_key};
 mod toxicity;
 pub use toxicity::{markout_spread_key, toxicity_score_key};
 mod volume;
+// From `V83`, each account's reversed deposits awaiting repayment.
+mod reversed;
 pub use volume::volume_key;
 pub(crate) mod state;
 pub use state::{CommitInputs, RootDelta, RootWork, TreeEvent};

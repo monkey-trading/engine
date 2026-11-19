@@ -22,6 +22,14 @@
 //!
 //! From `V70`, a proven fault's haircut withholds its integral from the member's time in office, and
 //! the close pays the member only the time it kept (`operator_faults`).
+//!
+//! From `V83` the open epoch counts only to its own end: time served after it is kept apart, as stints
+//! of one holder under one haircut, for the epochs it falls in. A close splits the share over the time
+//! from the count's start to the epoch's end, however late the close runs, so holding a close earns
+//! nothing, and the next epoch counts from that end, starting with the stints inside it. An epoch that
+//! had already ended when `V83` activated keeps the count the rules before it ran past its end, to the
+//! activation, unserved time included, and each epoch up to the one the activation falls in counts from
+//! the activation, so one that ended before it counts nothing.
 
 use std::collections::BTreeMap;
 
@@ -40,10 +48,32 @@ use crate::types::{AccountId, Millis};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimeInOffice {
-    /// When the open epoch began counting, in sequenced milliseconds.
+    /// When the open epoch began counting, in sequenced milliseconds; from `V83`'s activation, past the
+    /// open epoch's end where the activation found it ended.
     pub since: Millis,
-    /// Each account's sequenced time in office since `since`, in milliseconds; never zero.
+    /// Each account's sequenced time in office since `since`, in milliseconds; never zero. From `V83`
+    /// only the time before the open epoch's end, or before `inherited_to`.
     pub served: BTreeMap<AccountId, Millis>,
+    /// From `V83`, the time in office after the open epoch's end, in order, for the closes after it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub later: Vec<Stint>,
+    /// From `V83`'s activation, where the open epoch had already ended by it: the activation's time, to
+    /// which the rules before it counted, past the end, and to which the epoch's close counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inherited_to: Option<Millis>,
+}
+
+/// From `V83`, one account's unbroken time in office under one haircut, past the open epoch's end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Stint {
+    pub account: AccountId,
+    /// When it began and ended, in sequenced milliseconds; `from < to`.
+    pub from: Millis,
+    pub to: Millis,
+    /// When the account's haircut began decaying, if a proven fault's applied over it (`operator_faults`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub haircut: Option<Millis>,
 }
 
 impl Engine {
@@ -61,16 +91,30 @@ impl Engine {
         };
         let Some((holder, until)) = holder else { return };
         let to = self.now.min(until);
+        let haircut = self.operator_faults.haircuts.get(&holder).copied();
+        // From `V83` the open epoch counts to its end, and the time after it is kept for later closes.
+        let end = match &self.staking {
+            Some(staking) if self.protocol_version >= ProtocolVersion::V83 => staking.config.epoch_end(staking.epoch),
+            _ => Millis::MAX,
+        };
+        let counted = to.min(end);
         // From `V70` a proven fault's haircut withholds its integral over the same time.
-        let withheld = self.withheld_in_office(holder, from, to);
+        let withheld = self.withheld_over(haircut, from, counted);
         let Some(staking) = self.staking.as_mut() else { return };
         let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
-        let served = to - from;
+        let served = counted - from;
         if served > 0 {
             *office.served.entry(holder).or_default() += served;
         }
         if withheld > 0 {
             *self.operator_faults.withheld.entry(holder).or_default() += withheld;
+        }
+        let after = from.max(end);
+        if to > after {
+            match office.later.last_mut() {
+                Some(last) if last.account == holder && last.haircut == haircut && last.to == after => last.to = to,
+                _ => office.later.push(Stint { account: holder, from: after, to, haircut }),
+            }
         }
     }
 
@@ -78,11 +122,22 @@ impl Engine {
     /// `floor(share · served / counted)` each, leaving out the parts that round to nothing. Each part
     /// comes with what a proven fault's haircut withheld from it: from `V70` an account the haircut
     /// withheld `w` bps·ms from is paid `floor(share · (10,000 · served − w) / (10,000 · counted))`.
+    /// `counted` runs from the count's start to now, and from `V83` to the open epoch's end, or to
+    /// `V83`'s activation where that found the end passed (`TimeInOffice::inherited_to`).
     pub(crate) fn split_by_time_in_office(&self, share: u128) -> Vec<(AccountId, u128, u128)> {
-        let office = self.staking.as_ref().and_then(|staking| staking.office.as_ref());
-        let office = office.expect("V50 counts time in office once staking is initialised");
-        // Positive whenever anyone served: every credit lies between `since` and now.
-        let counted = U256::from((self.now - office.since) as u128);
+        let staking = self.staking.as_ref().expect("a close splits the share once staking is initialised");
+        let office = staking.office.as_ref().expect("V50 counts time in office once staking is initialised");
+        // Positive whenever anyone served: every credit lies between `since` and now, and from `V83`
+        // before the later of the open epoch's end and an inherited count's end; at least the time served,
+        // so no part exceeds the share.
+        let counted = if self.protocol_version >= ProtocolVersion::V83 {
+            let end = staking.config.epoch_end(staking.epoch).max(office.inherited_to.unwrap_or(Millis::MIN));
+            let served: Millis = office.served.values().sum();
+            (end - office.since).max(served)
+        } else {
+            self.now - office.since
+        };
+        let counted = U256::from(counted as u128);
         let whole_bps = U256::from(WHOLE_BPS as u128);
         office
             .served
@@ -119,14 +174,58 @@ impl Engine {
     }
 
     /// Starts counting time in office now, afresh: at `V50`'s activation, at staking's initialisation
-    /// under it, and at each close, which from `V70` also drops the haircuts withheld so far and those
-    /// that have decayed to nothing.
+    /// under it, and before `V83` at each close, which from `V70` also drops the haircuts withheld so far
+    /// and those that have decayed to nothing.
     pub(crate) fn start_time_in_office(&mut self) {
         let since = self.now;
         if let Some(staking) = self.staking.as_mut() {
-            staking.office = Some(TimeInOffice { since, served: BTreeMap::new() });
+            staking.office =
+                Some(TimeInOffice { since, served: BTreeMap::new(), later: Vec::new(), inherited_to: None });
         }
         self.operator_faults.withheld.clear();
         self.drop_spent_haircuts();
+    }
+
+    /// From `V83`, after a close: the new open epoch counts from `since`, the closed epoch's end, or from
+    /// where the closed epoch's count began or ended if that is later, as for counts inherited at `V83`'s
+    /// activation past one or more ends, so no time counts in two epochs; with the time its stints served
+    /// before its own end, and the haircuts' integral over that time; the rest stays for the closes after
+    /// it. Drops the haircuts that have decayed to nothing, as each close does.
+    pub(crate) fn carry_time_in_office(&mut self, since: Millis) {
+        let staking = self.staking.as_mut().expect("a close carries time in office once staking is initialised");
+        let end = staking.config.epoch_end(staking.epoch);
+        let office = staking.office.as_mut().expect("V50 counts time in office once staking is initialised");
+        let since = since.max(office.since).max(office.inherited_to.unwrap_or(Millis::MIN));
+        let stints = std::mem::take(&mut office.later);
+        let (mut served, mut withheld, mut later) = (BTreeMap::new(), BTreeMap::new(), Vec::new());
+        for stint in stints {
+            let to = stint.to.min(end);
+            if to > stint.from {
+                *served.entry(stint.account).or_default() += to - stint.from;
+                let part = self.withheld_over(stint.haircut, stint.from, to);
+                if part > 0 {
+                    *withheld.entry(stint.account).or_default() += part;
+                }
+            }
+            if stint.to > end {
+                later.push(Stint { from: stint.from.max(end), ..stint });
+            }
+        }
+        let staking = self.staking.as_mut().expect("read above");
+        staking.office = Some(TimeInOffice { since, served, later, inherited_to: None });
+        self.operator_faults.withheld = withheld;
+        self.drop_spent_haircuts();
+    }
+
+    /// At `V83`'s activation: where the open epoch has already ended, the count the rules before it ran
+    /// past the end stops now, so the epoch's close counts to now and the next epoch from now, and the
+    /// time after now is kept for the closes after it.
+    pub(crate) fn inherit_time_in_office(&mut self) {
+        let now = self.now;
+        let Some(staking) = self.staking.as_mut() else { return };
+        let end = staking.config.epoch_end(staking.epoch);
+        if let Some(office) = staking.office.as_mut().filter(|_| now > end) {
+            office.inherited_to = Some(now);
+        }
     }
 }
