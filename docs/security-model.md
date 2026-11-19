@@ -439,6 +439,11 @@ Known limits:
   is the followed enclave's, or one that a checkpoint in the copy names, so history sealed before a
   handover still extends it. Each stream it resumes must first repeat the copy's last instruction
   exactly, with each signature and signer compared as the bytes it holds.
+- **A standby's cold start.** The completed segments that a standby backfills from the archive, its
+  mirrors first, are checked only by hash against the manifest that the answering origin served.
+  Before the standby first follows onto them, it replays them as its takeover would replay them. A
+  copy that does not replay is set aside, the standby raises the Critical alert
+  `standby_backfill_refused`, and it backfills again from the operator alone.
 - When the operator's log no longer holds what the standby copied, the standby raises the Critical
   alert `operator_log_rollback` through its own alert routing, naming the range, and keeps its copy
   unchanged to restore from. The signs are a signed heartbeat behind the copy, a repeated
