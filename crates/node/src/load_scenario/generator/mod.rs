@@ -342,14 +342,7 @@ impl Scheduler {
     /// free trader; with no trader free, the one free soonest.
     fn pick(&mut self, kind: Kind, due: Instant) -> (usize, Kind) {
         let count = self.slots.len();
-        let acts = |slot: &Slot, kind: Kind| {
-            let holding = slot.holding.lock().expect("a holding");
-            match kind {
-                Kind::Cancel | Kind::CancelAll => !holding.resting.is_empty(),
-                Kind::CloseAll => !holding.positions.is_empty(),
-                Kind::Market | Kind::Limit => true,
-            }
-        };
+        let acts = |slot: &Slot, kind: Kind| slot.holding.lock().expect("a holding").acts_on(kind);
         for kind in [kind, Kind::Market] {
             let found = (0..count)
                 .map(|step| (self.cursor + step) % count)
