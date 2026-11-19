@@ -57,6 +57,14 @@ wait_for_state() {
   done
   fail "the watcher state never satisfied $1: $(cat "$work/watch/state.json" 2>/dev/null || true)"
 }
+# Waits up to 30 seconds for the stand-in at URL $1 to answer, with any status.
+wait_listening() {
+  for _ in $(seq 1 150); do
+    curl -s -o /dev/null --max-time 2 "$1" && return 0
+    sleep 0.2
+  done
+  fail "nothing answered at $1"
+}
 sha256_of_pubkey() { openssl pkey -pubin -in "$1" -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1; }
 
 start_node() {
@@ -145,6 +153,8 @@ add_leaf 1 "$work/unrelated.pem"
 add_leaf 2 "$work/foreign.pem"
 python3 "$root/scripts/dev-ct-log.py" serve "$log_port" "$work/ctlog" "$work/log.key" &
 log_pid=$!
+wait_listening "http://127.0.0.1:$log_port/ct/v1/get-sth"
+wait_listening "http://127.0.0.1:$hook_port/"
 
 step "write the watcher config"
 cat > "$work/release.toml" <<EOF
