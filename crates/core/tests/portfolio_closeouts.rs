@@ -95,23 +95,7 @@ fn a_groups_later_member_is_scored_at_the_nav_its_earlier_fills_leave() {
     // BTC closes first and gives the house its spread, so ETH's close pays level 0: scored at the NAV
     // BTC's fill leaves, the pair restores the level alone and AAPL stays open.
     let (mut h, a) = pair_and_shares();
-    let eth_notional = |h: &Harness| {
-        let held = h.engine.accounts()[&a.account].position(ETH).qty.abs();
-        held.mul(h.engine.markets()[&ETH].mark.expect("ETH is priced"))
-    };
-    let lower_by = h.engine.house_nav() - (eth_notional(&h) - f("50"));
-    let mut state = serde_json::to_value(&h.engine).expect("the engine encodes");
-    let cash: Fixed = serde_json::from_value(state["house_cash"].clone()).expect("house cash");
-    state["house_cash"] = serde_json::to_value(cash - lower_by).expect("house cash");
-    for id in [BTC, AAPL] {
-        state["markets"][id.to_string()]["spec"]["house_cap_floor"] = serde_json::json!("1000000000");
-    }
-    state["markets"][ETH.to_string()]["spec"]["house_cap_bps"] = serde_json::json!(10_000);
-    state["markets"][ETH.to_string()]["spec"]["house_cap_floor"] = serde_json::json!("0");
-    state["params"]["stress_cooldown_ms"] = serde_json::json!(0);
-    state["params"]["stress_levels"][1]["trigger"] = serde_json::json!({ "utilisation_bps": 10_000 });
-    h.engine = serde_json::from_value(state).expect("the engine decodes");
-    assert_eq!(h.engine.house_nav(), eth_notional(&h) - f("50"));
+    eth_capped_at_the_house_nav(&mut h, &a, f("-50"), |_| {});
     let acct = &h.engine.accounts()[&a.account];
     let (equity, _) = h.engine.equity_and_closeout_requirement(acct);
     let eth = f("4000") + (equity - f("20570")).div_int(250);
@@ -140,11 +124,11 @@ fn a_member_that_cannot_trade_waits_and_the_others_close_alone_even_worsening_th
 }
 
 #[test]
-fn a_failed_fill_ends_the_close_out_mid_group() {
-    // Every pure close clamps to its market's close-spread ceiling, so no state the engine reaches fails
-    // one; this one takes ETH's ceiling away and raises stress level 1's spread to the whole price. ETH
-    // rises 17%: the pair is the only candidate, scored at ETH's level 0; BTC closes, then ETH's fill
-    // re-evaluates its stress, reaches level 1 on the move, and is refused, which ends the close-out.
+fn a_member_whose_close_does_not_price_at_its_projected_level_waits() {
+    // Every pure close clamps to its market's close-spread ceiling, so this takes ETH's ceiling away and
+    // raises stress level 1's spread to the whole price. ETH rises 17%: scoring projects ETH's level 1,
+    // where its close does not price, so ETH waits, BTC is the only candidate and closes alone, and
+    // nothing fails in execution.
     let mut h = genesis_with_grid(V81, pairs(5_000), 750, 0);
     let a = client(&mut h, 1, "210000");
     open_pair(&mut h, &a);
@@ -155,6 +139,31 @@ fn a_failed_fill_ends_the_close_out_mid_group() {
     let events = h.price(ETH, "4680");
     assert_eq!(liquidations(&events), vec![BTC], "{events:?}");
     assert_eq!(h.engine.accounts()[&a.account].position(ETH).qty, f("-250"));
+}
+
+#[test]
+fn a_failed_fill_ends_the_close_out_mid_group() {
+    // The house's NAV stands $50 over ETH's notional, its cap, so ETH is at level 0, and BTC's mark
+    // $1,000 under its index: the NAV is read at the mark, and the account's equity and fills are at the
+    // index. Scoring takes the NAV BTC's fill leaves from the index, about $10,000 more than it leaves,
+    // so it scores ETH at level 0 and the pair as restoring the level; ETH's fill pays level 1, whose
+    // spread reaches the price with no ceiling to clamp it, and is refused. The close-out ends there: ETH
+    // stays open, and AAPL, the next candidate now the pair has not restored the level, stays open too.
+    let (mut h, a) = pair_and_shares();
+    let (equity, _) = h.engine.equity_and_closeout_requirement(&h.engine.accounts()[&a.account]);
+    eth_capped_at_the_house_nav(&mut h, &a, f("50"), |state| {
+        state["close_spread_ceilings"].as_object_mut().expect("installed").remove(&ETH.to_string());
+        state["params"]["stress_levels"][1]["min_spread_bps"] = serde_json::json!(10_000);
+        state["markets"][BTC.to_string()]["mark"] = serde_json::json!("99000");
+    });
+    let eth = f("4000") + (equity - f("20570")).div_int(250);
+    let events = h.price(ETH, &eth.to_string());
+    assert_eq!(liquidations(&events), vec![BTC], "{events:?}");
+    let announced = events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).count();
+    assert_eq!(announced, 1, "{events:?}");
+    let held = &h.engine.accounts()[&a.account];
+    assert_eq!(held.position(ETH).qty, f("-250"));
+    assert_eq!(held.position(AAPL).qty, f("1000"));
 }
 
 #[test]
@@ -204,6 +213,36 @@ fn reprice(h: &mut Harness) {
     for (id, price) in MARKETS {
         h.price(id, price);
     }
+}
+
+/// Rewrites `h`'s engine so that ETH's cap is all of the house's NAV, which stands `margin` over ETH's
+/// notional and follows it one for one while `client`'s short is ETH's only position: ETH is at stress
+/// level 1 while the NAV is under its notional, with no cooldown. `edit` changes the encoded state first.
+fn eth_capped_at_the_house_nav(
+    h: &mut Harness,
+    client: &Client,
+    margin: Fixed,
+    edit: impl FnOnce(&mut serde_json::Value),
+) {
+    let eth_notional = |h: &Harness| {
+        let held = h.engine.accounts()[&client.account].position(ETH).qty.abs();
+        held.mul(h.engine.markets()[&ETH].mark.expect("ETH is priced"))
+    };
+    let mut state = serde_json::to_value(&h.engine).expect("the engine encodes");
+    edit(&mut state);
+    h.engine = serde_json::from_value(state.clone()).expect("the engine decodes");
+    let lower_by = h.engine.house_nav() - (eth_notional(h) + margin);
+    let cash: Fixed = serde_json::from_value(state["house_cash"].clone()).expect("house cash");
+    state["house_cash"] = serde_json::to_value(cash - lower_by).expect("house cash");
+    for id in [BTC, AAPL] {
+        state["markets"][id.to_string()]["spec"]["house_cap_floor"] = serde_json::json!("1000000000");
+    }
+    state["markets"][ETH.to_string()]["spec"]["house_cap_bps"] = serde_json::json!(10_000);
+    state["markets"][ETH.to_string()]["spec"]["house_cap_floor"] = serde_json::json!("0");
+    state["params"]["stress_cooldown_ms"] = serde_json::json!(0);
+    state["params"]["stress_levels"][1]["trigger"] = serde_json::json!({ "utilisation_bps": 10_000 });
+    h.engine = serde_json::from_value(state).expect("the engine decodes");
+    assert_eq!(h.engine.house_nav(), eth_notional(h) + margin);
 }
 
 /// `client`'s equity and the close-out level of the requirement its close-out reads, at the marks.
