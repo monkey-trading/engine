@@ -407,6 +407,16 @@ mod tests {
         assert!(cancels > 0 && markets > 0, "{cancels} cancels, {markets} market orders");
     }
 
+    #[test]
+    fn the_first_reply_of_each_other_status_is_written_out_with_its_body() {
+        let mut trader = traders::Trader::new(1);
+        let body = serde_json::json!({ "error": "screening is at capacity" });
+        let line = trader.refusal_line(503, &body).expect("the first 503 is said");
+        assert!(line.contains("503") && line.contains("screening is at capacity"), "{line}");
+        assert_eq!(trader.refusal_line(503, &body), None, "a second 503 is not");
+        assert!(trader.refusal_line(429, &body).is_some(), "another status is");
+    }
+
     #[tokio::test]
     async fn a_leg_waits_for_every_subscriber_to_take_a_command_stamped_after_its_end() {
         let ended = 1_000;
