@@ -1,5 +1,5 @@
-//! A position's estimated close-out price across margin bands, and for a market that converts its own
-//! quote currency.
+//! A position's estimated close-out price across margin bands, for a market that converts its own quote
+//! currency, and the search for a hedged member of an offset group.
 
 use super::*;
 use crate::test_support::dev_config;
@@ -99,4 +99,28 @@ fn a_self_converting_short_is_none_from_ten_times_its_mark_even_by_a_fraction_of
     assert!(matches!(reach_self_converting(standing("90249.9"), false, quantity, entry, mark, 90_000), Reach::At(_)));
     assert_eq!(reach_self_converting(standing("90250"), false, quantity, entry, mark, 90_000), Reach::Beyond);
     assert_eq!(reach_self_converting(standing("90250.09"), false, quantity, entry, mark, 90_000), Reach::Beyond);
+}
+
+#[test]
+fn a_grouped_search_through_a_flat_slack_ends_without_dividing_by_zero() {
+    // The slack is zero above 98.2 and one unit short below it: halving the unit short side to nothing
+    // would leave the next interpolation nothing to divide by.
+    let slack = |at: Fixed| if at > "98.2".parse().unwrap() { Fixed::ZERO } else { Fixed::from_raw(-1) };
+    let Reach::At(ratio) = reach_grouped(slack, true, f(100), 10_000) else { panic!("a crossing") };
+    assert!(ratio > "0.981".parse().unwrap() && ratio <= "0.983".parse().unwrap(), "{ratio}");
+}
+
+#[test]
+fn a_grouped_search_finds_the_first_crossing_of_a_slack_that_turns_back_up() {
+    // Above zero at the mark and at nothing, below it between 30 and 70: a long closes out at 70, and a
+    // short of the mirror image at 130.
+    let dip = |at: Fixed| {
+        let off = at - f(50);
+        off.mul(off) - f(400)
+    };
+    let Reach::At(ratio) = reach_grouped(dip, true, f(100), 10_000) else { panic!("a crossing inside the range") };
+    assert!(ratio > "0.69999".parse().unwrap() && ratio <= "0.70001".parse().unwrap(), "{ratio}");
+    let mirror = |at: Fixed| dip(f(200) - at);
+    let Reach::At(ratio) = reach_grouped(mirror, false, f(100), 90_000) else { panic!("a crossing inside the range") };
+    assert!(ratio >= "1.29999".parse().unwrap() && ratio < "1.30001".parse().unwrap(), "{ratio}");
 }

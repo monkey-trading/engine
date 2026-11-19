@@ -8,7 +8,7 @@ use std::time::Instant;
 use engine_core::market::QuoteCurrency;
 
 use super::*;
-use crate::stats::closeout::{ReachKind, account_closeouts};
+use crate::stats::closeout::{AccountStanding, ReachKind, account_closeouts};
 
 const SAMPLES: usize = 2_000;
 
@@ -38,10 +38,16 @@ fn engine_with_every_launch_market() -> Engine {
         let qty = if index % 2 == 0 { "1000" } else { "-1000" };
         positions.insert(id.to_string(), serde_json::json!({ "qty": qty, "entry": "100" }));
     }
+    // The production grid is in the parameters, so its groups' positions close out under the portfolio rule.
+    let grid: engine_core::portfolio::PortfolioGrid =
+        genesis["genesis"]["params"]["portfolio_grid"].clone().try_into().unwrap();
+    state["params"]["portfolio_grid"] = serde_json::to_value(grid).unwrap();
+    state["protocol_version"] = serde_json::to_value(engine_core::protocol::ProtocolVersion::LATEST).unwrap();
     state["accounts"][TRADER.to_string()]["positions"] = positions.into();
     state["accounts"][TRADER.to_string()]["balance"] = serde_json::json!("0");
     let flat: Engine = serde_json::from_value(state.clone()).expect("the fixture's markets and positions");
-    let (_, margin) = flat.equity_and_margin(&flat.accounts()[&TRADER], None);
+    assert!(flat.portfolio_rules().is_some(), "the production grid is in force");
+    let (_, margin) = flat.equity_and_closeout_requirement(&flat.accounts()[&TRADER]);
     let level = flat.params().expect("dev genesis sets parameters").closeout_level_bps;
     let balance = margin.mul_bps(level) + Fixed::from_int(30_000);
     state["accounts"][TRADER.to_string()]["balance"] = serde_json::json!(balance);
@@ -53,7 +59,7 @@ fn engine_with_every_launch_market() -> Engine {
 fn the_close_outs_of_an_account_holding_every_launch_market_fit_the_command_budget() {
     let engine = engine_with_every_launch_market();
     let acct = &engine.accounts()[&TRADER];
-    let standing = engine.equity_and_margin(acct, None);
+    let standing = AccountStanding::of(&engine, acct);
     let found = account_closeouts(&engine, acct, standing);
     let at = found.iter().filter(|c| c.reach == ReachKind::At).count();
     eprintln!("{} positions, {at} with a price", found.len());
@@ -62,12 +68,18 @@ fn the_close_outs_of_an_account_holding_every_launch_market_fit_the_command_budg
     let mut whole = Vec::new();
     for _ in 0..SAMPLES {
         let start = Instant::now();
-        let standing = engine.equity_and_margin(acct, None);
+        let standing = AccountStanding::of(&engine, acct);
         let base = start.elapsed();
         let found = account_closeouts(&engine, acct, standing);
         let end = start.elapsed();
-        std::hint::black_box((&found, acct.positions.clone(), acct.orders.clone()));
         closeouts.push((end - base).as_nanos());
+        let grid = engine.portfolio_rules().expect("the grid applies");
+        std::hint::black_box((
+            &found,
+            engine.portfolio_standing(TRADER, grid).ok(),
+            acct.positions.clone(),
+            acct.orders.clone(),
+        ));
         whole.push(start.elapsed().as_nanos());
     }
     for (name, times) in [("close-outs", &mut closeouts), ("account read", &mut whole)] {

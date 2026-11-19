@@ -248,6 +248,62 @@ fn a_weekend_gap_values_a_keyed_holder_only_when_its_marks_leave_its_ranges() {
 }
 
 #[test]
+fn a_new_grid_or_grouped_ceiling_reassesses_every_unkeyed_account() {
+    // From `V81`, a hedged pair of BTC-USD long and WTI short as one group at a 1% floor share, valued at
+    // their marks: between the close-out levels of its portfolio and per-position requirements, so
+    // unkeyed and at or above its level.
+    let mut engine = Engine::new();
+    engine.protocol_version = ProtocolVersion::V81;
+    let member = |market, loading: Fixed| crate::portfolio::GroupMember {
+        market,
+        loading,
+        residual_shock_bps: 20,
+        max_residual_shock_bps: 20,
+    };
+    let group = crate::portfolio::OffsetGroup {
+        name: "pair".into(),
+        floor_share_bps: 100,
+        max_floor_share_bps: 10_000,
+        members: vec![member(BTC, Fixed::ONE), member(WTI, Fixed::ONE)],
+    };
+    let grid = crate::portfolio::PortfolioGrid { groups: vec![group] };
+    engine.params = Some(crate::params::ProtocolParams { portfolio_grid: grid, ..crate::params::tests::params() });
+    for (id, price) in [(BTC, 50_000), (WTI, 70)] {
+        let spec: MarketSpec = serde_json::from_value(listing(id, "M", None, 0)).unwrap();
+        let mut market = MarketState::new(spec);
+        market.mark = Some(Fixed::from_int(price));
+        engine.markets.insert(id, market);
+    }
+    engine.close_spread_ceilings = Some(BTreeMap::from([(BTC, 20), (WTI, 20)]));
+    // $500k each way: $20k of bands, matched whole, less a grid charge of 0.2% for the move and 0.4% for
+    // closing at a 20bp ceiling at the 50% level, a $14k credit: $6k required. $8k of cash is above half
+    // of that and below half the bands.
+    let holder = account(1);
+    let mut acct = Account { balance: Fixed::from_int(8_000), ..Account::default() };
+    acct.positions.insert(BTC, Position { qty: Fixed::from_int(10), entry: Fixed::from_int(50_000) });
+    acct.positions.insert(WTI, Position { qty: Fixed::from_int(-500_000).div_int(70), entry: Fixed::from_int(70) });
+    engine.accounts.insert(holder, acct);
+    let below = |index: &CloseoutIndex| match index.accounts.get(&holder) {
+        Some(Standing::Unkeyed { below, .. }) => Some(*below),
+        _ => None,
+    };
+    let mut index = CloseoutIndex::default();
+    index.build(&engine, 5_000);
+    assert_eq!(below(&index), Some(false), "unkeyed, at or above its level");
+    // A floor share raised alone, with no price, level, band or balance moved, puts it below.
+    engine.params.as_mut().unwrap().portfolio_grid.groups[0].floor_share_bps = 10_000;
+    index.refresh(&engine, 5_000, BTreeSet::new());
+    assert_eq!(below(&index), Some(true), "a new grid re-assesses it");
+    engine.params.as_mut().unwrap().portfolio_grid.groups[0].floor_share_bps = 100;
+    index.refresh(&engine, 5_000, BTreeSet::new());
+    assert_eq!(below(&index), Some(false));
+    // So does a grouped market's ceiling raised alone: closing costs take the credit.
+    engine.close_spread_ceilings = Some(BTreeMap::from([(BTC, 20), (WTI, 5_000)]));
+    index.refresh(&engine, 5_000, BTreeSet::new());
+    assert_eq!(below(&index), Some(true), "a new ceiling re-assesses it");
+}
+
+#[test]
 fn no_key_is_made_or_kept_where_a_point_inside_could_overflow_the_check() {
     let mut runner = TestRunner::new(Config { cases: 64, rng_seed: RngSeed::Fixed(SEED), ..Config::default() });
     let (keyed, overflowed) = (Cell::new(0u32), Cell::new(0u32));

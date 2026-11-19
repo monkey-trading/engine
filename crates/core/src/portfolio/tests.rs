@@ -1,8 +1,15 @@
-use alloy_primitives::U512;
+use std::collections::BTreeMap;
+
+use alloy_primitives::{U256, U512};
+use proptest::prelude::*;
+use proptest::test_runner::{Config, RngSeed, TestRunner};
 use serde_json::{Value, json};
 
 use super::exposure::{Exposure, Leg};
 use super::*;
+use crate::account::{Account, Position};
+use crate::engine::{Engine, MarketState};
+use crate::protocol::ProtocolVersion;
 
 /// The dev fixture's grid charge on each dollar of notional, over `CHARGE_SCALE`: a 20bp residual at a
 /// 50% close-out level, 20 × 5000, and a 30bp ceiling, 30 × 10^4, so 0.2% plus 0.6%.
@@ -17,16 +24,19 @@ fn a_well_formed_grid_passes() {
 
 #[test]
 fn the_grid_refuses_each_malformed_part() {
-    let cases: [(&str, Break); 11] = [
+    let cases: [(&str, Break); 14] = [
         ("floor_share_bps", |g| g.groups[0].floor_share_bps = 0),
         ("floor_share_bps", |g| g.groups[1].floor_share_bps = 10_001),
+        ("max_floor_share_bps", |g| g.groups[0].max_floor_share_bps = 4_999),
+        ("max_floor_share_bps", |g| g.groups[0].max_floor_share_bps = 10_001),
+        ("bound on its residual shock", |g| g.groups[0].members[0].max_residual_shock_bps = 19),
+        ("bound on its residual shock", |g| g.groups[1].members[1].max_residual_shock_bps = 10_001),
         ("non-empty and distinct", |g| g.groups[0].name.clear()),
         ("non-empty and distinct", |g| g.groups[1].name = "crypto".into()),
         ("at least two members", |g| g.groups[0].members.truncate(1)),
         ("more than one place", |g| g.groups[1].members[0].market = 1),
         ("more than one place", |g| g.groups[0].members[1].market = 1),
         ("residual shock", |g| g.groups[0].members[0].residual_shock_bps = -1),
-        ("residual shock", |g| g.groups[0].members[0].weekend_residual_shock_bps = 19),
         ("loading", |g| g.groups[0].members[0].loading = Fixed::ZERO),
         ("loading", |g| g.groups[0].members[1].loading = -(MAX_LOADING + Fixed::from_raw(1))),
     ];
@@ -36,18 +46,66 @@ fn the_grid_refuses_each_malformed_part() {
         let refused = broken.validate().expect_err(expected);
         assert!(refused.contains(expected), "{expected}: {refused}");
     }
-    // The bounds themselves pass: a zero residual, loadings of ten either way, full shocks and shares.
+    // The bounds themselves pass: a zero residual, loadings of ten either way, full shocks and shares, and
+    // bounds equal to their values.
     let mut edge = grid();
-    edge.groups[0].members[0] =
-        GroupMember { loading: MAX_LOADING, residual_shock_bps: 0, ..edge.groups[0].members[0] };
+    edge.groups[0].members[0] = GroupMember {
+        loading: MAX_LOADING,
+        residual_shock_bps: 0,
+        max_residual_shock_bps: 0,
+        ..edge.groups[0].members[0]
+    };
     edge.groups[0].members[1] = GroupMember {
         loading: -MAX_LOADING,
         residual_shock_bps: 10_000,
-        weekend_residual_shock_bps: 10_000,
+        max_residual_shock_bps: 10_000,
         ..edge.groups[0].members[1]
     };
     (edge.groups[0].floor_share_bps, edge.groups[1].floor_share_bps) = (1, 10_000);
+    edge.groups[1].max_floor_share_bps = 10_000;
     assert_eq!(edge.validate(), Ok(()));
+}
+
+#[test]
+fn a_grid_moves_from_its_launch_grid_only_up_within_its_bounds() {
+    let launch = grid();
+    assert_eq!(launch.check_within_launch(&launch), Ok(()));
+    // Every shock and share raised to its bound passes.
+    let mut raised = grid();
+    for group in &mut raised.groups {
+        group.floor_share_bps = group.max_floor_share_bps;
+        for member in &mut group.members {
+            member.residual_shock_bps = member.max_residual_shock_bps;
+        }
+    }
+    assert_eq!(raised.check_within_launch(&launch), Ok(()));
+    let cases: [(&str, Break); 10] = [
+        ("floor share 4999 must be from its launch value 5000", |g| g.groups[0].floor_share_bps = 4_999),
+        ("floor share 8001 must be from its launch value 5000 to its bound 8000", |g| {
+            g.groups[1].floor_share_bps = 8_001
+        }),
+        ("residual shock 19 must be from its launch value 20", |g| g.groups[0].members[0].residual_shock_bps = 19),
+        ("residual shock 81 must be from its launch value 20 to its bound 80", |g| {
+            g.groups[0].members[1].residual_shock_bps = 81
+        }),
+        ("fixed at its launch grid", |g| g.groups[0].members[1].loading = "1.1".parse().unwrap()),
+        ("fixed at its launch grid", |g| g.groups[0].members.swap(0, 1)),
+        ("fixed at its launch grid", |g| g.groups[1].members[1].max_residual_shock_bps = 400),
+        ("fixed at its launch grid", |g| g.groups[0].max_floor_share_bps = 9_000),
+        ("fixed at its launch grid", |g| g.groups[1].name = "silver".into()),
+        ("groups are fixed at its launch grid", |g| {
+            g.groups.pop();
+        }),
+    ];
+    for (expected, break_it) in cases {
+        let mut moved = grid();
+        break_it(&mut moved);
+        let refused = moved.check_within_launch(&launch).expect_err(expected);
+        assert!(refused.contains(expected), "{expected}: {refused}");
+    }
+    // An empty launch grid keeps none.
+    assert!(grid().check_within_launch(&PortfolioGrid::default()).is_err());
+    assert_eq!(PortfolioGrid::default().check_within_launch(&PortfolioGrid::default()), Ok(()));
 }
 
 #[test]
@@ -123,8 +181,8 @@ fn the_net_matches_an_exact_reference_over_many_terms() {
             price: Fixed::from_raw(*price),
             loading: Fixed::from_raw(*loading),
             bands: Fixed::ZERO,
-            charge: U512::ZERO,
-            residual: U512::ZERO,
+            charge: U256::ZERO,
+            residual: U256::ZERO,
         };
         accumulated.add(leg);
     }
@@ -176,6 +234,70 @@ fn a_leg_left_out_of_the_credit_still_matches_its_side() {
     assert_eq!(book.credit(5_000, U512::from(CHARGE_SCALE)), "1904.761904761".parse().unwrap());
 }
 
+#[test]
+fn the_requirement_without_some_positions_is_the_one_valued_again_without_them() {
+    // A group of three, a pair and an ungrouped market at marks of 100, each held at up to $5M either way:
+    // leaving out any subset of the positions, the parts' bands and untouched groups' credits, with a touched
+    // group credited again on what it still holds, give exactly the requirement valued again without it.
+    let config =
+        Config { cases: 64, rng_seed: RngSeed::Fixed(0x0081_0639), failure_persistence: None, ..Config::default() };
+    let held = proptest::collection::btree_map(1..=6u32, (any::<bool>(), 1..=5_000_000i64), 1..=6);
+    let result = TestRunner::new(config).run(&(held, 1..=10_000i64), |(held, floor_share_bps)| {
+        let member = |market, loading: &str| GroupMember {
+            market,
+            loading: loading.parse().unwrap(),
+            residual_shock_bps: 20,
+            max_residual_shock_bps: 20,
+        };
+        let group = |name: &str, members| OffsetGroup {
+            name: name.into(),
+            floor_share_bps,
+            max_floor_share_bps: 10_000,
+            members,
+        };
+        let grid = PortfolioGrid {
+            groups: vec![
+                group("a", vec![member(1, "1"), member(2, "1.25"), member(6, "0.8")]),
+                group("b", vec![member(3, "0.9"), member(4, "-0.5")]),
+            ],
+        };
+        let mut engine = Engine::new();
+        engine.protocol_version = ProtocolVersion::LATEST;
+        engine.params =
+            Some(crate::params::ProtocolParams { portfolio_grid: grid.clone(), ..crate::params::tests::params() });
+        let mut acct = Account { balance: Fixed::from_int(1_000_000), ..Account::default() };
+        for (id, (long, usd)) in &held {
+            let spec = serde_json::from_value(json!({
+                "id": id, "symbol": format!("M{id}"), "asset_class": "index", "schedule": { "kind": "always_open" },
+                "margin_tiers": [{ "up_to": "1000000", "bps": 200 }, { "bps": 500 }], "spread_tiers": [{ "bps": 0 }],
+                "price_rules": { "max_age_ms": 1000, "max_divergence_bps": 50, "min_sources": 2 },
+                "max_slippage_bps": 20, "house_cap_bps": 5000,
+                "financing": { "benchmark": "SOFR", "markup_bps": 0, "day_basis": 365 },
+            }))
+            .unwrap();
+            let mut market = MarketState::new(spec);
+            market.mark = Some(Fixed::from_int(100));
+            engine.markets.insert(*id, market);
+            let units = Fixed::from_int(*usd).div_int(100);
+            acct.positions
+                .insert(*id, Position { qty: if *long { units } else { -units }, entry: Fixed::from_int(99) });
+        }
+        engine.close_spread_ceilings = Some(held.keys().map(|id| (*id, 20)).collect::<BTreeMap<_, _>>());
+        let ids: Vec<MarketId> = held.keys().copied().collect();
+        let parts = engine.requirement_parts(&acct, &grid, Basis::Market, at_mark);
+        let whole = engine.equity_and_portfolio_requirement(&acct, &grid, Basis::Market, &[], at_mark);
+        prop_assert_eq!(parts.equity, whole.0);
+        for mask in 0..1u32 << ids.len() {
+            let without: Vec<MarketId> =
+                ids.iter().enumerate().filter(|(i, _)| mask & 1 << i != 0).map(|(_, id)| *id).collect();
+            let again = engine.equity_and_portfolio_requirement(&acct, &grid, Basis::Market, &without, at_mark).1;
+            prop_assert_eq!(engine.requirement_without(&grid, Basis::Market, &parts, &without), again, "{:?}", without);
+        }
+        Ok(())
+    });
+    result.unwrap();
+}
+
 // ── Helpers ──
 
 /// An edit that breaks one part of a grid.
@@ -187,9 +309,14 @@ fn grid() -> PortfolioGrid {
         market,
         loading: loading.parse().unwrap(),
         residual_shock_bps: residual,
-        weekend_residual_shock_bps: residual,
+        max_residual_shock_bps: residual * 4,
     };
-    let group = |name: &str, members| OffsetGroup { name: name.into(), floor_share_bps: 5_000, members };
+    let group = |name: &str, members| OffsetGroup {
+        name: name.into(),
+        floor_share_bps: 5_000,
+        max_floor_share_bps: 8_000,
+        members,
+    };
     PortfolioGrid {
         groups: vec![
             group("crypto", vec![member(1, "1", 20), member(2, "1.05", 20)]),
@@ -217,14 +344,14 @@ fn spec(id: MarketId, class: &str, schedule: Value, currency: Option<Value>) -> 
 /// `per_unit` on each dollar of notional over `CHARGE_SCALE`, and a 20bp residual.
 fn leg(qty: &str, price: &str, loading: &str, bands: &str, per_unit: u64) -> Leg {
     let (qty, price): (Fixed, Fixed) = (qty.parse().unwrap(), price.parse().unwrap());
-    let notional = U512::from(qty.abs().mul(price).raw().unsigned_abs());
+    let notional = U256::from(qty.abs().mul(price).raw().unsigned_abs());
     Leg {
         qty,
         price,
         loading: loading.parse().unwrap(),
         bands: bands.parse().unwrap(),
-        charge: notional * U512::from(per_unit),
-        residual: notional * U512::from(20u64),
+        charge: notional * U256::from(per_unit),
+        residual: notional * U256::from(20u64),
     }
 }
 

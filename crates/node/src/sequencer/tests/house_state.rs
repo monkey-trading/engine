@@ -228,6 +228,7 @@ fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_acros
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at: clock.now_ms() + NOTICE_MS + 60_000,
         score_tiers: None,
     };
@@ -236,6 +237,42 @@ fn a_pending_parameter_notice_and_the_profit_fee_curve_are_listed_and_kept_acros
     assert_eq!(read(&mut seq).params_notice, Some(notice.clone()));
     let listed = serde_json::to_value(read(&mut seq)).unwrap();
     assert_eq!(listed["params_notice"]["profit_fee_curve"][9]["fee_bps"], 2_000, "{listed}");
+    drop(seq);
+
+    let mut recovered = start(&dir, &clock, false);
+    assert_eq!(read(&mut recovered).params_notice, Some(notice));
+}
+
+#[test]
+fn from_v81_the_house_lists_the_portfolio_grid_in_force_and_a_pending_grid_notice() {
+    let dir = scratch_dir("house-state-portfolio-grid");
+    let clock = Arc::new(TestClock::at(START));
+    let mut seq = start(&dir, &clock, true);
+    let launch = dev_config().genesis.params.portfolio_grid;
+    let state = serde_json::to_value(read(&mut seq)).unwrap();
+    assert_eq!(state["params"]["portfolio_grid"], serde_json::to_value(&launch).unwrap(), "{state}");
+    assert_eq!(state["params"]["portfolio_grid"]["groups"][0]["members"][1]["market"], 2, "{state}");
+    // A notice raises the group's floor share and a residual shock, within their launch bounds.
+    let mut raised = launch.clone();
+    raised.groups[0].floor_share_bps = 6_000;
+    raised.groups[0].members[0].residual_shock_bps = 30;
+    let notice = ParamsNotice {
+        profit_fee_bps: None,
+        closeout_level_bps: None,
+        stress: None,
+        profit_fee_curve: None,
+        volume_tiers: None,
+        rollover: None,
+        corporate_bounds: None,
+        portfolio_grid: Some(raised.clone()),
+        effective_at: clock.now_ms() + NOTICE_MS + 60_000,
+        score_tiers: None,
+    };
+    let events = operate(&mut seq, &clock, AdminCommand::AnnounceParams(notice.clone()));
+    assert_eq!(events, [Event::AdminApplied]);
+    let listed = serde_json::to_value(read(&mut seq)).unwrap();
+    assert_eq!(listed["params_notice"]["portfolio_grid"], serde_json::to_value(&raised).unwrap(), "{listed}");
+    assert_eq!(listed["params"]["portfolio_grid"], serde_json::to_value(&launch).unwrap(), "{listed}");
     drop(seq);
 
     let mut recovered = start(&dir, &clock, false);

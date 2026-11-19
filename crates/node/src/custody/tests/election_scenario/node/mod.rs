@@ -361,7 +361,6 @@ impl Node {
             stats,
             emission_budget: None,
             staking_terms: None,
-            portfolio_margin: None,
             status: Default::default(),
             payouts_enabled: post_checkpoints,
             collateral: None,

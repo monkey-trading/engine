@@ -10,12 +10,27 @@ an index: load only the rule whose hint matches the current action.
 ## Structure
 
 - **crates/core/** — `engine-core`: the protocol state machine. Covers pricing against the index,
-  size and stress spreads, margin and close-out, portfolio margin as a read nothing decides on
+  size and stress spreads, margin and close-out, portfolio margin
   (`portfolio/`: per-position margin less each offset group's credit on its matched exposure, the
   loading-weighted exposure of its smaller side and as much of its larger, pro rata: the matched bands less
   their residual shocks and closing cost, at most `1 - φ` of them, exact in wide integers and rounded down
-  once, so exposure that offsets nothing keeps its bands, at the market's bands and at initial bands,
-  `tests/portfolio_margin.rs`, its cost at 100k holders in `tests/portfolio_margin_benchmark.rs`), the profit fee (from `V55` falling with holding time
+  once, so exposure that offsets nothing keeps its bands, at the market's bands, at initial bands and at a
+  weekend gap's start, `tests/portfolio_margin.rs`, its cost at 100k holders in
+  `tests/portfolio_margin_benchmark.rs`; from `V81`, while the parameters name a grid
+  (`ProtocolParams::portfolio_grid`), close-outs read it: the trigger is the close-out level of the portfolio
+  requirement, and a close-out closes step by step the candidate restoring the level with the least notional, else
+  the one gaining most per dollar, a group whole while its held members can all trade (`portfolio/closeout.rs`,
+  `tests/portfolio_closeouts.rs`); every account a non-close-out fill touched is checked once the command's fills are
+  done (`tests/portfolio_closeouts/after_fills.rs`); the requirement is the same at every time, a weekend margin's gap
+  start reading it in full with each group's credit and a market with none keeping no gap
+  (`tests/portfolio_closeouts/weekend.rs`); the groups, members, loadings and bounds are
+  fixed at the launch grid, notices and votes move only shocks and floor shares up within their bounds, and the fast
+  path may raise a floor share (`portfolio/bounds.rs`, `tests/portfolio_grid.rs`, `tests/parameter_votes/portfolio.rs`);
+  `RelistMarkets` relists several markets at once, all or nothing (`admin/listing.rs`); the account read's estimate
+  of a grouped position's close-out price is `portfolio/reach.rs`; the close-out index keys on per-position margin,
+  which bounds the portfolio requirement, and re-assesses its unkeyed accounts when the grid or a grouped market's
+  ceiling moves (`tests/portfolio_closeouts/index.rs`); the cost of its close-outs at 100k accounts is
+  `tests/hot_path_benchmark/portfolio.rs`), the profit fee (from `V55` falling with holding time
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold
@@ -288,8 +303,8 @@ an index: load only the rule whose hint matches the current action.
   `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/notice` read of the operator's status notice (from `V78`, read from the engine's state, `api/notice.rs`), also the signed stream's `notice` frames at its start and on each change (`notice=1`, `api/stream/notice.rs`), and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
   initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), from `V79` each position's levels and each market's `min_level_distance_bps` in the market read, and
-  under `[portfolio_margin]` the portfolio requirement with each offset group's part (Warning `portfolio_grid_mismatch`
-  while the grid does not fit the listings), the
+  from `V81`, under the parameters' offset grid, the portfolio requirement with each offset group's part, the
+  maintenance requirement and each position's close-out price read from it, the
   signed quote ladder's steps at the account's own band bounds, checkpoint posting
   and collateral reconciliation, distributions paid included (`checkpoints/`), at most one signed checkpoint on its way to
   finality at a time (`sequencer/checkpoints/hold_back.rs`), with strict signature replay and startup checks
@@ -513,9 +528,11 @@ an index: load only the rule whose hint matches the current action.
   `custody.vault` under `eip712`, and `operator.public_key`, with the same chain id and vault, are
   recorded in the log when it first activates the protocol versions that need them, so changing
   either needs a fresh log.
-  The optional `[portfolio_margin]` names the offset groups, each with its floor share, that the account read
-  computes the portfolio requirement under, checked at load against the genesis listings; `dev.toml` carries a labelled
-  BTC-USD/ETH-USD fixture group, and production leaves it out until #914's values are confirmed.
+  `[genesis.params.portfolio_grid]` names the offset groups, their members' loadings and shocks, each group's floor share
+  and the bounds on each (from `V81` close-outs read it, and the launch grid fixes them); `dev.toml` carries a labelled
+  BTC-USD/ETH-USD fixture group (a dev log started before it needs a fresh start, as its genesis
+  parameters differ), and `production-genesis.toml` #914's fx, metals and US index groups, the launch
+  values the owner confirmed on #913.
   The optional `[custody.evm.staking.registry.vote]` names the `ParameterVote` contract over the schedule
   and its `restriction_ttl` (at most seven days), which the node records in the log once V56 applies; a
   log recording another is refused.
@@ -567,7 +584,8 @@ an index: load only the rule whose hint matches the current action.
   and `api.per_account` until a notice names them), and from `V68` their fee and financing discounts and emissions
   boosts (#614, D1; `dev.toml` and `anvil.toml` name none, so a log started from them has none, as no notice can
   raise a benefit above launch's), and from `V79` each market's minimum level distance at its close-spread ceiling
-  (#633, D6, confirmed by the owner on 2026-11-18; `dev.toml` and `anvil.toml` the same); a deployment's node sections complete it
+  (#633, D6, confirmed by the owner on 2026-11-18; `dev.toml` and `anvil.toml` the same), and from `V81` #914's offset
+  grid with its bounds (the values confirmed on #913; `anvil.toml` names none); a deployment's node sections complete it
   into a config. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.

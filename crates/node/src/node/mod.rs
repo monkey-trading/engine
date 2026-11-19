@@ -436,7 +436,6 @@ async fn serve_node(
         stats,
         emission_budget,
         staking_terms,
-        portfolio_margin: crate::api::account::PortfolioMargin::configured(cfg),
         status,
         collateral: served,
         listing: Default::default(),

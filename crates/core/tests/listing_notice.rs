@@ -247,6 +247,7 @@ fn from_v52_no_stress_level_waives_the_size_spread() {
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at: at,
         score_tiers: None,
     };

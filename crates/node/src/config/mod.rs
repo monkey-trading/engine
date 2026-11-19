@@ -21,7 +21,6 @@ use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::eip712;
 use engine_core::market::MarketSpec;
 use engine_core::params::ProtocolParams;
-use engine_core::portfolio::PortfolioGrid;
 use engine_core::staking::StakingConfig;
 use engine_core::types::AccountId;
 use k256::ecdsa;
@@ -146,9 +145,6 @@ pub struct NodeConfig {
     pub standby: Option<StandbySection>,
     /// The seed relayer, which runs beside the node in either mode.
     pub seed_relay: Option<SeedRelaySection>,
-    /// The offset groups, each with its floor share, the account read computes each account's
-    /// portfolio requirement under; nothing the engine decides reads it. Absent, the read gives none.
-    pub portfolio_margin: Option<PortfolioGrid>,
     /// Sequenced as admin commands after protocol activation on a log's first boot, all or nothing,
     /// so the rules every fill ran under are part of the public record.
     pub genesis: Genesis,
@@ -342,7 +338,6 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command
-    /// - `[portfolio_margin]` is malformed, or does not fit the genesis listings
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     /// - `[api.proxy_protocol]` or `api.fresh_accounts` fails validation
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed

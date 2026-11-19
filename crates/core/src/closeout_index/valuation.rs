@@ -9,6 +9,7 @@ use crate::account::{Account, Position};
 use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
 use crate::market::{QuoteCurrency, Tier, floored_margin};
+use crate::portfolio::{Basis, Valued};
 use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
@@ -82,12 +83,16 @@ impl Engine {
     }
 
     /// Whether `acct` is below `level_bps` of its margin requirement at `valuations`, as
-    /// `next_closeout` judges it: equity and requirement folded in market order, a market not
+    /// `next_closeout` judges it, or from `V81`, while a grid applies, of its portfolio requirement as
+    /// `next_portfolio_step` does: equity and requirement folded in market order, a market not
     /// listed skipped, and a requirement of zero never below. A step that would overflow or panic
-    /// reports it below.
+    /// reports it below. Keys bound the per-position requirement, which is never below the portfolio
+    /// one, so an account is keyable only while its headroom under that covers a basis point.
     pub(super) fn assess(&self, acct: &Account, valuations: &Valuations, level_bps: i64) -> Assessment {
         let charge = self.charge_rounding();
+        let grid = self.portfolio_rules();
         let (mut equity, mut margin, mut notional) = (acct.balance, Fixed::ZERO, Fixed::ZERO);
+        let mut grouped = Vec::new();
         let mut keyable = true;
         for (id, pos) in &acct.positions {
             // `next_closeout` reads the trading state of every market held, so one not listed panics.
@@ -97,21 +102,32 @@ impl Engine {
             let currency = market.spec.quote_currency;
             keyable &= valuation.is_point(currency);
             let (price, fx) = valuation.price_for(pos);
-            let summed = position_value(self.protocol_version, charge, currency, pos, price, fx)
-                .and_then(|(pnl, held)| Some((pnl, held, margin_of(&market.spec.margin_tiers, held, 0, charge)?)))
-                .and_then(|(pnl, held, required)| {
-                    Some((add(equity, pnl)?, add(margin, required)?, add(notional, held)?))
-                });
-            let Some(sums) = summed else { return Assessment::Below };
+            let valued = position_value(self.protocol_version, charge, currency, pos, price, fx)
+                .and_then(|(pnl, held)| Some((pnl, held, margin_of(&market.spec.margin_tiers, held, 0, charge)?)));
+            let Some((pnl, held, required)) = valued else { return Assessment::Below };
+            let Some(sums) = (|| Some((add(equity, pnl)?, add(margin, required)?, add(notional, held)?)))() else {
+                return Assessment::Below;
+            };
+            if grid.is_some_and(|grid| grid.group_of(*id).is_some()) {
+                grouped.push(Valued { market: *id, qty: pos.qty, price, notional: held, band: required });
+            }
             (equity, margin, notional) = sums;
         }
         if margin.is_zero() {
             return Assessment::Above { keyable: false };
         }
-        let Some(level) = at_level(margin, level_bps, charge) else { return Assessment::Below };
-        if equity < level {
-            return Assessment::Below;
+        // The portfolio requirement is never above the per-position one, so an account at or above the
+        // latter's level needs no credit worked out.
+        let per_position = at_level(margin, level_bps, charge);
+        if per_position.is_none_or(|level| equity < level) {
+            // Each group's credit is at most its share of the bands, so this stays at least zero.
+            let requirement = grid.map_or(margin, |grid| margin - self.portfolio_credit(grid, Basis::Market, &grouped));
+            let Some(level) = at_level(requirement, level_bps, charge) else { return Assessment::Below };
+            if equity < level {
+                return Assessment::Below;
+            }
         }
+        let Some(level) = per_position else { return Assessment::Above { keyable: false } };
         let worth = sub(equity, level).zip(notional.checked_mul_div(Fixed::ONE, Fixed::from_int(10_000), Rounding::Up));
         Assessment::Above { keyable: keyable && worth.is_some_and(|(headroom, bp)| headroom >= bp) }
     }

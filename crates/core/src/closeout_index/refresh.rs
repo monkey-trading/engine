@@ -5,8 +5,9 @@
 //! bands in force, and the valuation of every market it holds lies inside its ranges. An unkeyed
 //! account's flag is the exact check's verdict at the valuations now. Each input of the check that can
 //! move between refreshes is caught: an account's balance and positions by the accounts' change record,
-//! the level by comparison, a market's bands and currency by comparison with its listing, and its
-//! valuation by computing every one afresh.
+//! the level by comparison, a market's bands and currency by comparison with its listing, from `V81`
+//! the grid in force and its markets' close-spread ceilings by comparison, and its valuation by
+//! computing every one afresh.
 
 use std::collections::BTreeSet;
 
@@ -15,6 +16,7 @@ use crate::closeout_index::valuation::{Assessment, Valuations};
 use crate::closeout_index::{CloseoutIndex, Noted, Standing};
 use crate::engine::Engine;
 use crate::fixed::Rounding;
+use crate::portfolio::PortfolioGrid;
 use crate::types::{AccountId, MarketId};
 
 impl CloseoutIndex {
@@ -30,6 +32,7 @@ impl CloseoutIndex {
             ..CloseoutIndex::default()
         };
         self.coverage.note(Noted::Build);
+        (self.grid, self.ceilings) = portfolio_inputs(engine);
         let valuations = valuations(engine, engine.markets.keys());
         for (account, acct) in engine.accounts.iter().filter(|(_, acct)| !acct.positions.is_empty()) {
             let held = acct.positions.keys().copied().collect();
@@ -50,9 +53,10 @@ impl CloseoutIndex {
         }
     }
 
-    /// Brings the index to the state now: the close-out level, each market's listing, the accounts
-    /// `changed` since the last refresh, and each market's valuation, in that order; then assesses the
-    /// accounts those unkeyed or touched, and keys queued accounts within the command's allowance.
+    /// Brings the index to the state now: the close-out level, each market's listing, the grid, the
+    /// accounts `changed` since the last refresh, and each market's valuation, in that order; then
+    /// assesses the accounts those unkeyed or touched, and keys queued accounts within the command's
+    /// allowance.
     pub(super) fn refresh(&mut self, engine: &Engine, level_bps: i64, changed: BTreeSet<AccountId>) {
         if self.allowance_seq != engine.last_seq {
             (self.allowance, self.allowance_seq) = (self.keying_allowance(), engine.last_seq);
@@ -63,6 +67,7 @@ impl CloseoutIndex {
             self.relevel(engine, level_bps, charge, &mut marked);
         }
         self.relist(engine, charge, &mut marked);
+        self.regrid(engine, &mut marked);
         for account in changed {
             self.account_changed(engine, account, charge, &mut marked);
         }
@@ -135,6 +140,22 @@ impl CloseoutIndex {
                 }
             }
         }
+    }
+
+    /// Takes up a change to the portfolio requirement's own inputs, which no other comparison sees: the
+    /// grid in force and its markets' close-spread ceilings. Every unkeyed account is marked, as a raised
+    /// shock or floor share can put one below its level with nothing else moved; keys bound the
+    /// per-position requirement, which none of these moves.
+    fn regrid(&mut self, engine: &Engine, marked: &mut BTreeSet<AccountId>) {
+        let grid = engine.portfolio_rules();
+        let ceilings_held = || self.ceilings.iter().all(|(id, ceiling)| engine.close_spread_ceiling(*id) == *ceiling);
+        if self.grid.as_ref() == grid && ceilings_held() {
+            return;
+        }
+        (self.grid, self.ceilings) = portfolio_inputs(engine);
+        self.coverage.note(Noted::Regrid);
+        let unkeyed = self.accounts.iter().filter(|(_, standing)| matches!(standing, Standing::Unkeyed { .. }));
+        marked.extend(unkeyed.map(|(account, _)| *account));
     }
 
     /// Takes up a change to `account`: one that left it flat leaves the index, one to its balance alone
@@ -231,6 +252,14 @@ impl CloseoutIndex {
             }
         }
     }
+}
+
+/// The grid in force and each of its markets' close-spread ceiling, from `V81`.
+fn portfolio_inputs(engine: &Engine) -> (Option<PortfolioGrid>, Vec<(MarketId, Option<i64>)>) {
+    let grid = engine.portfolio_rules().cloned();
+    let members = grid.iter().flat_map(|grid| grid.groups.iter().flat_map(|group| &group.members));
+    let ceilings = members.map(|member| (member.market, engine.close_spread_ceiling(member.market))).collect();
+    (grid, ceilings)
 }
 
 /// The valuation of each listed market among `markets`.

@@ -13,6 +13,9 @@ use serde::Serialize;
 const LONG_RANGE_BPS: u32 = 10_000;
 /// How far a short can rise, to ten times its mark, before its close-out price counts as none.
 const SHORT_RANGE_BPS: u32 = 90_000;
+/// The evenly spaced prices, the range's edge the last, at which the grouped search looks for the first
+/// one past a crossing before it brackets it.
+const GROUPED_SAMPLES: i64 = 16;
 
 /// Whether an account's position is below its close-out level at the marks, or where it closes out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -150,13 +153,36 @@ pub(crate) fn valued(market: &MarketState, position: &Held) -> (Fixed, Fixed) {
     (price, market.usd_at_mark(position.qty.abs().mul_rounded(price, Rounding::Up), Rounding::Up))
 }
 
-/// Where the account holding `position` in market `id` closes out, for an account of `equity` and
-/// `margin` at the marks, the position valued at `(price, notional)` as `valued` gives: the one rule behind the position maps and an account's own read. A market
-/// converting its own currency takes the walk that follows its price; none is due when the node has
-/// no close-out level yet.
+/// An account's equity at the marks, the requirement its close-out reads there
+/// (`Engine::equity_and_closeout_requirement`), and its per-position requirement, which is never below
+/// that one: the same while no grid applies.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AccountStanding {
+    pub equity: Fixed,
+    pub requirement: Fixed,
+    pub per_position: Fixed,
+}
+
+impl AccountStanding {
+    /// `account`'s standing in `engine` now.
+    pub(crate) fn of(engine: &Engine, account: &Account) -> Self {
+        let (equity, requirement) = engine.equity_and_closeout_requirement(account);
+        let per_position =
+            if engine.portfolio_rules().is_some() { engine.equity_and_margin(account, None).1 } else { requirement };
+        AccountStanding { equity, requirement, per_position }
+    }
+}
+
+/// Where the account holding `position` in market `id` closes out, for an account of `standing`, the
+/// position valued at `(price, notional)` as `valued` gives: the one rule behind the position maps and an
+/// account's own read. A position in an offset group walks its group's slack in price (`reach_grouped`),
+/// but for one the band walk at the per-position requirement finds beyond the range, since that slack is
+/// a floor under the group's; a market converting its own currency takes the walk that follows its price;
+/// none is due when the node has no close-out level yet.
 pub(crate) fn position_reach(
     engine: &Engine,
-    (equity, margin): (Fixed, Fixed),
+    account: &Account,
+    standing: AccountStanding,
     id: MarketId,
     position: &Held,
     (price, notional): (Fixed, Fixed),
@@ -164,7 +190,19 @@ pub(crate) fn position_reach(
 ) -> Reach {
     let market = &engine.markets()[&id];
     let long = position.qty.is_positive();
-    match engine.params().map(|params| params.closeout_level_bps).filter(|_| notional.is_positive()) {
+    let (equity, margin) = (standing.equity, standing.requirement);
+    let level_bps = engine.params().map(|params| params.closeout_level_bps).filter(|_| notional.is_positive());
+    let grouped = engine.portfolio_rules().is_some_and(|grid| grid.group_of(id).is_some());
+    if let Some(level_bps) = level_bps.filter(|_| grouped) {
+        let floor = Standing { equity, margin: standing.per_position, level_bps };
+        if reach(floor, Position { notional, long, spec: &market.spec }, range_bps) == Reach::Beyond {
+            return Reach::Beyond;
+        }
+        if let Some(slack) = engine.portfolio_move(account, id) {
+            return reach_grouped(|at| slack.slack_at(at), long, price, range_bps);
+        }
+    }
+    match level_bps {
         Some(level_bps) if market.spec.quote_currency.fx_market() == Some(id) => {
             let standing = Standing { equity, margin, level_bps };
             reach_self_converting(standing, long, position.qty.abs(), position.entry, price, range_bps)
@@ -177,9 +215,70 @@ pub(crate) fn position_reach(
     }
 }
 
+/// As `reach`, for a position in an offset group, whose requirement follows its price through the
+/// group's credit and is not linear: `slack_at` is the account's close-out slack with that position at a
+/// price and the rest at their marks. The slack need not move one way with the price, since the other
+/// legs' matched share grows as the position's exposure shrinks, so the first price below zero is looked
+/// for at `GROUPED_SAMPLES` evenly spaced prices from `mark` to the edge of `range_bps`, and a crossing
+/// between two of them that the slack crosses back is not seen. A bracketed root search (Illinois' false
+/// position) then finds the crossing between that price and the one before it: the price on the
+/// closed-out side where the bracket ends, within a hundred-millionth of the mark of the last price above.
+fn reach_grouped(slack_at: impl Fn(Fixed) -> Fixed, long: bool, mark: Fixed, range_bps: u32) -> Reach {
+    let slack_mark = slack_at(mark);
+    if slack_mark.is_negative() {
+        return Reach::Due;
+    }
+    let move_by = mark.mul_bps(i64::from(range_bps));
+    let span = if long { -move_by } else { move_by };
+    let mut sampled = (mark, slack_mark);
+    let mut first_below = None;
+    for step in 1..=GROUPED_SAMPLES {
+        let at = mark + span.mul_div(Fixed::from_int(step), Fixed::from_int(GROUPED_SAMPLES), Rounding::TowardZero);
+        let slack = slack_at(at);
+        if slack.is_negative() {
+            first_below = Some((at, slack));
+            break;
+        }
+        sampled = (at, slack);
+    }
+    let Some((edge, slack_edge)) = first_below else { return Reach::Beyond };
+    // `above` holds a slack of at least zero, `below` a negative one.
+    let ((mut above, mut slack_above), (mut below, mut slack_below)) = (sampled, (edge, slack_edge));
+    let precision = mark.div_int(100_000_000).max(Fixed::from_raw(1));
+    let mut last_above = None;
+    while (above - below).abs() > precision {
+        let span = slack_above - slack_below;
+        let step = (below - above).mul_div(slack_above, span, Rounding::TowardZero);
+        let at = above + step;
+        // A step that lands on a bound, or past one, bisects instead.
+        let at = if at == above || at == below { (above + below).div_int(2) } else { at };
+        let slack = slack_at(at);
+        let now_above = !slack.is_negative();
+        if now_above {
+            (above, slack_above) = (at, slack);
+            // Halved, a slack below zero stays below it, so the next step's denominator is never zero.
+            if last_above == Some(true) {
+                slack_below = slack_below.div_int(2).min(Fixed::from_raw(-1));
+            }
+        } else {
+            (below, slack_below) = (at, slack);
+            if last_above == Some(false) {
+                slack_above = slack_above.div_int(2);
+            }
+        }
+        last_above = Some(now_above);
+    }
+    // Rounded up so a crossing too small for the ratio's nine places stays a positive price.
+    Reach::At(below.mul_div(Fixed::ONE, mark, Rounding::Up))
+}
+
 /// The close-out of each of `account`'s positions, in market order, with the account's other
 /// positions held at their marks. The price is in the market's quote currency.
-pub(crate) fn account_closeouts(engine: &Engine, account: &Account, standing: (Fixed, Fixed)) -> Vec<PositionCloseout> {
+pub(crate) fn account_closeouts(
+    engine: &Engine,
+    account: &Account,
+    standing: AccountStanding,
+) -> Vec<PositionCloseout> {
     account
         .positions
         .iter()
@@ -187,7 +286,8 @@ pub(crate) fn account_closeouts(engine: &Engine, account: &Account, standing: (F
             let long = position.qty.is_positive();
             let range = if long { LONG_RANGE_BPS } else { SHORT_RANGE_BPS };
             let (mark, notional) = valued(&engine.markets()[id], position);
-            let (reach, price) = match position_reach(engine, standing, *id, position, (mark, notional), range) {
+            let found = position_reach(engine, account, standing, *id, position, (mark, notional), range);
+            let (reach, price) = match found {
                 Reach::Due => (ReachKind::Due, None),
                 Reach::Beyond => (ReachKind::Beyond, None),
                 Reach::At(ratio) => {

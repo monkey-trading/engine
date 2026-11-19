@@ -17,6 +17,11 @@
 //! market's weekend margin moves only as a listing notice of at least seven days names it
 //! (`listing_bounds`), or, while rotation is on, as a passed vote does (`governance`), and its
 //! calendar changes only as `schedule` allows.
+//!
+//! From `V81`, while the parameters name an offset grid, the close-out at a gap's start reads the
+//! portfolio requirement in full with the weekend margins in its bands, each group keeping its credit,
+//! and closes the least that meets it (`portfolio::closeout`). A market with no weekend margin keeps no
+//! gap, grouped or not.
 
 mod schedule;
 
@@ -32,6 +37,7 @@ use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
 use crate::fixed::Rounding;
 use crate::levels::FillCause;
+use crate::portfolio::{Basis, CloseoutContext, at_mark};
 use crate::types::{AccountId, MarketId, Millis, Side};
 
 /// How long before a weekend gap starts its weekend margin applies: two hours.
@@ -108,7 +114,8 @@ impl MarketState {
 
 impl Engine {
     /// Each market `account` holds with a weekend margin, with what the account must have over its
-    /// weekend gap, at its marks now. Empty for an account never credited.
+    /// weekend gap, at its marks now. Empty for an account never credited. From `V81`, while a grid
+    /// applies, the requirement is the portfolio requirement its gap's start reads.
     pub fn weekend_requirements(&self, account: AccountId) -> BTreeMap<MarketId, WeekendRequirement> {
         let Some(acct) = self.accounts.get(&account) else { return BTreeMap::new() };
         let (_, margin) = self.equity_and_margin(acct, None);
@@ -117,7 +124,12 @@ impl Engine {
             .filter_map(|id| Some((*id, self.markets.get(id)?.weekend_window()?)))
             .map(|(id, window)| {
                 let at = window.close.max(self.now);
-                let required = margin + self.weekend_margin_extra(acct, at, 0, at_mark);
+                let required = match self.portfolio_rules() {
+                    Some(grid) => {
+                        self.equity_and_portfolio_requirement(acct, grid, Basis::Weekend { at }, &[], at_mark).1
+                    }
+                    None => margin + self.weekend_margin_extra(acct, at, 0, at_mark),
+                };
                 (id, WeekendRequirement { window, required })
             })
             .collect()
@@ -204,7 +216,8 @@ impl Engine {
 
     /// Closes `account`'s positions in `closing`, largest loser first, at their marks, while its
     /// equity is below its margin requirement with the weekend margins that apply at `at`, then
-    /// settles any bad debt.
+    /// settles any bad debt; from `V81`, while a grid applies, step by step under portfolio margin in
+    /// its weekend context (`Engine::close_out_portfolio`).
     fn weekend_close_out(
         &mut self,
         account: AccountId,
@@ -212,6 +225,9 @@ impl Engine {
         at: Millis,
         events: &mut Vec<Event>,
     ) {
+        if self.portfolio_rules().is_some() {
+            return self.close_out_portfolio(account, CloseoutContext::Weekend { at, closing }, events);
+        }
         let mut announced = false;
         while let Some((market, qty, equity, margin)) = self.next_weekend_closeout(account, closing, at) {
             if !announced {
@@ -242,10 +258,22 @@ impl Engine {
         self.settle_bad_debt(account, events);
     }
 
+    /// Whether a weekend gap's close-out of `account` over `closing` at `at` would close anything,
+    /// under the rules in force: `next_weekend_closeout`, or from `V81`, while a grid applies,
+    /// `next_portfolio_step` in its weekend context.
+    #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
+    pub(crate) fn weekend_closes_out(&self, account: AccountId, closing: &BTreeSet<MarketId>, at: Millis) -> bool {
+        match self.portfolio_rules() {
+            Some(_) => self.next_portfolio_step(account, CloseoutContext::Weekend { at, closing }).is_some(),
+            None => self.next_weekend_closeout(account, closing, at).is_some(),
+        }
+    }
+
     /// The position in `closing` to close next, with the account's equity and its margin requirement
     /// with the weekend margins that apply at `at`, both at its marks, or `None` when the equity
     /// meets the requirement or no position in `closing` can be valued: one in a market never marked,
-    /// with no FX mark to convert at, or blocked by a failed split.
+    /// with no FX mark to convert at, or blocked by a failed split. The rule before `V81`, and from it
+    /// while no grid applies.
     pub(crate) fn next_weekend_closeout(
         &self,
         account: AccountId,
@@ -278,9 +306,4 @@ impl Engine {
             .min_by_key(|(pnl, id, _)| (*pnl, *id))
             .map(|(_, id, qty)| (id, qty, equity, required))
     }
-}
-
-/// A position's price and FX index at its market's marks, or its entry before the market is marked.
-fn at_mark(_: MarketId, market: &MarketState, pos: &Position) -> (Fixed, Option<Fixed>) {
-    (market.mark.unwrap_or(pos.entry), market.fx_mark)
 }

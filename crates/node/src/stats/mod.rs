@@ -24,7 +24,7 @@ mod record;
 mod series;
 mod snapshot;
 mod view;
-pub(crate) use closeout::{PositionCloseout, account_closeouts};
+pub(crate) use closeout::{AccountStanding, PositionCloseout, account_closeouts};
 pub(crate) use distributions::DistributionsPage;
 pub(crate) use monkey::MonkeyView;
 pub(crate) use view::{ActivityPage, HouseFigures, PositionsView, SeriesPage, SeriesQuery};

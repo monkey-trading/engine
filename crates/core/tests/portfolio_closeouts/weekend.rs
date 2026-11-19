@@ -1,0 +1,145 @@
+//! A weekend gap's start under portfolio margin (#913): a market with no weekend margin keeps no gap,
+//! grouped or not, so a hedged group of such markets is neither closed out nor held to more over a
+//! weekend; at the gap of a market with one, the close-out reads the portfolio requirement in full with
+//! the weekend margins in its bands, each group keeping its credit, valued and filled at the marks, and
+//! closes only what the weekend close-out can fill.
+
+use super::*;
+use common::weekend::{OIL_WEEKEND_BPS, chicago};
+use engine_core::command::{AdminCommand, Command};
+use engine_core::types::Millis;
+use engine_core::weekend::WeekendGap;
+
+/// Friday 23 October 2026's 16:00 Globex close in Chicago, which starts that weekend's gap.
+fn friday_close() -> Millis {
+    chicago(2026, 10, 23, 16, 0)
+}
+
+/// Sunday 25 October 2026's 17:00 Globex open in Chicago, which ends it.
+fn sunday_open() -> Millis {
+    chicago(2026, 10, 25, 17, 0)
+}
+
+/// Oil at `oil_weekend_bps` and gold at `gold_weekend_bps` under `grid`, and a holder of $700k of oil long
+/// against $700k of gold short, opened with $70k, after oil falls to `oil`.
+fn hedged_commodities(
+    grid: PortfolioGrid,
+    oil_weekend_bps: i64,
+    gold_weekend_bps: i64,
+    oil: &str,
+) -> (Harness, Client) {
+    let mut h = genesis_with_grid(V81, grid, oil_weekend_bps, gold_weekend_bps);
+    let a = client(&mut h, 1, "70000");
+    h.price(OIL, "70");
+    h.price(GOLD, "2000");
+    only_fill(&trade(&mut h, &a, OIL, Side::Buy, "10000", "70"));
+    only_fill(&trade(&mut h, &a, GOLD, Side::Sell, "350", "2000"));
+    assert!(fills(&h.price(OIL, oil)).is_empty());
+    (h, a)
+}
+
+/// The first command after Friday's close, Saturday morning, with oil at `oil` and gold at 2,000 until then.
+fn past_the_close(h: &mut Harness, oil: &str) -> Vec<Event> {
+    h.advance_to(friday_close() - 500);
+    h.price(OIL, oil);
+    h.price(GOLD, "2000");
+    h.advance_to(friday_close() + 20 * 60 * 60 * 1000);
+    h.cmd(Command::Tick)
+}
+
+/// What `client` must have over the oil gap that starts at Friday's close.
+fn over_the_gap(h: &Harness, client: &Client) -> Fixed {
+    let required = h.engine.weekend_requirements(client.account);
+    assert_eq!(required.keys().copied().collect::<Vec<_>>(), vec![OIL], "only oil keeps a gap");
+    required[&OIL].required
+}
+
+/// `client`'s oil and gold quantities.
+fn held(h: &Harness, client: &Client) -> (Fixed, Fixed) {
+    let acct = &h.engine.accounts()[&client.account];
+    (acct.position(OIL).qty, acct.position(GOLD).qty)
+}
+
+#[test]
+fn a_group_with_no_weekend_margin_keeps_no_gap_and_holds_over_the_weekend() {
+    // About $9.7k of equity against a portfolio requirement of about $9.4k and $13.4k of bands.
+    let (mut h, a) = hedged_commodities(pairs(5_000), 0, 0, "64");
+    let (equity, level) = standing(&h, &a);
+    let (_, bands) = h.equity_and_margin(a.account);
+    assert!(equity > level && equity < bands, "{equity} between {level} and {bands}");
+    for id in [OIL, GOLD] {
+        assert_eq!(h.engine.markets()[&id].weekend, None, "market {id}");
+    }
+    assert!(h.engine.weekend_requirements(a.account).is_empty());
+    let events = past_the_close(&mut h, "64");
+    assert!(liquidations(&events).is_empty(), "{events:?}");
+    assert_eq!(held(&h, &a), (f("10000"), f("-350")));
+}
+
+#[test]
+fn activating_v81_gives_a_grouped_market_with_no_weekend_margin_no_gap() {
+    // Within the lead before Friday's close, gold keeps none, and oil the one `V60` set it.
+    let mut h = genesis_with_grid(ProtocolVersion::V79, pairs(5_000), OIL_WEEKEND_BPS, 0);
+    h.advance_to(friday_close() - 60 * 60 * 1000);
+    h.admin(AdminCommand::ActivateProtocol { version: V81 });
+    assert_eq!(h.engine.markets()[&GOLD].weekend, None);
+    let gap = WeekendGap { close: friday_close(), reopen: sunday_open(), closed_out: false };
+    assert_eq!(h.engine.markets()[&OIL].weekend, Some(gap));
+}
+
+#[test]
+fn at_a_weekend_margins_gap_a_hedged_group_keeps_its_credit() {
+    // Oil at 67 charges 7.5% over its gap, $50,250, and gold its $7,000. The matched bands are gold's and
+    // oil's $47,250 of weekend bands, against a $9,310 grid charge, so the credit is half of them,
+    // $27,125, and the requirement $30,125: below the holder's equity, which the bands alone are above.
+    let (mut h, a) = hedged_commodities(pairs(5_000), OIL_WEEKEND_BPS, 0, "67");
+    let (mut alone, b) = hedged_commodities(PortfolioGrid { groups: vec![] }, OIL_WEEKEND_BPS, 0, "67");
+    assert_eq!(h.engine.markets()[&GOLD].weekend, None);
+    let grouped = over_the_gap(&h, &a);
+    let per_position = over_the_gap(&alone, &b);
+    assert_eq!((grouped, per_position), (f("30125"), f("57250")));
+    let equity = standing(&h, &a).0;
+    assert!(grouped < equity && equity < per_position, "{equity} between {grouped} and {per_position}");
+    let events = past_the_close(&mut h, "67");
+    assert!(liquidations(&events).is_empty(), "{events:?}");
+    assert_eq!(held(&h, &a), (f("10000"), f("-350")));
+    // With no group, the same book is closed out at the gap's start.
+    let events = past_the_close(&mut alone, "67");
+    assert_eq!(liquidations(&events), vec![OIL], "{events:?}");
+}
+
+#[test]
+fn below_it_the_close_out_closes_the_gapped_market_at_its_mark() {
+    // Oil at 64: $48,000 of weekend bands against the same $27,125 credit, $27,875, far above the equity.
+    // Only oil's gap starts, so only oil closes, at its mark, and gold stays.
+    let (mut h, a) = hedged_commodities(pairs(5_000), OIL_WEEKEND_BPS, 0, "64");
+    let required = over_the_gap(&h, &a);
+    assert_eq!(required, f("27875"));
+    let events = past_the_close(&mut h, "64");
+    assert_eq!(liquidations(&events), vec![OIL], "{events:?}");
+    for fill in fills(&events) {
+        assert_eq!(fill.index, h.engine.markets()[&fill.market].mark.unwrap(), "filled at the mark");
+    }
+    let Some(Event::CloseOut { margin, .. }) = events.iter().find(|e| matches!(e, Event::CloseOut { .. })) else {
+        panic!("{events:?}")
+    };
+    assert_eq!(*margin, required);
+    assert_eq!(held(&h, &a), (Fixed::ZERO, f("-350")));
+}
+
+#[test]
+fn a_member_blocked_by_a_failed_split_waits_and_the_rest_close_alone() {
+    let (mut h, a) = hedged_commodities(pairs(5_000), OIL_WEEKEND_BPS, OIL_WEEKEND_BPS, "64");
+    h.advance_to(friday_close() - 500);
+    h.price(OIL, "64");
+    h.price(GOLD, "2000");
+    // A failed split blocks its market, which needs a share price that rounds to zero: set the flag the
+    // gap's close-out reads directly, on gold.
+    let mut state = serde_json::to_value(&h.engine).expect("the engine encodes");
+    state["markets"][GOLD.to_string()]["corporate_action_blocked"] = serde_json::json!(true);
+    h.engine = serde_json::from_value(state).expect("the engine decodes");
+    h.advance_to(friday_close() + 20 * 60 * 60 * 1000);
+    let events = h.cmd(Command::Tick);
+    assert_eq!(liquidations(&events), vec![OIL], "{events:?}");
+    assert_eq!(held(&h, &a), (Fixed::ZERO, f("-350")));
+}

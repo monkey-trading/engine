@@ -1,8 +1,8 @@
 //! Fast-path restrictions: which commands one may carry, and the values in force while restrictions
-//! hold, the stricter of the baseline and every restriction: the highest close-out level and margin
-//! band rate, and the lowest house caps and floors. The engine keeps the values in force in the
-//! parameters and market specs, so every reader prices with them, and the baseline beside them while
-//! a restriction holds a field. The stress floor and reduce-only are read where they apply
+//! hold, the stricter of the baseline and every restriction: the highest close-out level, margin
+//! band rate and, from `V81`, offset group floor share, and the lowest house caps and floors. The
+//! engine keeps the values in force in the parameters and market specs, so every reader prices with
+//! them, and the baseline beside them while a restriction holds a field. The stress floor and reduce-only are read where they apply
 //! (`Governance::stress_floor`, `Governance::reduce_only`), beside the operator's own.
 
 use std::collections::BTreeSet;
@@ -15,10 +15,13 @@ use crate::governance::{Limit, MAX_RESTRICTIONS, MarketBaseline, ParamsBaseline,
 use crate::market::{MarketSpec, Tier};
 use crate::operator_bounds::within_half;
 use crate::params::ProtocolParams;
+use crate::protocol::ProtocolVersion;
 use crate::types::MarketId;
 
-/// What a fast-path proposal may carry, for its refusals.
+/// What a fast-path proposal may carry, for its refusals, which the log records: before `V81`, and from
+/// it, when an offset group's floor share joins.
 const FAST_PATH: &str = "the fast path takes only a higher margin or close-out level, a stress floor, a lower house or market cap, or reduce-only";
+const FAST_PATH_V81: &str = "the fast path takes only a higher margin or close-out level or floor share, a stress floor, a lower house or market cap, or reduce-only";
 
 impl ParamsBaseline {
     /// The restricted fields of `params`.
@@ -27,6 +30,7 @@ impl ParamsBaseline {
             closeout_level_bps: params.closeout_level_bps,
             house_total_cap_bps: params.house_total_cap_bps,
             house_total_cap_floor: params.house_total_cap_floor,
+            floor_shares: params.portfolio_grid.floor_shares(),
         }
     }
 
@@ -35,6 +39,7 @@ impl ParamsBaseline {
         params.closeout_level_bps = self.closeout_level_bps;
         params.house_total_cap_bps = self.house_total_cap_bps;
         params.house_total_cap_floor = self.house_total_cap_floor;
+        params.portfolio_grid.set_floor_shares(&self.floor_shares);
     }
 }
 
@@ -184,17 +189,26 @@ impl Engine {
                     baseline.write(params);
                 }
             } else {
-                let baseline = *governance.params_baseline.get_or_insert_with(|| ParamsBaseline::of(params));
+                let baseline = governance.params_baseline.get_or_insert_with(|| ParamsBaseline::of(params)).clone();
                 let mut strict = baseline;
                 for restriction in held {
-                    if let Limit::Params { closeout_level_bps, house_total_cap_bps, house_total_cap_floor } =
-                        &restriction.limit
+                    if let Limit::Params {
+                        closeout_level_bps,
+                        house_total_cap_bps,
+                        house_total_cap_floor,
+                        floor_shares,
+                    } = &restriction.limit
                     {
                         strict.closeout_level_bps = strict.closeout_level_bps.max(closeout_level_bps.unwrap_or(0));
                         strict.house_total_cap_bps = house_total_cap_bps
                             .map_or(strict.house_total_cap_bps, |cap| cap.min(strict.house_total_cap_bps));
                         strict.house_total_cap_floor = house_total_cap_floor
                             .map_or(strict.house_total_cap_floor, |floor| floor.min(strict.house_total_cap_floor));
+                        for (group, share) in floor_shares.iter().flatten() {
+                            if let Some(held) = strict.floor_shares.get_mut(group) {
+                                *held = (*held).max(*share);
+                            }
+                        }
                     }
                 }
                 if ParamsBaseline::of(params) != strict {
@@ -246,9 +260,10 @@ impl Engine {
     /// The restriction a fast-path `command` holds, measured against the baseline.
     /// Error cases:
     /// - a command other than `SetParams`, `UpsertMarket`, `SetStressFloor` or `SetReduceOnly`
-    /// - `SetParams` before parameters are set, changing a field other than the close-out level and the
-    ///   total house cap and floor, lowering the close-out level or raising a cap, or failing
-    ///   `ProtocolParams::validate_for`, or a close-out level outside ±50% of its launch value
+    /// - `SetParams` before parameters are set, changing a field other than the close-out level, the
+    ///   total house cap and floor and, from `V81`, the offset groups' floor shares, lowering the
+    ///   close-out level or a floor share or raising a cap, or failing `ProtocolParams::validate_for`, or
+    ///   a close-out level outside ±50% of its launch value
     /// - `UpsertMarket` of a market not listed, changing a field other than the margin bands and the
     ///   market's house cap and floor, lowering any band's rate at any notional or raising a cap, or
     ///   failing `MarketSpec::validate`
@@ -257,6 +272,8 @@ impl Engine {
     /// - a command that changes nothing
     fn limit_of(&self, command: &AdminCommand) -> Result<Limit, String> {
         let unknown = |market: Option<MarketId>| market.is_some_and(|id| !self.markets.contains_key(&id));
+        let v81 = self.protocol_version >= ProtocolVersion::V81;
+        let fast_path = if v81 { FAST_PATH_V81 } else { FAST_PATH };
         let limit = match command {
             AdminCommand::SetParams(proposed) => {
                 let baseline = self.baseline_params().ok_or("protocol params not set")?;
@@ -264,17 +281,23 @@ impl Engine {
                 let mut others = proposed.clone();
                 ParamsBaseline::of(&baseline).write(&mut others);
                 if others != baseline {
-                    return Err(format!("{FAST_PATH}: this SetParams changes another parameter"));
+                    return Err(format!("{fast_path}: this SetParams changes another parameter"));
                 }
                 let (level, cap, floor) =
                     (proposed.closeout_level_bps, proposed.house_total_cap_bps, proposed.house_total_cap_floor);
+                let (shares, baseline_shares) =
+                    (proposed.portfolio_grid.floor_shares(), baseline.portfolio_grid.floor_shares());
+                let lowers_share = shares.iter().any(|(group, share)| share < &baseline_shares[group]);
                 if level < baseline.closeout_level_bps
                     || cap > baseline.house_total_cap_bps
                     || floor > baseline.house_total_cap_floor
+                    || lowers_share
                 {
-                    return Err(format!(
-                        "{FAST_PATH}: this SetParams lowers the close-out level or raises a house cap"
-                    ));
+                    let lowers = if v81 { "the close-out level or a floor share" } else { "the close-out level" };
+                    return Err(format!("{fast_path}: this SetParams lowers {lowers} or raises a house cap"));
+                }
+                if shares != baseline_shares && !v81 {
+                    return Err(format!("a floor share restriction needs protocol {:?}", ProtocolVersion::V81));
                 }
                 let launch = self.operator_bounds.launch.ok_or("no launch rates are recorded")?;
                 if !within_half(level.into(), launch.closeout_level_bps.into()) {
@@ -287,6 +310,7 @@ impl Engine {
                     closeout_level_bps: (level != baseline.closeout_level_bps).then_some(level),
                     house_total_cap_bps: (cap != baseline.house_total_cap_bps).then_some(cap),
                     house_total_cap_floor: (floor != baseline.house_total_cap_floor).then_some(floor),
+                    floor_shares: (shares != baseline_shares).then_some(shares),
                 }
             }
             AdminCommand::UpsertMarket(proposed) => {
@@ -295,13 +319,13 @@ impl Engine {
                 let mut others = proposed.clone();
                 MarketBaseline::of(&baseline).write(&mut others);
                 if others != baseline {
-                    return Err(format!("{FAST_PATH}: this UpsertMarket changes another field"));
+                    return Err(format!("{fast_path}: this UpsertMarket changes another field"));
                 }
                 if !tiers_at_least(&proposed.margin_tiers, &baseline.margin_tiers)
                     || proposed.house_cap_bps > baseline.house_cap_bps
                     || proposed.house_cap_floor > baseline.house_cap_floor
                 {
-                    return Err(format!("{FAST_PATH}: this UpsertMarket lowers a margin band or raises a house cap"));
+                    return Err(format!("{fast_path}: this UpsertMarket lowers a margin band or raises a house cap"));
                 }
                 Limit::Market {
                     market: proposed.id,
@@ -324,19 +348,23 @@ impl Engine {
             }
             AdminCommand::SetReduceOnly { market, reduce_only } => {
                 if !reduce_only {
-                    return Err(format!("{FAST_PATH}: lifting reduce-only adds risk"));
+                    return Err(format!("{fast_path}: lifting reduce-only adds risk"));
                 }
                 if unknown(*market) {
                     return Err("unknown market".into());
                 }
                 Limit::ReduceOnly { market: *market }
             }
-            _ => return Err(FAST_PATH.into()),
+            _ => return Err(fast_path.into()),
         };
         let unchanged = matches!(
             &limit,
-            Limit::Params { closeout_level_bps: None, house_total_cap_bps: None, house_total_cap_floor: None }
-                | Limit::Market { margin_tiers: None, house_cap_bps: None, house_cap_floor: None, .. }
+            Limit::Params {
+                closeout_level_bps: None,
+                house_total_cap_bps: None,
+                house_total_cap_floor: None,
+                floor_shares: None
+            } | Limit::Market { margin_tiers: None, house_cap_bps: None, house_cap_floor: None, .. }
         );
         if unchanged {
             return Err("the proposal restricts nothing the baseline does not".into());

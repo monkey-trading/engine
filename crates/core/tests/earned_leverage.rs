@@ -208,6 +208,7 @@ fn a_genesis_that_names_the_floors_binds_later_tables_to_them() {
             volume_tiers: Some(volume_tiers),
             rollover: None,
             corporate_bounds: None,
+            portfolio_grid: None,
             effective_at: due,
         }))
     };

@@ -176,6 +176,7 @@ fn announce_and_apply(h: &mut common::Harness, params: engine_core::params::Prot
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at: due,
         score_tiers: None,
     };

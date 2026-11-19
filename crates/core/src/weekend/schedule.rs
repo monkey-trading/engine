@@ -14,13 +14,23 @@ use crate::types::{MarketId, Millis};
 use crate::weekend::{WEEKEND_LEAD_MS, WeekendGap};
 
 impl Engine {
+    /// From `V60`, after the listings of `markets` apply, sets each one's weekend gap under its calendar
+    /// (`relisted_gap`), then closes out, at the marks, every market among them that entered a gap the
+    /// gap kept before had not closed out, together, so markets relisted into one gap close as one.
+    pub(crate) fn relist_weekends(&mut self, markets: &[MarketId], events: &mut Vec<Event>) {
+        let entered: BTreeSet<MarketId> = markets.iter().copied().filter(|market| self.relisted_gap(*market)).collect();
+        if !entered.is_empty() {
+            self.weekend_close_outs(&entered, self.now, events);
+        }
+    }
+
     /// From `V60`, after a listing applies, sets `market`'s weekend gap under its calendar: the gap it
-    /// is in now, if any, and the next one otherwise. A gap the market is in that the gap kept before
-    /// had not closed out is closed out now, at the marks; one it had keeps its close-out and takes the
-    /// calendar's reopening. A gap yet to start whose close-out the kept gap had waived, as an
+    /// is in now, if any, and the next one otherwise, and returns whether it entered a gap the gap kept
+    /// before had not closed out, which is then closed out now. One it had keeps its close-out and takes
+    /// the calendar's reopening. A gap yet to start whose close-out the kept gap had waived, as an
     /// activation does, stays waived. A frontier kept before is no gap. A market with no weekend margin
     /// keeps no gap.
-    pub(crate) fn relist_weekend(&mut self, market: MarketId, events: &mut Vec<Event>) {
+    fn relisted_gap(&mut self, market: MarketId) -> bool {
         let now = self.now;
         let state = &self.markets[&market];
         let kept = state.weekend;
@@ -39,9 +49,7 @@ impl Engine {
         if kept != gap {
             self.markets.get_mut(&market).expect("listed").weekend = gap;
         }
-        if close_out {
-            self.weekend_close_outs(&BTreeSet::from([market]), now, events);
-        }
+        close_out
     }
 
     /// At a closed-out weekend gap's reopening `at`: a market still shut in the gap, past the end of

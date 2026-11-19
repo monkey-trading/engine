@@ -22,5 +22,6 @@ impl Engine {
         self.start_corporate_bounds(version);
         self.start_rollover_spans(version);
         self.start_levels(version);
+        self.start_portfolio_margin(version);
     }
 }

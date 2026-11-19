@@ -721,7 +721,7 @@ prices.
 | `equity` | The balance plus the unrealised profit and loss of every position. |
 | `margin` | The margin requirement at each market's own bands. |
 | `initial_margin` | The equity that a trade adding risk, or a withdrawal, must leave. It charges each band at least the account's volume tier's margin floor, and applies weekend margins from two hours before a market's weekend gap. |
-| `maintenance_margin` | The equity below which the account is closed out, which is `margin` at the close-out level. |
+| `maintenance_margin` | The equity below which the account is closed out, which is `margin` at the close-out level, or, while the protocol parameters name offset groups, `portfolio_margin.maintenance_margin`. |
 | `withdrawable` | The cash a withdrawal may take now. |
 | `max_leverage` | For every listed market, the most leverage a position opened now could reach. |
 | `positions` | By market, each position's signed quantity `qty`, positive for long and negative for short, and its average entry price `entry`. |
@@ -733,14 +733,17 @@ prices.
 | `volume` | The account's volume tier and its progress, as described below. |
 | `weekend_margins` | By market, for each position in a market with a weekend margin: the market's `weekend_margin` fields and `required`, the margin requirement the account must meet over the gap at the current prices. Absent when there is none. The production trading settings give no market a weekend margin, so the production trading server leaves the field out of every account. |
 | `levels` | By market, each position's `take_profit` and `stop_loss`. A level that is not set is left out, and the field is absent while no position has one. |
-| `portfolio_margin` | Present only on a server configured with `[portfolio_margin]`, as described below. |
+| `portfolio_margin` | Present only while the protocol parameters name offset groups, as described below. |
 
 Each entry of `closeouts` holds `market`, `reach` and `price`. A `reach` of `at` gives in `price`
 the market price at which the account would fall below its close-out level, with its other positions
 held at their current prices. `due` means the account is already below the level, and `beyond` means
 that no price would close it out. `price` is `null` unless `reach` is `at`. The figure is an
-estimate, because a close-out first closes the largest losing position that can be traded, which may
-be in another market.
+estimate, because a close-out may first close a position in another market. For a position in an
+offset group that the account holds on both sides, the requirement follows the price through the
+group's credit and need not move one way with it, so the server looks for the first price below the
+level at 16 evenly spaced prices across the range before narrowing it down; a dip below the level
+narrower than their spacing, which recovers before the next, is not seen.
 
 `volume` holds the following fields:
 
@@ -755,12 +758,17 @@ be in another market.
 | `requests_per_second` | The tier's request rate, where the tier table names one. |
 | `fee_discount_bps`, `financing_discount_bps`, `emissions_boost_bps` | The tier's discount on the profit fee and on the financing markup, and its boost to the account's MONKEY weight, where the tier table names them. |
 
-`portfolio_margin` shows what the account's requirement would be if margin were set by the risk of
-the whole account rather than position by position. Nothing the engine decides reads it. It holds
-`margin`, `initial_margin` and `maintenance_margin` on the same bases as the fields above, and
-`groups`, which gives for each offset group the account holds a member of: its `members`, the
-loading-weighted `net_notional` and `matched_notional`, the matched exposure's `worst_loss`, the
-`binding_direction` in which a move hurts the unmatched exposure, and the credit `offset`.
+`portfolio_margin` is the account's requirement set by the risk of the whole account rather than
+position by position, which close-outs read. In each offset group, the exposure on
+the group's smaller side, long or short, offsets as much on its larger side, and that matched
+exposure takes the group's credit: its share of the margin less its worst loss and the cost of
+closing it, at most the share the group's floor share leaves. Exposure that offsets nothing keeps
+its margin, so a position alone keeps its own requirement. `portfolio_margin` holds `margin`,
+`initial_margin` and `maintenance_margin` on the same bases as the fields above, and `groups`, which
+gives for each offset group the account holds a member of: its `members`, the loading-weighted
+`net_notional` and `matched_notional`, the matched exposure's `worst_loss`, the `binding_direction`
+in which a move hurts the unmatched exposure, and the credit `offset`. New risk and withdrawals still
+meet `initial_margin`.
 
 ### Eligibility
 
@@ -1242,13 +1250,16 @@ of every client position, long and short; `open_positions`; `unrealised`, the ho
 current prices; `volume` over the last 24 hours, from `volume_since_ms`; and `markets`, each
 market's `long`, `short` and `net` client value with position counts, `unrealised` and `volume`.
 These come from the latest scan, at most `api.stats_light_interval` old, which `seq` and
-`snapshot_ms` date. `open_margin` comes from the latest full scan, at most `api.stats_interval` old,
-which `margin_seq` and `margin_snapshot_ms` date. The scan figures are `null` until the first scan.
+`snapshot_ms` date. `open_margin`, the sum of every account's close-out requirement, its portfolio
+requirement while the parameters name offset groups, comes from the latest full scan, at most
+`api.stats_interval` old, which `margin_seq` and `margin_snapshot_ms` date. The scan figures are `null`
+until the first scan.
 
 `GET /v1/house/positions?market=<id>` returns one market's client positions as aggregates that name
 no account, as of the latest full scan, which `seq` and `snapshot_ms` date. `market` is required.
 `closeout` groups the positions, in US dollars and counts for each side, by how far in basis points
-the market must move from its current price to close each account out, with the price at each
+the market must move from its current price to close each account out, estimated as each
+account's `closeouts` are, with the price at each
 bucket's edges. `due_now` and `beyond_range` count the positions already due and those that no move
 within the range reaches. `profit` groups the positions by their profit from entry. The bucket
 widths and ranges are in `closeout_bucket_bps`, `closeout_range_bps`, `profit_bucket_bps` and
@@ -1261,8 +1272,8 @@ widths and ranges are in `closeout_bucket_bps`, `closeout_range_bps`, `profit_bu
 | Field | Meaning |
 | --- | --- |
 | `seq` | The last command the answer reflects, or `null` on an empty log. |
-| `params` | The trading settings in force, with `seq`, the command that set them, or `null` before the first. |
-| `params_notice` | A pending change to the trading settings, with the time it takes effect, `effective_at`, or `null`. |
+| `params` | The trading settings in force, with `seq`, the command that set them, or `null` before the first. They include `portfolio_grid`, the offset groups that close-outs read, while they name any. |
+| `params_notice` | A pending change to the trading settings, with the time it takes effect, `effective_at`, or `null`. A change to the offset groups' shocks or floor shares appears as its `portfolio_grid`. |
 | `listing_notices` | By market, a pending change to the market's bands or markup, with `effective_at`. |
 | `score_rules` | The toxicity score's fixed constants. |
 | `house_loss` | The house's loss to its clients over the trailing day, `loss`, from the start of its window, `since`, and the stress `level` that the loss sets in every market. |

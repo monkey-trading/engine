@@ -19,7 +19,7 @@ const ZERO_PIN: &str = "0x000000000000000000000000000000000000000000000000000000
 /// A valid key that is not the dev operator's.
 const OTHER_KEY: &str = "0x0101010101010101010101010101010101010101010101010101010101010101";
 /// A 24/7 listing the dev genesis does not have, as an operator writes one.
-const SOL: &str = r#"
+pub(super) const SOL: &str = r#"
 id = 3
 symbol = "SOL-USD"
 asset_class = "crypto"
@@ -152,6 +152,7 @@ fn each_action_builds_its_admin_command() {
                 volume_tiers: None,
                 rollover: None,
                 corporate_bounds: None,
+                portfolio_grid: None,
                 effective_at: 1_798_761_600_000,
             }),
         ),
@@ -266,7 +267,6 @@ fn a_listing_or_parameters_come_from_toml_and_are_validated_before_signing() {
     let genesis = dev_config().genesis.params;
     let named = (notice.rollover, notice.corporate_bounds, notice.volume_tiers);
     assert_eq!(named, (Some(genesis.rollover), Some(genesis.corporate_bounds), None));
-
     let mut wide = dev_config().genesis.params;
     let top = wide.stress_levels.len() - 1;
     wide.stress_levels[top].min_spread_bps = 10_000;

@@ -111,13 +111,11 @@ pub enum ProtocolVersion {
     V23,
     /// Signed eligibility declarations and fail-closed API and custody access screening.
     V24,
-    /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation
-    /// records a liquidity floor, an epoch length, and a start, each epoch the house NAV above the
-    /// floor is distributed to stakers pro-rata from the staked snapshot at the epoch's close,
-    /// paid in whole USDC base units that reduce house cash, with each account's cumulative
-    /// distribution a leaf of the state tree the vault pays a claim against. Stake and unstake
-    /// mirror the staking contract's finalised events, each credited once under its chain
-    /// reference.
+    /// MONKEY staking and USDC distributions (`staking`): once the operator's initialisation records a liquidity floor,
+    /// an epoch length, and a start, each epoch the house NAV above the floor is distributed to stakers pro-rata from
+    /// the staked snapshot at the epoch's close, paid in whole USDC base units that reduce house cash, with each
+    /// account's cumulative distribution a leaf of the state tree the vault pays a claim against. Stake and unstake
+    /// mirror the staking contract's finalised events, each credited once under its chain reference.
     V25,
     /// Screen canonical replacement payers and retain terminal holds across receipt variants.
     V26,
@@ -168,15 +166,13 @@ pub enum ProtocolVersion {
     /// vault's cursor rule already refunds it by id, and reserving it as unheld too double-counted
     /// it in the exit's refund reserve.
     V39,
-    /// The total spread a close can pay is capped per market (`close_spread`): a ceiling registry
-    /// adopted at genesis — one entry per listed market, kept apart from `MarketSpec` — bounds
-    /// every close, and no operator command can raise a close's spread above its ceiling. A pure
-    /// close's charge clamps to the ceiling, floored to the exact bound; a reversal whose blended
-    /// spread would exceed the ceiling is refused while the pure close stays open, and a triggered
-    /// order refused that way fills its closing slice and cancels the rest. After genesis an entry
-    /// enters only by a signed adoption in effect seven days after it is logged, and can only be
-    /// lowered; a listing without an adopted ceiling, or one changing its instrument's identity,
-    /// is refused.
+    /// The total spread a close can pay is capped per market (`close_spread`): a ceiling registry adopted at genesis —
+    /// one entry per listed market, kept apart from `MarketSpec` — bounds every close, and no operator command can
+    /// raise a close's spread above its ceiling. A pure close's charge clamps to the ceiling, floored to the exact
+    /// bound; a reversal whose blended spread would exceed the ceiling is refused while the pure close stays open, and
+    /// a triggered order refused that way fills its closing slice and cancels the rest. After genesis an entry enters
+    /// only by a signed adoption in effect seven days after it is logged, and can only be lowered; a listing without an
+    /// adopted ceiling, or one changing its instrument's identity, is refused.
     V40,
     /// Session keys (`session_keys`): an account-signed registration authorises a browser-held key
     /// to place and cancel orders until its expiry or an account-signed revocation. A registered,
@@ -250,18 +246,16 @@ pub enum ProtocolVersion {
     /// operator's share counts time in office from the member's `TurnTaken` to the end of its turn,
     /// and the time before a member takes its turn goes to stakers.
     V51,
-    /// Every fill pays its market's size spread (`spread_tier`), in tenths of a bp: the slice that
-    /// closes the position pays through the same bands as the slice that grows it, over the notional
-    /// it closes, both at the stress level's multiplier, and a pure close's charge clamps to its
-    /// ceiling before the check that a spread stays under the price, so a pure close always prices.
-    /// No spread band is below its class's floor, a tenth of a bp on FX and index markets and 1bp on
-    /// every other, and no stress level's size multiplier is below 1x. A listed market's spread and
-    /// margin bands move only as a listing notice of at least seven days names them: at every
-    /// notional the spread rate stays from its launch rate to twice it, and the margin requirement at
-    /// or above launch's (`listing_bounds`). A close-spread ceiling is at least its market's launch
-    /// close charge, which counts the first band at the widest multiplier, and an adoption for a
-    /// market not yet listed binds the listing that market's first listing must be. Activation writes
-    /// every listed band in tenths, raises each to its floor and each multiplier to 1x, and takes the
+    /// Every fill pays its market's size spread (`spread_tier`), in tenths of a bp: the slice that closes the position
+    /// pays through the same bands as the slice that grows it, over the notional it closes, both at the stress level's
+    /// multiplier, and a pure close's charge clamps to its ceiling before the check that a spread stays under the
+    /// price, so a pure close always prices. No spread band is below its class's floor, a tenth of a bp on FX and index
+    /// markets and 1bp on every other, and no stress level's size multiplier is below 1x. A listed market's spread and
+    /// margin bands move only as a listing notice of at least seven days names them: at every notional the spread rate
+    /// stays from its launch rate to twice it, and the margin requirement at or above launch's (`listing_bounds`). A
+    /// close-spread ceiling is at least its market's launch close charge, which counts the first band at the widest
+    /// multiplier, and an adoption for a market not yet listed binds the listing that market's first listing must be.
+    /// Activation writes every listed band in tenths, raises each to its floor and each multiplier to 1x, and takes the
     /// result as the launch bands.
     V52,
     /// Daily turns keep a key's notice across sets, and count no office past the first turn's application.
@@ -272,20 +266,18 @@ pub enum ProtocolVersion {
     /// so the first command past that boundary credits it nothing for the time since. The activation
     /// carries the notice through the sets the log keeps then.
     V53,
-    /// The toxicity score only worsens a price, and round trips cannot dilute it (`toxicity`). A
-    /// fill's markout is the index's move from the fill's index to the market's tradeable index 5 s
-    /// later, in units of the market's markout spread: the root mean square of its index's 5 s
-    /// changes over the trailing hour, never below the floor its listing names. The score is the
-    /// account's decayed weighted markout sum over the root of its decayed squared weights, with a
-    /// 7-day half-life and each weight capped at four times the account's decayed mean fill; from 20
-    /// decayed fills its tiers add spread. A fill matches the account's opposite fills within the
-    /// horizon newest-first, the quantity it closes against what they opened and the quantity it
-    /// opens against what they closed, and quantity matched at the same index scores nothing. Tier
-    /// thresholds and add-ons move only after a seven-day notice, within ±50% of
-    /// launch with an add-on of at least 1 bp, and a market's floor only at its listing. Activation
-    /// drops queued markouts, clears the `V11` scores and starts every account neutral, sets the
-    /// launch tiers where the parameters name none, and gives a market listed with no floor its
-    /// asset class's: 0.1 bp for FX, bonds and rates, 0.5 bp for indices, and 1 bp for the rest.
+    /// The toxicity score only worsens a price, and round trips cannot dilute it (`toxicity`). A fill's markout is the
+    /// index's move from the fill's index to the market's tradeable index 5 s later, in units of the market's markout
+    /// spread: the root mean square of its index's 5 s changes over the trailing hour, never below the floor its
+    /// listing names. The score is the account's decayed weighted markout sum over the root of its decayed squared
+    /// weights, with a 7-day half-life and each weight capped at four times the account's decayed mean fill; from 20
+    /// decayed fills its tiers add spread. A fill matches the account's opposite fills within the horizon newest-first,
+    /// the quantity it closes against what they opened and the quantity it opens against what they closed, and quantity
+    /// matched at the same index scores nothing. Tier thresholds and add-ons move only after a seven-day notice, within
+    /// ±50% of launch with an add-on of at least 1 bp, and a market's floor only at its listing. Activation drops
+    /// queued markouts, clears the `V11` scores and starts every account neutral, sets the launch tiers where the
+    /// parameters name none, and gives a market listed with no floor its asset class's: 0.1 bp for FX, bonds and rates,
+    /// 0.5 bp for indices, and 1 bp for the rest.
     V54,
     /// The profit fee falls with holding time (`holding_fee`): a realised gain pays the larger of
     /// the base fee and the hold curve's fee at the hold of the slice it closes, the hold running
@@ -297,16 +289,14 @@ pub enum ProtocolVersion {
     /// launch value back to it, gives parameters that name no curve the default one, and gives each
     /// held position the open time `activation - the curve's last hold`.
     V55,
-    /// Parameter changes by stake-weighted operator vote (`governance`). While rotation is on, the
-    /// governed parameters, listings, toxicity weighting, close-spread ceiling adoptions, the access
-    /// policy and protocol activation change only by a passed proposal, mirrored from finalised
-    /// events and credited once, and the operator's signed commands for them, and the node's unsigned
-    /// ones, are refused. A normal change applies no sooner than seven days after it is logged, under
-    /// every check its command meets but the notices the vote's own replaces. A fast-path proposal
-    /// applies at once as a restriction that only raises a margin or the close-out level, sets a
-    /// stress floor, lowers a house or market cap, or makes a market reduce-only: the values in force
-    /// are the stricter of the baseline and every restriction, which lapses after the recorded
-    /// lifetime unless renewed.
+    /// Parameter changes by stake-weighted operator vote (`governance`). While rotation is on, the governed parameters,
+    /// listings, toxicity weighting, close-spread ceiling adoptions, the access policy and protocol activation change
+    /// only by a passed proposal, mirrored from finalised events and credited once, and the operator's signed commands
+    /// for them, and the node's unsigned ones, are refused. A normal change applies no sooner than seven days after it
+    /// is logged, under every check its command meets but the notices the vote's own replaces. A fast-path proposal
+    /// applies at once as a restriction that only raises a margin or the close-out level, sets a stress floor, lowers a
+    /// house or market cap, or makes a market reduce-only: the values in force are the stricter of the baseline and
+    /// every restriction, which lapses after the recorded lifetime unless renewed.
     V56,
     /// An add's averaged open time is clamped at the launch curve's last hold, 15 minutes at launch,
     /// whatever curve is in force: the open time is raised to no earlier than now less that hold
@@ -496,4 +486,14 @@ pub enum ProtocolVersion {
     /// (`financing`). The per-position rows are derived output (`Engine::take_derived`), at the same
     /// amounts and in the same order; balances, house cash and state roots are as before.
     V80,
+    /// Close-outs read portfolio margin (`portfolio`) while the parameters name an offset grid: an account is closed
+    /// out below the close-out level of its portfolio requirement, per-position margin less each group's credit on its
+    /// matched exposure, at the indexes a close-out fills at, a market that cannot trade at its last mark. A close-out
+    /// closes, step by step, the least notional that restores the level, a group whole while every held member can
+    /// trade, else what gains the most per dollar; every account with a fill in a command but a close-out's is checked
+    /// once the command's fills are done. A weekend margin's gap start reads the requirement in full, each group
+    /// keeping its credit; a market with none keeps no gap. Groups, members, loadings and bounds are fixed at launch;
+    /// a notice or a vote moves only shocks and floor shares, up within their bounds; the fast path may raise a share.
+    /// `RelistMarkets` relists several markets at once.
+    V81,
 }

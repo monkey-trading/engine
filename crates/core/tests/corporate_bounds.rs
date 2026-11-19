@@ -145,6 +145,7 @@ fn bounds_notice(corporate_bounds: CorporateBounds, effective_at: Millis) -> Adm
         volume_tiers: None,
         rollover: None,
         corporate_bounds: Some(corporate_bounds),
+        portfolio_grid: None,
         effective_at,
     })
 }
@@ -411,6 +412,7 @@ fn v76s_state_and_notice_fields_encode_by_name_and_only_when_set() {
         volume_tiers: None,
         rollover,
         corporate_bounds,
+        portfolio_grid: None,
         effective_at: 7,
     };
     assert_eq!(encode(&notice(None, None)), r#"{"effective_at":7}"#);

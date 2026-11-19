@@ -201,6 +201,21 @@ processes. The bounds are:
   the house loss trigger sets. The stress levels keep that trigger at its launch level or above,
   with a threshold no higher than its launch value. A trade or close-out executed below that level
   while the house is behind on the day is in scope, and so is a change beyond this bound.
+- While the parameters name offset groups, close-outs read each account's portfolio requirement: its
+  per-position requirement at the market's bands, less each group's credit on the exposure its
+  positions on one side match on the other. That requirement is never above the per-position one,
+  and never below each group's floor share of its matched part's. A close-out closes, one step at a
+  time, the position or group whose closing restores the account with the least value closed, a
+  group's positions together while all of them can trade. Every account that a trade, a triggered
+  order or a level fills is checked for close-out once the instruction's trades are done. The groups,
+  their members, loadings and bounds are fixed at launch. Each residual shock and floor share moves
+  only up, within its bound, after seven days' notice or by a vote, and a fast-path vote may raise a
+  floor share. The requirement is the same at every time. A market given a weekend margin raises only
+  its own bands over its weekend closures, and each group keeps its credit: an account below that
+  whole requirement when such a closure starts is closed out in the closing markets at their last
+  prices. A market without a weekend margin has no weekend close-out. An account left open below its
+  close-out level after an instruction, a close-out of an account above it, or a requirement or grid
+  beyond these bounds, is in scope.
 
 Known limits:
 

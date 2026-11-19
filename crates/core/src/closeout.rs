@@ -9,7 +9,9 @@
 //! A price update checks the accounts holding its market. From `V6`, financing and parameter or
 //! listing changes check accounts too, only a market inside its trading session can trade, and a
 //! market that can trade counts at the index a close-out would fill it at. From `V12`, so does any
-//! change to a market's index without a price update, before the next command acts.
+//! change to a market's index without a price update, before the next command acts. From `V81`, while
+//! the parameters name an offset grid, the requirement is the portfolio requirement and a close-out
+//! closes the least that restores the level, keeping each group together (`portfolio::closeout`).
 
 use std::collections::BTreeMap;
 
@@ -21,6 +23,7 @@ use crate::event::Event;
 use crate::execution::{Exec, PriceGuard};
 use crate::fixed::Rounding;
 use crate::levels::FillCause;
+use crate::portfolio::CloseoutContext;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, Side};
 
@@ -75,8 +78,12 @@ impl Engine {
     }
 
     /// Closes the account's positions, largest loser first, while it is below `level_bps` of its
-    /// margin requirement, then settles any bad debt.
+    /// margin requirement, then settles any bad debt; from `V81`, while a grid applies, step by step
+    /// under portfolio margin (`Engine::close_out_portfolio`).
     fn close_out(&mut self, account: AccountId, level_bps: i64, events: &mut Vec<Event>) {
+        if self.portfolio_rules().is_some() {
+            return self.close_out_portfolio(account, CloseoutContext::Price { level_bps }, events);
+        }
         let mut announced = false;
         while let Some((market, pos, equity, margin)) = self.next_closeout(account, level_bps) {
             if !announced {
@@ -102,10 +109,21 @@ impl Engine {
         self.settle_bad_debt(account, events);
     }
 
+    /// Whether a close-out of `account` at `level_bps` would close anything now, under the rules in
+    /// force: `next_closeout`, or from `V81`, while a grid applies, `next_portfolio_step`.
+    #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
+    pub(crate) fn closes_out(&self, account: AccountId, level_bps: i64) -> bool {
+        match self.portfolio_rules() {
+            Some(_) => self.next_portfolio_step(account, CloseoutContext::Price { level_bps }).is_some(),
+            None => self.next_closeout(account, level_bps).is_some(),
+        }
+    }
+
     /// The position to close next, with the account's equity and margin, or `None` when the
     /// account is at or above the close-out level or nothing it holds can trade now. Positions
     /// count at their last marks; from `V6`, one in a market that can trade counts at the index it
-    /// would fill at, so the account is judged and ranked at the prices it is closed at.
+    /// would fill at, so the account is judged and ranked at the prices it is closed at. The rule
+    /// before `V81`, and from it while no grid applies.
     pub(crate) fn next_closeout(
         &self,
         account: AccountId,

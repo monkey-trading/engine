@@ -251,6 +251,47 @@ volume_tiers = [
   { threshold = "250000000", day_divisor = 10, best_price_share_bps = 25000, max_resting_orders = 250, requests_per_second = 20, fee_discount_bps = 2000, financing_discount_bps = 2000, emissions_boost_bps = 5000 },
 ]
 
+# From protocol V81 close-outs read the account's portfolio requirement under this grid, and the
+# account read serves its breakdown. Portfolio margin's launch values, confirmed 2026-11-18 on #913:
+# #914's E1 (research/portfolio-margin/results/proposal.toml), its shocks in tenths of a basis point
+# rounded up to whole bps, its loadings in thousandths. Crypto and the shares are not grouped (their
+# offsets save too little at their floor shares) and stay on per-position margin. Each group's floor
+# share is the least share of its matched exposure's per-position requirement it keeps. The
+# requirement is the same at every time, a weekend gap included (#913, 2026-11-19), so E1's weekend
+# shocks are not used. A notice or a vote may raise the residual shocks to their
+# max_residual_shock_bps, #914's stricter bounds (99.9% over 5 minutes, rounded up to whole bps),
+# and the floor share to 100%; the groups, members and loadings never move.
+[genesis.params.portfolio_grid]
+
+[[genesis.params.portfolio_grid.groups]]
+name = "fx"
+floor_share_bps = 7000
+max_floor_share_bps = 10000
+members = [
+  { market = 10, loading = "0.9", residual_shock_bps = 6, max_residual_shock_bps = 27 },
+  { market = 11, loading = "0.91", residual_shock_bps = 5, max_residual_shock_bps = 21 },
+  { market = 13, loading = "1.19", residual_shock_bps = 5, max_residual_shock_bps = 28 },
+]
+
+[[genesis.params.portfolio_grid.groups]]
+name = "metals"
+floor_share_bps = 8000
+max_floor_share_bps = 10000
+members = [
+  { market = 30, loading = "0.61", residual_shock_bps = 28, max_residual_shock_bps = 167 },
+  { market = 31, loading = "1.39", residual_shock_bps = 13, max_residual_shock_bps = 73 },
+]
+
+[[genesis.params.portfolio_grid.groups]]
+name = "us_index"
+floor_share_bps = 7000
+max_floor_share_bps = 10000
+members = [
+  { market = 20, loading = "0.96", residual_shock_bps = 6, max_residual_shock_bps = 50 },
+  { market = 21, loading = "1.22", residual_shock_bps = 9, max_residual_shock_bps = 43 },
+  { market = 22, loading = "0.82", residual_shock_bps = 15, max_residual_shock_bps = 67 },
+]
+
 [genesis.params.rollover]
 tz = "Europe/London"
 hour = 22

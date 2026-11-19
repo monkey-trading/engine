@@ -19,8 +19,8 @@ pub struct MarginStanding {
     /// position in a market whose weekend margin applies now at least that, band by band.
     pub initial_margin: Fixed,
     /// The equity below which a price move closes the account out, at marks now: the requirement at
-    /// the market's bands, at the close-out level. A weekend gap's start closes out below what
-    /// `Engine::weekend_requirements` gives instead.
+    /// the market's bands, from `V81` the portfolio requirement while a grid applies, at the close-out
+    /// level. A weekend gap's start closes out below what `Engine::weekend_requirements` gives instead.
     pub maintenance_margin: Fixed,
     /// The cash a withdrawal may take now (`Engine::withdrawable`).
     pub withdrawable: Fixed,
@@ -100,7 +100,7 @@ impl Engine {
     pub fn margin_standing(&self, account: AccountId) -> Option<MarginStanding> {
         let acct = self.accounts.get(&account)?;
         let (_, initial_margin) = self.equity_and_initial_margin_now(account, acct);
-        let (_, margin) = self.equity_and_margin(acct, None);
+        let (_, margin) = self.equity_and_closeout_requirement(acct);
         let maintenance_margin = match &self.params {
             Some(params) => margin.mul_bps_rounded(params.closeout_level_bps, self.charge_rounding()),
             None => margin,

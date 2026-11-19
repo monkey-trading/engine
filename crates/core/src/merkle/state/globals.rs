@@ -152,6 +152,7 @@ impl Engine {
             closeout_index: _,
             // Derived output, which no state holds.
             derived: _,
+            filled_accounts: _,
         } = self;
         Globals {
             params,

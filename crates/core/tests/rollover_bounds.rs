@@ -68,6 +68,7 @@ fn rollover_notice(rollover: Rollover, effective_at: Millis) -> AdminCommand {
         volume_tiers: None,
         rollover: Some(rollover),
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
     })
 }

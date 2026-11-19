@@ -204,6 +204,7 @@ fn notice(
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
         score_tiers: None,
     })

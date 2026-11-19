@@ -10,6 +10,7 @@ use crate::corporate::{CorporateBounds, is_launch};
 use crate::fixed::Rounding;
 use crate::holding_fee::{CurvePoint, validate_curve};
 use crate::market::MarketSpec;
+use crate::portfolio::PortfolioGrid;
 use crate::protocol::ProtocolVersion;
 use crate::toxicity::{HORIZON_MS, ScoreTier, validate_score_tiers};
 use crate::types::Millis;
@@ -83,6 +84,11 @@ pub struct ProtocolParams {
     /// none take launch's, and before `V76` they name only those. Left out of the encoding at launch's.
     #[serde(default, skip_serializing_if = "is_launch")]
     pub corporate_bounds: CorporateBounds,
+    /// From `V81`, the offset groups close-outs read the portfolio requirement under (`portfolio`).
+    /// Parameters set before `V81` may name them for its activation to take up. Left out of the
+    /// encoding while empty, so parameters that name none keep their roots, and their rules.
+    #[serde(default, skip_serializing_if = "PortfolioGrid::is_empty")]
+    pub portfolio_grid: PortfolioGrid,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +202,7 @@ impl ProtocolParams {
     /// - a profit fee curve that fails `holding_fee::validate_curve`
     /// - volume tiers that fail `volume_tier::validate_volume_tiers`
     /// - corporate bounds that fail `CorporateBounds::validate`
+    /// - a portfolio grid that fails `PortfolioGrid::validate`
     pub fn validate(&self) -> Result<(), String> {
         let rate = 0..=MAX_RATE_BPS;
         if !(0..MAX_RATE_BPS).contains(&self.profit_fee_bps) {
@@ -253,7 +260,8 @@ impl ProtocolParams {
         }
         validate_curve(&self.profit_fee_curve)?;
         validate_volume_tiers(&self.volume_tiers)?;
-        self.corporate_bounds.validate()
+        self.corporate_bounds.validate()?;
+        self.portfolio_grid.validate()
     }
 
     /// Checks a trade that only reduces a position can always fill: the widest stress spread plus

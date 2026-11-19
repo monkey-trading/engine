@@ -139,8 +139,6 @@ impl NodeConfig {
     /// - `operator.public_key` or `custody.vault` does not parse
     /// - genesis lists a market id, a market symbol, or a benchmark name twice
     /// - the engine would reject a genesis command (see `check_genesis`)
-    /// - `[portfolio_margin]` fails `PortfolioGrid::validate`, or `PortfolioGrid::check_listings`
-    ///   against the genesis listings
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
     /// - `[tee.sealing]` fails validation (see `validate_sealing`)
@@ -295,12 +293,6 @@ impl NodeConfig {
         }
         if let Some(id) = repeated(self.genesis.close_spread_ceilings.iter().map(|c| c.market)) {
             bail!("genesis lists a close-spread ceiling for market {id} twice");
-        }
-        if let Some(grid) = &self.portfolio_margin {
-            grid.validate().map_err(anyhow::Error::msg).context("portfolio_margin")?;
-            grid.check_listings(|id| markets.iter().find(|spec| spec.id == id))
-                .map_err(anyhow::Error::msg)
-                .context("portfolio_margin against the genesis listings")?;
         }
         // Genesis is all or nothing, so a command the engine would refuse fails the load.
         check_genesis(&self.client_auth()?, self.operator()?, &self.genesis)

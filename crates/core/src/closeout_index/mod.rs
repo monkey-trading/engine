@@ -16,6 +16,10 @@
 //! makes, their events and the state they leave are today's. Keys bound the per-position requirement,
 //! the one every close-out reads.
 //!
+//! From `V81`, while a grid applies, the exact check reads the portfolio requirement, which is never
+//! above the per-position one the keys bound, so every key stays sound; the refresh also takes up the
+//! grid in force and its markets' close-spread ceilings, which move the portfolio requirement alone.
+//!
 //! A weekend gap's close-out uses the same keys: a keyed account whose valuation at its marks lies
 //! inside its ranges, and whose key shows it meeting the requirement with every weekend margin, is
 //! skipped there too. Keying spends a per-command allowance of positions, so after a mass event the
@@ -33,6 +37,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::closeout_index::key::Key;
 use crate::closeout_index::markets::MarketKeys;
 use crate::engine::Engine;
+use crate::portfolio::PortfolioGrid;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId};
 
@@ -58,6 +63,9 @@ pub(crate) struct CloseoutIndex {
     /// Unkeyed accounts at or above their level, to be keyed, oldest first; `queued` holds each once.
     queue: VecDeque<AccountId>,
     queued: BTreeSet<AccountId>,
+    /// From `V81`, the grid in force when last refreshed, and each of its markets' close-spread ceilings.
+    grid: Option<PortfolioGrid>,
+    ceilings: Vec<(MarketId, Option<i64>)>,
     /// Positions left to key in the command `allowance_seq` names.
     allowance: usize,
     allowance_seq: Option<u64>,
@@ -86,6 +94,7 @@ pub(crate) enum Noted {
     HeadroomMove,
     Relevel,
     Reband,
+    Regrid,
     Keyed,
     /// Counted only under the oracle, which works it out.
     #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
@@ -157,8 +166,17 @@ impl CloseoutIndex {
         self.coverage.note(Noted::Keyed);
     }
 
-    /// Unkeys `account`, entering it under the markets it holds now, and marks it to be assessed.
+    /// Unkeys `account`, entering it under the markets it holds now, and marks it to be assessed. An
+    /// account already unkeyed under them stays entered as it is: its assessment sets its flag afresh.
     fn unkey(&mut self, engine: &Engine, account: AccountId, marked: &mut BTreeSet<AccountId>) {
+        if let (Some(Standing::Unkeyed { markets, .. }), Some(acct)) =
+            (self.accounts.get(&account), engine.accounts.get(&account))
+            && !markets.is_empty()
+            && markets.iter().eq(acct.positions.keys())
+        {
+            marked.insert(account);
+            return;
+        }
         self.forget(account);
         let held = engine.accounts.get(&account).map(|acct| acct.positions.keys().copied().collect::<Vec<_>>());
         if let Some(markets) = held.filter(|markets| !markets.is_empty()) {

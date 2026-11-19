@@ -2,7 +2,7 @@
 //! short of the price closes nothing out, and to just past it closes the account out.
 
 use super::*;
-use crate::stats::closeout::{PositionCloseout, ReachKind, account_closeouts};
+use crate::stats::closeout::{AccountStanding, PositionCloseout, ReachKind, account_closeouts};
 use crate::test_support::dev_config;
 
 const EUR_USD: MarketId = 10;
@@ -17,7 +17,7 @@ const TOLERANCE: Fixed = Fixed::from_raw(1_000);
 /// The close-out of `account`'s position in `market`, as the account read serves it.
 fn closeout_of(rig: &Rig, account: AccountId, market: MarketId) -> PositionCloseout {
     let acct = &rig.engine.accounts()[&account];
-    let standing = rig.engine.equity_and_margin(acct, None);
+    let standing = AccountStanding::of(&rig.engine, acct);
     account_closeouts(&rig.engine, acct, standing).into_iter().find(|c| c.market == market).expect("a position")
 }
 
@@ -326,7 +326,7 @@ fn the_answer_names_each_position_and_leaves_the_price_out_unless_the_reach_is_a
     quote(&mut rig, ETH, "4000", T0 + 2_000);
     rig.trade_in(ETH, T0 + 2_100, TRADER, Side::Sell, 1);
     let acct = &rig.engine.accounts()[&TRADER];
-    let standing = rig.engine.equity_and_margin(acct, None);
+    let standing = AccountStanding::of(&rig.engine, acct);
     let found = account_closeouts(&rig.engine, acct, standing);
     let json = serde_json::to_value(&found).unwrap();
     assert_eq!(json[0]["market"], 1);
@@ -351,4 +351,40 @@ fn an_fx_market_is_priced_within_15_bps_with_positions_quoted_in_its_currency_he
         rig
     };
     Case::new(EUR_USD, build).agrees_within(Fixed::from_raw(1_500_000));
+}
+
+/// 5 BTC long against 100 ETH short, the dev genesis's offset group (ETH loaded 1.25), activated at `V81`:
+/// each leg's price follows the group's credit, held to where the engine closes the account out with the
+/// other leg quoted at its mark.
+fn hedged_pair() -> Rig {
+    let mut rig = btc(Side::Buy, 5, 0);
+    quote(&mut rig, ETH, "4000", T0 + 2_000);
+    let events = rig.trade_in(ETH, T0 + 2_100, TRADER, Side::Sell, 100);
+    assert!(events.iter().any(|event| matches!(event, Event::Fill(_))), "{events:?}");
+    let activation = AdminCommand::ActivateProtocol { version: engine_core::protocol::ProtocolVersion::V81 };
+    let events = rig.apply(T0 + 2_200, Command::Admin(activation));
+    assert!(events.contains(&Event::AdminApplied), "{events:?}");
+    assert!(rig.engine.portfolio_rules().is_some(), "the genesis's grid is in force");
+    rig
+}
+
+#[test]
+fn each_leg_of_a_hedged_pair_is_priced_where_the_engine_closes_the_account_out() {
+    let mut btc_leg = Case::new(1, hedged_pair);
+    btc_leg.keep = vec![(ETH, "4000".parse().unwrap())];
+    let price = btc_leg.agrees();
+    assert!(price < Fixed::from_int(100_000), "{price}");
+    let mut eth_leg = Case::new(ETH, hedged_pair);
+    eth_leg.keep = vec![(1, Fixed::from_int(100_000))];
+    let price = eth_leg.agrees();
+    assert!(price > Fixed::from_int(4_000), "{price}");
+}
+
+/// A hedged member that the band walk at the per-position requirement, a floor under its group's slack,
+/// finds beyond the range is beyond it: so for the pair on ample equity, and not on its own.
+#[test]
+fn a_hedged_member_is_beyond_the_range_once_its_per_position_walk_is() {
+    let funded = with_balance(hedged_pair(), 10_000_000);
+    assert_eq!(closeout_of(&funded, TRADER, 1).reach, ReachKind::Beyond);
+    assert_eq!(closeout_of(&hedged_pair(), TRADER, 1).reach, ReachKind::At);
 }

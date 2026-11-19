@@ -153,6 +153,7 @@ fn stress_notice(params: &ProtocolParams, effective_at: Millis) -> AdminCommand 
         volume_tiers: None,
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at,
     })
 }

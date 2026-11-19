@@ -152,8 +152,8 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
         if account.positions.is_empty() || !valued {
             continue;
         }
-        let (equity, margin) = if full { engine.equity_and_margin(account, None) } else { Default::default() };
-        open_margin += margin;
+        let standing = if full { closeout::AccountStanding::of(engine, account) } else { Default::default() };
+        open_margin += standing.requirement;
         for (id, position) in &account.positions {
             let market = &engine.markets()[id];
             let (price, notional) = closeout::valued(market, position);
@@ -175,7 +175,7 @@ pub(crate) fn scan(engine: &Engine, seq: u64, ts: Millis, layout: Layout, full: 
                 book.profit[layout.profit.profit_bucket(profit_bps)].add(long, notional);
             }
             let range = layout.closeout.range_bps();
-            let reach = closeout::position_reach(engine, (equity, margin), *id, position, (price, notional), range);
+            let reach = closeout::position_reach(engine, account, standing, *id, position, (price, notional), range);
             match reach {
                 Reach::Due => book.due.add(long, notional),
                 Reach::Beyond => book.beyond.add(long, notional),

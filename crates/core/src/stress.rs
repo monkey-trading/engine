@@ -18,7 +18,7 @@ use crate::command::Command;
 use crate::engine::{Engine, MarketState};
 use crate::event::Event;
 use crate::fixed::Rounding;
-use crate::params::{StressLevel, StressTrigger};
+use crate::params::{ProtocolParams, StressLevel, StressTrigger};
 use crate::protocol::ProtocolVersion;
 use crate::types::{MarketId, Millis};
 
@@ -72,6 +72,14 @@ struct Readings {
     house_loss: Option<Fixed>,
 }
 
+/// What a market's stress level steps on: its readings but the move, which the index mid sets as it
+/// joins the move window, and the floor every level is held to.
+struct StressReading {
+    mid: Fixed,
+    readings: Readings,
+    global_floor: usize,
+}
+
 impl Engine {
     /// Before `V13`: recomputes a market's automatic stress level from the latest index, then its
     /// effective level. A raised automatic level steps down only after the cooldown.
@@ -115,37 +123,48 @@ impl Engine {
     /// its level, since nothing fills there but a weekend close-out, which from `V67` pays at least the level the
     /// house's loss sets (`close_out_stress_level`). From `V62` the readings include the house's loss at `nav`.
     pub(crate) fn refresh_stress(&mut self, market_id: MarketId, nav: Fixed, events: &mut Vec<Event>) {
-        let now = self.now;
-        let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));
-        let market = self.markets.get(&market_id).expect("callers pass a listed market");
-        let cap = self.market_cap(&market.spec, nav);
-        if !market.open {
-            return;
-        }
-        let Ok(index) = market.index(now) else { return };
-        // A fill converts at the live FX index, so the reading does too.
-        let Ok(fx) = self.live_fx(market_id) else { return };
-        let Some(params) = self.params.as_ref() else { return };
-        let house_loss = (self.protocol_version >= ProtocolVersion::V62).then(|| self.house_loss_at(nav));
+        let Some(reading) = self.stress_reading(market_id, nav) else { return };
+        let params = self.params.as_ref().expect("a reading needs parameters");
         // Only a market with a reading is handed out for change, so the state root rehashes no other.
         let market = self.markets.get_mut(&market_id).expect("listed");
+        step_stress(&mut market.stress, reading.readings, reading.mid, params, self.now);
+        let max_level = params.stress_levels.len() - 1;
+        set_stress_level(market_id, market, reading.global_floor, max_level, events);
+    }
 
-        // The window takes over the move reference the rules before `V13` keep.
-        if let Some((from, mid)) = market.stress.move_ref.take() {
-            market.stress.move_window.push_front(MoveBucket { from, to: from, low: mid, high: mid });
+    /// The stress level a fill in `market_id` would pay if it ran now, at house NAV `nav`: from `V13` the
+    /// level `refresh_stress` would set first, stepped on a copy of the market's stress state, so nothing
+    /// is recorded; before it, the level as it stands.
+    pub(crate) fn projected_stress_level(&self, market_id: MarketId, nav: Fixed) -> usize {
+        let stress = &self.markets[&market_id].stress;
+        let reading = self.stress_reading(market_id, nav).filter(|_| self.protocol_version >= ProtocolVersion::V13);
+        let (Some(reading), Some(params)) = (reading, self.params.as_ref()) else { return stress.level };
+        let mut stress = stress.clone();
+        step_stress(&mut stress, reading.readings, reading.mid, params, self.now);
+        stress.auto.max(stress.floor).max(reading.global_floor).min(params.stress_levels.len() - 1)
+    }
+
+    /// What `refresh_stress` steps `market_id`'s level on now, at house NAV `nav`; `None` for a market
+    /// that keeps its level: one closed, or with no index or no live FX index, or before parameters.
+    fn stress_reading(&self, market_id: MarketId, nav: Fixed) -> Option<StressReading> {
+        let market = self.markets.get(&market_id).expect("callers pass a listed market");
+        if !market.open {
+            return None;
         }
-        let move_bps = record_move(&mut market.stress.move_window, now, index.mid, params.stress_move_window_ms);
+        let index = market.index(self.now).ok()?;
+        // A fill converts at the live FX index, so the reading does too.
+        let fx = self.live_fx(market_id).ok()?;
+        self.params.as_ref()?;
+        let cap = self.market_cap(&market.spec, nav);
         let readings = Readings {
             divergence_bps: index.divergence_bps,
             divergence_share_bps: divergence_share_bps(market, index.divergence_bps),
-            move_bps,
+            move_bps: 0,
             utilisation_bps: utilisation_bps(market, index.mid, fx, cap),
-            house_loss,
+            house_loss: (self.protocol_version >= ProtocolVersion::V62).then(|| self.house_loss_at(nav)),
         };
-        let target = auto_stress_target(&params.stress_levels, &readings);
-        step_auto(&mut market.stress, target, now, params.stress_cooldown_ms);
-        let max_level = params.stress_levels.len() - 1;
-        set_stress_level(market_id, market, global_floor, max_level, events);
+        let global_floor = self.global_stress_floor.max(self.governance.stress_floor(market_id));
+        Some(StressReading { mid: index.mid, readings, global_floor })
     }
 
     /// From `V13`: re-evaluates every market's stress level after `cmd`, at one house NAV, since any
@@ -284,6 +303,17 @@ fn divergence_share_bps(market: &MarketState, divergence_bps: i64) -> i64 {
 fn utilisation_bps(market: &MarketState, mid: Fixed, fx: Option<Fixed>, cap: Fixed) -> i64 {
     let exposure = market.spec.quote_currency.to_usd(market.client_qty.abs().mul(mid), fx, Rounding::Up);
     if cap.is_positive() { exposure.bps_of(cap) } else { i64::MAX }
+}
+
+/// Steps `stress` on `readings` at `now`: the window takes over the move reference the rules before `V13`
+/// keep, `mid` joins it and sets the move reading, and the automatic level moves to the readings' target.
+fn step_stress(stress: &mut StressState, mut readings: Readings, mid: Fixed, params: &ProtocolParams, now: Millis) {
+    if let Some((from, mid)) = stress.move_ref.take() {
+        stress.move_window.push_front(MoveBucket { from, to: from, low: mid, high: mid });
+    }
+    readings.move_bps = record_move(&mut stress.move_window, now, mid, params.stress_move_window_ms);
+    let target = auto_stress_target(&params.stress_levels, &readings);
+    step_auto(stress, target, now, params.stress_cooldown_ms);
 }
 
 /// Moves the automatic level to `target`: up at once, down only after the cooldown.

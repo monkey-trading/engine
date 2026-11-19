@@ -72,7 +72,8 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
     assert_eq!(account["close_fees"][BTC.to_string()]["opened_at"].as_i64(), Some(now), "{account}");
 
     // 4. C holds a BTC long that gains and an ETH long that loses; ETH's fall closes C out of both, the
-    // BTC gain paying the whole of itself at its 5 s hold.
+    // dev genesis's crypto group closing whole in market order, the BTC gain paying the whole of itself at
+    // its 5 s hold.
     price(&node, ETH, "2000").await;
     fill_event(&node, &c, BTC, Side::Buy, "23", "100000").await;
     fill_event(&node, &c, ETH, Side::Buy, "750", "2000").await;
@@ -81,7 +82,7 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
     let events = price(&node, ETH, "1880").await;
     let closed: Vec<&Fill> =
         events.iter().filter_map(|event| if let Event::Fill(fill) = event { Some(fill) } else { None }).collect();
-    let [eth, btc] = closed[..] else { panic!("two close-out fills: {events:?}") };
+    let [btc, eth] = closed[..] else { panic!("two close-out fills: {events:?}") };
     assert!(eth.liquidation && btc.liquidation && eth.market == ETH && btc.market == BTC);
     assert!(eth.realised_pnl.is_negative() && eth.profit_fee.is_zero(), "{eth:?}");
     assert!(btc.realised_pnl.is_positive(), "{btc:?}");
@@ -99,6 +100,7 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
             volume_tiers: None,
             rollover: None,
             corporate_bounds: None,
+            portfolio_grid: None,
             effective_at: due,
             score_tiers: None,
         })
@@ -136,6 +138,7 @@ async fn dev_scenario_a_gain_pays_the_fee_its_hold_gives_and_the_fee_moves_only_
         profit_fee_curve: Some(extended.clone()),
         rollover: None,
         corporate_bounds: None,
+        portfolio_grid: None,
         effective_at: due,
         score_tiers: None,
         volume_tiers: None,

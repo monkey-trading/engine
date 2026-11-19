@@ -1,5 +1,5 @@
-//! Portfolio margin as a read: an account's requirement under a grid of shocks, which nothing the
-//! engine decides reads.
+//! Portfolio margin: an account's requirement under a grid of shocks, which close-outs read from `V81`
+//! while the parameters name a grid (`closeout`).
 //!
 //! The markets of an offset group share an asset class, one schedule and USD as quote currency, so
 //! each member's profit and loss is linear in its own price, and each moves with the group's factor by
@@ -14,14 +14,20 @@
 //! its share of the bands less its worst loss and the cost of closing it at its close-spread ceilings
 //! over the close-out level, at most `1 - φ` of that share, φ the group's floor share, and never
 //! below zero. The portfolio requirement is the per-position requirement less every group's credit,
-//! so it is never above per-position margin. At initial bands each band charges at least the
-//! account's tier floor and, over its market's weekend window, its weekend margin. From two hours
-//! before a group's members' shared schedule starts a weekend gap until they reopen, the group takes
-//! its weekend shocks, and the matched part of a market with no weekend rate keeps its bands, taking
-//! no credit then. A group takes no credit while a member the account holds cannot trade.
+//! so it is never above per-position margin. The grid has one shock per member, the same at every time,
+//! a weekend gap included. At initial bands each band charges at least the account's tier floor and,
+//! over its market's weekend window, its weekend margin, and a group takes no credit while a member the
+//! account holds cannot trade.
 
+mod bounds;
+mod closeout;
 mod exposure;
+mod reach;
 mod requirement;
+pub(crate) use bounds::spend_grid_notice;
+pub(crate) use closeout::CloseoutContext;
+pub use reach::PortfolioMove;
+pub(crate) use requirement::{Basis, Valued, at_mark};
 pub use requirement::{FactorMove, GroupStanding, PortfolioStanding};
 
 use std::collections::BTreeSet;
@@ -38,8 +44,9 @@ const MAX_BPS: i64 = 10_000;
 /// bounds the exposures' range (`exposure`).
 pub const MAX_LOADING: Fixed = Fixed::from_int(10);
 
-/// The offset groups an account's portfolio requirement is computed under.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The offset groups an account's portfolio requirement is computed under. Empty, no group offsets
+/// anything.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PortfolioGrid {
     pub groups: Vec<OffsetGroup>,
@@ -53,6 +60,8 @@ pub struct OffsetGroup {
     pub name: String,
     /// φ: the least share of its matched exposure's per-position requirement the group keeps, in bps.
     pub floor_share_bps: i64,
+    /// The most a notice or a vote may raise φ to, fixed with the launch grid (`bounds`).
+    pub max_floor_share_bps: i64,
     pub members: Vec<GroupMember>,
 }
 
@@ -65,17 +74,17 @@ pub struct GroupMember {
     pub loading: Fixed,
     /// ρ: the member's own move either way, in bps of its notional.
     pub residual_shock_bps: i64,
-    /// ρ over the group's weekend window, for the initial requirement; at least `residual_shock_bps`.
-    pub weekend_residual_shock_bps: i64,
+    /// The most a notice or a vote may raise ρ to, fixed with the launch grid (`bounds`).
+    pub max_residual_shock_bps: i64,
 }
 
 impl PortfolioGrid {
     /// Checks the grid's structure.
     /// Error cases:
     /// - a group with an empty name, a name another group has, or fewer than two members
-    /// - a floor share outside 1..=10000 bps
+    /// - a floor share outside 1..=10000 bps, or a bound on it below it or above 10000 bps
     /// - a market in more than one group, or twice in one
-    /// - a residual shock outside 0..=10000 bps, or a weekend one below it or above 10000 bps
+    /// - a residual shock outside 0..=10000 bps, or a bound on it below it or above 10000 bps
     /// - a loading of zero, or of a magnitude above `MAX_LOADING`
     pub fn validate(&self) -> Result<(), String> {
         let (mut names, mut markets) = (BTreeSet::new(), BTreeSet::new());
@@ -90,6 +99,9 @@ impl PortfolioGrid {
             if !(1..=MAX_BPS).contains(&group.floor_share_bps) {
                 return Err(format!("group {name}: floor_share_bps must be in 1..=10000"));
             }
+            if !(group.floor_share_bps..=MAX_BPS).contains(&group.max_floor_share_bps) {
+                return Err(format!("group {name}: max_floor_share_bps must be from its floor share to 10000"));
+            }
             for member in &group.members {
                 let market = member.market;
                 if !markets.insert(market) {
@@ -100,11 +112,13 @@ impl PortfolioGrid {
                         "group {name}: market {market}'s loading must be non-zero and at most 10 either way"
                     ));
                 }
-                let (normal, weekend) = (member.residual_shock_bps, member.weekend_residual_shock_bps);
-                if !(0..=MAX_BPS).contains(&normal) || !(normal..=MAX_BPS).contains(&weekend) {
+                let shock = member.residual_shock_bps;
+                if !(0..=MAX_BPS).contains(&shock) {
+                    return Err(format!("group {name}: market {market}'s residual shock must be in 0..=10000 bps"));
+                }
+                if !(shock..=MAX_BPS).contains(&member.max_residual_shock_bps) {
                     return Err(format!(
-                        "group {name}: market {market}'s residual shock must be in 0..=10000 bps, and its \
-                         weekend shock from it to 10000"
+                        "group {name}: market {market}'s bound on its residual shock must be from the shock to 10000"
                     ));
                 }
             }
