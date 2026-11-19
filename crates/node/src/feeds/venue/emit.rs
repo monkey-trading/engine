@@ -54,7 +54,7 @@ impl VenueFeed {
         spent: &mut BTreeMap<String, Instant>,
     ) -> anyhow::Result<Option<Instant>> {
         // A feed holding its quotes back keeps each symbol's newest for when it goes live (see `live`).
-        if !self.live() {
+        if self.holds_back().await? {
             self.keep_newest(buffered);
             return Ok(None);
         }

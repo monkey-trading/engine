@@ -104,6 +104,35 @@ async fn a_paced_checkpoint_holds_stamps_for_its_stall_until_paced_ones_were_def
     assert!(at_due, "no checkpoint at the confirmed seq {due}");
 }
 
+/// A handover's final checkpoint that joins a paced one waiting at its seq is never given up on: past
+/// the stall and the deferral limit nothing is stamped or signed, and once a member confirms its seq it
+/// is written and the stop goes ahead.
+#[tokio::test]
+async fn a_final_checkpoint_joining_a_paced_wait_is_never_given_up() {
+    let dir = scratch_dir("seq-liveness-joined-final");
+    let gate = Gate::closed();
+    gate.fence(false);
+    gate.checked(true);
+    gate.bound_stamps(u64::MAX);
+    let clock = Arc::new(TestClock::at(1_800_000_000_000));
+    let (seq, _hold) = sequencer_at(&dir, gate.clone(), &clock);
+    let (tx, rx) = mpsc::channel(64);
+    let task = tokio::spawn(seq.run(rx));
+    let due = stamp_until_a_checkpoint_waits(&tx).await;
+    let (stop, stopped) = oneshot::channel();
+    tx.send(Request::FinalCheckpoint(stop)).await.unwrap();
+    clock.advance(DEFER_MAX + PACED_STALL);
+    assert!(!submit(&tx).await, "a command was stamped past the final checkpoint's seq");
+    let signed = log_entries(&dir).into_iter().any(|entry| matches!(entry, LogEntry::Checkpoint(c) if c.seq == due));
+    assert!(!signed, "the final checkpoint was signed with no member's confirmation");
+    gate.confirm(due);
+    let _ = submit(&tx).await;
+    stopped.await.unwrap().expect("the handover was refused though a member confirmed its seq");
+    task.await.unwrap().unwrap();
+    let signed = log_entries(&dir).into_iter().any(|entry| matches!(entry, LogEntry::Checkpoint(c) if c.seq == due));
+    assert!(signed, "no final checkpoint at seq {due}");
+}
+
 /// A fenced enclave, or one whose start check has not passed, signs no checkpoint, however far a
 /// member confirmed: a member may hold more than its log, or another history.
 #[tokio::test]

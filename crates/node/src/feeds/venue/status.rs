@@ -4,9 +4,9 @@
 
 use crate::clock::now_ms;
 use crate::feeds::status::{Connection, FeedStatus, SymbolState, SymbolStatus};
-use crate::feeds::venue::{Credentials, Timing, VenueConnection, VenueFeed};
+use crate::feeds::venue::{Credentials, Held, Timing, VenueConnection, VenueFeed};
 use crate::sequencer::Request;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 /// Where a connection publishes: the shared snapshots, and its place among them.
 #[derive(Clone, Debug, Default)]
@@ -24,7 +24,7 @@ impl Report {
 }
 
 /// As `run`, publishing what the connection's symbols are doing to `status` as its `index`th
-/// connection, and holding its quotes back while `live` is not set (see `live`).
+/// connection, and holding its quotes back as `held` says (see `live`).
 /// Error cases:
 /// - the sequencer has gone away, or the node its quotes were held back for has
 pub async fn run_reporting(
@@ -32,11 +32,10 @@ pub async fn run_reporting(
     credentials: Credentials,
     timing: Timing,
     tls: std::sync::Arc<rustls::ClientConfig>,
-    sequencer: (mpsc::Sender<Request>, watch::Receiver<bool>),
+    (tx, held): (mpsc::Sender<Request>, Held),
     (status, index): (FeedStatus, usize),
 ) -> anyhow::Result<()> {
-    let (tx, live) = sequencer;
-    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx).until_live(live);
+    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx).held_back_by(held);
     feed.report = Report::new(status, index);
     feed.run().await
 }

@@ -5,8 +5,13 @@
 
 use std::time::Duration;
 
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use anyhow::{Context, anyhow};
-use engine_core::types::Millis;
+use engine_core::Engine;
+use engine_core::session::Schedule;
+use engine_core::types::{MarketId, Millis};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tracing::info;
@@ -14,7 +19,7 @@ use tracing::info;
 use crate::config::{FeedProvider, FeedsSection};
 use crate::feeds;
 use crate::feeds::status::{Connection, FeedStatus, SymbolState, SymbolStatus};
-use crate::feeds::venue::{self, Timing};
+use crate::feeds::venue::{self, Held, Timing};
 use crate::node::CHANNEL_CAPACITY;
 use crate::node::secrets::Delivered;
 use crate::node::shutdown::TaskResult;
@@ -43,16 +48,22 @@ pub(crate) struct Live {
 }
 
 impl Warm {
-    /// Opens `feeds`' venue connections with their quotes held back, on a channel of their own; `None`
-    /// for the mock feed, which opens nothing.
+    /// Opens `feeds`' venue connections with their quotes held back, on a channel of their own, judging
+    /// their markets' hours by `hours` until the engine answers; `None` for the mock feed, which opens
+    /// nothing.
     /// Error cases:
     /// - as `spawn`
-    pub(crate) fn open(feeds: &FeedsSection, delivered: &Delivered) -> anyhow::Result<Option<Self>> {
+    pub(crate) fn open(
+        feeds: &FeedsSection,
+        delivered: &Delivered,
+        hours: BTreeMap<MarketId, Schedule>,
+    ) -> anyhow::Result<Option<Self>> {
         if feeds.provider != FeedProvider::Venues {
             return Ok(None);
         }
-        let (channel, (live, held)) = (mpsc::channel(CHANNEL_CAPACITY), watch::channel(false));
+        let (channel, (live, switch)) = (mpsc::channel(CHANNEL_CAPACITY), watch::channel(false));
         let (mut tasks, status) = (JoinSet::new(), FeedStatus::default());
+        let held = Held { live: switch, hours: Arc::new(hours) };
         spawn(&mut tasks, feeds.clone(), delivered, (&channel.0, &held), &status)?;
         Ok(Some(Self { channel, feeds: Live { tasks, live, status } }))
     }
@@ -60,11 +71,15 @@ impl Warm {
 
 impl Live {
     /// Lets the feeds' quotes through to the sequencer now reading their channel, and supervises their
-    /// tasks among `tasks`, as the node's own feeds are: one stopping stops the node.
+    /// tasks among `tasks`, as the node's own feeds are: one stopping stops the node. With every
+    /// connection off for want of its delivered secret, there is no task to supervise.
     fn start(self, tasks: &mut JoinSet<TaskResult>) {
         let Live { tasks: mut feeds, live, .. } = self;
         live.send_replace(true);
         info!(connections = feeds.len(), "the venue feeds opened before the turn send their quotes");
+        if feeds.is_empty() {
+            return;
+        }
         tasks.spawn(async move {
             match feeds.join_next().await {
                 Some(Ok(stopped)) => stopped,
@@ -103,8 +118,13 @@ pub(super) fn start(
             warm.start(tasks);
             Ok(())
         }
-        None => spawn(tasks, feeds, delivered, (tx, &venue::always()), status),
+        None => spawn(tasks, feeds, delivered, (tx, &Held::never()), status),
     }
+}
+
+/// Each market's trading hours in `engine`, which a member's warm feeds judge closures by.
+pub(crate) fn market_hours(engine: &Engine) -> BTreeMap<MarketId, Schedule> {
+    engine.markets().iter().map(|(id, market)| (*id, market.spec.schedule.clone())).collect()
 }
 
 /// Whether a member whose trusted time has reached `reached` opens its venue connections for its own
@@ -114,8 +134,7 @@ pub(crate) fn warm_due(boundary: Millis, reached: Millis) -> bool {
     boundary.saturating_sub(reached) <= lead
 }
 
-/// Spawns into `tasks` the feeds `feeds` configures, each sending its prices to `tx` while `live` is
-/// set.
+/// Spawns into `tasks` the feeds `feeds` configures, each sending its prices to `tx` as `held` lets it.
 /// Error cases:
 /// - `provider = "venues"` without `[feeds.venues]`, or the venues' TLS config or a connection's
 ///   credentials do not read
@@ -123,7 +142,7 @@ fn spawn(
     tasks: &mut JoinSet<TaskResult>,
     feeds: FeedsSection,
     delivered: &Delivered,
-    (tx, live): (&mpsc::Sender<Request>, &watch::Receiver<bool>),
+    (tx, held): (&mpsc::Sender<Request>, &Held),
     status: &FeedStatus,
 ) -> anyhow::Result<()> {
     match feeds.provider {
@@ -157,9 +176,9 @@ fn spawn(
                 }
                 let credentials = delivered.credentials(&conn, &tls, timing.timeout)?;
                 info!(venue = name, url = %conn.url, symbols = conn.symbols.len(), "starting venue feed");
-                let (report, live) = ((status.clone(), index), live.clone());
+                let (report, held) = ((status.clone(), index), held.clone());
                 tasks.spawn(async move {
-                    (name, venue::run_reporting(conn, credentials, timing, tls, (feed_tx, live), report).await)
+                    (name, venue::run_reporting(conn, credentials, timing, tls, (feed_tx, held), report).await)
                 });
             }
         }
@@ -170,6 +189,24 @@ fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Warm feeds go live when the node starts them, and their tasks join the node's: a feed task's
+    /// stopping stops the node, but with every connection off for want of its secret no task is added,
+    /// so none stops it at once.
+    #[tokio::test]
+    async fn starting_warm_feeds_lets_them_through_and_supervises_only_their_tasks() {
+        for running in [false, true] {
+            let (live, switch) = watch::channel(false);
+            let mut feeds = JoinSet::new();
+            if running {
+                feeds.spawn(std::future::pending::<TaskResult>());
+            }
+            let mut node = JoinSet::new();
+            Live { tasks: feeds, live, status: FeedStatus::default() }.start(&mut node);
+            assert!(*switch.borrow(), "the switch was not set");
+            assert_eq!(node.len(), usize::from(running), "running {running}: the node supervises {} tasks", node.len());
+        }
+    }
 
     #[test]
     fn a_member_opens_its_feeds_within_the_lead_of_its_turn_and_while_it_takes_it() {

@@ -166,7 +166,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 Err(e) => self.episodes.blocked(Step::ReadTurn, e),
             }
             if let Ok(holding) = &holding {
-                self.warm_for(holding.taking().is_some(), holding.own_next()).await;
+                self.warm_for(holding.taking().is_some(), holding.own_next(), follower.as_ref()).await;
             }
             let (turn, own_next) = match holding {
                 Ok(Holding::Hold) => return Ok(Turn::Hold),

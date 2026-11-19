@@ -8,10 +8,11 @@
 //! while the previous turn's is refused; that with C, the incumbent, killed once its head latched its
 //! turn, the callers promote the next member, whose node serves from its copy under its standby key,
 //! whose admin key signs and whose first checkpoint lands; and that its log replays across the change of
-//! signer. Each member prices the market from the scenario's venue stand-in, opening its connection a
-//! lead before its own turn: it checks that no node pages `market_no_price`, that the market goes
-//! unpriced across neither boundary for as long as `alerts.no_price_after`, measured from the log, and
-//! that the promoted member prices it within its start budget, printing each figure.
+//! signer. Each member prices the market from the scenario's venue stand-in: it checks that each turn's
+//! member opened its venue connection ahead of its boundary and its start let it through, that no node
+//! pages `market_no_price` before the kill, that the market goes unpriced across neither boundary for as
+//! long as `alerts.no_price_after`, measured from the log, and that the promoted member prices it within
+//! its start budget of the promotion being seen, printing each figure.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -186,6 +187,16 @@ async fn run() -> anyhow::Result<()> {
              is refused",
             seats[holder].name, seats[previous.0].name
         );
+        let log = std::fs::read_to_string(seats[holder].log())?;
+        ensure!(log.contains("opened the venue feeds ahead of this member's turn"), "no warm feeds before turn {next}");
+        ensure!(
+            log.contains("the venue feeds opened before the turn send their quotes"),
+            "turn {next} started them cold"
+        );
+        println!(
+            "PASS: {} opened its venue feeds ahead of turn {next}, and its start let them through",
+            seats[holder].name
+        );
         previous = (holder, seats[holder].admin.clone());
     }
 
@@ -198,6 +209,8 @@ async fn run() -> anyhow::Result<()> {
         (latch.member == c_candidate).then_some(())
     })
     .await?;
+    ensure!(!services.paged_any("market_no_price"), "a node paged market_no_price across the boundaries");
+    println!("PASS: no node paged market_no_price across the boundaries");
     let killed_ms = now_ms();
     seats[2].kill().await?;
     let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 1) + RULE.1);
@@ -226,8 +239,6 @@ async fn run() -> anyhow::Result<()> {
     })
     .await?;
     println!("PASS: {}'s first checkpoint under its standby key landed", seats[p].name);
-    ensure!(!services.paged_any("market_no_price"), "a node paged market_no_price");
-    println!("PASS: no node paged market_no_price");
 
     // The promoted member's log replays across the change of signer.
     for seat in &mut seats {

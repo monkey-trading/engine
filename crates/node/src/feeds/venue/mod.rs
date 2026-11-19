@@ -26,7 +26,7 @@ use delay::DelayProbe;
 mod emit;
 use emit::rearm;
 mod live;
-pub use live::always;
+pub use live::Held;
 mod standing;
 use standing::{StandingBooks, redates};
 mod quotes;
@@ -242,7 +242,7 @@ impl VenueFeed {
             timing,
             tls,
             tx,
-            live: always(),
+            live: Held::never().live,
             holding: false,
             down: false,
             quoted: false,
@@ -293,7 +293,7 @@ impl VenueFeed {
     /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
     /// - its bearer token cannot be had, or expires before a replacement on a fresh one takes over
     ///   (see `auth` and `replace`)
-    /// - the connection fails, or the sequencer has gone away
+    /// - the connection fails, or the sequencer, or the node its quotes were held back for, has gone away
     async fn relay(&mut self) -> anyhow::Result<Infallible> {
         self.open_token().await?;
         let connect = transport::connect(&self.conn, self.bearer(), self.tls.clone());
@@ -317,7 +317,7 @@ impl VenueFeed {
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
         self.sent.clear();
         // Ask at once, so the first quotes are judged against the markets' hours.
-        if self.confirming.is_none() && !self.holds_back() {
+        if !self.holds_back().await? && self.confirming.is_none() {
             self.confirming = Some(self.confirm().await?);
         }
 
@@ -373,15 +373,10 @@ impl VenueFeed {
                     }
                 }
                 _ = pings.tick() => self.ping(&mut link).await?,
-                live = going_live.changed(), if !self.live() => {
+                live = going_live.changed(), if self.holding() => {
                     live.map_err(|_| anyhow!("the node its quotes were held back for has gone"))?;
-                    if !self.holds_back() {
-                        waiting_since = Instant::now();
-                        if self.confirming.is_none() {
-                            self.confirming = Some(self.confirm().await?);
-                        }
-                        rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
-                    }
+                    // Taking the switch sends the kept quotes at once, behind the engine question.
+                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
                 }
                 answer = async {
                     match &mut self.confirming {
@@ -435,7 +430,7 @@ impl VenueFeed {
                     self.publish_status();
                     self.allow_quiet(&adapter, &mut quiet, &mut read_deadline, read_timeout);
                     // Held back, it asks the engine nothing and no count runs (see `live`).
-                    if self.holds_back() {
+                    if self.holds_back().await? {
                         waiting_since = Instant::now();
                         continue;
                     }

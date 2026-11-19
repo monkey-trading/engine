@@ -270,7 +270,9 @@ impl<'a> Member<'a> {
             warm: None,
         })
     }
+}
 
+impl<'a, C, H, T> Member<'a, C, H, T> {
     /// This member, opening its venue feeds a lead before each of its turns with `delivered`'s
     /// credentials (`warm`).
     pub(super) fn with_feeds(self, delivered: &'a Delivered) -> Self {

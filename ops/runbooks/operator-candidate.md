@@ -715,7 +715,12 @@ frame is verified against the vault's signer at the latest block. Your trading s
 these:
 
 - It keeps a copy of the log, with a live replica that one replay builds when it starts following.
-- It resolves the operator again at each boundary, and after a failed stint.
+- It resolves the operator again at each boundary, and after a failed stint: a second later, then
+  twice as long each time, up to a stint.
+- From a minute before its own turn's boundary, it holds its venue connections open beside the
+  incumbent's, with their quotes held back until it takes the turn, so it sends fresh quotes from its
+  first instruction. A vendor that streams one connection per account, as Alpaca does, therefore
+  needs each member's own keys.
 - It pins the latest posted log head as its replica passes that head.
 
 These alerts page what it finds. Each pages once per episode, and each resolves once the step works

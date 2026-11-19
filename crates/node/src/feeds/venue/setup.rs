@@ -8,6 +8,7 @@ use anyhow::{Context, anyhow};
 use rustls::crypto::ring;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::time::{Instant, sleep};
+use tracing::info;
 
 use crate::config::VenuesSection;
 use crate::feeds::venue::{Timing, VenueFeed};
@@ -35,7 +36,9 @@ impl Timing {
 impl VenueFeed {
     /// Connects and relays until the connection fails, then retries: at once after a connection that
     /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
-    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`).
+    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`). A drop while
+    /// the feed holds its quotes back (see `live`) is no outage: it is logged, raises no alert, and the
+    /// switch's being set cuts the wait short.
     /// Error cases:
     /// - the sequencer has gone away
     pub(super) async fn run(mut self) -> anyhow::Result<()> {
@@ -54,9 +57,17 @@ impl VenueFeed {
             // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
             let healthy = self.quoted && self.sent_own;
             let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
-            self.dropped(&error, wait);
-            self.publish_status();
-            sleep(wait).await;
+            if self.live() {
+                self.dropped(&error, wait);
+                self.publish_status();
+                sleep(wait).await;
+            } else {
+                let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
+                let error = self.redact(&format!("{error:#}"));
+                info!(venue, feed, retry_in = ?wait, "a venue connection held back before its node runs dropped: {error}");
+                self.publish_status();
+                self.wait_unless_live(wait).await;
+            }
             backoff = next;
         }
     }

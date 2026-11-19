@@ -13,7 +13,7 @@ use crate::clock::now_ms;
 use crate::config::{Venue, VenueConnection, VenueSymbol};
 use crate::feeds::status::FeedStatus;
 use crate::feeds::tests::fake::{Conn, FakeEngine, WAIT, accept, fast, kraken_book, listen, quote, send};
-use crate::feeds::venue::{self, Credentials};
+use crate::feeds::venue::{self, Credentials, Held, Timing};
 use crate::sequencer::Request;
 use crate::test_support::capture_alerts;
 
@@ -38,7 +38,7 @@ async fn a_held_back_feed_sends_nothing_until_live_and_then_its_newest_kept_book
         Credentials::Public,
         fast(TIMEOUT),
         venue::tls_config().expect("tls config"),
-        (tx, held),
+        (tx, Held { live: held, hours: Default::default() }),
         (FeedStatus::default(), 0),
     ));
     let (mut ws, _) = accept(&listener).await;
@@ -65,6 +65,35 @@ async fn a_held_back_feed_sends_nothing_until_live_and_then_its_newest_kept_book
     send(&mut ws, &[KRAKEN_HEARTBEAT.to_owned()]).await;
     let replaced = timeout(TIMEOUT / 2, next_quote(&mut rx, &mut engine)).await;
     assert!(replaced.is_err(), "a book replaced while held back was sent too: {replaced:?}");
+}
+
+/// A connection that drops while its feed holds back is no outage: it raises no alert. Its backoff,
+/// two seconds here, ends as soon as the switch is set, and the feed connects again at once.
+#[tokio::test]
+async fn a_held_back_connection_that_drops_raises_nothing_and_reconnects_once_live() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (listener, url) = listen().await;
+    let (tx, _rx) = mpsc::channel(1024);
+    let (live, held) = watch::channel(false);
+    let backoff = Duration::from_secs(2);
+    let timing = Timing { reconnect_min: backoff, reconnect_max: backoff * 2, ..fast(WAIT) };
+    let _feed = tokio::spawn(venue::run_reporting(
+        connection(&url),
+        Credentials::Public,
+        timing,
+        venue::tls_config().expect("tls config"),
+        (tx, Held { live: held, hours: Default::default() }),
+        (FeedStatus::default(), 0),
+    ));
+    let (ws, _) = accept(&listener).await;
+    drop(ws);
+    sleep(Duration::from_millis(100)).await;
+    assert!(timeout(Duration::from_millis(10), listener.accept()).await.is_err(), "it reconnected inside its backoff");
+    let flipped = Instant::now();
+    live.send_replace(true);
+    timeout(backoff / 2, listener.accept()).await.expect("it sat out its backoff once live").expect("accept");
+    assert!(flipped.elapsed() < backoff / 2);
+    assert!(alerts.try_recv().is_err(), "a held-back connection's drop raised an alert");
 }
 
 /// Sends heartbeats for `span`, so the connection's read deadline never passes.
