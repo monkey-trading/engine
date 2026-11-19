@@ -1,7 +1,8 @@
 //! Votes on `V81`'s offset grid: a normal vote moves its shocks and floor shares within their launch
 //! bounds with no notice, the fast path raises a floor share at once, in force as the stricter of the
 //! baseline and every restriction until it lapses, and a vote carries a relisting of several markets,
-//! which the operator alone may not send while votes govern.
+//! which the operator alone may not send while votes govern and which applies only over the baseline it
+//! passed on.
 
 use super::*;
 use common::portfolio::{group, member};
@@ -101,5 +102,26 @@ fn a_vote_carries_a_relisting_of_several_markets_and_the_operator_cannot_send_on
     assert_eq!(
         (h.engine.markets()[&BTC].spec.max_slippage_bps, h.engine.markets()[&ETH].spec.max_slippage_bps),
         (75, 75)
+    );
+}
+
+#[test]
+fn a_passed_relisting_over_a_market_whose_baseline_moved_is_refused() {
+    let mut h = governed_grid();
+    let raised = margin(&h, ETH, 1_500);
+    // Carries ETH's bands from before the raise, which applying it would undo.
+    let relisted =
+        |id: MarketId, h: &Harness| MarketSpec { max_slippage_bps: 75, ..h.engine.baseline_spec(id).expect("listed") };
+    let relisting = AdminCommand::RelistMarkets { specs: vec![relisted(BTC, &h), relisted(ETH, &h)] };
+    pass(&mut h, 1, false, raised.clone());
+    pass(&mut h, 2, false, relisting.clone());
+    h.advance(NOTICE_MS);
+    assert_eq!(apply(&mut h, 1, raised).last(), Some(&Event::AdminApplied));
+    rejected(&apply(&mut h, 2, relisting), "changed after it passed");
+    assert_eq!(margin_bps(&h, ETH), one_band(1_500));
+    assert_eq!(
+        (h.engine.markets()[&BTC].spec.max_slippage_bps, h.engine.markets()[&ETH].spec.max_slippage_bps),
+        (20, 20),
+        "the relisting changed no market"
     );
 }
