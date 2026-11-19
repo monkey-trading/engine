@@ -12,13 +12,33 @@ use tracing::debug;
 use crate::sequencer::{Sequencer, Stamped};
 
 impl Sequencer {
+    /// Stamps and sequences one command, after any queued required commands. Returns `None`, with
+    /// nothing logged, when trusted time refuses the stamp.
+    /// Error cases:
+    /// - as `sequence_stamped`
+    pub(super) fn sequence(&mut self, cmd: Command) -> anyhow::Result<Option<Stamped>> {
+        self.sequence_stamped(cmd, None)
+    }
+
     /// Sequences `cmd`, a venue's quote, unless the monotonic clock has passed `not_after`, or the
     /// run's stamps hold at its start, when a quote stored at that stamp would count for that much
-    /// longer: dropped as no quote, it returns `None`, as for a stamp trusted time refuses.
+    /// longer: dropped as no quote, it returns `None`, as for a stamp trusted time refuses. A quote it
+    /// stamps adds the time since `received`, its receipt at its venue task, to the price-to-stamp
+    /// histogram.
     /// Error cases:
     /// - as `sequence`
-    pub(super) fn sequence_quote(&mut self, cmd: Command, not_after: Instant) -> anyhow::Result<Option<Stamped>> {
-        self.sequence_stamped(cmd, Some(not_after))
+    pub(super) fn sequence_quote(
+        &mut self,
+        cmd: Command,
+        not_after: Instant,
+        received: Instant,
+    ) -> anyhow::Result<Option<Stamped>> {
+        let stamped = self.sequence_stamped(cmd, Some(not_after))?;
+        if stamped.is_some() {
+            let waited = self.time.stamped_at().saturating_duration_since(received);
+            self.metrics.latency.price_to_stamp.observe(waited.as_secs_f64());
+        }
+        Ok(stamped)
     }
 
     /// The stamp for a command now, if trusted time admits it. The host clock is untrusted inside

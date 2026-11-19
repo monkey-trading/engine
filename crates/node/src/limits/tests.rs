@@ -321,6 +321,38 @@ async fn a_tier_limited_request_gets_429_with_the_wait_and_names_its_tier_and_ra
     assert_eq!(body, serde_json::json!({ "error": "rate limited", "tier": 2, "requests_per_second": 10 }));
 }
 
+#[tokio::test]
+async fn each_signed_request_admitted_is_timed_to_its_reply_and_nothing_else_is() {
+    use axum::Router;
+    use axum::body::Body;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::{delete, get, post};
+    use tower::ServiceExt;
+
+    let latency = crate::metrics::LatencyMetrics::default();
+    let seconds = latency.request.clone();
+    let limits = Arc::new(ApiLimits::new(&section(1, 3)).with_timing(&latency));
+    let app = Router::new()
+        .route("/signed", post(|| async { "replied" }))
+        .route("/revoked", delete(|| async { "revoked" }))
+        .route("/read", get(|| async { "read" }))
+        .layer(from_fn_with_state(limits, limit_client));
+    let request = |method: &str, path: &str| {
+        let mut request = axum::http::Request::builder().method(method).uri(path).body(Body::empty()).unwrap();
+        request.extensions_mut().insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 9], 4_000))));
+        request
+    };
+    for (method, path) in [("POST", "/signed"), ("DELETE", "/revoked"), ("GET", "/read")] {
+        let response = app.clone().oneshot(request(method, path)).await.unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK, "{method} {path}");
+    }
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 2, "only the POST and the DELETE are signed requests");
+    // The client's burst of 3 is spent: a request refused for its rate never reaches a reply's timing.
+    let refused = app.oneshot(request("POST", "/signed")).await.unwrap();
+    assert_eq!(refused.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 2);
+}
+
 // ── Helpers ──
 
 fn budget(per_minute: u32, burst: u32) -> Budget {

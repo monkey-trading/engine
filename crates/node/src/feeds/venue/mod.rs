@@ -492,6 +492,8 @@ pub async fn run(
 #[cfg(test)]
 mod quiet_tests;
 #[cfg(test)]
+mod receipt_tests;
+#[cfg(test)]
 mod silence_tests;
 #[cfg(test)]
 mod tests;

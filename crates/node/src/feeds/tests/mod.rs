@@ -1,14 +1,14 @@
 //! Venue feed tasks against loopback venues: what they sequence, what they refuse, and how they
 //! reconnect.
 
-mod alpaca_support;
+pub(crate) mod alpaca_support;
 mod behind;
 mod cme;
-pub(super) mod cme_support;
+pub(crate) mod cme_support;
 mod coinbase_support;
 mod delay;
 mod emission;
-pub(super) mod fake;
+pub(crate) mod fake;
 mod hostile;
 mod hours;
 mod kraken_support;
@@ -21,12 +21,12 @@ mod reconnect;
 mod redate;
 mod redundant;
 mod rwa;
-pub(super) mod rwa_support;
+pub(crate) mod rwa_support;
 mod scenario;
 mod shares;
 mod silent;
 mod toxicity;
-mod vendors;
+pub(crate) mod vendors;
 mod venue_load;
 mod venue_soak;
 

@@ -109,6 +109,32 @@ fn a_kept_book_for_a_symbol_not_subscribed_is_refused_before_it_is_kept() {
 }
 
 #[test]
+fn a_kept_quotes_receipt_is_the_one_its_book_was_read_at() {
+    const NOW: Millis = 1_792_489_875_714;
+    let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };
+    let (first, later) = (std::time::Instant::now(), std::time::Instant::now() + Duration::from_millis(5));
+    let mut pending = Pending::default();
+    pending.add(at(NOW - 100), NOW).unwrap();
+    pending.note_received(first);
+    // An older book read later is not kept, and leaves the kept quote's receipt.
+    pending.add(at(NOW - 300), NOW).unwrap();
+    pending.note_received(later);
+    assert_eq!(pending.take().map(|(quote, _)| quote), Some(at(NOW - 100)));
+    assert_eq!(pending.take_received(), Some(first));
+    // A newer book replaces it with its own receipt.
+    pending.add(at(NOW - 100), NOW).unwrap();
+    pending.note_received(first);
+    pending.add(at(NOW - 50), NOW).unwrap();
+    pending.note_received(later);
+    assert_eq!(pending.take_received(), Some(later));
+    // A quote added with none noted, as a re-dated book is, replaces the kept one's receipt with none.
+    pending.add(at(NOW - 40), NOW).unwrap();
+    pending.note_received(first);
+    pending.add(at(NOW - 30), NOW).unwrap();
+    assert_eq!(pending.take_received(), None);
+}
+
+#[test]
 fn the_newest_quote_is_kept_by_the_engines_own_rule() {
     const NOW: Millis = 1_792_489_875_714;
     let at = |ts: Millis| SourceQuote { source: "kraken".into(), mid: Fixed::from_int(100), ts, contract: None };

@@ -415,7 +415,7 @@ async fn next_quote(rx: &mut mpsc::Receiver<Request>, engine: &mut FakeEngine) -
     let quote = async {
         loop {
             match rx.recv().await.expect("feed running") {
-                Request::Quote { cmd: Command::Prices { market, quotes }, not_after } => {
+                Request::Quote { cmd: Command::Prices { market, quotes }, not_after, .. } => {
                     let [quote] = quotes.as_slice() else { panic!("one quote a command: {quotes:?}") };
                     let quote = quote.clone();
                     engine.apply(Command::Prices { market, quotes });

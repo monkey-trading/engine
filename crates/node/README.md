@@ -44,6 +44,14 @@ nothing until two of three public Roughtime servers agree on the time, and then 
 `first trusted time sample: sequencing started`. The [root README](../../README.md#running-it)
 walks through this case and the others.
 
+The metrics include three latency histograms an operator watches under load. The first is the time
+a venue quote waits from its receipt to its stamp, `engine_price_to_stamp_seconds`. The second is
+the time from the API admitting a signed request to its reply, `engine_api_request_seconds`. The
+third is the time from a command's stamp to its send to each stream subscriber,
+`engine_stream_lag_seconds`. The counter `engine_sequencer_busy_seconds_total` grows by the time the
+sequencer's thread spends working, so its rate is the share of the time the thread is busy. The
+Grafana dashboard in [`ops/grafana/`](../../ops/grafana/) shows all four.
+
 The server provides a REST API under `/v1` and a WebSocket stream at `/v1/stream`. The
 [API reference](../../docs/api.md) lists every endpoint, request body and answer, and describes how
 requests are signed and how a client verifies the server's signed answers.
@@ -124,6 +132,26 @@ the venues and the market-data vendors. Each script's header says what it does a
 The benchmarks of the sequencer's latency at 100,000 accounts are ignored by default and need a
 quiet machine. `sequencer::wait_bench` and `stats::launch_bench` give their commands in their
 module documentation.
+
+The load test runs the server on a launch-scale book of 100,000 accounts and loads it through its
+API, its stream and its feeds. Two thousand traders behind 100 client addresses send signed orders,
+cancels, cancel-alls and close-alls, every stream subscriber the API allows reads the stream, and
+loopback stand-ins quote every launch market. It runs at launch flow and at ten times launch flow,
+two minutes each, and prints each run's latencies and the sequencer's busy share against the launch
+bar: the budgets for the time from an order to its fill, from a price to its stamp and from a stamp
+to each subscriber, and for the share of the time the sequencer is busy. A run fails when a budget
+breaks, except the median time from an order to its fill, which it holds to a looser 10 ms
+regression guard while it still prints the 5 ms budget's verdict.
+It also prints the CPU and memory of the test's process, which holds the server, the stand-ins and
+the screening source. The clients run in a second process. The `--ramp` option then doubles the load
+each minute and prints the load at which each budget first breaks. At full size the test takes
+about 4 GB of memory and about five cores, so run it in a quiet window:
+
+```shell
+nice ./scripts/dev-load.sh
+```
+
+The script's header lists the variables that size a smaller run.
 
 ## License
 

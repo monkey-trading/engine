@@ -118,7 +118,9 @@ an index: load only the rule whose hint matches the current action.
   `engine-node`'s `stats::launch_bench`) and `tests/launch_book.rs` holds it to its mix; `tests/mass_events_benchmark.rs`
   runs the commands that act on every holder of a market, or every account, on it (#907), and `engine-node`'s
   `sequencer::wait_bench::mass` times what a price waits behind two of them, and `sequencer::wait_bench::rollover` behind
-  the daily rollover and the MONKEY period close, with the rollover's apply and log entry in parts (#933).
+  the daily rollover and the MONKEY period close, with the rollover's apply and log entry in parts (#933);
+  `engine-node`'s `load_scenario` runs a node on the book, every market open around the clock (`Mix::always_open`), and
+  loads it through its API, stream and feeds (#906).
   `tests/reference/` holds one reference log per protocol version, written once by
   `examples/reference_log/` and replayed to its roots by `tests/reference_logs.rs`;
   `tests/invariants/` holds the property tests.
@@ -374,7 +376,10 @@ an index: load only the rule whose hint matches the current action.
   they quote, alone on the connection on Coinbase, and
   `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics
   on an operator
-  listener, and alert routing to webhooks with a bounded durable outbox outside the public log. Its
+  listener (with, in `metrics/latency.rs`, a venue quote's receipt to its stamp, a signed request's
+  admission to its reply in `limits/`, a command's stamp to its send to each live stream subscriber in
+  `api/stream/`, and the
+  sequencer's busy time), and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, a genesis market fewer venues quote than its `min_sources`, and a secret read
   from the environment, at config load, and does not compile with the development-only `short-turns`
@@ -797,7 +802,17 @@ an index: load only the rule whose hint matches the current action.
   venues streaming, or `reconnect_max` more after a full outage, then a second connection to each venue with each
   connection stalled and dropped in turn and every market priced throughout, and with `--soak` the manual soak before each release
   (`feeds/tests/venue_soak.rs`): the template's crypto connections to the live venues for 30 minutes, each dropped in
-  turn and then all at once, every two minutes, no market unpriced for longer than 10 s; `dev-loss-trigger.sh`, the house loss
+  turn and then all at once, every two minutes, no market unpriced for longer than 10 s, then each crypto market's price
+  commands a second at the median second and the busiest; `dev-load.sh`, the node load dev scenario (`load_scenario/`,
+  #906): the launch book taken over by a node in the test's process (`sequencer/seeded.rs`), its feeds reading loopback
+  stand-ins for every connection the production template opens, under the template's `[api]` limits and screening
+  slots, driven by a load generator in a second process, the test binary started again
+  (`load_scenario/generator/`): 2,000 traders under session keys sending an open-loop Poisson mix of signed market and
+  limit orders, cancels, cancel-alls and close-alls through the API's PROXY protocol peer from 100 client addresses, and
+  every stream subscriber the template allows, half signed and some quoting; launch flow and ten times it, with
+  `--ramp` a doubling ramp printing the load at which each budget first breaks, each leg's figures against #904's bar, failing outside it under
+  a loaded runner's tolerance but for order-to-fill p50, held to a 10 ms regression guard until #1045 cuts the path, then the log replayed from the rebuilt book (`replay::replay_path_from`);
+  `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
   once it is ahead, twice, then a replay and restart; `dev-cme-feeds.sh`, the CME Group feed dev scenario against
@@ -860,7 +875,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -1053,8 +1068,14 @@ Run from the repo root:
 - Venue load dev scenario: `./scripts/dev-venue-load.sh` (loopback Coinbase and Kraken stand-ins at
   the venues' sizes and rates, faults injected one at a time, the deadlines asserted; needs only Cargo,
   about six minutes; the only place the full-size Coinbase books are served); before each release,
-  `./scripts/dev-venue-load.sh --soak [minutes]` runs the manual soak against the live venues (needs
-  Cargo and the venues' public feeds; 30 minutes unless given; never in CI)
+  `./scripts/dev-venue-load.sh --soak [minutes]` runs the manual soak against the live venues and prints
+  each crypto market's price commands a second (needs Cargo and the venues' public feeds; 30 minutes
+  unless given; never in CI)
+- Node load dev scenario: `./scripts/dev-load.sh` (needs only Cargo; at the launch book's 100k accounts
+  it builds the book twice, once for the run and once for its replay, and takes the run's legs of two
+  minutes each; run it under `nice` in a quiet window); `--ramp` adds the ramp, and `LOAD_ACCOUNTS`,
+  `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE` and `LOAD_RWA_MOVES` size the
+  run (CI's job sets 10,000 accounts, 200 traders and 16 subscribers)
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

@@ -218,6 +218,26 @@ async fn a_subscriber_that_stops_reading_is_closed_at_the_send_timeout() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_live_message_is_timed_from_its_stamp_once_sent_to_the_subscriber() {
+    let stamped = |seq| Arc::new(Arc::into_inner(tick(seq)).unwrap().stamped_at(std::time::Instant::now()));
+    // A message read back from the log carries no stamp, and one never sent is not timed.
+    for (stopped_reading, timed) in [(false, 2), (true, 0)] {
+        let (live, feed) = live_feed(4);
+        let sent = Histogram::new(crate::metrics::LATENCY_BUCKETS);
+        let feed = feed.timed(sent.clone());
+        for msg in [stamped(0), tick(1), stamped(2)] {
+            live.send(msg).unwrap();
+        }
+        let mut subscriber = Subscriber { stopped_reading, ..Subscriber::default() };
+        let _ =
+            timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None, (None, None, None)))
+                .await;
+        assert_eq!(subscriber.sent.len(), if stopped_reading { 0 } else { 3 });
+        assert_eq!(crate::metrics::latency::observed(&sent).0, timed, "stopped reading: {stopped_reading}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_subscriber_that_disconnects_is_dropped_with_no_message_sent() {
     let (_live, feed) = live_feed(4);
     let mut subscriber = Subscriber { disconnected: true, ..Subscriber::default() };

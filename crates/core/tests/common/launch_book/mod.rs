@@ -34,8 +34,8 @@ mod mix;
 
 // Each test binary uses a different subset.
 #[allow(unused_imports)]
-pub use build::{Book, CLOSEOUT_MARKET, MARK, NamedCounts, build, closeout_mark};
+pub use build::{Book, CLOSEOUT_MARKET, MARK, NamedCounts, build, closeout_mark, named_key};
 #[allow(unused_imports)]
 pub use genesis::*;
 #[allow(unused_imports)]
-pub use mix::{Mix, Origin, Rng, Weak, WeakKind};
+pub use mix::{Mix, Origin, Rng, Weak, WeakKind, market_weights};

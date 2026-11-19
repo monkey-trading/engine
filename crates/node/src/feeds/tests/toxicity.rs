@@ -204,6 +204,17 @@ pub(super) fn boot_with(
     fresh: bool,
 ) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>) {
     let (stream_tx, _): (broadcast::Sender<Arc<StreamMsg>>, _) = broadcast::channel(65_536);
+    boot_publishing(dir, key, genesis, fresh, stream_tx)
+}
+
+/// `boot_with`, publishing what it sequences on `stream_tx`.
+pub(super) fn boot_publishing(
+    dir: &std::path::Path,
+    key: &Arc<EnclaveKey>,
+    genesis: &Genesis,
+    fresh: bool,
+    stream_tx: broadcast::Sender<Arc<StreamMsg>>,
+) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>) {
     let (withdrawals_tx, _) = mpsc::unbounded_channel();
     let (manifest, _) = watch::channel(Manifest::default());
     let cfg = SequencerConfig {

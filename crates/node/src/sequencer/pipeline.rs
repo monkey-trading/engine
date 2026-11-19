@@ -431,6 +431,16 @@ impl Sequencer {
         self.finish(release)
     }
 
+    /// `complete` between batches, its time counted as the thread's busy time.
+    /// Error cases:
+    /// - as `complete`
+    fn complete_between(&mut self, done: anyhow::Result<()>) -> anyhow::Result<()> {
+        let began = self.clock.instant();
+        self.complete(done)?;
+        self.metrics.latency.busy(self.clock.instant().saturating_duration_since(began));
+        Ok(())
+    }
+
     /// Makes everything written so far durable, then releases it: the batches in flight first, so
     /// the stream stays in log order, then what is buffered. For a caller that must not go on
     /// before that, and for the sequencer when it has no thread for the syncs.

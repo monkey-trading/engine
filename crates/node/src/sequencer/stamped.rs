@@ -72,7 +72,7 @@ impl Sequencer {
         let offset = self.log.append_command(&encoded)?;
         self.command_link = link;
         let entry = CommandEntry { sequenced, events: Some(events), seal: Some(seal) };
-        let message = Arc::new(StreamMsg::new(offset, LogEntry::Command(entry)));
+        let message = Arc::new(StreamMsg::new(offset, LogEntry::Command(entry)).stamped_at(self.time.stamped_at()));
         self.outbox.push(message.clone());
         Ok(Stamped(Some(message)))
     }

@@ -225,4 +225,4 @@ pub(super) fn split_view(engine: &Engine) -> SplitView {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

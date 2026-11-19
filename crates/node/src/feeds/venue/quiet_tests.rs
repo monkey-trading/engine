@@ -15,7 +15,7 @@ use crate::feeds::venue::quotes::{Verdict, record, refresh_after, verdict};
 
 /// The price rules of every dev and production market of the live venues.
 const RULES: PriceRules = PriceRules { max_age_ms: 1_000, max_divergence_bps: 25, min_sources: 2 };
-const SYMBOL: &str = "BTC/USD";
+pub(super) const SYMBOL: &str = "BTC/USD";
 
 #[test]
 fn a_repeated_mid_waits_until_half_the_shorter_limit_has_passed() {
@@ -302,12 +302,12 @@ async fn a_symbol_sequences_a_burst_at_once_then_one_quote_per_interval() {
 
 // ── Helpers ──
 
-fn at(mid: i64, ts: Millis) -> SourceQuote {
+pub(super) fn at(mid: i64, ts: Millis) -> SourceQuote {
     SourceQuote { source: "kraken".into(), mid: Fixed::from_int(mid), ts, contract: None }
 }
 
 /// A Kraken feed for `SYMBOL` on market 1 that is never run, sequencing into the returned channel.
-fn feed_with_rules(known: bool) -> (VenueFeed, mpsc::Receiver<Request>) {
+pub(super) fn feed_with_rules(known: bool) -> (VenueFeed, mpsc::Receiver<Request>) {
     let symbols = vec![VenueSymbol { market: 1, symbol: SYMBOL.into(), contract: None }];
     let conn = VenueConnection {
         venue: Venue::Kraken,
@@ -341,7 +341,7 @@ fn sequenced(rx: &mut mpsc::Receiver<Request>) -> Option<SourceQuote> {
 /// The next sequenced quote and the delay bound it carries, if one went.
 fn sequenced_with_bound(rx: &mut mpsc::Receiver<Request>) -> Option<(SourceQuote, std::time::Instant)> {
     match rx.try_recv() {
-        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, not_after }) => {
+        Ok(Request::Quote { cmd: Command::Prices { mut quotes, .. }, not_after, .. }) => {
             quotes.pop().map(|quote| (quote, not_after))
         }
         Ok(_) => panic!("expected a price command"),

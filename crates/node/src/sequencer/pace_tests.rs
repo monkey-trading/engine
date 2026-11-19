@@ -72,7 +72,7 @@ fn the_first_stamp_of_a_run_is_past_every_quote_carried_across_its_restart() {
     assert_eq!(seq.engine.markets()[&1].index(seq.engine.now()), Err(PriceError::Stale { fresh: 0, needed: 2 }));
     // While stamps hold there, a quote stored at that stamp would count for longer: none is taken.
     let fresh_quote = clock.instant() + MAX_DELAY;
-    assert!(seq.sequence_quote(prices(seq.engine.now()), fresh_quote).unwrap().is_none());
+    assert!(seq.sequence_quote(prices(seq.engine.now()), fresh_quote, clock.instant()).unwrap().is_none());
     assert_eq!(seq.engine.markets()[&1].quotes["venue-a"].ts, AT, "only the carried quote is held");
 
     // Once the pace from the last stamp passes the hold, stamps follow it, not the hold.
@@ -80,7 +80,7 @@ fn the_first_stamp_of_a_run_is_past_every_quote_carried_across_its_restart() {
     seq.sequence(Command::Tick).unwrap().expect("within the drift bound");
     assert_eq!(seq.engine.now(), AT + max_age + 100);
     let quote = clock.instant() + MAX_DELAY;
-    assert!(seq.sequence_quote(prices(seq.engine.now()), quote).unwrap().is_some());
+    assert!(seq.sequence_quote(prices(seq.engine.now()), quote, clock.instant()).unwrap().is_some());
 }
 
 #[test]
@@ -128,12 +128,32 @@ fn a_quote_held_back_past_its_deadline_is_dropped_however_fresh_its_stamp_looks(
     // The feed has read and queued a quote, and the host stalls the sequencer's log for as long as
     // its clock is behind, so sequenced time reaches the quote's stamp just as it is sequenced.
     clock.advance(HELD);
-    assert!(seq.sequence_quote(prices(stamp), not_after).unwrap().is_none());
+    assert!(seq.sequence_quote(prices(stamp), not_after, clock.instant()).unwrap().is_none());
     assert_eq!(seq.engine.markets()[&1].quotes.len(), 0);
 
     // Within its deadline the same quote prices the market: only the deadline kept it out.
-    assert!(seq.sequence_quote(prices(stamp), clock.instant() + MAX_DELAY).unwrap().is_some());
+    assert!(seq.sequence_quote(prices(stamp), clock.instant() + MAX_DELAY, clock.instant()).unwrap().is_some());
     assert!(seq.engine.markets()[&1].index(seq.engine.now()).is_ok());
+}
+
+#[test]
+fn a_stamped_quote_times_its_wait_from_its_receipt_and_a_dropped_one_times_nothing() {
+    let dir = scratch_dir("pace-price-to-stamp");
+    let clock = Arc::new(TestClock::at(AT));
+    let mut seq = fresh(&dir, &clock);
+    let waited = seq.metrics.latency.price_to_stamp.clone();
+    // Its venue task read it 3 ms before the sequencer stamps it.
+    let received = clock.instant();
+    clock.advance(Duration::from_millis(3));
+    assert!(seq.sequence_quote(prices(clock.now_ms()), clock.instant() + MAX_DELAY, received).unwrap().is_some());
+    let (count, sum) = crate::metrics::latency::observed(&waited);
+    assert_eq!(count, 1);
+    assert!((sum - 0.003).abs() < 1e-9, "{sum}");
+    // Past its delay bound it is dropped: nothing is stamped, so nothing is timed.
+    let past = clock.instant();
+    clock.advance(STEP);
+    assert!(seq.sequence_quote(prices(clock.now_ms()), past, clock.instant()).unwrap().is_none());
+    assert_eq!(crate::metrics::latency::observed(&waited).0, 1);
 }
 
 #[test]
@@ -153,7 +173,7 @@ fn a_quote_is_judged_on_the_clock_readings_its_stamp_is_made_from() {
     seq.trust(sample_around(&TrueTime(clock.clone()))).unwrap();
     stalling.armed.store(true, Ordering::SeqCst);
     let not_after = clock.instant() + MAX_DELAY;
-    assert!(seq.sequence_quote(prices(clock.now_ms()), not_after).unwrap().is_some());
+    assert!(seq.sequence_quote(prices(clock.now_ms()), not_after, clock.instant()).unwrap().is_some());
     // Judged and stamped on one reading: the stamp is the host clock's, not the stall's pace.
     assert_eq!(seq.engine.now(), clock.now_ms());
 }

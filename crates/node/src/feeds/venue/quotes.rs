@@ -2,6 +2,8 @@
 //! repeats the mid already sequenced and when it falls due, and the rule that judges whether the
 //! quote the engine holds counts as the venue quoting.
 
+use std::time::Instant;
+
 use engine_core::Fixed;
 use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
 use engine_core::types::Millis;
@@ -21,10 +23,17 @@ pub(super) struct Pending {
     quote: Option<(SourceQuote, Millis)>,
     /// The high-water mark of the host times quotes were read at, by which stamps are clamped.
     read_hwm: Millis,
+    /// When the venue message holding the kept quote's book was read, which the quote's wait to its
+    /// stamp is measured from; none for a quote re-dated by a ping's answer or put back to wait for
+    /// its refresh, whose wait counts from when it is sent.
+    received: Option<Instant>,
+    /// Whether the last quote added replaced the one kept, so a receipt noted now is its.
+    replaced: bool,
 }
 
 impl Pending {
-    /// Adds a quote received at host time `now`.
+    /// Adds a quote received at host time `now`. A quote that replaces the one kept clears the kept
+    /// one's receipt, for `note_received` to note its own.
     /// Error cases:
     /// - the quote is dated more than `MAX_QUOTE_LEAD_MS` ahead of the highest host time read, `now`
     ///   or a higher one before it, which the engine refuses, so it is dropped; the error is its lead
@@ -35,8 +44,10 @@ impl Pending {
         }
         self.read_hwm = self.read_hwm.max(now);
         let stamp = quote.ts.min(self.read_hwm);
-        if self.quote.as_ref().is_none_or(|(_, kept)| stamp >= *kept) {
+        self.replaced = self.quote.as_ref().is_none_or(|(_, kept)| stamp >= *kept);
+        if self.replaced {
             self.quote = Some((quote, stamp));
+            self.received = None;
         }
         Ok(())
     }
@@ -45,6 +56,20 @@ impl Pending {
     /// read.
     pub(super) fn take(&mut self) -> Option<(SourceQuote, Millis)> {
         self.quote.take()
+    }
+
+    /// Notes that the quote just added was read from a venue message received at `at`, if it is the
+    /// one kept: a book older than the kept quote's leaves the kept quote's receipt.
+    pub(super) fn note_received(&mut self, at: Instant) {
+        if self.replaced {
+            self.received = Some(at);
+        }
+    }
+
+    /// Takes when the quote just taken was read, if it was read from a venue message since the last
+    /// take.
+    pub(super) fn take_received(&mut self) -> Option<Instant> {
+        self.received.take()
     }
 
     /// The highest host time a quote was read at: sequenced time, which does not step back with the

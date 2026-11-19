@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{ConnectInfo, Request, State};
+use axum::http::Method;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use engine_core::types::AccountId;
@@ -28,12 +29,14 @@ use governor::middleware::NoOpMiddleware;
 use governor::state::keyed::DashMapStateStore;
 use governor::{Quota, RateLimiter};
 use http_body_util::LengthLimitError;
+use prometheus_client::metrics::histogram::Histogram;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{interval, timeout};
 use tracing::{debug, warn};
 
 use crate::api::ApiError;
 use crate::config::{ApiSection, Budget, RateLimit};
+use crate::metrics::{LATENCY_BUCKETS, LatencyMetrics};
 
 mod tier;
 use tier::TierBuckets;
@@ -87,6 +90,10 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     quote_reads: Arc<Semaphore>,
     /// The browser origins `api.allowed_origins` lists.
     allowed_origins: BTreeSet<String>,
+    /// Each signed request's time from its admission to its reply, and each live stream message's
+    /// from its stamp to its send to a subscriber (`with_timing`).
+    request_seconds: Histogram,
+    stream_seconds: Histogram,
 }
 
 /// Open connections, in total and per client.
@@ -175,7 +182,20 @@ impl<C: Clock + Clone> ApiLimits<C> {
             quote_max_markets: cfg.quote_max_markets.get(),
             quote_reads: Arc::new(Semaphore::new(QUOTE_READS_IN_FLIGHT)),
             allowed_origins: cfg.allowed_origins.iter().cloned().collect(),
+            request_seconds: Histogram::new(LATENCY_BUCKETS),
+            stream_seconds: Histogram::new(LATENCY_BUCKETS),
         }
+    }
+
+    /// These limits, timing each signed request they admit and each live message a stream subscriber
+    /// is sent into the node's registered histograms, in place of ones no registry exports.
+    pub fn with_timing(self, latency: &LatencyMetrics) -> Self {
+        Self { request_seconds: latency.request.clone(), stream_seconds: latency.stream_lag.clone(), ..self }
+    }
+
+    /// The histogram each live message's time from its stamp to its send to a subscriber goes in.
+    pub(crate) fn stream_seconds(&self) -> Histogram {
+        self.stream_seconds.clone()
     }
 
     /// The permits a connection takes for each quote read it queues at the sequencer.
@@ -372,7 +392,8 @@ impl ThrottledAlert {
     }
 }
 
-/// Refuses a request with 429 when its client is over its rate.
+/// Refuses a request with 429 when its client is over its rate, and times each signed request it
+/// admits to its reply.
 pub async fn limit_client(
     State(limits): State<Arc<ApiLimits>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -380,6 +401,13 @@ pub async fn limit_client(
     next: Next,
 ) -> Response {
     match limits.check_ip(peer.ip()) {
+        // Every POST and DELETE carries a signature: the time to its reply is what a trader waits.
+        Ok(()) if matches!(*req.method(), Method::POST | Method::DELETE) => {
+            let admitted = Instant::now();
+            let response = next.run(req).await;
+            limits.request_seconds.observe(admitted.elapsed().as_secs_f64());
+            response
+        }
         Ok(()) => next.run(req).await,
         Err(e) => e.into_response(),
     }

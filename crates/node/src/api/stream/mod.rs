@@ -21,6 +21,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use engine_wire::Connection;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
+use prometheus_client::metrics::histogram::Histogram;
 use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, watch};
@@ -93,6 +94,8 @@ pub(crate) struct Feed {
     reader: Option<LogReader>,
     /// Read from disk, not yet yielded.
     backlog: VecDeque<Arc<StreamMsg>>,
+    /// Where each live message's time from its stamp to its send goes, when timed (`timed`).
+    sent: Option<Histogram>,
 }
 
 impl Feed {
@@ -107,7 +110,12 @@ impl Feed {
         start: Option<Offset>,
     ) -> Self {
         let (catching_up, reader, backlog) = (start.is_some(), None, VecDeque::new());
-        Self { live, log_dir, manifest, backfills, next: start, catching_up, reader, backlog }
+        Self { live, log_dir, manifest, backfills, next: start, catching_up, reader, backlog, sent: None }
+    }
+
+    /// This feed, timing each live message it is sent from its stamp into `sent`.
+    pub(crate) fn timed(self, sent: Histogram) -> Self {
+        Self { sent: Some(sent), ..self }
     }
 
     /// The next message, or `None` once the sequencer has stopped.
@@ -227,7 +235,8 @@ pub async fn stream(
     };
     Span::current().record("id", display(start.map_or_else(|| "live".to_owned(), |from| from.to_string())));
     let place = s.limits.subscribe()?;
-    let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start);
+    let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start)
+        .timed(s.limits.stream_seconds());
     let (send_timeout, span) = (s.limits.send_timeout, Span::current());
     let ws = ws.max_message_size(s.limits.max_body_bytes).max_frame_size(s.limits.max_body_bytes);
     Ok(ws.on_upgrade(move |socket| {
@@ -297,6 +306,7 @@ async fn send_feed<S: Sink<Message> + Unpin>(
     mut framing: Option<Framing>,
     (mut quotes, mut status, mut notice): (Option<Quotes>, Option<StatusFeed>, Option<NoticeFeed>),
 ) {
+    let timed = feed.sent.clone();
     loop {
         let next = feed.next();
         tokio::pin!(next);
@@ -364,6 +374,15 @@ async fn send_feed<S: Sink<Message> + Unpin>(
         if !send_text(sink, text, send_timeout, Some(msg.offset)).await {
             return;
         }
+        note_sent(timed.as_ref(), &msg);
+    }
+}
+
+/// Times `msg`, just sent, from its stamp into `sent`: a live message only, since one read back from
+/// the log carries no stamp on the monotonic clock.
+fn note_sent(sent: Option<&Histogram>, msg: &StreamMsg) {
+    if let (Some(sent), Some(stamped)) = (sent, msg.stamped()) {
+        sent.observe(stamped.elapsed().as_secs_f64());
     }
 }
 
