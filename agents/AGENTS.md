@@ -1211,7 +1211,8 @@ Run from the repo root:
   reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar, as do `dev-load`'s order-to-fill and stream-lag bars
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
-  `RECOVERY_LAUNCH_SECS` set to the days that fit, and read the 30-day replay's projection);
+  `RECOVERY_LAUNCH_SECS` set to the days that fit, which sizes the ten-times leg a tenth as long unless
+  `RECOVERY_TEN_TIMES_SECS` is set, and read the 30-day replay's projection);
   `RECOVERY_ACCOUNTS`, `RECOVERY_TRADERS`, `RECOVERY_LAUNCH_SECS`, `RECOVERY_TEN_TIMES_SECS`,
   `RECOVERY_CAPTURE_SECS`, `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and
   twenty-one minutes of flow, which the first emission period and staking epoch end in), and `RECOVERY_REPLAY_WORKERS`
