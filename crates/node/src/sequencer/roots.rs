@@ -19,6 +19,7 @@ use engine_core::eip712::B256;
 use engine_core::merkle::TreeEvent;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
+use prometheus_client::metrics::counter::Counter;
 use tokio::time::Instant as TokioInstant;
 use tracing::{debug, info, warn};
 
@@ -71,12 +72,13 @@ pub(super) struct Roots {
 }
 
 impl Roots {
-    /// Starts the worker, which holds no tree until the sequencer detaches its engine's.
+    /// Starts the worker, which holds no tree until the sequencer detaches its engine's, counting the
+    /// reads it turns away on `reads_refused`.
     /// Error cases:
     /// - the worker's thread cannot start
-    pub(super) fn start() -> anyhow::Result<Self> {
+    pub(super) fn start(reads_refused: Counter) -> anyhow::Result<Self> {
         Ok(Self {
-            worker: RootWorker::start()?,
+            worker: RootWorker::start(reads_refused)?,
             running: false,
             detached: false,
             proving: BTreeMap::new(),
@@ -371,7 +373,7 @@ impl Sequencer {
     /// Forwards a proof or claim read from the API to the worker, which answers it on its reply.
     /// Error cases:
     /// - the worker has stopped
-    pub(super) fn forward_read(&self, request: Request) -> anyhow::Result<()> {
+    pub(super) fn forward_read(&mut self, request: Request) -> anyhow::Result<()> {
         let read = match request {
             Request::AccountProof { account, reply } => Read::Account(account, reply),
             Request::ExitProof { account, reply } => Read::Exit(account, reply),

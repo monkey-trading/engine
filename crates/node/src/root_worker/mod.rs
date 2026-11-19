@@ -26,8 +26,9 @@ use engine_core::merkle::{
     WithdrawalApprovalProof,
 };
 use engine_core::types::AccountId;
+use prometheus_client::metrics::counter::Counter;
 use tokio::sync::{Notify, oneshot};
-use tracing::{debug, error};
+use tracing::{error, info, warn};
 
 use crate::checkpoints::LatestCheckpoint;
 use crate::root_worker::protocol::Progress;
@@ -121,6 +122,10 @@ pub(crate) struct RootWorker {
     shared: Arc<Shared>,
     /// Units of leaf writes sent.
     sent: u64,
+    /// Counts the reads turned away at `MAX_READS`.
+    reads_refused: Counter,
+    /// Whether `root_reads_refused` is open: a read was turned away, and none forwarded since.
+    refusing: bool,
 }
 
 /// Reports a panic of the worker's thread to the sequencer, which stops with it. The thread's other
@@ -131,10 +136,11 @@ struct StopGuard {
 }
 
 impl RootWorker {
-    /// Starts the worker's thread, holding no tree until the sequencer installs one.
+    /// Starts the worker's thread, holding no tree until the sequencer installs one, counting the reads
+    /// it turns away on `reads_refused`.
     /// Error cases:
     /// - the thread cannot start
-    pub(crate) fn start() -> anyhow::Result<Self> {
+    pub(crate) fn start(reads_refused: Counter) -> anyhow::Result<Self> {
         let (tx, rx) = channel();
         let (outcomes_tx, outcomes) = channel();
         let shared = Arc::new(Shared::default());
@@ -143,7 +149,7 @@ impl RootWorker {
             .name("state-root".into())
             .spawn(move || run(WorkerState::new(StateTree::default()), &rx, &worker_shared, outcomes_tx))
             .context("starting the state root worker")?;
-        Ok(Self { tx, outcomes, stashed: Vec::new(), shared, sent: 0 })
+        Ok(Self { tx, outcomes, stashed: Vec::new(), shared, sent: 0, reads_refused, refusing: false })
     }
 
     /// Sends `work`, which the worker handles after everything sent before it.
@@ -213,17 +219,28 @@ impl RootWorker {
     }
 
     /// Forwards a proof read, which the worker answers on the read's own channel, or, with
-    /// `MAX_READS` outstanding, drops it, which answers the API unavailable.
+    /// `MAX_READS` outstanding, drops it, which answers the API unavailable: each one counted, and the
+    /// first of an episode raising the Warning `root_reads_refused`, which the next read forwarded
+    /// resolves.
     /// Error cases:
     /// - the worker has stopped
-    pub(crate) fn read(&self, read: Read) -> anyhow::Result<()> {
+    pub(crate) fn read(&mut self, read: Read) -> anyhow::Result<()> {
         if read.is_closed() {
             return Ok(());
         }
         // Only the sequencer adds, so no other read can pass the bound between the check and the add.
         if self.shared.reads.load(Ordering::Acquire) >= MAX_READS {
-            debug!("a proof read turned away: {MAX_READS} reads wait on the state root worker");
+            self.reads_refused.inc();
+            if !std::mem::replace(&mut self.refusing, true) {
+                warn!(
+                    alert = "root_reads_refused",
+                    "proof and claim reads are answered unavailable: {MAX_READS} reads wait on the state root worker"
+                );
+            }
             return Ok(());
+        }
+        if std::mem::take(&mut self.refusing) {
+            info!(alert_resolved = "root_reads_refused", "the state root worker has room for proof and claim reads");
         }
         self.shared.reads.fetch_add(1, Ordering::AcqRel);
         self.tx.send(Message::Read(read)).map_err(|_| anyhow!("the state root worker has stopped"))
