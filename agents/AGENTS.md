@@ -503,19 +503,21 @@ an index: load only the rule whose hint matches the current action.
   slots (`witness`), promotes the next qualified member's vouched standby key to the vault's signer in a
   new epoch with no timelock (`promote`, `Vault.promoteSigner`), keeps every assignment and its release
   revisions (`assignmentOf`), and registers standby keys from the candidate with a vouch from the vault's
-  signer or a promotable standby key (`registerStandby`, `promotable`); `promotionDueAt` is the earliest
-  time a promotion could pass. From #596 it skips a turn whose current assignment no head latched within
-  `takeWindow` marked slots to the next member in its order, in a new generation with no signer change
-  (`skip`, `skipDueAt`), and promotes past an incumbent that still beats once no assignment of a turn of
-  two or more members is latched within `heartbeatMisses + 1`; `LogHeads.headRelease(epoch)` names the
-  release of the epoch's newest head, and `releaseCandidate` the key holder whose assignment, release move
-  or naming as a source recorded it (before the epoch's first head, where the epoch found the keys: the
-  member of the latest turn taken or promoted, else the earliest untaken turn's source), which a skip
-  passes over and a promotion takes last, after every member that never received the keys, drawn,
-  skipped to or not, by position; each search runs through the whole scan past the current position, so
-  every member stays in reach; only a member that held the keys under an assignment of the turn
-  (`heldKeys`) is never named again in it (`test/KeyHolder.t.sol`, `test/FirstTurnHolder.t.sol`,
-  `test/PromotionOrder.t.sol`).
+  signer or a promotable standby key, recovered by `LogHeads.recover` (`registerStandby`, `promotable`);
+  `promotionDueAt` is the earliest time a promotion could pass. From #596 it skips a turn whose current
+  assignment no head latched within `takeWindow` marked slots to the next member in its order, in a new
+  generation with no signer change (`skip`, `skipDueAt`), and promotes past an incumbent that still beats
+  once no assignment of a turn of two or more members is latched within `heartbeatMisses + 1`;
+  `LogHeads.keyHolder()` names the key holder from the epoch's newest head signed since `registryTurn`
+  began, through the `releaseCandidate` whose assignment, release move or naming as a source recorded its
+  release, or else where the epoch found the keys (the member of the latest turn taken or promoted, the
+  member the timelock installed in a turn the epoch began in, which a skip past it records as
+  `skippedHolder`, else `registryTurn`'s source), which a skip passes over, recording a skipped member
+  that holds the keys as having held them, and a promotion takes last, after every member that never
+  received the keys, drawn, skipped to or not, by position; each search runs through the whole scan past
+  the current position, so every member stays in reach; only a member that held the keys under an
+  assignment of the turn (`heldKeys`) is never named again in it (`test/KeyHolder.t.sol`,
+  `test/FirstTurnHolder.t.sol`, `test/PromotionOrder.t.sol`).
   `src/FaultProof.sol` (from #597) takes two `engine.log-head.v2` heads of one signer epoch, turn,
   position and release that name different links at one seq, checks both against that epoch's signer
   (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read

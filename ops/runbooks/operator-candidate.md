@@ -1136,32 +1136,19 @@ The command prints the window in slots, followed by its minimum and maximum.
 
 Once the window passes with no latch, anyone's `skip()` names the next listed member in the turn's
 order that has held no assignment of the turn, other than the key holder. The skip creates a new
-generation, with no signer change. The key holder is the candidate whose assignment, release move or
-naming as a turn's source recorded the release that signed the newest head, whatever release it has
-moved to since. To find it, run:
+generation, with no signer change. The key holder is the candidate whose enclave holds the signer
+epoch's keys. It is the candidate whose assignment, release move or naming as a turn's source recorded
+the release that signed the newest head, whatever release it has moved to since, when that head was
+signed since the latest turn drawn while the registry named its own operator began. Before such a
+head, the keys are where the epoch found them. To read the key holder, and that turn, run:
 
 ```shell
-HEAD_RELEASE=$(cast call $LOG_HEADS 'headRelease(uint64)(bytes32)' <epoch> --rpc-url $RPC)
-cast call $SCHEDULE 'releaseCandidate(bytes32)(address)' $HEAD_RELEASE --rpc-url $RPC
+cast call $LOG_HEADS 'keyHolder()(address)' --rpc-url $RPC
+cast call $SCHEDULE 'registryTurn()(uint64)' --rpc-url $RPC
 ```
 
-`<epoch>` is the vault's signer epoch. The second command prints the key holder's candidate address.
-When the first command prints zero, the epoch has no head yet, and the keys are where the epoch found
-them. They are with the member of the latest turn that a member took or a promotion reached, or else
-with the source of the earliest turn since, such as the operator in office when turns began or after
-an installation. To read a turn's source, its latest assignment and whether a head latched that
-assignment, run:
-
-```shell
-cast call $SCHEDULE 'sourceOf(uint64)(address)' <turn> --rpc-url $RPC
-cast call $SCHEDULE 'turnOf(uint64)((address,uint16,uint8,uint32,uint64,uint64,bytes32,address))' <turn> \
-  --rpc-url $RPC
-cast call $LOG_HEADS 'latches(uint64,uint16)(uint64,uint64,address,bytes32,uint64)' <turn> <position> \
-  --rpc-url $RPC
-```
-
-The second command prints the turn's latest member, position and reason (2 for a promotion), and the
-turn drawn before it. The third prints a latch time of zero when no head latched the assignment.
+The first command prints zero when nothing names a holder, as for a newest head whose release no
+candidate recorded.
 
 - An unwitnessed slot, as during a chain outage, restarts the window.
 - A promotion's assignment is never skipped.

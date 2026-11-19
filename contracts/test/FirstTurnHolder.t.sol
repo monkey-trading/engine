@@ -116,6 +116,11 @@ abstract contract FirstTurnTest is SkipTest {
         }
     }
 
+    /// @dev The key holder `LogHeads` names now.
+    function _holderNow() internal view returns (address holder) {
+        (holder,) = logHeads.keyHolder();
+    }
+
     /// @dev Alice's enclave beats from the boundary, refusing every take, until a promotion moves the
     /// signer, at most twelve slots.
     function _aliceRefusesUntilPromoted() internal {
@@ -299,10 +304,120 @@ contract FirstTurnHolderTest is FirstTurnTest {
         assertEq(schedule.turnOf(turn).candidate, carol, "the missed-head promotion names carol");
         assertFalse(schedule.heldKeys(turn, alice), "bob held the keys, not alice");
         _newSignerEpochWithNoHead();
+        assertEq(_holderNow(), carol);
         _lapse();
         (, position) = schedule.promote();
         assertEq(position, 2);
         assertEq(schedule.turnOf(turn).candidate, alice, "alice is not taken for the key holder");
+    }
+
+    /// The same promotion of carol, with the next turn drawn before it for dave, with carol and then alice
+    /// after him, so its source is bob. The timelock installs carol's registered enclave in a new signer
+    /// epoch, which no head reaches, and nobody takes the next turn: carol still holds the keys, so its skip
+    /// passes her, though she held nothing of it and is not its source, and names alice.
+    function test_APromotedMemberHoldsTheKeysIntoTheNextTurn() public {
+        address[] memory order = new address[](3);
+        (order[0], order[1], order[2]) = (bob, carol, alice);
+        nextOrder.push(dave);
+        nextOrder.push(carol);
+        nextOrder.push(alice);
+        _aliceIsTheSource(order, false, false);
+        _draw(turn + 1);
+        assertEq(schedule.sourceOf(turn + 1), bob, "drawn while bob was named");
+        _post(_nextHead());
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, carol, "the missed-head promotion names carol");
+        _newSignerEpochWithNoHead();
+        turn += 1;
+        seed = schedule.turnOf(turn).seed;
+        vm.warp(schedule.boundary(turn));
+        assertEq(_holderNow(), carol);
+        silent = true;
+        for (uint256 slots = 0; slots < 4 && schedule.turnOf(turn).reason == 0; ++slots) {
+            _slotOn();
+        }
+        assertEq(schedule.turnOf(turn).reason, 1, "skipped");
+        assertEq(schedule.turnOf(turn).candidate, alice, "the skip passes carol, who holds the keys");
+    }
+
+    /// The first turn is drawn for bob, with carol after him, and the next for dave, with bob next. Four
+    /// slots before the first turn ends the timelock installs bob's registered enclave, which posts no head,
+    /// and the skip passes bob to carol. The next turn begins with bob still holding the keys: neither its
+    /// skip nor its promotion names him.
+    function test_TheMemberTheTimelockInstalledHoldsTheKeysIntoTheNextTurn() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, carol);
+        nextOrder.push(dave);
+        nextOrder.push(bob);
+        _aliceIsTheSource(order, false, false);
+        _draw(turn + 1);
+        vm.warp(schedule.boundary(turn + 1) - 4 * INTERVAL - 30);
+        _newSignerEpochWithNoHead();
+        silent = true;
+        for (uint256 slots = 0; slots < 3 && schedule.turnOf(turn).reason == 0; ++slots) {
+            _slotOn();
+        }
+        assertEq(schedule.turnOf(turn).candidate, carol, "the skip passes bob to carol");
+        turn += 1;
+        seed = schedule.turnOf(turn).seed;
+        vm.warp(schedule.boundary(turn));
+        assertEq(_holderNow(), bob, "bob still holds the keys");
+        uint64 epoch = vault.signerEpoch();
+        for (uint256 slots = 0; slots < 12 && vault.signerEpoch() == epoch; ++slots) {
+            _slotOn();
+            assertTrue(schedule.turnOf(turn).candidate != bob, "a skip or promotion named the key holder");
+        }
+        assertEq(vault.signerEpoch(), epoch + 1, "a promotion happened");
+    }
+
+    /// Bob grows his drawn assignment's revisions by moving to the release he runs again and again, and the
+    /// timelock installs his registered enclave before his take. The skip that passes him costs no more for
+    /// the revisions: the key holder reads none of them.
+    function test_ASkipPastAnInstalledMemberDoesNotReadItsRevisions() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, carol);
+        _aliceIsTheSource(order, false, false);
+        for (uint256 i = 0; i < 300; ++i) {
+            vm.prank(bob);
+            registry.setRelease(_digest(2), CONFIG);
+        }
+        (, OperatorSchedule.Revision[] memory revisions) = schedule.assignmentOf(turn, 0);
+        assertGt(revisions.length, 300);
+        _newSignerEpochWithNoHead();
+        _marked(TAKE);
+        schedule.skip();
+        uint256 skipGas = vm.lastCallGas().gasTotalUsed;
+        assertEq(schedule.turnOf(turn).candidate, carol);
+        assertLt(skipGas, 600_000, "the skip reads no revision");
+    }
+
+    /// The first turn is drawn for bob, with carol, bob and dave after him. The guardian retires the signer
+    /// before bob takes it and the timelock installs bob's registered enclave, which posts no head: bob holds
+    /// the keys. The skip passes him to carol, and the missed-head promotion passes bob at position 2, who
+    /// withheld the keys under his own assignment, and names dave.
+    function test_AMemberTheTimelockInstallsBeforeItsTakeIsNotPromotedBackIntoItsTurn() public {
+        address[] memory order = new address[](4);
+        (order[0], order[1], order[2], order[3]) = (bob, carol, bob, dave);
+        _aliceIsTheSource(order, false, false);
+        _newSignerEpochWithNoHead();
+        assertEq(vault.checkpointSigner(), registry.candidateOf(bob).enclave, "bob's registered enclave");
+        assertEq(_holderNow(), bob);
+        silent = true;
+        uint64 epoch = vault.signerEpoch();
+        for (uint256 slots = 0; slots < 12 && vault.signerEpoch() == epoch; ++slots) {
+            _slotOn();
+            if (vault.signerEpoch() == epoch && schedule.turnOf(turn).reason == 1) {
+                assertEq(_holderNow(), bob, "the skip recorded bob as the key holder it passed");
+                assertTrue(schedule.heldKeys(turn, bob), "the skip recorded bob as having held the keys");
+            }
+        }
+        assertEq(vault.signerEpoch(), epoch + 1, "a promotion happened");
+        assertTrue(schedule.heldTurn(turn, carol), "the skip named carol");
+        assertTrue(schedule.heldKeys(turn, bob), "the skip passed bob as the key holder");
+        OperatorSchedule.Turn memory current = schedule.turnOf(turn);
+        assertEq(current.position, 3, "bob, at position 2, withheld the keys");
+        assertEq(current.candidate, dave);
     }
 
     /// Alice's host drops every head and no slot is witnessed through the first turn, drawn for bob, so it
@@ -371,6 +486,129 @@ contract FirstTurnHolderTest is FirstTurnTest {
         assertEq(schedule.sourceOf(turn), alice);
         assertEq(schedule.turnOf(turn).prior, taken);
         vm.warp(schedule.boundary(turn));
+        silent = true;
+        for (uint256 slots = 0; slots < 4; ++slots) {
+            _slotOn();
+            assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the member whose enclave holds the keys");
+        }
+        assertEq(schedule.turnOf(turn).reason, 1, "skipped, past alice");
+    }
+
+    /// Bob takes a turn and the turns end; the timelock installs alice as the operator and she takes the
+    /// signer epoch's keys from bob's enclave, so the epoch's newest head is still bob's. The next turn, drawn
+    /// for bob with alice next, names alice as its source, and her host drops every head: that head, from
+    /// before the turn began, names no key holder, so alice holds the keys and the skip passes her.
+    function test_TheInstalledOperatorThatKeepsTheSignerEpochIsTheKeyHolder() public {
+        (address[] memory all, uint256[] memory weights) = _members();
+        setId = _rotate(all, weights);
+        uint64 taken = _nextTurn() + 1;
+        address[] memory first = new address[](1);
+        first[0] = bob;
+        _relayOrder(taken, first);
+        _draw(taken);
+        vm.warp(schedule.boundary(taken));
+        _post(_nextHead());
+        uint64 epoch = vault.signerEpoch();
+        bytes32 bobRelease = registry.candidateOf(bob).release;
+        assertEq(logHeads.headRelease(epoch), bobRelease);
+        // Each governance step passes the timelock's delay: bob's turn has ended by the installation.
+        _setRotation(false);
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.installOperator, (alice, _key(alice), _digest(1), CONFIG))
+        );
+        _setRotation(true);
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, alice);
+        turn = _nextTurn() + 1;
+        seed = _relayOrder(turn, order);
+        _draw(turn);
+        assertEq(schedule.sourceOf(turn), alice);
+        assertEq(schedule.registryTurn(), turn, "drawn while the registry named its own operator");
+        vm.warp(schedule.boundary(turn));
+        assertEq(vault.signerEpoch(), epoch, "the signer epoch stays");
+        assertEq(logHeads.headRelease(epoch), bobRelease, "the epoch's newest head is still bob's");
+        assertEq(_holderNow(), alice);
+        silent = true;
+        for (uint256 slots = 0; slots < 4; ++slots) {
+            _slotOn();
+            assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the member whose enclave holds the keys");
+        }
+        assertEq(schedule.turnOf(turn).reason, 1, "skipped, past alice");
+    }
+
+    /// Alice holds the keys of her turn and is drawn for the next, with bob, alice and carol after her. Her
+    /// heads still bind her earlier assignment, so the skip passes her, holding the keys, to bob, and records
+    /// her as having held them. She hands them to bob, who takes the turn and stops: the missed-head
+    /// promotion passes alice at position 2, who withheld the keys under her own assignment, and names carol.
+    function test_ASkippedMemberThatHeldTheKeysIsNotPromotedOnceTheyMoveOn() public {
+        (address[] memory all, uint256[] memory weights) = _members();
+        setId = _rotate(all, weights);
+        uint64 earlier = _nextTurn() + 1;
+        address[] memory first = new address[](1);
+        first[0] = alice;
+        _relayOrder(earlier, first);
+        address[] memory order = new address[](4);
+        (order[0], order[1], order[2], order[3]) = (alice, bob, alice, carol);
+        turn = earlier + 1;
+        seed = _relayOrder(turn, order);
+        _draw(earlier);
+        vm.warp(schedule.boundary(earlier));
+        LogHeads.HeadV2 memory taken = _nextHead();
+        _post(taken);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        LogHeads.HeadV2 memory head = _nextHead();
+        (head.turn, head.position, head.release, head.generation) = (earlier, 0, taken.release, taken.generation);
+        _post(head);
+        assertEq(_holderNow(), alice);
+        _marked(TAKE);
+        schedule.skip();
+        assertEq(schedule.turnOf(turn).candidate, bob);
+        assertTrue(schedule.heldKeys(turn, alice), "the skip recorded alice as having held the keys");
+        _post(_nextHead());
+        assertEq(_holderNow(), bob, "bob took the turn with alice's keys");
+        _lapse();
+        (, uint16 position) = schedule.promote();
+        assertEq(position, 3, "alice, at position 2, withheld the keys");
+        assertEq(schedule.turnOf(turn).candidate, carol);
+    }
+
+    /// Bob takes a turn, and his host keeps back a held head his enclave signs then. The turns end, the
+    /// timelock installs alice, who takes the signer epoch's keys, and the next turn is drawn for bob with
+    /// alice next. Across a paused chain, bob's head is relayed after that turn's boundary: signed before it,
+    /// it names no key holder, so alice still holds the keys and the skip passes her.
+    function test_AHeadSignedBeforeTheRegistryTurnNamesNoKeyHolderHoweverLateItIsRelayed() public {
+        (address[] memory all, uint256[] memory weights) = _members();
+        setId = _rotate(all, weights);
+        uint64 taken = _nextTurn() + 1;
+        address[] memory first = new address[](1);
+        first[0] = bob;
+        _relayOrder(taken, first);
+        _draw(taken);
+        vm.warp(schedule.boundary(taken));
+        _post(_nextHead());
+        vm.warp(block.timestamp + 20);
+        LogHeads.HeadV2 memory keptBack = _held(_nextHead(), 1, uint64(ARB.arbBlockNumber()));
+        bytes memory signature = _sign(keptBack, _signerKey());
+        _setRotation(false);
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.installOperator, (alice, _key(alice), _digest(1), CONFIG))
+        );
+        _setRotation(true);
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, alice);
+        turn = _nextTurn() + 1;
+        seed = _relayOrder(turn, order);
+        _draw(turn);
+        vm.warp(schedule.boundary(turn) + 10);
+        // The chain resumes: one block on from the one the head binds, and no slot witnessed since.
+        ARB.setBlockNumber(ARB.arbBlockNumber() + 1);
+        logHeads.postV2(keptBack, signature);
+        (,,,, uint64 postedAt) = logHeads.heads(vault.signerEpoch());
+        assertEq(postedAt, block.timestamp, "relayed after the turn's boundary");
+        assertEq(_holderNow(), alice, "a head signed before the turn began names no holder");
         silent = true;
         for (uint256 slots = 0; slots < 4; ++slots) {
             _slotOn();
