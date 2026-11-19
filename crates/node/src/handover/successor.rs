@@ -20,7 +20,7 @@ use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
 use crate::handover::assigned::{Binding, Bound};
 use crate::handover::evidence::{self, Peer, Quoting};
-use crate::handover::tail::{TailRefused, Tip, tail_report_data, version_name};
+use crate::handover::tail::{TailRefused, Tip, Unacknowledged, tail_report_data, version_name};
 use crate::handover::{
     Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
     confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
@@ -287,7 +287,7 @@ pub(super) async fn confirm(
              here, but this release must not start until the predecessor has stopped, or both may sign: \
              {e:#}"
         );
-        bail!("the predecessor did not acknowledge the handover: {e:#}");
+        return Err(e.context(Unacknowledged));
     }
     Ok(())
 }

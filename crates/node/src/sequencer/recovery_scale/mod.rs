@@ -17,7 +17,8 @@
 //! - a tail handover grown under launch flow on the recovered node to about each of `TAILS`, the
 //!   largest held 1 MiB under the handover's bound, then the member's start from its replica, which
 //!   each switch's window counts. A take that outlasts a predecessor's wait for its confirmation
-//!   (`handover::REPLY_TIMEOUT`) is reported unconfirmed, and no later tail is handed over.
+//!   (`handover::REPLY_TIMEOUT`) and fails only for the missing acknowledgement, its replica at the holder's
+//!   final checkpoint, is reported unconfirmed, and no later tail is handed over; any other failure fails the run.
 //!
 //! The book is engine state, not a log, so the log starts where the book ends, as `load_scenario`'s
 //! does: each replay starts from the book where a whole log's starts from an empty engine
