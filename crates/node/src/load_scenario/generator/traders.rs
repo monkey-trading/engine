@@ -2,7 +2,7 @@
 //! requests the scheduler hands its client, one at a time over the client's connection, and keeping
 //! what the replies say it holds.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -99,6 +99,8 @@ pub(super) struct Trader {
     next_client_id: u64,
     /// Whether a rejection of this trader's has been written out.
     rejection_said: bool,
+    /// The statuses other than 200 and 409 whose reply this trader has written out.
+    statuses_said: BTreeSet<u16>,
 }
 
 impl Trader {
@@ -110,7 +112,16 @@ impl Trader {
         scalar[28..].copy_from_slice(&number.to_be_bytes());
         let session = SigningKey::from_slice(&scalar).expect("a valid scalar");
         let account = eip712::address(key.verifying_key());
-        Trader { account, key, session, nonce: 0, holding: Arc::default(), next_client_id: 1, rejection_said: false }
+        Trader {
+            account,
+            key,
+            session,
+            nonce: 0,
+            holding: Arc::default(),
+            next_client_id: 1,
+            rejection_said: false,
+            statuses_said: BTreeSet::new(),
+        }
     }
 
     /// Registers the session key with the account's signature at its next nonce.
@@ -196,6 +207,14 @@ impl Trader {
         }
     }
 
+    /// What to write out about a reply with `status`, the first this trader sees with that status: the
+    /// body, so a run's refusals can be read as well as counted.
+    pub(super) fn refusal_line(&mut self, status: u16, reply: &Value) -> Option<String> {
+        self.statuses_said
+            .insert(status)
+            .then(|| format!("load generator: {} was answered {status}: {reply}", self.account))
+    }
+
     /// Takes what a reply says: the nonce moves on for a request the log took, or to the one a
     /// conflict names; orders rest, cancel and fill, and positions open and close. Returns the fills
     /// the reply holds for this account, and the kind of the first rejection it holds, if any.
@@ -208,7 +227,12 @@ impl Trader {
                 }
                 return (0, None);
             }
-            _ => return (0, None),
+            _ => {
+                if let Some(line) = self.refusal_line(status, reply) {
+                    eprintln!("{line}");
+                }
+                return (0, None);
+            }
         }
         let mut holding = self.holding.lock().expect("a holding");
         let (mut fills, mut rejected) = (0, None);
