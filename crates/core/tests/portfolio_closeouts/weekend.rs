@@ -143,3 +143,31 @@ fn a_member_blocked_by_a_failed_split_waits_and_the_rest_close_alone() {
     assert_eq!(liquidations(&events), vec![OIL], "{events:?}");
     assert_eq!(held(&h, &a), (Fixed::ZERO, f("-350")));
 }
+
+#[test]
+fn a_hedged_group_with_both_markets_on_a_weekend_margin_closes_whole_at_the_gaps_start() {
+    // Oil and gold each carry 7.5% over their gaps, which start together at Friday's close. $700k of oil
+    // long against $700k of gold short, opened with $40k, is under the portfolio requirement over the gap.
+    let mut h = genesis_with_grid(V81, pairs(5_000), OIL_WEEKEND_BPS, OIL_WEEKEND_BPS);
+    let a = client(&mut h, 1, "40000");
+    h.price(OIL, "70");
+    h.price(GOLD, "2000");
+    only_fill(&trade(&mut h, &a, OIL, Side::Buy, "10000", "70"));
+    only_fill(&trade(&mut h, &a, GOLD, Side::Sell, "350", "2000"));
+    let required = h.engine.weekend_requirements(a.account);
+    assert_eq!(required.keys().copied().collect::<Vec<_>>(), vec![GOLD, OIL], "both keep a gap");
+    let requirement = required[&OIL].required;
+    assert_eq!(required[&GOLD].required, requirement);
+    let equity = standing(&h, &a).0;
+    assert!(equity < requirement, "{equity} under {requirement}");
+    let events = past_the_close(&mut h, "70");
+    // One close-out, announced once at the weekend requirement, closes both legs, gold before oil.
+    assert_eq!(liquidations(&events), vec![GOLD, OIL], "{events:?}");
+    let announced: Vec<_> = events.iter().filter(|e| matches!(e, Event::CloseOut { .. })).collect();
+    assert!(matches!(announced[..], [Event::CloseOut { margin, .. }] if *margin == requirement), "{events:?}");
+    for fill in fills(&events) {
+        assert_eq!(fill.index, h.engine.markets()[&fill.market].mark.unwrap(), "filled at the mark");
+        assert_eq!(fill.position, Fixed::ZERO);
+    }
+    assert!(h.engine.accounts()[&a.account].positions.is_empty());
+}
