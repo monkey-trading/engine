@@ -12,7 +12,9 @@ use tokio::time::{Instant, sleep, timeout};
 use crate::clock::now_ms;
 use crate::config::{Venue, VenueConnection, VenueSymbol};
 use crate::feeds::status::FeedStatus;
-use crate::feeds::tests::fake::{Conn, FakeEngine, WAIT, accept, fast, kraken_book, listen, quote, send};
+use crate::feeds::tests::fake::{
+    Conn, FakeEngine, WAIT, accept, fake_sequencer, fast, kraken_book, listen, quote, send,
+};
 use crate::feeds::venue::{self, Credentials, Held, Timing};
 use crate::sequencer::Request;
 use crate::test_support::capture_alerts;
@@ -67,16 +69,18 @@ async fn a_held_back_feed_sends_nothing_until_live_and_then_its_newest_kept_book
     assert!(replaced.is_err(), "a book replaced while held back was sent too: {replaced:?}");
 }
 
-/// A connection that drops while its feed holds back is no outage: it raises no alert. Its backoff,
-/// two seconds here, ends as soon as the switch is set, and the feed connects again at once.
+/// A connection that drops while its feed holds back is no outage: it raises no alert. The backoff
+/// its drops built up ends as soon as the switch is set, and starts afresh for the feed live: the
+/// first live drop waits only `reconnect_min`.
 #[tokio::test]
-async fn a_held_back_connection_that_drops_raises_nothing_and_reconnects_once_live() {
+async fn a_held_back_connection_that_drops_raises_nothing_and_starts_afresh_once_live() {
     let (_guard, mut alerts) = capture_alerts();
     let (listener, url) = listen().await;
-    let (tx, _rx) = mpsc::channel(1024);
+    // A sequencer that answers the feed's questions, so a live drop settles at once.
+    let (tx, _rx) = fake_sequencer();
     let (live, held) = watch::channel(false);
-    let backoff = Duration::from_secs(2);
-    let timing = Timing { reconnect_min: backoff, reconnect_max: backoff * 2, ..fast(WAIT) };
+    let reconnect_min = Duration::from_millis(100);
+    let timing = Timing { reconnect_min, reconnect_max: Duration::from_secs(10), ..fast(WAIT) };
     let _feed = tokio::spawn(venue::run_reporting(
         connection(&url),
         Credentials::Public,
@@ -85,15 +89,25 @@ async fn a_held_back_connection_that_drops_raises_nothing_and_reconnects_once_li
         (tx, Held { live: held, hours: Default::default() }),
         (FeedStatus::default(), 0),
     ));
-    let (ws, _) = accept(&listener).await;
-    drop(ws);
+    // Four drops held back build its wait up to 1.6 s.
+    for _ in 0..4 {
+        drop(accept(&listener).await);
+    }
     sleep(Duration::from_millis(100)).await;
     assert!(timeout(Duration::from_millis(10), listener.accept()).await.is_err(), "it reconnected inside its backoff");
+    assert!(alerts.try_recv().is_err(), "a held-back connection's drop raised an alert");
     let flipped = Instant::now();
     live.send_replace(true);
-    timeout(backoff / 2, listener.accept()).await.expect("it sat out its backoff once live").expect("accept");
-    assert!(flipped.elapsed() < backoff / 2);
-    assert!(alerts.try_recv().is_err(), "a held-back connection's drop raised an alert");
+    let (ws, _) = accept(&listener).await;
+    assert!(
+        flipped.elapsed() < Duration::from_millis(800),
+        "it sat out its backoff once live: {:?}",
+        flipped.elapsed()
+    );
+    let dropped = Instant::now();
+    drop(ws);
+    accept(&listener).await;
+    assert!(dropped.elapsed() < Duration::from_millis(800), "its first live drop waited {:?}", dropped.elapsed());
 }
 
 /// Sends heartbeats for `span`, so the connection's read deadline never passes.

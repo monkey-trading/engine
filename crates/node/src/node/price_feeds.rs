@@ -3,10 +3,9 @@
 //! quotes held back (`feeds::venue::live`) on the request channel the node it starts then sequences
 //! from, so its first commands have fresh quotes from every venue.
 
-use std::time::Duration;
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use engine_core::Engine;
@@ -191,20 +190,33 @@ mod tests {
     use super::*;
 
     /// Warm feeds go live when the node starts them, and their tasks join the node's: a feed task's
-    /// stopping stops the node, but with every connection off for want of its secret no task is added,
-    /// so none stops it at once.
+    /// stopping ends the node's supervising task with its result, but with every connection off for
+    /// want of its secret no task is added, so none stops the node at once.
     #[tokio::test]
     async fn starting_warm_feeds_lets_them_through_and_supervises_only_their_tasks() {
         for running in [false, true] {
             let (live, switch) = watch::channel(false);
-            let mut feeds = JoinSet::new();
+            let (mut feeds, stop) = (JoinSet::new(), tokio::sync::oneshot::channel::<()>());
             if running {
-                feeds.spawn(std::future::pending::<TaskResult>());
+                let stopped = stop.1;
+                feeds.spawn(async move {
+                    let _ = stopped.await;
+                    ("kraken", Err(anyhow!("the venue task stopped")))
+                });
             }
             let mut node = JoinSet::new();
             Live { tasks: feeds, live, status: FeedStatus::default() }.start(&mut node);
             assert!(*switch.borrow(), "the switch was not set");
             assert_eq!(node.len(), usize::from(running), "running {running}: the node supervises {} tasks", node.len());
+            if running {
+                let _ = stop.0.send(());
+                let (name, result) = node.join_next().await.expect("a task").expect("no panic");
+                assert_eq!(
+                    (name, result.is_err()),
+                    ("kraken", true),
+                    "the stopped feed's result did not reach the node"
+                );
+            }
         }
     }
 

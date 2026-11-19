@@ -33,8 +33,8 @@ pub(super) const PACED_STALL: Duration = Duration::from_millis(250);
 /// How long paced checkpoints may be given up on before one waits in full.
 pub(super) const DEFER_MAX: Duration = Duration::from_secs(30);
 
-/// When the paced checkpoint that waits began to, and when paced checkpoints were first given up on
-/// since one was written, with whether that is alerted.
+/// When the waiting paced checkpoint began to wait, and when paced checkpoints were first given up on
+/// since a member last confirmed one, with whether that is alerted.
 #[derive(Debug, Default)]
 pub(super) struct PacedWaits {
     since: Option<Instant>,
@@ -102,6 +102,12 @@ impl Sequencer {
         if now.saturating_duration_since(since) < PACED_STALL {
             return;
         }
+        // A confirmation the rule recorded before the stall ran out is the batch's end to write.
+        let seq = self.engine.last_seq().unwrap_or_default();
+        let publisher = self.log_heads.as_ref();
+        if publisher.is_some_and(|p| p.gate.confirmed() >= seq && p.gate.signs() && p.gate.start_checked()) {
+            return;
+        }
         let (first, alerted) = self.paced_waits.deferred.get_or_insert((since, false));
         if now.saturating_duration_since(*first) >= DEFER_MAX {
             if !std::mem::replace(alerted, true) {
@@ -135,7 +141,9 @@ impl Sequencer {
     }
 
     /// The parked handover's stop, once its final checkpoint is written; refused, and sequencing goes
-    /// on, once `HANDOVER_WAIT` runs out first.
+    /// on, once `HANDOVER_WAIT` runs out first. A refused handover needs no final checkpoint, so its wait
+    /// is given up as a paced checkpoint's is: nothing is signed, and the next paced checkpoint covers
+    /// its seq.
     pub(super) fn admitted_handover(&mut self) -> Option<oneshot::Sender<anyhow::Result<()>>> {
         let (reply, until) = self.handover_waits.take()?;
         if self.checkpoint_waits.is_none() && self.last_checkpoint == self.engine.last_seq() {
@@ -150,6 +158,11 @@ impl Sequencer {
              handover is refused until one does"
         ));
         let _ = reply.send(Err(anyhow::anyhow!(refused)));
+        if self.checkpoint_waits.is_some() {
+            debug!(seq = ?self.engine.last_seq(), "the refused handover's final checkpoint stops waiting");
+            (self.checkpoint_waits, self.paced_waits.since) = (None, None);
+            self.paced_waits.deferred.get_or_insert((self.clock.instant(), false));
+        }
         None
     }
 

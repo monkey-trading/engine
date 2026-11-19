@@ -15,6 +15,7 @@
 //! its start budget of the promotion being seen, printing each figure.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,8 +23,7 @@ use alloy::primitives::{Address, B256, U256};
 use alloy::sol_types::{SolCall, SolValue};
 use anyhow::{Context, ensure};
 use engine_core::auth::Operator;
-use engine_core::command::Command;
-use engine_core::command::{AdminCommand, AdminRequest};
+use engine_core::command::{AdminCommand, AdminRequest, Command};
 use engine_core::event::Event;
 use engine_core::types::{AccountId, MarketId, Millis};
 use k256::ecdsa::SigningKey;
@@ -34,6 +34,7 @@ use super::nodes::{Deployment, MAX_AGE_MS, Seat};
 use super::{START_BUDGET, adopt, latestSeqCall, now_s, until};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::now_ms;
+use crate::config::NodeConfig;
 use crate::custody::tests::election_scenario::chain::Chain;
 use crate::custody::tests::election_scenario::liveness::{
     DIGEST_C, KEYS, RULE, checkpointSignerCall, drawCall, etch_arb_sys, latchesCall, receiveSeedCall, relayAliasCall,
@@ -48,7 +49,7 @@ use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::tee::EnclaveKey;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer};
-use crate::test_support::log_entries;
+use crate::test_support::{ANVIL_CONFIG, log_entries};
 
 alloy::sol! {
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
@@ -63,9 +64,6 @@ const SWITCH_BUDGET_SECS: u64 = 5;
 const LEAD_SECS: u64 = 60;
 /// The market the venue stand-in quotes.
 const MARKET: MarketId = 1;
-/// How long a market may go unpriced before a node pages `market_no_price`: the config's
-/// `alerts.no_price_after`.
-const NO_PRICE_AFTER_MS: Millis = 5_000;
 /// How long before a boundary the scenario starts to read whether the market is priced across it.
 const BEFORE_BOUNDARY_MS: Millis = 30_000;
 /// How long a member gets past its boundary to take the keys and log `TurnTaken`.
@@ -188,13 +186,17 @@ async fn run() -> anyhow::Result<()> {
             seats[holder].name, seats[previous.0].name
         );
         let log = std::fs::read_to_string(seats[holder].log())?;
-        ensure!(log.contains("opened the venue feeds ahead of this member's turn"), "no warm feeds before turn {next}");
+        let opened = logged_at(&log, "opened the venue feeds ahead of this member's turn");
+        let opened =
+            opened.with_context(|| format!("{} opened no venue feed ahead of turn {next}", seats[holder].name))?;
+        let lead = Millis::try_from(boundary(next) * 1000)? - opened;
+        ensure!(lead > 0, "{} opened its venue feeds {} ms past turn {next}'s boundary", seats[holder].name, -lead);
         ensure!(
             log.contains("the venue feeds opened before the turn send their quotes"),
             "turn {next} started them cold"
         );
         println!(
-            "PASS: {} opened its venue feeds ahead of turn {next}, and its start let them through",
+            "PASS: {} opened its venue feeds {lead} ms ahead of turn {next}, and its start let them through",
             seats[holder].name
         );
         previous = (holder, seats[holder].admin.clone());
@@ -256,6 +258,9 @@ async fn run() -> anyhow::Result<()> {
 
     // From the log: the market priced across both boundaries, up to C's kill, and soon after the promotion.
     let entries = log_entries(&seats[p].log_dir());
+    // How long a market may go unpriced before a node pages `market_no_price`.
+    let no_price_after = NodeConfig::load(Path::new(ANVIL_CONFIG))?.alerts.no_price_after;
+    let no_price_after = Millis::try_from(no_price_after.as_millis())?;
     let spans = unpriced(&entries, MARKET, MAX_AGE_MS);
     let ms = |s: u64| Millis::try_from(s * 1000).expect("a boundary fits in milliseconds");
     let windows = [
@@ -269,7 +274,7 @@ async fn run() -> anyhow::Result<()> {
             .map(|(s, e)| e.min(&to) - s.max(&from))
             .collect();
         let (longest, total) = (within.iter().max().copied().unwrap_or(0), within.iter().sum::<Millis>());
-        ensure!(longest < NO_PRICE_AFTER_MS, "across turn {turn}'s boundary the market went unpriced for {longest} ms");
+        ensure!(longest < no_price_after, "across turn {turn}'s boundary the market went unpriced for {longest} ms");
         println!(
             "PASS: across turn {turn}'s boundary the market went unpriced for {total} ms in {} spans, the longest {longest} \
              ms, under no_price_after",
@@ -293,6 +298,23 @@ async fn run() -> anyhow::Result<()> {
         seats[p].name
     );
     Ok(())
+}
+
+/// When `log`, a node's log, first logged a line holding `message`, in milliseconds: the line's leading
+/// RFC 3339 time, its colour codes stripped.
+fn logged_at(log: &str, message: &str) -> Option<Millis> {
+    let line = log.lines().find(|line| line.contains(message))?;
+    let mut plain = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            chars.by_ref().find(|c| *c == 'm');
+        } else {
+            plain.push(c);
+        }
+    }
+    let at = plain.split_whitespace().next()?;
+    Some(chrono::DateTime::parse_from_rfc3339(at).ok()?.timestamp_millis())
 }
 
 /// The spans, in milliseconds, in which `entries` leave `market` with no quote that counts: a quote

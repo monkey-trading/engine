@@ -33,8 +33,12 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let hours = copy.map(|(follower, ..)| market_hours(follower.replica().engine())).unwrap_or_default();
         match Warm::open(&self.cfg.feeds, delivered, hours) {
             Ok(warm) => {
-                if warm.is_some() {
-                    info!(boundary = ?own_next, "opened the venue feeds ahead of this member's turn");
+                match (&warm, taking) {
+                    (Some(_), false) => {
+                        info!(boundary = ?own_next, "opened the venue feeds ahead of this member's turn")
+                    }
+                    (Some(_), true) => info!("opened the venue feeds as this member takes its turn"),
+                    (None, _) => {}
                 }
                 self.warm = warm;
             }

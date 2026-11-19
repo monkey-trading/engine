@@ -60,9 +60,9 @@ impl Tries {
 }
 
 /// The wait before the next try after a failed stint that waited `retry`: twice as long, up to a
-/// `STINT`. An operator that stopped for a handover serves its successor's stream within seconds, so a
-/// member follows the new operator soon after, and its confirmations let the new operator checkpoint;
-/// one that stays down is asked again at most once a `STINT`.
+/// `STINT`. After a handover the new operator serves its stream within seconds, so a member follows it
+/// soon after, and its confirmations let the new operator checkpoint; an operator that stays down is
+/// asked again at most once a `STINT`.
 pub(super) fn retry_after(retry: Duration) -> Duration {
     retry.saturating_mul(2).min(STINT)
 }

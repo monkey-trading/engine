@@ -37,9 +37,12 @@ impl Held {
 }
 
 impl VenueFeed {
-    /// This feed, holding its quotes back as `held` says, with its markets' hours.
+    /// This feed, holding its quotes back as `held` says, with its markets' hours. One held back from the
+    /// outset is holding before any connection opens, so its going live restarts its counts however its
+    /// attempts went meanwhile.
     pub(super) fn held_back_by(self, held: Held) -> Self {
-        Self { live: held.live, schedules: held.hours, ..self }
+        let holding = !*held.live.borrow();
+        Self { live: held.live, schedules: held.hours, holding, ..self }
     }
 
     /// Whether the switch lets the feed's quotes through.
@@ -70,8 +73,8 @@ impl VenueFeed {
     }
 
     /// Waits `wait` before a held-back feed connects again, or less once its switch is set: a feed going
-    /// live does not sit out a backoff it built up while held back.
-    pub(super) async fn wait_unless_live(&self, wait: Duration) {
+    /// live does not sit out a backoff it built up while held back. Whether the switch cut it short.
+    pub(super) async fn wait_unless_live(&self, wait: Duration) -> bool {
         let mut live = self.live.clone();
         // A switch whose node has gone sets nothing: the wait runs out, and the task is stopped.
         let set = async {
@@ -80,8 +83,8 @@ impl VenueFeed {
             }
         };
         tokio::select! {
-            () = tokio::time::sleep(wait) => {}
-            () = set => {}
+            () = tokio::time::sleep(wait) => false,
+            () = set => true,
         }
     }
 
