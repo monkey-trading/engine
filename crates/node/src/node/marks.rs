@@ -173,7 +173,7 @@ impl Drop for MarksStartup {
 /// afterwards: `failed` is set if any seed write failed (recovery refuses to serve, rather than
 /// sign a partially seeded cache) and `reset_done` says the log-derived content was reset — a
 /// recovery with zero mark samples still resets through the caller.
-pub(super) fn recovery_sink(
+pub(crate) fn recovery_sink(
     shared: &Rc<RefCell<Store>>,
 ) -> (crate::history::marks::MarkSink, Rc<Cell<bool>>, Rc<Cell<bool>>) {
     let failed = Rc::new(Cell::new(false));

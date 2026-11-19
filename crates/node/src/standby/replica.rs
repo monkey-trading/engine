@@ -110,32 +110,29 @@ impl Follower {
         domain: CheckpointDomain,
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
-        (stats, marks, checked, rows): Records,
+        records: Records,
         (posted, keep): (Option<(u64, B256)>, &[u64]),
-        mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
+        observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
-        let recorded = signers.clone();
         let fresh = || {
             let mut replica = LiveReplay::new(domain, signers.clone());
             keep.iter().for_each(|seq| replica.keep(*seq));
-            if let Some(stats) = &stats {
-                replica.record_stats_with(stats.clone());
-            }
-            if let Some(checked) = &checked {
-                replica.record_checked_with(checked.clone());
-            }
-            if let Some(rows) = &rows {
-                replica.store_rows_in(rows.clone());
-            }
-            if let Some(marks) = &marks {
-                // Each build folds the copy's marks from its start, and none of a tail an earlier one dropped.
-                marks.borrow_mut().restart();
-                let marks = marks.clone();
-                replica
-                    .sample_marks_with(Box::new(move |market, ts, mark| marks.borrow_mut().sample(market, ts, mark)));
-            }
-            replica
+            recording(replica, &records)
         };
+        Self::open_with(dir, segment_commands, (domain, enclave, signers.clone()), fresh, posted, observe)
+    }
+
+    /// Opens the copy in `dir`, building its replica from `fresh` as it is read (see `open_pinned`).
+    /// Error cases:
+    /// - see `open_pinned`
+    fn open_with(
+        dir: &std::path::Path,
+        segment_commands: u64,
+        (domain, enclave, recorded): (CheckpointDomain, AccountId, BTreeSet<AccountId>),
+        fresh: impl Fn() -> LiveReplay,
+        posted: Option<(u64, B256)>,
+        mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
         let (mut opened, mut previous) = (VecDeque::new(), None);
         let mut apply = |replica: &mut LiveReplay, entry: &LogEntry| {
             observe(entry)?;
@@ -158,7 +155,7 @@ impl Follower {
             Ok(())
         };
         let chain = Chain::new(domain, enclave);
-        let opened_copy = open_copy_replayed(dir, segment_commands.max(1), chain.clone(), fresh, &mut apply)
+        let opened_copy = open_copy_replayed(dir, segment_commands.max(1), chain.clone(), &fresh, &mut apply)
             .context("the copy does not replay")?;
         // A tail no accepted signer sealed is not the operator's history to vouch for: a reorged
         // promotion's, or one a host or an archive forged. It is kept aside as evidence and cut back to
@@ -189,7 +186,7 @@ impl Follower {
                 let to = Takeover { seq: checkpoint.seq, root: checkpoint.root, signer };
                 super::cut::cut_marked(dir, &to).context("cutting the copy's unaccepted tail")?;
                 replays += 1;
-                open_copy_replayed(dir, segment_commands.max(1), chain, fresh, &mut apply)
+                open_copy_replayed(dir, segment_commands.max(1), chain, &fresh, &mut apply)
                     .context("the copy does not replay")?
             }
         };
@@ -465,5 +462,27 @@ impl Follower {
     }
 }
 
+/// `replica`, recording what `records` names as it applies each entry (see `Follower::open_pinned`).
+fn recording(mut replica: LiveReplay, (stats, marks, checked, rows): &Records) -> LiveReplay {
+    if let Some(stats) = stats {
+        replica.record_stats_with(stats.clone());
+    }
+    if let Some(checked) = checked {
+        replica.record_checked_with(checked.clone());
+    }
+    if let Some(rows) = rows {
+        replica.store_rows_in(rows.clone());
+    }
+    if let Some(marks) = marks {
+        // Each build folds the copy's marks from its start, and none of a tail an earlier one dropped.
+        marks.borrow_mut().restart();
+        let marks = marks.clone();
+        replica.sample_marks_with(Box::new(move |market, ts, mark| marks.borrow_mut().sample(market, ts, mark)));
+    }
+    replica
+}
+
+#[cfg(test)]
+mod seeded;
 #[cfg(test)]
 mod tests;

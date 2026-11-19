@@ -32,8 +32,8 @@ use crate::load_scenario::generator::record::Recorder;
 const REQUEST_LIFE_MS: Millis = 60_000;
 const SESSION_LIFE_MS: Millis = 6 * 60 * 60 * 1_000;
 /// Where a limit order rests, away from the mark of 100 so no price reaches it.
-const LIMIT_BUY: i64 = 90;
-const LIMIT_SELL: i64 = 110;
+pub(crate) const LIMIT_BUY: i64 = 90;
+pub(crate) const LIMIT_SELL: i64 = 110;
 /// The book's mark in every market (`common::launch_book::MARK`).
 const MARK: i64 = 100;
 /// A request the scheduler hands out later than this after its schedule counts as late: the
@@ -260,7 +260,7 @@ fn domain() -> Eip712Domain {
 
 /// Each market's units worth the book's position of $5,000 at its mark of 100: a euro or a pound is
 /// 100 dollars and a dollar 100 yen in the book (`common::launch_book`).
-pub(super) fn units(markets: &BTreeMap<MarketId, QuoteCurrency>) -> BTreeMap<MarketId, Fixed> {
+pub(crate) fn units(markets: &BTreeMap<MarketId, QuoteCurrency>) -> BTreeMap<MarketId, Fixed> {
     markets
         .iter()
         .map(|(id, currency)| {
@@ -277,7 +277,7 @@ pub(super) fn units(markets: &BTreeMap<MarketId, QuoteCurrency>) -> BTreeMap<Mar
 /// The price an order to `side` quotes: twice the mark to buy and half it to sell, which no fill is
 /// worse than, so no spread declines it. The house's stress levels widen a spread past a market's
 /// slippage bound, and the generator measures the node's latency, not its slippage guard.
-fn quoted(side: Side) -> Fixed {
+pub(crate) fn quoted(side: Side) -> Fixed {
     let mark = Fixed::from_int(MARK);
     if side == Side::Buy { mark.mul_int(2) } else { mark.div_int(2) }
 }

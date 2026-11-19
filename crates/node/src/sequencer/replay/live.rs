@@ -76,6 +76,15 @@ impl LiveReplay {
         }
     }
 
+    /// `new`, starting from `engine`, a state no log holds (`Sequencer::take_over`), where a replica
+    /// of a whole log starts from an empty one.
+    #[cfg(test)]
+    pub(crate) fn seeded(domain: CheckpointDomain, attested: BTreeSet<AccountId>, engine: engine_core::Engine) -> Self {
+        let mut live = Self::new(domain, attested);
+        live.replay.engine = engine;
+        live
+    }
+
     /// Has the replica write the derived rows of each command it applies to `store`, the history's, so an
     /// index that resumes where a turn left it finds them there once the replica's memory has dropped them
     /// (`Deriver`), not only the newest `RETAINED` commands'. A file already holding a command's rows is

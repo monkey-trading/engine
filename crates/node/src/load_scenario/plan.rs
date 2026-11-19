@@ -8,15 +8,15 @@ use serde::{Deserialize, Serialize};
 
 /// Launch flow: the cap study's observed average of fills a second across markets
 /// (`research/cap-calibration/README.md`, "Data").
-pub(super) const LAUNCH_FILLS_PER_SECOND: f64 = 3.7;
+pub(crate) const LAUNCH_FILLS_PER_SECOND: f64 = 3.7;
 /// BTC-USD's share of launch flow, #549's model of it (`research/rogue-operator/README.md`, "Data").
-pub(super) const LAUNCH_BTC_FILLS_PER_SECOND: f64 = 1.5;
+pub(crate) const LAUNCH_BTC_FILLS_PER_SECOND: f64 = 1.5;
 
 /// The request mix [proposal], in per cent of requests: market orders, limit orders, cancels, and
 /// cancel-alls or close-alls, half each.
-pub(super) const MARKET_ORDERS: u64 = 40;
-pub(super) const LIMIT_ORDERS: u64 = 30;
-pub(super) const CANCELS: u64 = 25;
+pub(crate) const MARKET_ORDERS: u64 = 40;
+pub(crate) const LIMIT_ORDERS: u64 = 30;
+pub(crate) const CANCELS: u64 = 25;
 pub(super) const BATCHES: u64 = 5;
 const _: () = assert!(MARKET_ORDERS + LIMIT_ORDERS + CANCELS + BATCHES == 100, "the mix is every request");
 
@@ -176,7 +176,7 @@ impl Plan {
 
 /// Requests a second at `multiple` times launch flow: market orders, each a fill, at the flow's rate,
 /// and the mix's other requests in proportion.
-pub(super) fn requests_per_second(multiple: f64) -> f64 {
+pub(crate) fn requests_per_second(multiple: f64) -> f64 {
     LAUNCH_FILLS_PER_SECOND * multiple * 100.0 / MARKET_ORDERS as f64
 }
 

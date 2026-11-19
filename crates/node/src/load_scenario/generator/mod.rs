@@ -15,7 +15,7 @@
 mod client;
 mod record;
 mod streams;
-mod traders;
+pub(crate) mod traders;
 
 use std::collections::BTreeMap;
 use std::io::BufRead;

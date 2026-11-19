@@ -144,7 +144,7 @@ fn logged(turns: &DailyTurns, number: u64, key: AccountId) -> bool {
 
 /// How many bytes of tail a successor may be sent, before the stop, with a segment frame's room for what
 /// is sequenced first. A test sets its own on the thread of its runtime, which no other test shares.
-pub(super) fn tail_room() -> u64 {
+pub(crate) fn tail_room() -> u64 {
     #[cfg(test)]
     if let Some(room) = TEST_ROOM.get() {
         return room;
@@ -160,7 +160,7 @@ thread_local! {
 /// Whether the tail past `after` may be over `bound` bytes, judged before the stop from the
 /// listed segments that hold an entry past it and the open segment the stop seals: an upper
 /// bound on what `read_tail` reads after it. A log this cannot read is taken to be over.
-pub(super) fn tail_over(log_dir: &Path, after: u64, bound: u64) -> bool {
+pub(crate) fn tail_over(log_dir: &Path, after: u64, bound: u64) -> bool {
     let estimate = || -> anyhow::Result<u64> {
         let manifest = Manifest::load(log_dir)?;
         let listed: u64 = manifest.segments.iter().filter(|listed| listed.last_seq >= after).map(|l| l.bytes).sum();

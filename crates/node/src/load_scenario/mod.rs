@@ -27,9 +27,9 @@
 //! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections, at most two on
 //! CME Group's, whose stand-in reads its prices twice a second).
 
-mod generator;
+pub(crate) mod generator;
 mod node;
-mod plan;
+pub(crate) mod plan;
 mod report;
 mod venues;
 
@@ -67,11 +67,11 @@ const RAMP: Ramp = Ramp { from: 20.0, factor: 2.0, step_secs: 60, max: f64::MAX 
 /// Each crypto market's price commands a second from the live venues: BTC-USD's, ETH-USD's and
 /// SOL-USD's median seconds in six minutes of `scripts/dev-venue-load.sh --soak` on 18 November 2026,
 /// whose busiest seconds were 116, 74 and 30. Each market's four connections share its rate.
-const CRYPTO_RATES: [(MarketId, f64); 3] = [(1, 11.0), (2, 15.0), (3, 10.0)];
+pub(crate) const CRYPTO_RATES: [(MarketId, f64); 3] = [(1, 11.0), (2, 15.0), (3, 10.0)];
 const CRYPTO_CONNECTIONS: f64 = 4.0;
 /// How often each other market's mid moves on each of its two connections [proposal]: no vendor's rate
 /// is measured, and CME Group's stand-in quotes twice a second.
-const RWA_MOVES: f64 = 2.0;
+pub(crate) const RWA_MOVES: f64 = 2.0;
 /// How far before the wall clock the book's clock is, so the node's first stamp comes after its
 /// last, which the book's own commands run some 75 seconds past it.
 const BOOK_LEAD_MS: Millis = 10 * 60 * 1_000;

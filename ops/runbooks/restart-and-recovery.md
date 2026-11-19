@@ -19,6 +19,13 @@ their output call a running trading server a node.
 - **The log lines go to the serial console.** Capture the guest's serial console to a file on the
   host, and keep it. Every `alert =` line that this runbook mentions is read there, and the webhook
   receives the same alerts as pages.
+- **A restart replays the whole log, so it takes longer as the log grows.** The production template
+  leaves `[snapshots]` off, so every start replays every instruction in the log before it sequences
+  again, and the API answers nothing meanwhile. On a book of 100,000 accounts, a debug build on a
+  shared development machine recovered about 2,600 instructions a second, seeding the marks cache
+  and the dashboard record as it went. A weekday of launch flow logs about 9.8 million instructions,
+  so each such day adds about an hour to a restart, and 30 days of launch flow, about 246 million
+  instructions, add about 26 hours. Plan a restart's downtime from the length of the log.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
   chip open the same sealed keys. The enclave address, the signer epoch, the TLS key and therefore
   `$PIN`, the certificate, and the outstanding withdrawal authorisations are unchanged. A restart

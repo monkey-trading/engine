@@ -11,6 +11,21 @@ use engine_core::types::AccountId;
 use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
 use crate::sequencer::replay::{Replay, Replayed};
 
+#[cfg(test)]
+impl Replay {
+    /// A replay pinned to `signer` in `domain`, as `with_trust` builds one, that starts from `engine`, a
+    /// state no log holds (`Sequencer::take_over`), where a whole log's replay starts from an empty one.
+    pub(in crate::sequencer) fn seeded(
+        engine: engine_core::Engine,
+        domain: Option<CheckpointDomain>,
+        signer: AccountId,
+    ) -> Self {
+        let mut replay = Self::with_trust(domain, Some(signer));
+        replay.engine = engine;
+        replay
+    }
+}
+
 /// Replays with an independently trusted signer for withdrawal completion evidence.
 /// Error cases:
 /// - any entry, signature, or authorization fails replay
@@ -86,8 +101,7 @@ pub(crate) fn replay_path_from(
     path: &Path,
     signer: AccountId,
 ) -> anyhow::Result<Replayed> {
-    let mut replay = Replay::with_trust(None, Some(signer));
-    replay.engine = engine;
+    let mut replay = Replay::seeded(engine, None, signer);
     SegmentedLog::open(path, |entry| replay.apply(&entry))?;
     let replayed = replay.finish();
     replayed.origin.require_audit(signer)?;

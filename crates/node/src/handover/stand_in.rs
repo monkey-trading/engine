@@ -1,19 +1,24 @@
 //! A stand-in predecessor for tests outside the handover: it answers tail requests in the order its
 //! script gives — the keys and a tail of the bytes it is given, listed and attested as a predecessor
-//! lists and attests them, as a host feeding the copy a tail it cannot take would, or a refusal of
-//! the tip before the stop — and refuses every request past the script.
+//! lists and attests them, as a host feeding the copy a tail it cannot take would, then acknowledges
+//! the successor's confirmation, or a refusal of the tip before the stop — and refuses every request
+//! past the script.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use anyhow::ensure;
+use engine_core::eip712::{self, B256, Signature};
+use engine_core::types::AccountId;
 use sha2::{Digest as _, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use super::evidence::{self, Quoting};
-use super::messages::{Challenge, Reply, Request};
+use super::messages::{Challenge, Confirm, Reply, Request};
 use super::tail::{TAIL_FRAME_BYTES, TailListing, TailMiss, send_tail, tail_report_data};
-use super::{keys_report_data, receive, seal_keys, send};
+use super::{REPLY_TIMEOUT, confirm_digest, confirmed_digest, keys_report_data, receive, seal_keys, send};
 use crate::config::TeeProvider;
 use crate::log::CheckpointDomain;
 use crate::tee::MockAttestor;
@@ -98,7 +103,14 @@ async fn respond(
     let platform = Platform { launch_digest: [0x11; 48], policy: 0, tcb: 0 };
     let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };
     let evidence = evidence::produce(&quoting, &MockAttestor, &platform, bound).await?;
-    let keys = Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
-    send(stream, &keys).await?;
-    send_tail(stream, &tail).await
+    let reply = Reply::Keys { encapped_key: hex::encode(encapped_key), ciphertext: hex::encode(ciphertext), evidence };
+    send(stream, &reply).await?;
+    send_tail(stream, &tail).await?;
+    // The successor confirms once it has taken the tail and sealed the keys.
+    let confirm: Confirm = timeout(REPLY_TIMEOUT, receive(stream)).await??;
+    let signature: Signature = confirm.signature.parse()?;
+    let enclave = keys.enclave_key()?;
+    let signer = eip712::recover(&B256::from(confirm_digest(domain, &report_data)), &signature);
+    ensure!(signer == Some(AccountId(enclave.address())), "the confirmation is not the handed-over key's");
+    send(stream, &Reply::Confirmed { signature: enclave.sign_digest(confirmed_digest(domain, &report_data)) }).await
 }

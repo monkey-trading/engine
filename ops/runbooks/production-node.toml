@@ -499,6 +499,11 @@ name = "txryan"
 address = "time.txryan.com:5319"
 public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 
+# No [snapshots]: every start replays the whole log (restart-and-recovery.md has the figures). A cache
+# would bound a start to the commands after it, but a capture holds the sequencer while it encodes the
+# engine, 2.5 s on the launch book in scripts/dev-recovery-scale.sh, over the 500 ms one command may
+# hold it, at every checkpoint; rotation-set members leave [snapshots] unset.
+
 [history]
 dir = "/data/history"
 retention = "365d"

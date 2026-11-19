@@ -83,7 +83,9 @@ impl PrefixRing {
     /// seed the sequencer's tip ring and the log-head poster alike (2,048 in tests, so a test can
     /// lag past it). A head at a seq the ring no longer holds carries no evidence: the log-head
     /// poster does not adopt it, and a restart checks whatever the chain holds against the whole log.
-    pub(crate) const CAPACITY: usize = if cfg!(test) { 2_048 } else { 1 << 16 };
+    pub(crate) const CAPACITY: usize = if cfg!(test) { 2_048 } else { Self::RELEASE_CAPACITY };
+    /// `CAPACITY` in a build that is not a test's.
+    pub(crate) const RELEASE_CAPACITY: usize = 1 << 16;
 
     /// An empty ring retaining `capacity` pairs.
     pub(crate) fn with_capacity(capacity: usize) -> Self {

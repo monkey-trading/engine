@@ -152,6 +152,18 @@ nice ./scripts/dev-load.sh
 
 The script's header lists the variables that size a smaller run.
 
+The recovery test writes a long log of launch flow on the same book through the server's sequencer,
+on a clock that skips ahead to each instruction, then times each way the server comes back on it: a
+full replay, a restart from a cache, a rotation member's replica build, and turn handovers with tails
+of up to about 512 MiB. It prints a full replay of 30 days of launch flow, projected from the replay's
+rate, against 30 minutes, a restart from the cache against 2 minutes, and each handover's switch
+against 1 second. A day of launch flow writes several gigabytes of log, so size the run to the disk you
+have, as the script's header and the `sequencer::recovery_scale` module documentation describe:
+
+```shell
+RECOVERY_LAUNCH_SECS=3600 nice ./scripts/dev-recovery-scale.sh
+```
+
 ## License
 
 Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).

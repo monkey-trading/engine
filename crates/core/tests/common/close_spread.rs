@@ -82,10 +82,21 @@ pub fn evidence(
     account: Option<engine_core::types::AccountId>,
     payer: Option<engine_core::types::AccountId>,
 ) -> AccessEvidence {
+    evidence_at(&h.engine, h.ts, hash, account, payer)
+}
+
+/// `evidence` for a request to `engine`, observed at `observed_at`.
+pub fn evidence_at(
+    engine: &engine_core::Engine,
+    observed_at: engine_core::types::Millis,
+    hash: eip712::B256,
+    account: Option<engine_core::types::AccountId>,
+    payer: Option<engine_core::types::AccountId>,
+) -> AccessEvidence {
     let mut screening = Screening {
         source: source_key(),
         request_hash: hash,
-        observed_at: h.ts,
+        observed_at,
         account,
         payer,
         jurisdiction: Jurisdiction::Allowed,
@@ -94,7 +105,7 @@ pub fn evidence(
         signature: Signature::ZERO,
     };
     screening.signature =
-        eip712::sign(&source(), &eip712::screening_hash(&h.engine.access_domain().unwrap(), &screening));
+        eip712::sign(&source(), &eip712::screening_hash(&engine.access_domain().unwrap(), &screening));
     AccessEvidence::Screened(screening)
 }
 
