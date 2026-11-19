@@ -156,7 +156,7 @@ impl Node {
 
     /// `boot`, activating `version`: tests of listing and quoting paths that predate the rules
     /// `version` adds run under those rules.
-    async fn boot_at(name: &str, genesis: &Genesis, version: ProtocolVersion) -> Self {
+    pub(super) async fn boot_at(name: &str, genesis: &Genesis, version: ProtocolVersion) -> Self {
         Self::boot_with(name, genesis, version, None).await
     }
 

@@ -12,6 +12,7 @@ use engine_core::command::Command;
 use engine_core::event::Event;
 use engine_core::futures::FuturesContract;
 use engine_core::market::MarketSpec;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Millis};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -55,6 +56,9 @@ const PINGING: Timing = Timing {
 const RUN: usize = 200;
 /// Far enough ahead that setup ends well before it, however long setup takes.
 const LATER_MS: Millis = 600_000;
+/// The version before `V82`, which holds a listed market's calendar to a seven-day notice: a test that
+/// shuts a market at once, to stand in for a venue's close mid-stream, runs under it.
+const BEFORE_CALENDAR_NOTICE: ProtocolVersion = ProtocolVersion::V81;
 
 #[tokio::test]
 async fn quotes_stamped_while_a_market_is_closed_are_held_back_without_a_silence_alert() {
@@ -367,7 +371,7 @@ async fn a_connection_that_quoted_and_then_goes_silent_after_the_open_is_replace
     let (_guard, mut alerts) = capture_alerts();
     let open_all = || MarketSpec { schedule: around_the_clock(None), ..listing(AAPL) };
     let closed = |until| MarketSpec { schedule: around_the_clock(Some((now_ms() - 60_000, until))), ..listing(AAPL) };
-    let node = Node::boot("quoted-then-silent", &genesis(vec![open_all()])).await;
+    let node = Node::boot_at("quoted-then-silent", &genesis(vec![open_all()]), BEFORE_CALENDAR_NOTICE).await;
     let applied = node.record();
     let (listener, url) = listen().await;
     start_feed_timed(&node, Venue::Alpaca, &[(AAPL, "AAPL", None)], &url, PINGING);

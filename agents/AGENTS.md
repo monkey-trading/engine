@@ -61,7 +61,9 @@ an index: load only the rule whose hint matches the current action.
   account's balance written once, and from `V80` one `financing_applied` per rollover with a keccak Merkle root
   over each account's charges, the per-position rows the command's derived output, `Engine::take_derived`,
   `tests/financing_aggregate.rs`), trading
-  sessions (from `V21` no quote stamped outside a market's hours prices it), markets priced from
+  sessions (from `V21` no quote stamped outside a market's hours prices it, and from `V82` the operator's calendar change
+  shuts a listed market in no hours within seven days its calendar has it open, unless a vote carries it,
+  `listing_bounds.rs` and `tests/calendar_notice.rs`), markets priced from
   roll-adjusted front futures contracts (`futures.rs`), dated benchmark histories (`benchmark.rs`, with calendar-change regressions in
   `tests/benchmark_retention.rs`), house exposure caps, toxicity scoring (from `V54` a stick in `toxicity/`: markouts from
   the fill's index in units of each market's markout spread, a decayed size-capped score, tiers from 20 decayed fills, and

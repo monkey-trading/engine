@@ -95,6 +95,8 @@ impl Engine {
     ///   USD (`PortfolioGrid::check_listings`); from `V81`, `SetParams` changing the grid outside its launch
     ///   bounds or without a notice (`Engine::check_grid_change`); `RelistMarkets` with any error case of
     ///   `Engine::relist_markets`
+    /// - from `V82`, `UpsertMarket` or `RelistMarkets` whose calendar shuts a listed market within seven
+    ///   days at an instant its calendar in force has it open, outside a vote (`Engine::check_listing_change`)
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in

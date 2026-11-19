@@ -82,9 +82,11 @@ full session earlier than that, so that a rejection can be fixed in time.
 
    **If the calendar does not list a close or an open that you expect, such as a half day or a
    holiday, stop.** The calendar is changed by an `upsert-market` instruction, which is a protocol
-   change for the owner, and a pending action locks the calendar once it is scheduled. While votes
-   govern, only a normal vote changes the calendar, and the change applies seven days after the
-   engine logs it. Until then, schedule an action only at an open that the calendar already lists.
+   change for the owner, and a pending action locks the calendar once it is scheduled. The
+   operator's change may not close the market within seven days at any time the calendar has it
+   open. While votes govern, only a normal vote changes the calendar, and the change applies seven
+   days after the engine logs it. Until then, schedule an action only at an open that the calendar
+   already lists.
 
 3. Convert each local time to milliseconds with the zone's rules. For example, for the close at
    16:00 New York time on Tuesday 3 November 2026:

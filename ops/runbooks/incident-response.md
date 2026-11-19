@@ -277,9 +277,14 @@ reduce-only switch.
 
 The same rules apply to a market's weekend margin, which a notice given with
 `announce-listing --weekend-margin-bps` sets. The production settings give no market a weekend
-margin. For a market that has one, a new listing may not shorten or remove a weekend closure that
-starts within seven days. While such a market holds positions, a new listing also may not add a
-closure, or bring one forward, within seven days.
+margin. A market's calendar has a bound of its own: a new listing of a listed market may not close it
+within seven days at any time its calendar has it open, whatever its weekend margin and whether or not
+it holds positions, and for a market with a weekend margin it also may not shorten or remove a weekend
+closure that starts within seven days. A new listing that only adds hours, or that closes the market
+from seven days on, is not held back by this. Hours once added can be taken back only from seven days
+on, so check such a listing before you send it. An unplanned closure at a venue, an early close
+included, therefore stays off the calendar: the market has no price while its venues stop quoting,
+and making it reduce-only stops new risk.
 
 **Close-outs when a market reopens after a closure are the rule working, not an incident.** Margins
 do not rise ahead of a weekend or holiday closure, and no account is closed out because a market

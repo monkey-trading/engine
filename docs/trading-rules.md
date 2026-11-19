@@ -320,6 +320,9 @@ limits set at launch:
 - each margin stays at or above its launch rate;
 - each volume tier's benefits stay at or below their launch values.
 
+Once a market is listed, the operator can close it, shorten its trading hours or bring a closure
+forward only with seven days' public notice.
+
 When operator rotation is enabled, MONKEY stakers elect the operators, and one of them is drawn each
 day to run the engine. The operator in office then receives a fifth of each staking distribution.
 While rotation is enabled, the settings above can change only through a vote that carries more than

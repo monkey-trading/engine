@@ -167,6 +167,13 @@ processes. The bounds are:
 - A listed market's price rules are loosened only after seven days' notice, and never beyond the
   market's launch rules. Tighter price rules apply at once. Price rules loosened beyond these bounds
   are in scope.
+- A calendar change by the operator cannot close a listed market within seven days at any time its
+  calendar in force has it open, whatever the market's weekend margin and whether or not it holds
+  positions. The bound does not hold back a change that only adds trading hours, or one that closes
+  the market only from seven days after it is logged, though the weekend closure bound below and a
+  pending dividend or split still apply. A market's first listing may name any calendar. A vote's
+  calendar change waits the vote's seven days, and then may close the market at once. A calendar
+  change outside a vote that closes a listed market within seven days is in scope.
 - A market's minimum distance for take profit and stop loss levels moves only after seven days'
   notice, and only between its launch value and twice that value.
 - A dividend or split stays within the corporate bounds in the parameters. Those bounds move only
@@ -189,9 +196,8 @@ processes. The bounds are:
   of day or week. A weekend margin is a higher margin over a market's weekend closures, which are
   closures of at least 40 hours. One can be added to a listed market, or changed, only after seven
   days' notice.
-- For a market with a weekend margin, a calendar change by the operator cannot narrow or remove a
-  weekend closure that starts within seven days. While such a market holds positions, a calendar
-  change by the operator also cannot add a weekend closure, or bring one forward, within seven days.
+- For a market with a weekend margin, a calendar change by the operator also cannot narrow or remove
+  a weekend closure that starts within seven days.
 - A weekend margin applies to new positions and withdrawals from two hours before a weekend closure
   until the market reopens. An account below it when the closure starts is closed out in that market
   at the market's last price. A weekend margin change beyond these bounds, or a position held across
