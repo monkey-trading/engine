@@ -709,9 +709,9 @@ Otherwise the market has no price. No order in it can be executed, including an 
 position, and positions in it that fall below the close-out level wait until the market has a price
 again.
 
-There is one exception. When a market with a weekend margin starts its weekend gap, the close-out
-executes at the market's last mark, which is the last price before the market closed, however old
-that price is.
+There is one exception, for a market with a weekend margin, and the production settings give no
+market one. When such a market starts its weekend gap, the close-out executes at the market's last
+mark, which is the last price before the market closed, however old that price is.
 
 A market priced from two sources has no price when either source fails, or goes quiet for longer
 than `max_age_ms`. That holds for the crypto markets and for the markets that data vendors price.

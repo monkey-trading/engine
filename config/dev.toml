@@ -526,7 +526,8 @@ windows = [
 # the market's weekend gap, any closure of at least 40 hours: from 2 hours
 # before the gap starts until the market reopens, new risk and withdrawals
 # meet it, and when it starts an account below it is closed out at the last
-# price. 7.5% is WTI's launch value (#750).
+# price. 7.5% is research/launch-caps' rate for WTI (#750). Production lists
+# no market with a weekend margin (#913), so this fixture keeps the rule tested.
 [[genesis.markets]]
 id = 32
 symbol = "WTI"

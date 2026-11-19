@@ -276,17 +276,18 @@ reduce-only, and it applies at once. The operator keeps its own level-1 stress f
 reduce-only switch.
 
 The same rules apply to a market's weekend margin, which a notice given with
-`announce-listing --weekend-margin-bps` changes. A new listing of a market may not shorten or remove
-a weekend closure that starts within seven days. While the market holds positions, a new listing may
-not add a closure, or bring one forward, within seven days. An unplanned early close at a venue
-therefore stays off the calendar until the planned close, and the close-out at the weekend gap still
-runs at the last price.
+`announce-listing --weekend-margin-bps` sets. The production settings give no market a weekend
+margin. For a market that has one, a new listing may not shorten or remove a weekend closure that
+starts within seven days. While such a market holds positions, a new listing also may not add a
+closure, or bring one forward, within seven days.
 
-**Close-outs at a weekend gap are the rule working, not an incident.** When a market with a weekend
-margin starts its weekend gap, every account below that margin is closed out in that market, at its
-last price before the close. A burst of close-outs at Friday's close in WTI, Japan 225, silver or US
-Tech 100 is therefore expected. So are withdrawals refused over the weekend for accounts holding
-those markets, which must keep the weekend margin until the market reopens.
+**Close-outs when a market reopens after a closure are the rule working, not an incident.** Margins
+do not rise ahead of a weekend or holiday closure, and no account is closed out because a market
+closes. A market can reopen at a different price, which takes some accounts below their close-out
+level. Those accounts are closed out on the first prices after the reopening, and the house bears
+any loss beyond their balances. A burst of close-outs when a market reopens after a weekend is
+therefore expected. It is most likely in WTI, silver, Japan 225 and US Tech 100, whose weekend moves
+are the largest against their margin.
 
 ### The host misbehaves
 

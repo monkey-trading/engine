@@ -557,8 +557,10 @@ an index: load only the rule whose hint matches the current action.
   with FX and index first bands confirmed by the owner on 2026-11-18), from `V40` each market's
   close-spread ceiling (#147's calibrated values, recomputed for `V52`'s floor and `V54`'s score
   tiers), from `V54` the toxicity score's tiers and each market's markout floor, its year's
-  markout spread (#699), from `V59` the volume tier table (#614, D1), from `V60` the weekend margins of
-  WTI, Japan 225, silver and US Tech 100 (#750), from `V62` level 2's house loss threshold of zero
+  markout spread (#699), from `V59` the volume tier table (#614, D1), no weekend margin on any market
+  (margins are constant, the owner's decision of 2026-11-19 on #913, so the house carries gap risk; `V60`'s
+  rule stays, which `dev.toml`'s WTI fixture and the launch book's `WEEKEND_MARGINS` exercise), from `V62`
+  level 2's house loss threshold of zero
   (`dev.toml` and `anvil.toml` carry a labelled $1M fixture), from `V64` its volume tiers' margin
   floors (#614, D5), from `V66` their resting-order limits and request rates (#614, D11 and D1; `dev.toml` and
   `anvil.toml` name none, so a log started from them keeps resuming, and fresh dev nodes keep the parameters' cap
@@ -983,8 +985,8 @@ Run from the repo root:
   worker copy:
   `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`; the builder's own
   test: `cargo test -p engine-core --test launch_book`
-- Mass-event latency (#907: the weekend gap's start, a crash, a stress level change, a split and a dividend, the MONKEY
-  period close and the staking epoch close, an activation and V74's re-key, each on a launch-scale book of its own; an
+- Mass-event latency (#907: the weekend gap's start at `WEEKEND_MARGINS`, a crash, a stress level change, a split and
+  a dividend, the MONKEY period close and the staking epoch close, an activation and V74's re-key, each on a launch-scale book of its own; an
   activation and the first price after a relisting are only reported against #904's 500 ms bar,
   and every case over it prints `OVER`): `cargo test -p engine-core --test
   mass_events_benchmark --locked -- --ignored --nocapture --test-threads=1 mass_` (`MASS_ACCOUNTS` and `MASS_ORDERS`

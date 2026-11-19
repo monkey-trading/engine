@@ -36,7 +36,9 @@ mod proof_burst;
 mod rollover_root;
 
 use crate::clock::test_clock::TestClock;
-use crate::common::launch_book::{Book, Mix, NamedCounts, Weak, WeakKind, benchmark_batch, build, price_command};
+use crate::common::launch_book::{
+    Book, Mix, NamedCounts, WEEKEND_MARGINS, Weak, WeakKind, benchmark_batch, build, price_command,
+};
 use crate::common::{BTC, f};
 use crate::log::Manifest;
 use crate::sequencer::wait_bench::{StampClock, report};
@@ -88,11 +90,11 @@ pub(super) struct Outcome {
     pub(super) emitted: Vec<Event>,
 }
 
-/// The start of WTI's weekend gap, with a fifth of its holders below their weekend margin.
+/// The start of WTI's weekend gap, with a fifth of its holders below their weekend margin, at `WEEKEND_MARGINS`.
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_weekend_gap_start() {
-    let mut book = book(WTI, WeakKind::BelowWeekendMargin);
+    let mut book = book(WTI, WeakKind::BelowWeekendMargin, &WEEKEND_MARGINS);
     let stream = stream_market(&mut book);
     let gap = book.h.engine.markets()[&WTI].weekend_window().expect("WTI has a weekend gap");
     roll_to(&mut book, gap.close);
@@ -112,7 +114,7 @@ fn mass_weekend_gap_start() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_crash() {
-    let mut book = book(BTC, WeakKind::FallsBelowAt(f(CRASH_MID)));
+    let mut book = book(BTC, WeakKind::FallsBelowAt(f(CRASH_MID)), &[]);
     let stream = stream_market(&mut book);
     book.h.advance(70_000);
     let others: Vec<MarketId> = book.h.engine.markets().keys().copied().filter(|id| *id != BTC).collect();
@@ -143,9 +145,13 @@ fn mass_proof_burst() {
     proof_burst::run();
 }
 
-/// The launch book with `SHARE` per cent of `market`'s holders set as `kind` says.
-fn book(market: MarketId, kind: WeakKind) -> Book {
-    let mix = Mix { weak: Some(Weak { market, share: SHARE, kind }), ..Mix::proposal(accounts()) };
+/// The launch book with `SHARE` per cent of `market`'s holders set as `kind` says, and `weekend_margins`.
+fn book(market: MarketId, kind: WeakKind, weekend_margins: &[(MarketId, i64)]) -> Book {
+    let mix = Mix {
+        weak: Some(Weak { market, share: SHARE, kind }),
+        weekend_margins: weekend_margins.to_vec(),
+        ..Mix::proposal(accounts())
+    };
     build(&mix, NamedCounts { adders: 1, openers: 0, closeouts: 0 })
 }
 

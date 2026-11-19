@@ -23,7 +23,8 @@ limits it. The study measures two such attacks. At 1% margin on BTC-USD and ETH-
 ahead of a move that the operator leaves unpriced take $12.9M of house loss over the four stress
 hours of 10 October 2025. Pairs held across weekends pay at the market's own leverage on WTI, Japan
 225, silver and US Tech 100. The weekend margins that stop them, 7.5% on WTI, 1.5% on Japan 225 and
-silver, and 1% on US Tech 100, are the launch values.
+silver, and 1% on US Tech 100, are the study's proposal. Launch keeps every market's margin constant
+instead, with no weekend margin, so the house carries the gap risk of these pairs.
 
 Rates are given in basis points, abbreviated to bps. One basis point is one hundredth of one
 percent, so a utilisation level of 8000 bps is 80% of the cap.
@@ -60,7 +61,7 @@ it meets it at both ends. [Method](#method) explains why.
 | `house_total_cap_floor` | $61M |
 | Level 1 `utilisation_bps` | 8000 |
 | Level 2 `utilisation_bps` | 9500 |
-| Weekend margin | 7.5% on WTI, 1.5% on JP225 and XAG-USD, 1% on US100 |
+| Weekend margin | None, where the study proposes 7.5% on WTI, 1.5% on JP225 and XAG-USD, 1% on US100 |
 | House capital at launch | None |
 
 The study's floors are values of the cap calibration's floor grid, which the launch values round to
@@ -353,8 +354,8 @@ A selective attacker holds pairs only across the closures that pay. Across weeke
   paying once each position holds 1% on US Tech 100, 1.5% on Japan 225 and silver, and 7.5% on WTI.
   At 1.5%, silver is about even. At 5%, WTI's weekends still pay 0.2% of a position's notional a
   year. At their own first bands, every other market's weekend pairs already lose
-  (`results/session_gaps.json`, `weekend_breakeven`). These weekend margins are the launch values,
-  and tier 0's limit of 20x already stops the pairs.
+  (`results/session_gaps.json`, `weekend_breakeven`). These weekend margins are the study's
+  proposal, and tier 0's limit of 20x already stops the pairs.
 - **WTI's weekend gaps come from a series that rolls on its own calendar.** The public front-month
   series switches contracts on its own calendar, which the engine's roll-adjusted index does not, so
   a gap in the series may include a change of contract. The largest of WTI's 102 weekend gaps is

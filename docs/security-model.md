@@ -185,15 +185,17 @@ processes. The bounds are:
   dividends still apply to both. A corporate action already pending when these bounds first applied
   to a log keeps the rules it was scheduled under. A corporate action applied outside these bounds
   is in scope.
-- A listed market's weekend margin changes only after seven days' notice. A weekend closure is a
-  market closure of at least 40 hours. For a market with a weekend margin, a calendar change by the
-  operator cannot narrow or remove a weekend closure that starts within seven days. While such a
-  market holds positions, a calendar change by the operator also cannot add a weekend closure, or
-  bring one forward, within seven days.
-- The weekend margin applies to new positions and withdrawals from two hours before a weekend
-  closure until the market reopens. An account below it when the closure starts is closed out in
-  that market at the market's last price. A weekend margin change beyond these bounds, or a position
-  held across a closure below its weekend margin, is in scope.
+- The production settings give no market a weekend margin, so margins do not change with the time
+  of day or week. A weekend margin is a higher margin over a market's weekend closures, which are
+  closures of at least 40 hours. One can be added to a listed market, or changed, only after seven
+  days' notice.
+- For a market with a weekend margin, a calendar change by the operator cannot narrow or remove a
+  weekend closure that starts within seven days. While such a market holds positions, a calendar
+  change by the operator also cannot add a weekend closure, or bring one forward, within seven days.
+- A weekend margin applies to new positions and withdrawals from two hours before a weekend closure
+  until the market reopens. An account below it when the closure starts is closed out in that market
+  at the market's last price. A weekend margin change beyond these bounds, or a position held across
+  a closure below its weekend margin, is in scope.
 - The house loss is the house's net asset value less the net capital moved into it. Once the house
   has lost money to its clients over the trailing day, every market rises to the stress level that
   the house loss trigger sets. The stress levels keep that trigger at its launch level or above,
@@ -205,6 +207,18 @@ Known limits:
 - The house loss trigger caps how fast the house loses, not what a fast client takes from the
   house's income. [The loss-rate trigger study](../research/loss-rate-trigger/README.md) gives the
   bound and the kinds of trading it leaves open.
+- Margins stay the same across a market's closures, and no market carries a weekend margin. The
+  house therefore bears any loss beyond an account's equity when a market reopens at a different
+  price. The exposure caps bound the house's net position in each market, but not that loss.
+- A pair of opposite positions in two accounts leaves the house's net position unchanged, so no cap
+  limits it. Across a reopening, one account keeps its gain while the house bears the other's loss
+  beyond its equity. Held across every weekend, such pairs lose money on average at volume tier 0's
+  limit of 20 times leverage on every market, and at tier 1's limit of 50 times they pay only on WTI.
+- At a market's own leverage, from volume tier 2, pairs held across every weekend pay on average on
+  WTI, Japan 225, silver and US Tech 100, and the take grows with the margin posted, as
+  [the launch-caps study](../research/launch-caps/README.md#paired-positions-across-session-gaps)
+  measures for each market. A single gap wider than a position's margin and spreads pays a pair at
+  any tier.
 - A host that delays or drops a market's quotes lowers that market's markout spread, the unit of the
   toxicity score, which inflates every account's score in the market. The markout floor that each
   listing names bounds this, and the floor cannot change once the market is listed. Each launch

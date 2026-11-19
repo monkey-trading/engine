@@ -96,6 +96,10 @@ The close-out level is half of the margin requirement. If your equity falls belo
 level, the engine closes your largest losing position that can be traded, and then the next, until
 your equity recovers. Any loss beyond your balance is borne by the house, not by you.
 
+Margins do not change with the time of day or week. They do not rise before a weekend or holiday
+closure, and no position is closed out because its market is about to close. When a market reopens
+at a different price, the same close-out rule applies at the new price.
+
 ### Funds and MONKEY
 
 Deposits and withdrawals are made in USDC through the vault. Before an account's first deposit is

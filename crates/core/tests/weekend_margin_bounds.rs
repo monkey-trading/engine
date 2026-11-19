@@ -255,7 +255,7 @@ fn withdrawal_refused(events: &[Event]) -> bool {
     matches!(events.last(), Some(Event::WithdrawalRejected { .. }))
 }
 
-/// `genesis_v60` with oil at its launch weekend margin and a funded client, so the operator signs.
+/// `genesis_v60` with oil at `OIL_WEEKEND_BPS` and a funded client, so the operator signs.
 fn funded_genesis() -> Harness {
     let mut h = genesis_v60(globex(vec![]), OIL_WEEKEND_BPS, 0);
     client(&mut h, 1, "10000");

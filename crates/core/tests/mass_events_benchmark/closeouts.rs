@@ -8,7 +8,7 @@ use engine_core::types::MarketId;
 
 use crate::common::BTC;
 use crate::common::f;
-use crate::common::launch_book::{Mix, NamedCounts, Weak, WeakKind, build, price_command};
+use crate::common::launch_book::{Mix, NamedCounts, WEEKEND_MARGINS, Weak, WeakKind, build, price_command};
 use crate::report::timed;
 use crate::support::{accounts, assert_financed, count, finish, positions_held, report, roll_to};
 
@@ -21,12 +21,14 @@ fn close_outs(events: &[Event]) -> usize {
     count(events, |e| matches!(e, Event::CloseOut { .. }))
 }
 
-/// The start of WTI's weekend gap, when every account holding WTI whose equity is below its margin
-/// requirement with the weekend margin is closed out on it, with `share` per cent of its holders below it.
+/// The start of WTI's weekend gap, at `WEEKEND_MARGINS`, when every account holding WTI whose equity is below
+/// its margin requirement with the weekend margin is closed out on it, with `share` per cent of its holders
+/// below it.
 /// The Friday rollover falls at the same instant, so the case with none below it is the baseline.
 fn weekend(share: u64) {
     let mix = Mix {
         weak: Some(Weak { market: WTI, share, kind: WeakKind::BelowWeekendMargin }),
+        weekend_margins: WEEKEND_MARGINS.to_vec(),
         ..Mix::proposal(accounts())
     };
     let mut book = build(&mix, NAMED);

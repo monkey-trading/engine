@@ -58,6 +58,8 @@ pub struct Mix {
     pub at: Millis,
     /// Every market trades around the clock, so a node priced at any hour prices them all.
     pub always_open: bool,
+    /// Markets listed with a weekend margin, which the production genesis gives none (`WEEKEND_MARGINS`).
+    pub weekend_margins: Vec<(MarketId, i64)>,
 }
 
 /// The time origin and epoch length a case that closes a period or an epoch sets: the deployment's
@@ -82,7 +84,8 @@ pub enum WeakKind {
     /// Long in the market, with cash that leaves its equity a dollar under the close-out level once the
     /// market's price is `price`, and above it at the book's mark.
     FallsBelowAt(Fixed),
-    /// Cash equal to the margin requirement, which the weekend margin of the market lifts above it.
+    /// Cash equal to the margin requirement, which the weekend margin the market is listed with
+    /// (`Mix::weekend_margins`) lifts above it.
     BelowWeekendMargin,
 }
 
@@ -109,6 +112,7 @@ impl Mix {
             near_level: 0,
             at: BOOK_TIME,
             always_open: false,
+            weekend_margins: Vec::new(),
         }
     }
 }
