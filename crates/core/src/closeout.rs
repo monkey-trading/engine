@@ -102,6 +102,7 @@ impl Engine {
                 reduce_only: true,
                 guard: PriceGuard::None,
                 liquidation: true,
+                close_checked: false,
             };
             match self.execute(exec, events) {
                 Ok(fill) => self.after_fill(fill, FillCause::CloseOut, events),

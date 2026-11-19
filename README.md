@@ -95,7 +95,11 @@ margin on the first $2 million is 1%, which allows leverage of up to 100 times f
 Markets that move together, such as the US index futures, form offset groups. Positions that offset
 each other within a group lower the margin a close-out reads: the part of a group's positions that
 offsets the other side takes a credit, never more than a set share of its margin, and the rest keeps
-its full margin. Opening a position still needs each market's own margin. The close-out level is half
+its full margin. Opening or adding to a position, and withdrawing, need this portfolio requirement too,
+with each band at least its volume tier's margin floor; closing one leg of a hedge by an order is
+refused if it would raise the requirement past your equity, judged with the hedge's credit kept even
+while another leg's market cannot be traded, while a close-all, a stop or limit order
+that triggers and a take profit or stop loss always close it. The close-out level is half
 of this portfolio requirement. If your equity falls below it, the engine closes, one step at a time,
 the position or group whose closing restores your equity with the least value closed, or else the one
 that improves your standing most for each dollar closed, keeping a group's positions together while

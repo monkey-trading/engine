@@ -164,12 +164,6 @@ impl Engine {
             .sum()
     }
 
-    /// What weekend margins add to `acct`'s requirement now, at its marks, with each margin band
-    /// charging at least `floor_bps`.
-    pub(crate) fn weekend_margin_extra_now(&self, acct: &Account, floor_bps: i64) -> Fixed {
-        self.weekend_margin_extra(acct, self.now, floor_bps, at_mark)
-    }
-
     /// The next weekend boundary of any market, from `V60`: a gap's start, until its close-out runs,
     /// then its reopening. The corporate timeline walks to it, though its catch-up bound does not
     /// count it.
@@ -249,6 +243,7 @@ impl Engine {
                 reduce_only: true,
                 guard: PriceGuard::None,
                 liquidation: true,
+                close_checked: false,
             };
             match self.execute_at(exec, mark, fx_mark) {
                 Ok(fill) => self.after_fill(fill, FillCause::WeekendCloseOut, events),

@@ -1,4 +1,5 @@
-//! An account's equity, margin requirement and, from `V64`, initial requirement at marks.
+//! An account's equity, margin requirement and, from `V64`, initial requirement at marks; from `V84`,
+//! while a grid applies, the initial requirement is the portfolio requirement at initial bands.
 
 use std::collections::BTreeMap;
 
@@ -8,6 +9,7 @@ use crate::Fixed;
 use crate::account::{Account, Position};
 use crate::engine::{Engine, MarketState};
 use crate::fixed::Rounding;
+use crate::portfolio::{Basis, at_mark};
 use crate::types::{AccountId, MarketId};
 
 /// An account's initial and maintenance requirements, withdrawable cash and maximum leverage in each
@@ -16,7 +18,9 @@ use crate::types::{AccountId, MarketId};
 pub struct MarginStanding {
     /// What a fill that adds risk, and a withdrawal, must leave equity at or above, at marks now:
     /// from `V64` each margin band charged at least the account's tier's floor, and from `V60` each
-    /// position in a market whose weekend margin applies now at least that, band by band.
+    /// position in a market whose weekend margin applies now at least that, band by band; from `V84`,
+    /// while a grid applies, the portfolio requirement on those bands, with no credit for a group while
+    /// a member the account holds cannot trade.
     pub initial_margin: Fixed,
     /// The equity below which a price move closes the account out, at marks now: the requirement at
     /// the market's bands, from `V81` the portfolio requirement while a grid applies, at the close-out
@@ -67,7 +71,7 @@ impl Engine {
     }
 
     /// `equity_and_margin_at` with each margin band charging at least `floor_bps`.
-    fn equity_and_requirement_at(
+    pub(crate) fn equity_and_requirement_at(
         &self,
         acct: &Account,
         floor_bps: i64,
@@ -86,13 +90,28 @@ impl Engine {
             })
     }
 
-    /// (equity, initial requirement) of `acct`, `account`'s, at marks now: each margin band charged at
-    /// least its tier's floor, and from `V60` each position in a market whose weekend margin applies
-    /// now at least that too.
+    /// (equity, initial requirement) of `acct`, `account`'s, at marks now
+    /// (`Engine::equity_and_initial_requirement_at`).
     pub(crate) fn equity_and_initial_margin_now(&self, account: AccountId, acct: &Account) -> (Fixed, Fixed) {
-        let floor_bps = self.margin_floor_bps(account);
-        let (equity, initial) = self.equity_and_initial_margin(acct, floor_bps, None);
-        (equity, initial + self.weekend_margin_extra_now(acct, floor_bps))
+        self.equity_and_initial_requirement_at(acct, self.margin_floor_bps(account), at_mark)
+    }
+
+    /// (equity, initial requirement) of `acct` with each position valued at the price and FX index
+    /// `price_of` gives: each margin band charged at least `floor_bps`, its tier's floor, and from `V60`
+    /// each position in a market whose weekend margin applies now at least that too; from `V84`, while a
+    /// grid applies, the portfolio requirement on those bands (`Basis::Initial`).
+    pub(crate) fn equity_and_initial_requirement_at(
+        &self,
+        acct: &Account,
+        floor_bps: i64,
+        price_of: impl Fn(MarketId, &MarketState, &Position) -> (Fixed, Option<Fixed>) + Copy,
+    ) -> (Fixed, Fixed) {
+        if let Some(grid) = self.initial_portfolio_rules() {
+            let basis = Basis::Initial { floor_bps, weekend: true, shut_credited: false };
+            return self.equity_and_portfolio_requirement(acct, grid, basis, &[], price_of);
+        }
+        let (equity, initial) = self.equity_and_requirement_at(acct, floor_bps, price_of);
+        (equity, initial + self.weekend_margin_extra(acct, self.now, floor_bps, price_of))
     }
 
     /// `account`'s initial and maintenance requirements, the cash it may withdraw, and the most

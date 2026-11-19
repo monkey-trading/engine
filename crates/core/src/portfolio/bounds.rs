@@ -88,6 +88,12 @@ impl Engine {
         (!params.portfolio_grid.is_empty()).then_some(&params.portfolio_grid)
     }
 
+    /// The grid new risk and withdrawals read: from `V84`, the one close-outs read (#913, D4). With none, the
+    /// initial requirement is the one before `V84`.
+    pub(crate) fn initial_portfolio_rules(&self) -> Option<&PortfolioGrid> {
+        self.portfolio_rules().filter(|_| self.protocol_version >= ProtocolVersion::V84)
+    }
+
     /// Checks `grid` fits the markets listed now (`PortfolioGrid::check_listings`).
     /// Error cases:
     /// - as `PortfolioGrid::check_listings`

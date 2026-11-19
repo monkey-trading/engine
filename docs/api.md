@@ -141,6 +141,7 @@ maximum `limit`.
 | GET | `/v1/accounts/{address}/history` | An account's events, newest first |
 | GET | `/v1/accounts/{address}/financing/{seq}` | An account's financing charges at the rollovers of one command, with their proof |
 | GET | `/v1/accounts/{address}/proof` | A proof of an account's balance and positions |
+| GET | `/v1/accounts/{address}/preview` | What a market order of an exact size would do now |
 | POST | `/v1/orders` | Places an order |
 | POST | `/v1/orders/cancel` | Cancels one working order |
 | POST | `/v1/orders/cancel-all` | Cancels every working order of an account |
@@ -712,6 +713,7 @@ use.
 | GET | `/v1/accounts/{address}/history` | An account's events, newest first |
 | GET | `/v1/accounts/{address}/financing/{seq}` | An account's financing charges at the rollovers of one command, with their proof |
 | GET | `/v1/accounts/{address}/proof` | A proof of an account's balance and positions |
+| GET | `/v1/accounts/{address}/preview` | What a market order of an exact size would do now |
 
 Account data is public, as the log it comes from is public. None of these routes needs a signature.
 
@@ -727,7 +729,7 @@ prices.
 | `unfinalised_deposits` | Deposits credited before the chain has finalised them, which count as margin but cannot be withdrawn yet. Absent when zero. |
 | `equity` | The balance plus the unrealised profit and loss of every position. |
 | `margin` | The margin requirement at each market's own bands. |
-| `initial_margin` | The equity that a trade adding risk, or a withdrawal, must leave. It charges each band at least the account's volume tier's margin floor, and applies weekend margins from two hours before a market's weekend gap. |
+| `initial_margin` | The equity that a trade adding risk, or a withdrawal, must leave. It charges each band at least the account's volume tier's margin floor, and applies weekend margins from two hours before a market's weekend gap. While the protocol parameters name offset groups, it is `portfolio_margin.initial_margin`. |
 | `maintenance_margin` | The equity below which the account is closed out, which is `margin` at the close-out level, or, while the protocol parameters name offset groups, `portfolio_margin.maintenance_margin`. |
 | `withdrawable` | The cash a withdrawal may take now. |
 | `max_leverage` | For every listed market, the most leverage a position opened now could reach. |
@@ -774,8 +776,40 @@ its margin, so a position alone keeps its own requirement. `portfolio_margin` ho
 `initial_margin` and `maintenance_margin` on the same bases as the fields above, and `groups`, which
 gives for each offset group the account holds a member of: its `members`, the loading-weighted
 `net_notional` and `matched_notional`, the matched exposure's `worst_loss`, the `binding_direction`
-in which a move hurts the unmatched exposure, and the credit `offset`. New risk and withdrawals still
-meet `initial_margin`.
+in which a move hurts the unmatched exposure, and the credit `offset`. New risk and withdrawals meet
+its `initial_margin`, which charges each band at least the account's volume tier's margin floor, so a
+position alone keeps its tier's leverage while a hedged book can pass it. A group takes no credit there
+while a member the account holds cannot trade, its market shut or without a price.
+
+### Previewing an order
+
+`GET /v1/accounts/{address}/preview?market={id}&side={buy|sell}&qty={qty}&reduce_only={bool}` answers
+what a market order of exactly that size would do now, were it processed next with nothing moved, from
+the same pricing and checks an order runs. `reduce_only` is optional and false by default. Screening and
+an order's take profit and stop loss are not part of it. The answer is read off the server's copy of the
+account, like the account read, and is limited by the client's request rate like every read. It answers
+404 for an account that has never been credited, and 400 for a malformed address or parameter.
+
+```json
+{"seq": 4211, "account": "0x…", "market": 1, "side": "sell", "qty": "10", "reduce_only": true,
+ "fill": {"qty": "10", "price": "99990.2", "mid": "100000", "spread_bps": 0, "increases": false},
+ "equity": "60212.1", "initial_margin": "100000", "maintenance_margin": "50000",
+ "refused": {"kind": "insufficient_margin", "equity": "60212.1", "required": "100000"}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `seq` | The last command processed in the state the answer read. |
+| `account`, `market`, `side`, `qty`, `reduce_only` | The order previewed. |
+| `fill` | The fill: its quantity `qty`, which for a reduce-only order is at most the position; its average price `price`, spread included; the reference price `mid`; the spread `spread_bps`; and `increases`, whether it grows the position. `null` when the order cannot be priced, and `refused` says why. |
+| `equity`, `initial_margin`, `maintenance_margin` | The account's equity, initial margin and maintenance margin after the fill, the order's market valued at `mid` and every other at its current price. When `fill` is `null`, the account as it is now. |
+| `refused` | Why the order would be rejected, as a rejection reason, or `null` when it would be executed. |
+
+While the protocol parameters name offset groups, whether an order is admitted can depend on its size
+either way. An account below its initial margin may be refused a small order that hedges part of a
+position and admitted a larger one that hedges more, and a hedge that grows past the position it offsets
+adds risk of its own. Closing one leg of a hedge can be refused, as described under closing positions.
+The preview answers for one size; the executable quotes answer only for the sizes of their steps.
 
 ### Eligibility
 
@@ -919,7 +953,7 @@ The most common rejection reasons are these:
 | `market_closed` | The market's exchange is closed. |
 | `no_price`, `no_fx_price` | The market, or the currency market it converts through, has no price. |
 | `slippage` | The execution price was worse than `quoted` by more than the slippage limit. |
-| `insufficient_margin` | The trade would leave equity below the initial margin. |
+| `insufficient_margin` | The trade would leave equity below the initial margin, which a trade that only reduces a position meets only when it raises that margin, as described under closing positions. |
 | `weekend_margin` | The trade would leave equity below the weekend margin that applies now. |
 | `reduce_only` | The market or the order allows only trades that reduce a position. |
 | `house_capacity` | The trade would take the house's exposure past its cap. |
@@ -955,6 +989,19 @@ A request that names a market twice, or names none, is rejected as a whole. The 
 single `order_rejected` with `client_id` 0 and the reason `invalid_order`, and no entry runs. A
 request that names more markets than are listed is refused with 400
 `more closes than listed markets` before its signature is checked.
+
+While the protocol parameters name offset groups, closing one leg of a hedge gives up the group's
+credit and can raise the account's initial margin. An ordinary order whose trade only reduces a
+position is then checked as a trade adding risk is, and rejected with `insufficient_margin` when it
+would leave equity below the margin it raised. Whether a trade raises the margin is judged with every
+group's credit kept, so while a member of a group cannot trade, an order closing another member is
+checked although `initial_margin`, which credits no such group, falls. A trade that leaves the margin
+lower on that basis is never checked.
+A close-all entry, a triggered stop or limit order whose trade only reduces a position, including one
+triggered as it is placed, a take profit or stop loss, and a close-out are never rejected for that
+margin, so a close-all of one market closes a leg that an order could not. A triggered order that turns
+a position around is checked on the risk it adds, as any order is. After any trade, an account left below its close-out level is
+closed out in the same command.
 
 ### Take profit and stop loss
 
@@ -1522,12 +1569,17 @@ The server reads quotes only after the log has moved, and at most once every `ap
 takes the price of the first step whose `qty` is at least its own, and that price is the average
 price for an order of the step's whole size. There is a step at the top of each spread band the
 account would reach, and a last step at the largest order the account can open. A step that the
-account cannot open carries `declined`, with the reason `insufficient_margin` or `house_capacity`.
+account cannot open carries `declined`, with the reason `insufficient_margin`, `weekend_margin` or
+`house_capacity`. A step's `declined` is the answer for an order of exactly the step's size. While the
+protocol parameters name offset groups, an order between two steps can be declined when both steps
+are admitted, or admitted when both are declined, and the order's own preview, described under the
+account routes, gives its answer.
 An order sent with a step's price as `quoted` and a slippage limit is executed if nothing has moved,
 and is rejected with `slippage` if the price has moved by more than the limit. `toxicity_bps` is the
 spread that the account's toxicity adds to every price in the message. `close` is the side, quantity
 and price of closing the account's whole position, or of 1,000,000,000 units of a larger one, and
-`null` when the account holds no position. When the market has no price, `unavailable` gives the
+`null` when the account holds no position. It carries `declined` when an order making that close
+would be rejected, which a close-all of the market would not be. When the market has no price, `unavailable` gives the
 reason as a rejection reason, and `ask` and `bid` are empty.
 
 A quote does not include screening, so an order can still be refused by screening at its quoted

@@ -20,6 +20,7 @@ impl Engine {
             reduce_only: true,
             guard: PriceGuard::None,
             liquidation: false,
+            close_checked: false,
         }
     }
 

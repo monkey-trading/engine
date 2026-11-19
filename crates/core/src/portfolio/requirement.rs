@@ -72,9 +72,11 @@ pub(crate) enum Basis {
     /// The market's bands: the close-out level's share of this is what close-outs read from `V81`, a
     /// member that cannot trade valued at its last mark and credited.
     Market,
-    /// Each band at least `floor_bps`, the account's tier floor, and over its market's weekend window
-    /// its weekend margin; and no credit while a member the account holds cannot trade.
-    Initial { floor_bps: i64 },
+    /// Each band at least `floor_bps`, the account's tier floor, and with `weekend` over its market's
+    /// weekend window its weekend margin; and no credit while a member the account holds cannot trade,
+    /// unless `shut_credited`, when such a group keeps its credit, its member valued as given, as at the
+    /// market's bands.
+    Initial { floor_bps: i64, weekend: bool, shut_credited: bool },
     /// A weekend gap's start at `at`: each band at least its market's weekend margin while that applies
     /// at `at`, as `V60` charges it.
     Weekend { at: Millis },
@@ -123,7 +125,7 @@ impl Engine {
         let Some(acct) = self.accounts.get(&account) else { return Ok(None) };
         let margin = self.portfolio_margin(acct, grid);
         let floor_bps = self.margin_floor_bps(account);
-        let initial = Basis::Initial { floor_bps };
+        let initial = Basis::Initial { floor_bps, weekend: true, shut_credited: false };
         let (_, initial_margin) = self.equity_and_portfolio_requirement(acct, grid, initial, &[], at_mark);
         let maintenance_margin = match &self.params {
             Some(params) => margin.mul_bps_rounded(params.closeout_level_bps, self.charge_rounding()),
@@ -264,7 +266,7 @@ impl Engine {
                 grouped.iter().find(|valued| valued.market == member.market).map(|valued| (member, valued))
             })
         };
-        let initial = matches!(basis, Basis::Initial { .. });
+        let initial = matches!(basis, Basis::Initial { shut_credited: false, .. });
         if held().next().is_none() || initial && held().any(|(member, _)| self.tradeable_index(member.market).is_none())
         {
             return None;
@@ -351,10 +353,10 @@ impl Engine {
     pub(crate) fn band_charge(&self, market: &MarketState, notional: Fixed, basis: Basis) -> Fixed {
         let floor_bps = match basis {
             Basis::Market => 0,
-            Basis::Initial { floor_bps } if market.weekend_margin_applies(self.now) => {
+            Basis::Initial { floor_bps, weekend: true, .. } if market.weekend_margin_applies(self.now) => {
                 floor_bps.max(market.spec.weekend_margin_bps)
             }
-            Basis::Initial { floor_bps } => floor_bps,
+            Basis::Initial { floor_bps, .. } => floor_bps,
             Basis::Weekend { at } if market.weekend_margin_applies(at) => market.spec.weekend_margin_bps.max(0),
             Basis::Weekend { .. } => 0,
         };

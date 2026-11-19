@@ -107,7 +107,7 @@ pub mod engine;
 pub use engine::{Engine, SequenceError};
 pub mod event;
 mod execution;
-pub use execution::{Quote, Quoter};
+pub use execution::{OrderPreview, PreviewFill, Quote, Quoter};
 pub mod financing;
 pub mod fixed;
 pub use fixed::Fixed;

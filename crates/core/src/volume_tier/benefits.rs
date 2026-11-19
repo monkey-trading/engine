@@ -93,6 +93,14 @@ impl Engine {
         self.benefit_tier_at(account, self.hold_clock_time()).map_or(0, |tier| tier.fee_discount_bps)
     }
 
+    /// The share of the base profit fee `tier` takes off, in bps: from `V68` its own, and zero before it.
+    pub(crate) fn fee_discount_of(&self, tier: Option<&VolumeTier>) -> i64 {
+        match tier {
+            Some(tier) if self.protocol_version >= ProtocolVersion::V68 => tier.fee_discount_bps,
+            _ => 0,
+        }
+    }
+
     /// The share of a position's markup `account`'s tier takes off at the rollover at `at`, in bps: from
     /// `V68` its tier's then, however late a command catches the rollover up, and zero before it.
     pub(crate) fn financing_discount_bps(&self, account: AccountId, at: Millis) -> i64 {

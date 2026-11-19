@@ -39,6 +39,7 @@ use crate::operator_bounds::ParamsNotice;
 use crate::params::MAX_RATE_BPS;
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, Millis};
+use crate::volume_tier::VolumeTier;
 
 /// The most points a curve may hold, which bounds the work a close's fee takes.
 pub const MAX_CURVE_POINTS: usize = 32;
@@ -90,8 +91,29 @@ impl Engine {
         (hold, fee_bps)
     }
 
+    /// `close_fee_terms` at `tier`'s fee discount in place of that of the tier `account` trades at now.
+    pub(crate) fn close_fee_terms_at(
+        &self,
+        account: AccountId,
+        market: MarketId,
+        tier: Option<&VolumeTier>,
+    ) -> (Option<Millis>, i64) {
+        let (hold, fee_bps, _) = self.close_fee_parts_with(account, market, || self.fee_discount_of(tier));
+        (hold, fee_bps)
+    }
+
     /// `close_fee_terms` with the discounted base it compared the curve with, read once.
     fn close_fee_parts(&self, account: AccountId, market: MarketId) -> (Option<Millis>, i64, i64) {
+        self.close_fee_parts_with(account, market, || self.fee_discount_bps(account))
+    }
+
+    /// `close_fee_parts` at the fee discount `discount_bps` gives, read only from `V55`.
+    fn close_fee_parts_with(
+        &self,
+        account: AccountId,
+        market: MarketId,
+        discount_bps: impl FnOnce() -> i64,
+    ) -> (Option<Millis>, i64, i64) {
         let params = self.params.as_ref().expect("callers check params are set");
         let held = self.accounts.get(&account).filter(|acct| !acct.position(market).qty.is_zero());
         let Some(acct) = held.filter(|_| self.protocol_version >= ProtocolVersion::V55) else {
@@ -100,14 +122,9 @@ impl Engine {
         // Activation, opening and every flip set the open time of a position they leave held.
         let opened_at = acct.opened_at.get(&market).expect("from V55 every position holds an open time");
         let hold = self.hold_clock_time() - opened_at;
-        let base = self.discounted_base(account, params.profit_fee_bps);
+        // The base less the tier's fee discount (`discounted_base_bps`), which is none before `V68`.
+        let base = discounted_base_bps(params.profit_fee_bps, discount_bps());
         (Some(hold), fee_at(base, &params.profit_fee_curve, hold), base)
-    }
-
-    /// The base profit fee `account` pays past the curve now: `base` less its tier's fee discount
-    /// (`discounted_base_bps`), which is none before `V68`.
-    fn discounted_base(&self, account: AccountId, base: i64) -> i64 {
-        discounted_base_bps(base, self.fee_discount_bps(account))
     }
 
     /// The time a hold runs to and an open time is set at: the command's own stamp, also while a

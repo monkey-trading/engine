@@ -250,6 +250,17 @@ fn the_largest_size_search_reaches_the_smallest_quantity_from_the_largest_order(
 }
 
 #[test]
+fn the_largest_size_search_finds_a_size_that_fills_where_the_least_size_does_not() {
+    // Under portfolio margin a small hedge can be declined where a larger one fills: here 40 to 350 fill.
+    let window = |qty: Fixed| (qty > Fixed::from_int(39) && qty < Fixed::from_int(350)).then_some(qty);
+    let floor = Fixed::from_int(1);
+    let found = largest(&window, floor, Fixed::ZERO, Fixed::from_int(1_250)).expect("a size fills").qty;
+    assert!(window(found).is_some() && found > Fixed::from_int(349), "{found}");
+    // With nothing that fills, the search finds nothing.
+    assert_eq!(largest(&|_: Fixed| None, floor, Fixed::ZERO, Fixed::from_int(1_250)), None);
+}
+
+#[test]
 fn a_position_past_the_input_bound_is_quoted_to_close_at_the_bound() {
     let mut engine = funded(100_000_000);
     deposit(&mut engine, MARGIN, Fixed::from_int(1_000_000));

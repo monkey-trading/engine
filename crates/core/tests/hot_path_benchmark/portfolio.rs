@@ -19,7 +19,7 @@ use engine_core::event::Event;
 use engine_core::portfolio::PortfolioGrid;
 use engine_core::types::Millis;
 
-const COUNT: usize = 100_000;
+pub(super) const COUNT: usize = 100_000;
 /// Samples of a command that acts once on an engine.
 const EXEC_SAMPLES: usize = 3;
 /// One account in this many is the one a case closes out or stops.
@@ -193,7 +193,7 @@ fn portfolio_stops_latency() {
 
 /// How an account stands against its two levels at the marks, by its index.
 #[derive(Clone, Copy)]
-enum Standing {
+pub(super) enum Standing {
     /// At twice its per-position level.
     Above,
     /// Three quarters of the way from its portfolio level to its per-position one.
@@ -211,7 +211,7 @@ enum Standing {
 
 /// An account's levels at the marks: the close-out level of the portfolio requirement and of the
 /// per-position bands, and the requirement in full over oil's weekend gap, or the bands with none.
-struct Targets {
+pub(super) struct Targets {
     portfolio: Fixed,
     per_position: Fixed,
     weekend: Fixed,
@@ -241,7 +241,7 @@ impl Standing {
 }
 
 /// What every account holds, and the markets and clock the book needs.
-struct Spec {
+pub(super) struct Spec {
     version: ProtocolVersion,
     floor_bps: i64,
     /// Share markets listed as copies of AAPL, in one group.
@@ -251,11 +251,11 @@ struct Spec {
     /// Each fifth account rests a sell stop on BTC-USD at 99,000.
     stop: bool,
     /// Market, side, quantity and price.
-    holdings: Vec<(MarketId, Side, &'static str, &'static str)>,
+    pub(super) holdings: Vec<(MarketId, Side, &'static str, &'static str)>,
 }
 
 /// BTC long and ETH short, $100k each, as one group, and $20k of AAPL.
-fn crypto(version: ProtocolVersion, floor_bps: i64) -> Spec {
+pub(super) fn crypto(version: ProtocolVersion, floor_bps: i64) -> Spec {
     let holdings =
         vec![(BTC, Side::Buy, "1", "100000"), (ETH, Side::Sell, "25", "4000"), (common::AAPL, Side::Buy, "100", "200")];
     Spec { version, floor_bps, shares: 0, weekend: false, stop: false, holdings }
@@ -287,7 +287,7 @@ fn friday_close() -> Millis {
     chicago(2026, 10, 23, 16, 0)
 }
 
-fn address(index: usize) -> String {
+pub(super) fn address(index: usize) -> String {
     let mut bytes = [0xbb; 20];
     bytes[12..].copy_from_slice(&(index as u64 + 1).to_be_bytes());
     serde_json::to_value(AccountId(bytes)).unwrap().as_str().unwrap().to_owned()
@@ -313,7 +313,7 @@ fn list_shares(h: &mut Harness, spec: &Spec) {
 /// `count` accounts, each a copy of one client holding `spec`'s positions with its equity set by
 /// `standing`, and the levels it was set against. Markets' aggregates match, house cash is ample, and
 /// the close-out index is built.
-fn build(spec: &Spec, count: usize, standing: Standing) -> (Engine, Targets) {
+pub(super) fn build(spec: &Spec, count: usize, standing: Standing) -> (Engine, Targets) {
     let oil_weekend_bps = if spec.weekend { OIL_WEEKEND_BPS } else { 0 };
     let mut h = genesis_with_grid(spec.version, pairs(spec.floor_bps), oil_weekend_bps, 0);
     if spec.shares > 0 {

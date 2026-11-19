@@ -1,5 +1,5 @@
 //! Earned leverage, from `V64`: a volume tier's margin floor raises each margin band of the account's
-//! initial requirement to at least the floor (`Engine::equity_and_initial_margin`), so a fresh wallet
+//! initial requirement to at least the floor (`Engine::equity_and_initial_requirement_at`), so a fresh wallet
 //! opens at most 20x and the top tiers reach the market's own bands. The initial requirement admits
 //! fills that add risk and withdrawals; close-outs read the market's bands alone, so a falling tier
 //! closes nothing out. The floors move only with the table (`bounds`), never below launch's.

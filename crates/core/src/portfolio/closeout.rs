@@ -10,21 +10,21 @@
 //!   the marks; positions in the closing markets that the weekend close-out can fill at their marks may
 //!   close.
 //!
-//! Slack is equity less the threshold. A position may close when its market can and its close prices. The
-//! candidates are each ungrouped position that may close, each group whose held members may all close,
-//! whole, and each member that may close of a group with one that may not, alone. A candidate's gain is the
-//! change in slack from closing it at its fill prices: the index or mark, the spread a close-out pays up to
-//! the close-spread ceiling, and the profit fee on a realised gain. Each close is scored at the stress
-//! level its fill would pay: on a price move the one the fill's own stress refresh would set
-//! (`Engine::projected_stress_level`), at a weekend gap's start the one its close-out pays, each at the
-//! house's NAV when it fills: the NAV now for a candidate's first close, and for a group's later members
-//! the NAV its earlier fills leave, up by what the account gives up on each. If any candidate leaves slack
-//! at or above zero, the one closing the least USD notional closes; otherwise the one gaining the most per
-//! dollar closed, compared exactly, even when every gain is negative; ties go to the lowest market id, a
-//! group's lowest member's. A group closes member by member in market order and finishes before the account
-//! is checked again; a fill that fails ends the account's close-out, as before `V81`. Each step closes at
-//! least one whole position, so the close-out ends within the account's position count. The rule is applied
-//! step by step and searches no combination of candidates.
+//! Slack is equity less the threshold. A position may close when its market can and its close prices. The candidates
+//! are each ungrouped position that may close, each group whose held members may all close, whole, and each member that
+//! may close of a group with one that may not, alone. A candidate's gain is the change in slack from closing it at its
+//! fill prices: the index or mark, the spread a close-out pays up to the close-spread ceiling, and the profit fee on a
+//! realised gain. Each close is scored at the stress level its fill would pay: on a price move the one the fill's own
+//! stress refresh would set (`Engine::projected_stress_level`), at a weekend gap's start the one its close-out pays,
+//! each at the house's NAV when it fills: the NAV now for a candidate's first close, and for a group's later members
+//! the NAV its earlier fills leave, up by what the account gives up on each. From `V84` a group's later members are
+//! also scored at the volume tier its earlier fills leave, which count their volume at once: its best-price share and
+//! its fee discount (#1008). If any candidate leaves slack at or above zero, the one closing the least USD notional
+//! closes; otherwise the one gaining the most per dollar closed, compared exactly, even when every gain is negative;
+//! ties go to the lowest market id, a group's lowest member's. A group closes member by member in market order and
+//! finishes before the account is checked again; a fill that fails ends the account's close-out, as before `V81`. Each
+//! step closes at least one whole position, so the close-out ends within the account's position count. The rule is
+//! applied step by step and searches no combination of candidates.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,7 +41,9 @@ use crate::execution::{Exec, PriceGuard, profit_fee};
 use crate::fixed::Rounding;
 use crate::levels::FillCause;
 use crate::portfolio::{Basis, PortfolioGrid, at_mark};
+use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MarketId, Millis, Side};
+use crate::volume_tier::ClosedOut;
 
 /// Where a portfolio close-out runs.
 #[derive(Clone, Copy, Debug)]
@@ -113,6 +115,7 @@ impl Engine {
                     reduce_only: true,
                     guard: PriceGuard::None,
                     liquidation: true,
+                    close_checked: false,
                 };
                 let filled = match ctx {
                     CloseoutContext::Price { .. } => self.execute(exec, events).map(|fill| (fill, FillCause::CloseOut)),
@@ -151,16 +154,18 @@ impl Engine {
             return None;
         }
         let slack = equity - threshold;
-        let share = self.best_price_share(account);
+        // A position's best-price share and profit fee rate at the tier the account trades at now.
+        let terms_now = |id: MarketId| (self.best_price_share(account), self.close_fee_terms(account, id).1);
         // The stress level a fill in a market pays at a house NAV: on a price move the level its own stress
         // refresh sets first, at a weekend gap's start the level a weekend close-out pays.
         let level_at = |id: MarketId, nav: Fixed| match ctx {
             CloseoutContext::Price { .. } => self.projected_stress_level(id, nav),
             CloseoutContext::Weekend { .. } => self.close_out_stress_level_at(id, nav),
         };
-        // A position's change in equity from closing it at its fill price at a stress level, and its
-        // notional; `None` when its close does not price.
-        let close = |id: MarketId, level: usize| {
+        // A position's change in equity from closing it at its fill price at a stress level and at a
+        // best-price share and profit fee rate, its notional and the fill as its volume counts; `None` when
+        // its close does not price.
+        let close = |id: MarketId, level: usize, (share, fee_bps): (Option<i64>, i64)| {
             let (market, pos, (mid, fx)) = (&self.markets[&id], acct.positions[&id], closable[&id]);
             let exec = Exec {
                 account,
@@ -171,37 +176,51 @@ impl Engine {
                 reduce_only: true,
                 guard: PriceGuard::None,
                 liquidation: true,
+                close_checked: false,
             };
             let priced = self.price_with(&exec, pos, mid, fx, level, share, 0).ok()?;
             let usd = |amount, fx, rounding| market.spec.quote_currency.to_usd(amount, fx, rounding);
             let mut closed = pos;
             let realised =
                 usd(closed.apply(priced.delta, priced.price, self.protocol_version), priced.fx, Rounding::Down);
-            let (_, fee_bps) = self.close_fee_terms(account, id);
             let fee = profit_fee(realised, fee_bps, self.protocol_version);
             let (price, valued_fx) = price_of(id, market, &pos);
             let unrealised = usd(pos.unrealised(price, self.protocol_version), valued_fx, Rounding::Down);
             let notional = usd(pos.qty.abs().mul_rounded(price, charge), valued_fx, Rounding::Up);
-            Some((realised - fee - unrealised, notional))
+            let counted = ClosedOut { market: id, qty: priced.qty, price: priced.price, fx: priced.fx };
+            Some((realised - fee - unrealised, notional, counted))
         };
         // Each position that may close, at the level its fill pays at the house's NAV now; one whose close
         // does not price waits, as one whose market cannot trade does.
         let nav = self.house_nav();
-        let closes: BTreeMap<MarketId, (usize, Fixed, Fixed)> = (closable.keys())
+        let closes: BTreeMap<MarketId, (usize, (Fixed, Fixed, ClosedOut))> = (closable.keys())
             .filter_map(|id| {
                 let level = level_at(*id, nav);
-                close(*id, level).map(|(change, notional)| (*id, (level, change, notional)))
+                close(*id, level, terms_now(*id)).map(|closed| (*id, (level, closed)))
             })
             .collect();
+        // From `V84` a group's later members fill at the tier its earlier fills leave (#1008).
+        let tiered = self.protocol_version >= ProtocolVersion::V84;
         // A group's later members fill at the NAV its earlier fills leave, which takes what the account
         // gives up on each; a candidate one of whose closes does not price there is none.
         let scored = candidates(acct, grid, &closes).into_iter().filter_map(|members| {
             let (mut gain, mut notional, mut after_nav) = (Fixed::ZERO, Fixed::ZERO, nav);
+            let mut counted = Vec::new();
             for (index, id) in members.iter().enumerate() {
-                let (level, change, closed) = closes[id];
+                let (level, scored_now) = closes[id];
                 let at = if index == 0 { level } else { level_at(*id, after_nav) };
-                let (change, closed) = if at == level { (change, closed) } else { close(*id, at)? };
+                let terms = match index {
+                    0 => terms_now(*id),
+                    _ if !tiered => terms_now(*id),
+                    _ => {
+                        let tier = self.tier_after_closeouts(account, &counted);
+                        (tier.map(|tier| tier.best_price_share_bps), self.close_fee_terms_at(account, *id, tier).1)
+                    }
+                };
+                let (change, closed, fill) =
+                    if at == level && terms == terms_now(*id) { scored_now } else { close(*id, at, terms)? };
                 (gain, notional, after_nav) = (gain + change, notional + closed, after_nav - change);
+                counted.push(fill);
             }
             let after = self.requirement_without(grid, ctx.basis(), &parts, &members);
             gain += threshold - ctx.threshold(after, charge);

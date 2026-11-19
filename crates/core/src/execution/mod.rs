@@ -56,11 +56,15 @@ pub(crate) struct Exec {
     pub reduce_only: bool,
     pub guard: PriceGuard,
     pub liquidation: bool,
+    /// Whether a fill that only reduces is checked against the initial requirement when it leaves that
+    /// higher, from `V84` while a grid applies (#913, D7): an ordinary order's is; a close-all entry's, a
+    /// triggered order's or level's (D14) and a close-out's never are.
+    pub close_checked: bool,
 }
 
 /// A priced fill that has passed its price guard but is not yet booked.
 pub(crate) struct Priced {
-    qty: Fixed,
+    pub(crate) qty: Fixed,
     pub(crate) delta: Fixed,
     pub(crate) price: Fixed,
     pub(crate) mid: Fixed,
@@ -128,6 +132,7 @@ impl Engine {
                     reduce_only: req.reduce_only,
                     guard: PriceGuard::Quote { quoted, max_bps },
                     liquidation: false,
+                    close_checked: cause != FillCause::CloseAll,
                 };
                 let checked = |engine: &Self, priced: &Priced, share| engine.check_order_levels(req, priced, share);
                 match self.execute_checked(exec, events, checked) {
@@ -177,6 +182,8 @@ impl Engine {
     /// - a live price beyond the slippage bound or the limit
     /// - not enough margin, from `V64` at the account's tier's margin floor, or no house capacity, for
     ///   the risk the fill adds
+    /// - from `V84`, while a grid applies, not enough margin for the requirement a fill that only reduces
+    ///   raises, unless `exec` is one margin never refuses (`Exec::close_checked`)
     pub(crate) fn execute(&mut self, exec: Exec, events: &mut Vec<Event>) -> Result<Fill, Reject> {
         self.execute_checked(exec, events, |_, _, _| Ok(()))
     }
@@ -203,6 +210,8 @@ impl Engine {
         let priced = self.price(&exec, share)?;
         if priced.increases && !exec.liquidation {
             self.check_risk(&exec, &priced, &HouseTotals::of(self), self.margin_floor_of(tier))?;
+        } else if exec.close_checked {
+            self.check_close(&exec, &priced, self.margin_floor_of(tier))?;
         }
         check(self, &priced, share)?;
         Ok(self.book(&exec, priced))
@@ -449,7 +458,7 @@ impl Engine {
 mod batch;
 mod cancel;
 mod quote;
-pub use quote::{Quote, Quoter};
+pub use quote::{OrderPreview, PreviewFill, Quote, Quoter};
 mod risk;
 use risk::HouseTotals;
 mod trigger;

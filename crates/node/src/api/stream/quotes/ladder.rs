@@ -1,5 +1,6 @@
 //! One account's executable quotes in one market, read from the engine with `Engine::quote`: the
-//! same pricing and risk checks a fill uses.
+//! same pricing and risk checks a fill uses. Each step's `declined` is the verdict on an order of exactly
+//! its size; an order of any other size has its own (`GET /v1/accounts/{address}/preview`).
 
 use engine_core::event::Reject;
 use engine_core::fixed::Rounding;
@@ -20,7 +21,10 @@ const DOUBLINGS: usize = 64;
 /// the price of the first step whose `qty` is at least its own. That price is the worst average of
 /// the step's size and the steps before it, which is at least that of any smaller order but for the
 /// rounding of a fill's cost up to a unit (`Engine::quote`), so an order quoted at it fills within
-/// its slippage bound while nothing moves, and one with a `declined` step is declined. A whole
+/// its slippage bound while nothing moves, unless it is declined. A step's `declined` covers an order of
+/// exactly its size, and no other: where the parameters name an offset grid, from `V84`, admission can
+/// depend on size either way, so between two steps a smaller hedging order can be declined where a larger
+/// one fills, or an order fill where both steps are declined, and only an order's own preview says. A whole
 /// position's close is priced exactly by `close`, not by the step at its size.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename = "quote")]
@@ -49,7 +53,8 @@ pub(super) struct MarketQuote {
 pub(super) struct Step {
     pub qty: Fixed,
     pub price: Fixed,
-    /// Why a fill of this size would be declined for margin or house capacity; absent when it fills.
+    /// Why a fill of exactly this size would be declined for margin or house capacity; absent when it
+    /// fills.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declined: Option<Reject>,
 }
@@ -61,6 +66,11 @@ pub(super) struct Close {
     pub side: Side,
     pub qty: Fixed,
     pub price: Fixed,
+    /// Why an order making this close would be declined: from `V84`, where the parameters name an offset
+    /// grid, closing one leg of a hedge can raise the requirement past the equity. A close-all entry is
+    /// never declined for margin. Absent when it fills.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declined: Option<Reject>,
 }
 
 /// `account`'s quotes in `market_id`; `None` for a market the engine does not list.
@@ -120,7 +130,12 @@ pub(super) fn market_quote(
         let side = if held.is_positive() { Side::Sell } else { Side::Buy };
         // A close-all closes at most the input bound of a larger position, so that is what is quoted.
         let qty = held.abs().min(Fixed::MAX_INPUT);
-        quote.close = quoter.quote(account, market_id, side, qty).ok().map(|q| Close { side, qty, price: q.price });
+        quote.close = (quoter.quote(account, market_id, side, qty).ok()).map(|q| Close {
+            side,
+            qty,
+            price: q.price,
+            declined: q.declined,
+        });
     }
     Some(quote)
 }
@@ -150,14 +165,17 @@ struct Held<'a> {
 /// when the smallest the engine admits by size, the position and one unit or the minimum order,
 /// whichever is larger, is admitted; and it ends at the largest size that fills below the first
 /// reversal top of at least the minimum order that the engine refuses, since a later step could cover
-/// sizes it refuses. A side with no step cannot open any size.
+/// sizes it refuses. A side with no step cannot open any size. Every size is quoted on its own, the whole
+/// close included, which from `V84` under an offset grid can be declined: a step's verdict is its own
+/// size's, and where admission does not fall with size the searched step is a size that fills with the
+/// next one tried declined, not a bound on every size that fills.
 fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held: &Held) -> Vec<Step> {
     let quote = |qty: Fixed| quoter.quote(account, market, side, qty).ok();
     let fits = |qty: Fixed| quote(qty).filter(|quote| quote.declined.is_none()).map(|quote| quote.price);
     let same_side = held.qty.is_zero() || held.qty.signum() == side.sign();
     let holding = held.qty.abs();
-    // Closing what the account holds on the other side fills, up to the input bound, past which no
-    // order is placeable.
+    // Closing what the account holds on the other side, up to the input bound, past which no order is
+    // placeable; from `V84` under a grid an order making that close can be declined.
     let closing = holding.min(Fixed::MAX_INPUT);
     // The minimum order notional is the whole order's, so past a position that clears it the smallest
     // reversal is one unit more.
@@ -171,16 +189,19 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     });
     let orders = closes.chain(opens);
     let mut steps: Vec<Step> = Vec::new();
-    // The largest size known to fill: the whole close, or the smallest reversal when it fills, so the
-    // sizes a minimum order above the position refuses lie below every search. And whether the side
-    // has reached a top it cannot fill: one declined, or a reversal of at least the minimum refused.
+    // The largest size known to fill, each by its own quote: the smallest reversal when it fills, else
+    // the whole close when it fills, so the sizes a minimum order above the position refuses lie below
+    // every search. And whether the side has reached a top it cannot fill: one declined, or a reversal of
+    // at least the minimum refused.
     let fills_smallest = reversal.is_some_and(|reversal| reversal.declined.is_none());
     let known = if same_side {
         Fixed::ZERO
     } else if fills_smallest {
         smallest
-    } else {
+    } else if fits(closing).is_some() {
         closing
+    } else {
+        Fixed::ZERO
     };
     let (mut known, mut ended) = (known, false);
     for qty in orders {
@@ -233,10 +254,11 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
     steps
 }
 
-/// The largest size between `known`, which fills (zero if none is known), and `declined`, which does
-/// not, with its price: found by trying `floor`, the least size worth looking for, then halving from
-/// `declined` down to it while none is known, and then bisecting. `None` if no size from `floor` to
-/// `declined` fills.
+/// A largest size between `known`, which fills (zero if none is known), and `declined`, which does
+/// not, with its price: found by halving from `declined` down to `floor`, the least size worth looking
+/// for, while none is known, and then bisecting. Each size tried is quoted on its own, so the size found
+/// fills and the one past it does not; where admission does not fall with size, other sizes between may
+/// fill too. `None` if no size the halving tries fills.
 pub(super) fn largest(
     fits: &impl Fn(Fixed) -> Option<Fixed>,
     floor: Fixed,
@@ -245,7 +267,6 @@ pub(super) fn largest(
 ) -> Option<Step> {
     let (mut low, mut high) = (known, declined);
     if low.is_zero() {
-        fits(floor)?;
         let mut probe = high;
         for _ in 0..HALVINGS {
             probe = probe.div_int(2).max(floor);
@@ -258,9 +279,9 @@ pub(super) fn largest(
             }
             high = probe;
         }
-        // Halving ended at the floor, which fits.
+        // Halving reached the floor, which does not fit either.
         if low.is_zero() {
-            low = floor;
+            return None;
         }
     }
     for _ in 0..BISECTIONS {

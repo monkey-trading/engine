@@ -223,9 +223,13 @@ processes. The bounds are:
   floor share. The grid's shocks are the same at every time. A market given a weekend margin raises
   only its own bands over its weekend closures, and each group keeps its credit: an account below that
   whole requirement when such a closure starts is closed out in the closing markets at their last
-  prices. A market without a weekend margin has no weekend close-out. An account left open below its
-  close-out level after an instruction, a close-out of an account above it, or a requirement or grid
-  beyond these bounds, is in scope.
+  prices. A market without a weekend margin has no weekend close-out. New risk and withdrawals read
+  the same requirement at initial bands, each band at least the account's tier floor and a group
+  credited nothing while a member the account holds cannot trade; an order that only reduces is held
+  to it when it would raise the requirement judged with every group's credit kept, a shut member's
+  included, while a close-all, a triggered order, a level and a close-out never are. An account left open below its close-out level after an instruction, a close-out of an account
+  above it, a fill or withdrawal that leaves equity below the initial requirement it is held to, or a
+  requirement or grid beyond these bounds, is in scope.
 
 Known limits:
 
