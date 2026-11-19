@@ -374,9 +374,9 @@ contract ExitUnfinalisedTest is ExitTest {
         verifier.previewClaim(root, alice, a, positions, markets, _one(_proven(pending, PENDING)));
     }
 
-    /// Every read a wallet makes of an account's exit proof answers any caller, as an `eth_call` with
-    /// no sender does: the terms, the claim's preview, an approval, a queued request, a distribution and
-    /// a pending deposit's receipt.
+    /// Every read a wallet makes of an account's exit proof answers an `eth_call` with no sender, whose
+    /// caller is the zero address: the terms, the claim's preview, an approval, a queued request, a
+    /// distribution and a pending deposit's receipt.
     function testAWalletReadsEveryPartOfAnExitProofFromAnyAddress() public {
         _deposit(alice, alice, 100e6);
         ExitVerifier.ExitTerms memory terms = _addTerms(1, 1, 0, 0, 0, 100e6 * UNIT, new uint64[](0));
@@ -389,9 +389,7 @@ contract ExitUnfinalisedTest is ExitTest {
         ExitVerifier verifier = vault.exitVerifier();
         (ExitVerifier.PositionState[] memory positions, ExitVerifier.MarketState[] memory markets) = _none();
         a = _withAccountProof(alice, a);
-        address wallet = makeAddr("wallet");
-
-        vm.startPrank(wallet);
+        vm.startPrank(address(0));
         assertTrue(verifier.provesTerms(root, terms, _siblings(keccak256(abi.encodePacked(uint8(24))))));
         assertEq(verifier.previewClaim(root, alice, a, positions, markets, new ExitVerifier.ReceiptLeaf[](0)), 100e6);
         assertTrue(

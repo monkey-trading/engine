@@ -37,7 +37,8 @@ contract ExitFuzzTest is ExitTest {
         assertEq(_claim(c), _expected(c));
     }
 
-    /// @dev The verifier's claim for `c`'s account, proven against a posted tree of its three leaves.
+    /// @dev The verifier's claim for `c`'s account, proven against a posted tree of its three leaves,
+    /// which its preview must come to as well.
     function _claim(Case memory c) private returns (uint256) {
         ExitVerifier.AccountState memory state;
         state.balance = c.balance;
@@ -61,8 +62,12 @@ contract ExitFuzzTest is ExitTest {
         ExitVerifier.PositionState[] memory positions = new ExitVerifier.PositionState[](1);
         positions[0] = ExitVerifier.PositionState(MARKET, c.qty, c.entry, _siblings(positionKey));
         ExitVerifier verifier = vault.exitVerifier();
+        uint256 previewed =
+            verifier.previewClaim(root, trader, state, positions, markets, new ExitVerifier.ReceiptLeaf[](0));
         vm.prank(address(vault));
-        return verifier.accountClaim(root, trader, state, positions, markets);
+        uint256 claim = verifier.accountClaim(root, trader, state, positions, markets);
+        assertEq(previewed, claim, "the preview is what registering comes to");
+        return claim;
     }
 
     /// @dev The claim `c` should value at.

@@ -1,7 +1,7 @@
-//! An exit proof checked as a wallet checks it before keeping it: each vault call the exit takes,
-//! run first as the verifier's read that anyone may make, with no sender, against the root the
-//! vault accepted. A change to the verifier that leaves a wallet no read for a part the proof holds
-//! fails here; the verifier's forge tests read every part from any address.
+//! An exit proof checked as a wallet checks it before keeping it: the terms and the account's claim,
+//! with its credits, read from the verifier as anyone may, with no sender, against the root the
+//! vault accepted. A change to the verifier that leaves a wallet no such read fails here; the
+//! verifier's forge tests read the approvals, queued requests, distributions and pending deposits.
 
 use alloy::primitives::{Address, B256, U256};
 use alloy::sol;
@@ -41,18 +41,12 @@ sol! {
         bytes32[] siblings;
     }
     struct ExitTerms { uint64 depositCursor; uint64 depositBase; int128 pending; int128 held; int128 unheld; int128 heldReceipts; uint64[] gaps; }
-    struct QueuedWithdrawal { address account; int128 amount; int128 remaining; uint64 requestedSeq; uint64 ticket; }
     struct ReceiptLeaf { bytes chainRef; uint64 depositId; address account; address payer; int128 amount; bytes32[] siblings; }
-    struct Approval { address account; uint256 amount; uint64 nonce; uint64 approvedSeq; }
 
     function startExit(ExitTerms terms, bytes32[] siblings) external;
     function registerExit(address account, AccountState state, PositionState[] positions, MarketState[] markets) external;
     function registerExitCredits(address account, ReceiptLeaf[] credits) external;
-    function registerExitWithdrawal(Approval approval, bytes32[] siblings) external;
-    function registerExitQueued(QueuedWithdrawal queued, bytes32[] siblings) external;
-    function registerExitDistribution(address account, uint256 entitled, bytes32[] siblings) external;
     function claimExit(address account) external returns (uint256);
-    function refundReceipt(ReceiptLeaf leaf, uint8 kind) external;
 
     function exitVerifier() external view returns (address);
     function exitClaimed(address account) external view returns (uint256);
@@ -66,19 +60,16 @@ sol! {
         MarketState[] markets,
         ReceiptLeaf[] credits
     ) external view returns (uint256);
-    function provesApproval(bytes32 root, Approval approval, bytes32[] siblings) external view returns (bool);
-    function provesQueued(bytes32 root, QueuedWithdrawal queued, bytes32[] siblings) external view returns (bool);
-    function provesDistribution(bytes32 root, address account, uint256 entitled, bytes32[] siblings)
-        external view returns (bool);
-    function provesReceipt(bytes32 root, ReceiptLeaf leaf, uint8 kind) external view returns (bool proven, bool matched);
 }
 
 /// Checks `proof`, `account`'s exit proof, against the root the vault accepted at its seq through
-/// the verifier's reads alone, and returns the USDC base units the account's claim previews at:
-/// the terms, the account with its credits, and each approval, queued request, distribution and
-/// pending deposit the exit would register or refund.
+/// the verifier's reads alone, and returns the USDC base units its equity and credits preview at:
+/// the terms, and the account with its credits, which must be `account`'s own.
 /// Error cases:
 /// - the vault holds another root at the proof's seq, or a read reverts or does not prove
+/// - the account proof is another account's
+/// - the proof holds a part this check leaves to the forge tests (an approval, a queued request, a
+///   distribution or a pending deposit), or a call's data does not decode
 pub(super) async fn wallet_check(chain: &Chain, account: AccountId, proof: &ExitProof) -> anyhow::Result<U256> {
     let root = proof.root;
     let accepted = chain.read(chain.vault, checkpointRootsCall { seq: proof.seq }).await?;
@@ -101,38 +92,17 @@ pub(super) async fn wallet_check(chain: &Chain, account: AccountId, proof: &Exit
                 credits.extend(registerExitCreditsCall::abi_decode(data)?.credits);
                 true
             }
-            Some(registerExitWithdrawalCall::SELECTOR) => {
-                let held = registerExitWithdrawalCall::abi_decode(data)?;
-                read(chain, verifier, provesApprovalCall { root, approval: held.approval, siblings: held.siblings })
-                    .await?
-            }
-            Some(registerExitQueuedCall::SELECTOR) => {
-                let held = registerExitQueuedCall::abi_decode(data)?;
-                read(chain, verifier, provesQueuedCall { root, queued: held.queued, siblings: held.siblings }).await?
-            }
-            Some(registerExitDistributionCall::SELECTOR) => {
-                let held = registerExitDistributionCall::abi_decode(data)?;
-                let call = provesDistributionCall {
-                    root,
-                    account: held.account,
-                    entitled: held.entitled,
-                    siblings: held.siblings,
-                };
-                read(chain, verifier, call).await?
-            }
-            Some(refundReceiptCall::SELECTOR) => {
-                let refund = refundReceiptCall::abi_decode(data)?;
-                read(chain, verifier, provesReceiptCall { root, leaf: refund.leaf, kind: refund.kind }).await?.proven
-            }
             Some(claimExitCall::SELECTOR) => true,
-            _ => bail!("an exit call the wallet check does not know: {}", call.what),
+            _ => bail!("the wallet check leaves this part to the verifier's forge tests: {}", call.what),
         };
         ensure!(proves, "the verifier does not prove what {} carries", call.what);
     }
     let Some(held) = registered else { return Ok(U256::ZERO) };
+    let own = Address::from(account.0);
+    ensure!(held.account == own, "the proof is account {}'s, not {own}'s", held.account);
     let preview = previewClaimCall {
         root,
-        account: held.account,
+        account: own,
         state: held.state,
         positions: held.positions,
         markets: held.markets,
