@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Runs the exit against the last posted root on Anvil: a real node with its TLS API trades and
-# checkpoints, then stops; the proofs come from its public log alone, and the vault's exit starts,
-# registers, refunds, pays and releases the remainder through the timelock.
+# checkpoints; its API's exit proof passes the verifier's reads a wallet makes and matches the log's;
+# then it stops, the proofs come from its public log alone, and the vault's exit starts, registers,
+# refunds, pays and releases the remainder through the timelock.
 # Needs Cargo, Forge, Anvil and pinned Soldeer dependencies. Uses no external server or real funds.
 set -euo pipefail
 

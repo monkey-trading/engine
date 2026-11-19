@@ -446,7 +446,9 @@ an index: load only the rule whose hint matches the current action.
   root, which ends signed withdrawals, checkpoints and distribution claims, registers claims proven
   against that root through `src/ExitVerifier.sol` for the claim window (account equity at its
   marks less its unfinalised principal, which `registerExitCredits` adds back credit by credit where the vault's deposit
-  records (payer, amount, beneficiary) match, unpaid approvals and queued remainders, then distributions), pays them pro
+  records (payer, amount, beneficiary) match, unpaid approvals and queued remainders, then distributions; its
+  `previewClaim` values an account's claim, credits included, for any caller without registering, so a wallet checks its
+  proof before the exit and during it, as the exit scenario does with the API's proof), pays them pro
   rata, refunds deposits the root does not hold or holds pending to their payers, and, while claims register, one at an
   id whose held, pending or credited receipt in the root its records do not match, and releases the remainder
   through the timelock; `src/StateTree.sol` is the shared proof check. `src/RegistryLens.sol` is a
@@ -828,7 +830,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-withdrawals.sh`, the actual Anvil/TLS withdrawal,
   pre-log crash, unpaid redelivery, FIFO liquidity, and guardian pause and signer retirement
   scenario; `dev-exit.sh`, the exit against the last posted root on Anvil from the stopped node's
-  public log; `dev-attestation-verifier.sh`,
+  public log, after the API's proof passes the verifier's reads a wallet makes (`previewClaim` included) and matches the
+  log's; `dev-attestation-verifier.sh`,
   the attestation verifier dev scenario against a loopback key-distribution stand-in, with no
   hardware or vendor access, also replaying a hand-built signed-withdrawal log through
   `engine replay --attestation`, and verifying from the collateral the node's route relays after

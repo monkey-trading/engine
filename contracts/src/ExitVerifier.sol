@@ -172,18 +172,38 @@ contract ExitVerifier {
         MarketState[] calldata markets
     ) external onlyVault returns (uint256) {
         if (exitRegistered[account]) revert AlreadyRegistered();
-        if (positions.length != state.openPositions || markets.length != positions.length) {
-            revert InvalidAccountProof();
-        }
-        bytes32 key = keccak256(abi.encodePacked(ACCOUNT_LEAF, account));
-        if (!StateTree.proves(root, key, _accountHash(state), state.siblings)) revert InvalidAccountProof();
-        int256 equity = int256(state.balance) - state.unfinalisedDeposits;
-        for (uint256 i; i < positions.length; ++i) {
-            if (i > 0 && positions[i].market <= positions[i - 1].market) revert InvalidAccountProof();
-            equity += _provenPnl(root, account, positions[i], markets[i]);
-        }
+        int256 equity = _provenEquity(root, account, state, positions, markets);
         exitRegistered[account] = true;
         return _claim(account, equity);
+    }
+
+    /// @notice The USDC base units `account` claims at `root` once its equity and `credits` are
+    /// registered, without registering anything, so a wallet can check its proof before the exit and
+    /// at any time during it: its balance less its unfinalised principal, with each position at its
+    /// market's mark, plus the principal of each credit whose deposit the vault's records match,
+    /// floored at zero and rounded down, as `accountClaim` and `creditClaim` together come to.
+    /// `credits` must be in strictly increasing deposit ids, so none counts twice.
+    /// Reverts with `InvalidAccountProof` when any leaf fails to prove, the positions are incomplete
+    /// or out of order, or a credit is another account's or out of order, and `UnvaluedPosition` for
+    /// a market it cannot value.
+    function previewClaim(
+        bytes32 root,
+        address account,
+        AccountState calldata state,
+        PositionState[] calldata positions,
+        MarketState[] calldata markets,
+        ReceiptLeaf[] calldata credits
+    ) external view returns (uint256) {
+        int256 equity = _provenEquity(root, account, state, positions, markets);
+        for (uint256 i; i < credits.length; ++i) {
+            ReceiptLeaf calldata credit = credits[i];
+            if (i > 0 && credit.depositId <= credits[i - 1].depositId) revert InvalidAccountProof();
+            if (credit.account != account || !_provesReceipt(root, credit, UNFINALISED_CREDIT_LEAF)) {
+                revert InvalidAccountProof();
+            }
+            if (_recorded(credit)) equity += credit.amount;
+        }
+        return equity > 0 ? uint256(equity / USDC_UNIT) : 0;
     }
 
     /// @notice Counts `credits`, unfinalised credit leaves of the registered `account` at `root`, each
@@ -316,6 +336,28 @@ contract ExitVerifier {
         (address payer, uint96 amount) = vault.depositRecords(leaf.depositId);
         return payer == leaf.payer && int256(uint256(amount)) * USDC_UNIT == leaf.amount
             && vault.depositAccounts(leaf.depositId) == leaf.account;
+    }
+
+    /// @dev `account`'s equity at `root` in raw units, its unfinalised principal left out, once its
+    /// account leaf and exactly its `openPositions` positions, in strictly increasing markets, prove
+    /// with their markets.
+    function _provenEquity(
+        bytes32 root,
+        address account,
+        AccountState calldata state,
+        PositionState[] calldata positions,
+        MarketState[] calldata markets
+    ) private pure returns (int256 equity) {
+        if (positions.length != state.openPositions || markets.length != positions.length) {
+            revert InvalidAccountProof();
+        }
+        bytes32 key = keccak256(abi.encodePacked(ACCOUNT_LEAF, account));
+        if (!StateTree.proves(root, key, _accountHash(state), state.siblings)) revert InvalidAccountProof();
+        equity = int256(state.balance) - state.unfinalisedDeposits;
+        for (uint256 i; i < positions.length; ++i) {
+            if (i > 0 && positions[i].market <= positions[i - 1].market) revert InvalidAccountProof();
+            equity += _provenPnl(root, account, positions[i], markets[i]);
+        }
     }
 
     /// @dev The USD PnL of `account`'s `position` at its `market`'s mark, once both leaves prove

@@ -198,6 +198,10 @@ contract ExitTestCases is ExitTest {
         vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
         verifier.accountClaim(root, alice, state, both, twiceMarks);
         vm.stopPrank();
+        ExitVerifier.ReceiptLeaf[] memory none = new ExitVerifier.ReceiptLeaf[](0);
+        vm.expectRevert(ExitVerifier.InvalidAccountProof.selector);
+        verifier.previewClaim(root, alice, state, winner, winnerMark, none);
+        assertEq(verifier.previewClaim(root, alice, state, both, marks, none), 70e6);
 
         _startExit(terms);
         vault.registerExit(alice, state, both, marks);
