@@ -26,6 +26,7 @@ use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, empty_custody_frontier, sample_around, scratch_dir, sequencer_config};
 
 mod mass;
+mod proofs;
 mod rollover;
 mod tail;
 
@@ -324,9 +325,10 @@ impl Clock for StampClock {
 }
 
 /// The time from a price entering the channel to its stamp, under the latest protocol, with the
-/// work that used to hold it back going on: proof reads (forwarded to the root worker), a checkpoint every
-/// `EVERY` prices, a disk whose every sync stalls 10 ms, and `ACCOUNTS` resting limits every price
-/// passes but the spread keeps out of reach (`resting_bench`), which from `V74` no price visits.
+/// work that used to hold it back going on: proof reads, which the root worker answers, each checked
+/// to be a proof (`proofs`), a checkpoint every `EVERY` prices, a disk whose every sync stalls 10 ms,
+/// and `ACCOUNTS` resting limits every price passes but the spread keeps out of reach
+/// (`resting_bench`), which from `V74` no price visits.
 /// Prices come 2 ms apart and the real `run` loop sequences them, in `BATCHES` batches measured
 /// separately. A price that waited for a stalled sync would wait out the stall behind every
 /// checkpoint (over a tenth of the batch's prices), so a batch's p90 must stay under the stall; a
@@ -391,10 +393,11 @@ fn price_wait_budget() {
         let tx = tx.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
+            let (mut account_proofs, mut exit_proofs) = (proofs::Answers::default(), proofs::Answers::default());
             while started.elapsed() < std::time::Duration::from_millis(2 * PRICES as u64 * BATCHES as u64 + 500) {
                 // The proofs are read on the root worker, the excess on the sequencer's engine.
-                let (proof, _) = tokio::sync::oneshot::channel();
-                let (exit, _) = tokio::sync::oneshot::channel();
+                let (proof, account_proof) = tokio::sync::oneshot::channel();
+                let (exit, exit_proof) = tokio::sync::oneshot::channel();
                 let excess: crate::sequencer::Query = Box::new(|engine: &Engine| {
                     _ = std::hint::black_box(engine.distributable_excess());
                 });
@@ -404,10 +407,15 @@ fn price_wait_budget() {
                     crate::sequencer::Request::Query(excess),
                 ];
                 if reads.into_iter().any(|read| tx.blocking_send(read).is_err()) {
-                    return;
+                    return (0, 0);
                 }
+                account_proofs.push(account_proof);
+                exit_proofs.push(exit_proof);
+                account_proofs.take();
+                exit_proofs.take();
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
+            (account_proofs.finish(), exit_proofs.finish())
         })
     };
     let mut batches = Vec::new();
@@ -432,7 +440,8 @@ fn price_wait_budget() {
         }
         batches.push((before, sent));
     }
-    load.join().unwrap();
+    let (account_proofs, exit_proofs) = load.join().unwrap();
+    println!("WAIT proof_reads_answered account={account_proofs} exit={exit_proofs}");
     drop(tx);
     drop(probe_tx);
     let probed = probe.join().unwrap();
