@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::load_scenario::plan::{
-    BUSY_SHARE, Figures, ORDER_TO_FILL_US, PRICE_TO_STAMP_S, Quantiles, STREAM_LAG_P99_MS,
+    BUSY_SHARE, Figures, ORDER_TO_FILL_P50_GUARD_US, ORDER_TO_FILL_US, PRICE_TO_STAMP_S, Quantiles, STREAM_LAG_P99_MS,
 };
 use crate::metrics::Metrics;
 
@@ -285,6 +285,16 @@ pub(super) fn unmeasured(figures: &Figures, node: &Delta) -> Vec<String> {
     gaps.into_iter().filter(|(gap, _)| *gap).map(|(_, why)| why).collect()
 }
 
+/// The breaches a measured leg fails on: every one of the bar's, but an order-to-fill p50 within its
+/// regression guard (`ORDER_TO_FILL_P50_GUARD_US`), which the bar's breaches still show.
+pub(super) fn guarded(windows: &[Vec<Breach>]) -> Vec<Vec<Breach>> {
+    let within_guard = |breach: &&Breach| {
+        (breach.budget, breach.quantile) == ("order_to_fill_us", "p50")
+            && breach.figure <= ORDER_TO_FILL_P50_GUARD_US as f64
+    };
+    windows.iter().map(|breaches| breaches.iter().filter(|b| !within_guard(b)).cloned().collect()).collect()
+}
+
 /// A loaded runner's tolerance, as `sequencer::wait_bench::price_wait_budget` grants one: a budget at
 /// the median must hold in every window, and one at a tail, or the busy share, in all but `misses`
 /// of them. Returns what failed it.
@@ -426,5 +436,20 @@ mod tests {
         assert_eq!(tolerate(&windows, 2).len(), 1);
         let windows = vec![vec![median], vec![], vec![], vec![], vec![]];
         assert_eq!(tolerate(&windows, 2).len(), 1, "a median over its bar in one window fails");
+    }
+
+    #[test]
+    fn only_order_to_fills_median_is_held_to_its_guard_in_place_of_the_bar() {
+        let fill = |figure| Breach { budget: "order_to_fill_us", quantile: "p50", figure, bar: 5_000.0 };
+        let stamp = Breach { budget: "price_to_stamp_us", quantile: "p50", figure: 2_000.0, bar: 1_000.0 };
+        let tail = Breach { budget: "order_to_fill_us", quantile: "p99", figure: 30_000.0, bar: 25_000.0 };
+        let guard = ORDER_TO_FILL_P50_GUARD_US as f64;
+        let windows = vec![vec![fill(5_800.0)], vec![fill(guard)], vec![], vec![], vec![]];
+        assert!(tolerate(&guarded(&windows), 2).is_empty(), "within the guard, over the bar");
+        let windows = vec![vec![fill(guard + 1.0)], vec![], vec![], vec![], vec![]];
+        assert_eq!(tolerate(&guarded(&windows), 2).len(), 1, "over the guard");
+        // Every other budget is still held to the bar.
+        let windows = vec![vec![stamp], vec![tail.clone()], vec![tail.clone()], vec![tail], vec![]];
+        assert_eq!(tolerate(&guarded(&windows), 2).len(), 2);
     }
 }

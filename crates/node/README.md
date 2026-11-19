@@ -139,11 +139,13 @@ cancels, cancel-alls and close-alls, every stream subscriber the API allows read
 loopback stand-ins quote every launch market. It runs at launch flow and at ten times launch flow,
 two minutes each, and prints each run's latencies and the sequencer's busy share against the launch
 bar: the budgets for the time from an order to its fill, from a price to its stamp and from a stamp
-to each subscriber, and for the share of the time the sequencer is busy.
+to each subscriber, and for the share of the time the sequencer is busy. A run fails when a budget
+breaks, except the median time from an order to its fill, which it holds to a looser 10 ms
+regression guard while it still prints the 5 ms budget's verdict.
 It also prints the CPU and memory of the test's process, which holds the server, the stand-ins and
 the screening source. The clients run in a second process. The `--ramp` option then doubles the load
 each minute and prints the load at which each budget first breaks. At full size the test takes
-several gigabytes of memory and most of a machine's cores, so run it in a quiet window:
+about 4 GB of memory and about five cores, so run it in a quiet window:
 
 ```shell
 nice ./scripts/dev-load.sh

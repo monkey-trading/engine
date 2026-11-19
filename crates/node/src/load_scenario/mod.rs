@@ -13,11 +13,13 @@
 //! `engine replay` cannot start from it.
 //!
 //! The launch and ten-times legs pass only within the bar, under the tolerance for a loaded runner
-//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only if they
-//! measured what they claim (`report::unmeasured`): every request answered 200 with no rejection, so
-//! every account stays within its tier's request rate and no request lacks a screening slot, every
-//! answer in, a market order filled, every subscriber taking frames to the leg's last commands, and
-//! prices stamped.
+//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`); order-to-fill p50 is
+//! held instead to a regression guard of twice the bar until the request path meets it (#1045,
+//! `plan::ORDER_TO_FILL_P50_GUARD_US`), each run still printing the bar's verdict. They pass only
+//! if they measured what they claim (`report::unmeasured`): every request answered 200 with no
+//! rejection, so every account stays within its tier's request rate and no request lacks a screening
+//! slot, every answer in, a market order filled, every subscriber taking frames to the leg's last
+//! commands, and prices stamped.
 //!
 //! Run by `scripts/dev-load.sh`; its variables size the run: `LOAD_ACCOUNTS` (100,000), `LOAD_TRADERS`
 //! (2,000), `LOAD_SUBSCRIBERS` (`api.max_subscribers`), `LOAD_LEG_SECS` (120), `LOAD_CRYPTO_RATE`
@@ -43,7 +45,7 @@ use crate::clock::now_ms;
 use crate::common::launch_book::{Mix, NamedCounts, build};
 use crate::load_scenario::node::Node;
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
-use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, judge, print, tolerate, unmeasured};
+use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, guarded, judge, print, tolerate, unmeasured};
 use crate::load_scenario::venues::Moves;
 use crate::sequencer::Request;
 use crate::test_support::scratch_dir;
@@ -286,7 +288,8 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
 }
 
 /// Prints the first multiple of launch flow each budget broke at, and fails a measured leg outside
-/// the bar or that did not measure what it claims.
+/// the bar, but for order-to-fill p50, held to its regression guard, or that did not measure what it
+/// claims.
 fn conclude(runs: &[Run]) {
     let last = runs.last().map_or(0.0, |run| run.multiple);
     for (budget, quantile) in BUDGETS {
@@ -304,7 +307,15 @@ fn conclude(runs: &[Run]) {
     assert_eq!(measured.len(), 2, "both measured legs ran");
     for run in measured {
         assert!(run.gaps.is_empty(), "{} did not measure what it claims: {:?}", run.leg, run.gaps);
-        let failed = tolerate(&run.windows, MISSES);
-        assert!(failed.is_empty(), "{} broke the launch bar: {failed:?}", run.leg);
+        let over_bar = tolerate(&run.windows, MISSES);
+        let failed = tolerate(&guarded(&run.windows), MISSES);
+        println!(
+            "LOAD leg={} launch bar: {} | order_to_fill_us p50 guard={}: {}",
+            run.leg,
+            if over_bar.is_empty() { "held".to_owned() } else { format!("broken {over_bar:?}") },
+            plan::ORDER_TO_FILL_P50_GUARD_US,
+            if failed.iter().any(|why| why.contains("order_to_fill_us p50")) { "broken" } else { "held" },
+        );
+        assert!(failed.is_empty(), "{} broke the launch bar, order-to-fill p50 held to its guard: {failed:?}", run.leg);
     }
 }

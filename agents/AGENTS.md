@@ -811,7 +811,7 @@ an index: load only the rule whose hint matches the current action.
   limit orders, cancels, cancel-alls and close-alls through the API's PROXY protocol peer from 100 client addresses, and
   every stream subscriber the template allows, half signed and some quoting; launch flow and ten times it, with
   `--ramp` a doubling ramp printing the load at which each budget first breaks, each leg's figures against #904's bar, failing outside it under
-  a loaded runner's tolerance, then the log replayed from the rebuilt book (`replay::replay_path_from`);
+  a loaded runner's tolerance but for order-to-fill p50, held to a 10 ms regression guard until #1045 cuts the path, then the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown
