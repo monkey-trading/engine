@@ -34,10 +34,27 @@ fn independent_wallet_typed_data_matches_both_eligibility_classes_and_source_evi
             "cast wallet and static Rust EIP712 structs agree"
         );
     }
-    for vector in vectors["screenings"].as_array().unwrap() {
-        let screening: Screening = serde_json::from_value(vector["body"].clone()).unwrap();
-        let hash = eip712::screening_hash(&domain, &screening);
+    // A decision naming its request, as a deposit's does, and a client request's from `V85`, naming none.
+    let screenings: Vec<Screening> = vectors["screenings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|vector| serde_json::from_value(vector["body"].clone()).unwrap())
+        .collect();
+    let named: Vec<bool> = screenings.iter().map(|screening| screening.request_hash.is_some()).collect();
+    assert_eq!(named, [true, false]);
+    for (screening, vector) in screenings.iter().zip(vectors["screenings"].as_array().unwrap()) {
+        let hash = eip712::screening_hash(&domain, screening);
         assert_eq!(eip712::recover(&hash, &screening.signature), Some(account));
-        assert_eq!(eip712::sign(&key, &hash), screening.signature);
+        assert_eq!(
+            eip712::sign(&key, &hash),
+            screening.signature,
+            "cast wallet and the decision's canonical JSON agree"
+        );
+        assert_eq!(
+            serde_json::to_value(screening).unwrap(),
+            vector["body"],
+            "the body round-trips as the source sends it"
+        );
     }
 }

@@ -3,7 +3,7 @@
 From V24, a trading account signs a professional or eligible-client declaration before the engine
 credits its first deposit or accepts an order. A new account deposits first: the deposit waits
 pending until the account records a declaration, then credits. Declarations, orders, withdrawals
-and withdrawal reissue requests require fresh screening of the account and of the client's peer. US and sanctioned jurisdictions,
+and withdrawal reissue requests require a fresh screening decision about the account and the client's peer. US and sanctioned jurisdictions,
 sanctioned accounts, and unknown or unavailable classifications are refused. A direct vault call can transfer tokens; the custody adapter applies these checks
 before engine credit. Pending and held funds never enter trading balances or house NAV.
 
@@ -43,14 +43,25 @@ source's signing key or changing the freshness bound therefore needs a fresh log
 
 ## Request and response contract
 
-The node sends one JSON POST per screening action:
+The node sends one JSON POST per call to the source. A call for an API action names the account and
+the client's address, and no request:
+
+```json
+{
+  "account": "<account address>",
+  "payer": null,
+  "peer": "<actual API socket peer IP>"
+}
+```
+
+A call for a deposit names the deposit's digest, its beneficiary and its funding address:
 
 ```json
 {
   "request_hash": "<32-byte hex digest>",
   "account": "<beneficiary address, or null for house funding>",
-  "payer": "<actual funding address for a deposit, otherwise null>",
-  "peer": "<actual API socket peer IP, or null for custody>"
+  "payer": "<actual funding address>",
+  "peer": null
 }
 ```
 
@@ -59,7 +70,7 @@ The source returns a `Screening` object from `engine_core::access`, with exactly
 | Field | Meaning |
 | --- | --- |
 | `source` | Recorded screening authority address |
-| `request_hash` | Exact request digest from the query |
+| `request_hash` | A deposit's exact digest from the query; absent for an API action, whose query names none |
 | `observed_at` | Milliseconds since Unix epoch; the oldest underlying classification's decision time |
 | `account`, `payer` | Exact subjects from the query, including nulls |
 | `jurisdiction` | `allowed`, `united_states`, `sanctioned`, or `unknown` |
@@ -83,10 +94,45 @@ to an assertion the host cannot alter is a promotion requirement.
 Use `engine_core::eip712::screening_hash` to sign the response. The type is
 `AccessScreening(string decision)` under the recorded deployment domain: name `monkeytrading`,
 version `1`, custody chain id, and vault address. `decision` is canonical compact JSON with fields in
-this order: `source`, `request_hash`, `observed_at`, `account`, `payer`, `jurisdiction`, `account_status`,
-`payer_status`. It excludes `signature`. The request hash binds the signed client action, including
-nonce and expiry, or the full deposit input, including its chain reference, amount and funding address.
-The independent wallet vectors are in `crates/core/tests/fixtures/access-eip712.json`.
+this order: `source`, `request_hash`, `observed_at`, `account`, `payer`, `jurisdiction`,
+`account_status`, `payer_status`. It excludes `signature`, and an API action's decision leaves out
+`request_hash` entirely, so a decision for a deposit can never be read as one for an account, or the
+reverse. A deposit's request hash binds the full deposit input, including its chain reference,
+amount and funding address. An API action's decision binds the account, and the source screens the
+peer its query names. The independent wallet vectors, one decision of each form, are in
+`crates/core/tests/fixtures/access-eip712.json`.
+
+A decision naming the digest of the one signed action it answers, nonce and expiry included, is
+still accepted for that action. A log before protocol `V85` accepts only that form, so the node
+queries the source that way, and keeps nothing, until it first sees the log at `V85`.
+
+## Reused decisions
+
+From `V85` the node keeps the latest verified decision for each account and client address and
+attaches it to each of that pair's declarations, orders, closes, take-profit and stop-loss requests,
+withdrawals and payout reissues, so those requests make no call to the source while the decision is
+fresh. A decision is kept only when it is signed by the recorded source under the recorded domain,
+names the account with no payer and no request, and is stamped no more than one second ahead of the
+node's clock. It is attached only while a tenth of the freshness bound is left (27 seconds of a
+30-second bound), so the engine's check at the sequenced time finds it fresh. A decision that refuses
+the account is kept and attached in the same way until it runs out, so a refused account does not
+make the node call the source on each request. A newer decision replaces an older one, never the
+reverse.
+
+A pair that sent a request within the last bound is refreshed in the background early enough for two
+attempts before its decision stops being attached, each `access.timeout` and a turn of the refresh
+loop (a twentieth of the bound, between 50 ms and 1 second), and no sooner than halfway through the
+decision's attachable life, so a trader who keeps sending requests does not wait for the source. With
+a 30-second bound and a 2-second timeout, a decision observed as it arrives is refreshed 21 seconds
+later. A refresh that fails, or finds no screening slot, is tried again on the next turn while the
+decision can still be attached. Refreshes hold at most half the screening slots outside the reserve,
+and never the last of them, so an order always finds one, whatever declarations and refreshes hold.
+
+A pair with no fresh decision waits for the source, and a failed or unverified answer is attached as
+it is, for the engine to refuse, and is not kept. A request from a pair that sends nothing else
+within the bound therefore costs two calls: the one it waits for, and the refresh made while the pair
+still counts as active. The node keeps decisions for at most 50,000 pairs; past that, a new pair waits
+for the source on each request. The decisions live in memory only, so a restart begins with none.
 
 The source contract is a gateway interface, not a selected commercial provider or legal country
 list. Selecting the data sources, jurisdiction classifications, freshness policy, signing authority
@@ -193,9 +239,11 @@ while a retry turn's screening fails or its evidence does not verify, and resolv
 that does not fail. Refusal counters include `eligibility_rejected`
 and `deposit_held` in `engine_rejections_total`; API policy reasons appear under `reason="access"`.
 Use the public event for the exact reason. API screening has bounded concurrency; custody retains
-independent bounded screening capacity for ingestion and retries. A request holds one of the API's
-`access.max_in_flight` screening slots while the source answers. One account's requests, its session
-keys' included, hold at most `access.max_in_flight_per_account` of them, and one client's at most
+independent bounded screening capacity for ingestion and retries. The API's `access.max_in_flight`
+screening slots bound the calls the node makes to the source: a request with no fresh decision holds
+one while the source answers, and so does each refresh. A request with a fresh decision takes none.
+One account's calls, its session keys' and its refreshes included, hold at most
+`access.max_in_flight_per_account` of them, and one client's at most
 `access.max_in_flight_per_client`, an IPv6 client counted by its /64; a request past its share gets
 429 with `Retry-After`. A copy of a signed request still being screened gets 409
 `the same request is already being screened` and takes no slot. `access.reserved_in_flight` of the
@@ -205,9 +253,9 @@ close-all naming at least one such market, a withdrawal while that copy shows th
 withdrawable cash, and a reissue of a payout the sequencer holds unpaid. Such a request may take any
 free slot, the reserve's included, but an account holds at most one of the reserved slots at a time.
 Every other request, including a reduce-only order from an account with no position in its market,
-takes only the rest. A request that finds every slot it may take held gets 503 `screening is at capacity` with
-`Retry-After`, uses no nonce, and `api_screening_slots_full` is a Warning raised at most once a
-minute while this lasts. Declarations
+and every refresh, takes only the rest. A request that finds every slot it may take held gets 503
+`screening is at capacity` with `Retry-After`, uses no nonce, and `api_screening_slots_full` is a
+Warning raised at most once a minute while this lasts. Declarations
 hold at most half the slots, rounded up, and the reserve must be below half of them, rounded down, so
 however many declarations arrive, orders keep a slot; `access.max_in_flight` must be at least 2 for
 that to hold. A declaration past that gets 503 `declaration screening is at capacity` with
@@ -226,21 +274,22 @@ declaration, a key request before the declaration, a stale nonce, or a bad expir
 takes a token; a declaration answered 503 for want of a screening slot has already spent its tokens.
 These budgets are the only bound on what a wallet can add for free:
 
-- Each admitted request adds one log command and one history index row, and a declaration one call to
-  the source.
+- Each admitted request adds one log command and one history index row, and a declaration at most two
+  calls to the source: the one it waits for, and the refresh of its decision while the wallet still
+  counts as active (see Reused decisions).
 - A wallet's first declaration adds two state entries, in `eligibility` and `request_nonces`. Its first
   registration adds two, in `session_keys` and `request_nonces`, whose entry for the key stays for good
   so a pruned key keeps its replay protection. Each later registration of a new address adds one.
 - All clients together therefore add at most `shared.per_minute` x 1,440 commands a day, plus the
   burst, and twice that in state entries, from fresh wallets that each declare and register once.
-  Declarations alone make at most that many calls to the source. One client adds at most
+  Declarations alone make at most twice that many calls to the source. One client adds at most
   `per_client.per_minute` x 1,440 commands a day, plus its burst.
 
 A production build refuses budgets above 60 a minute with a burst of 120 shared and 12 a minute with a
 burst of 6 per client, at config load; the dev configs' rates (3,000 a minute with a burst of 100, and
 600 with 20) are refused. At the production values, all clients together add at most 86,520 commands a
 day (about 93 MB of log at the measured 1,265 bytes a declaration and 896 a registration), 173,040
-state entries and 86,520 source calls, from 43,260 wallets that each declare and register once; one
+state entries and 173,040 source calls, from 43,260 wallets that each declare and register once; one
 client adds at most 17,286 commands. Five clients at their share take the shared refill, and 20 at
 their burst empty the shared burst, so a new wallet can then be refused for as long as they keep
 going. Anyone refused sees 429 `too many new wallets are being set up; try again later` with
@@ -254,7 +303,7 @@ and only until one is recorded: a declaration the engine refuses, such as one fr
 region, leaves the wallet undeclared and exempt. A paid wallet therefore adds at most
 `per_client.per_minute` x 1,440 declarations a day, plus its burst (17,286 at the production value),
 and all paid wallets together at most `shared.per_minute` x 1,440 plus the burst (86,520), each with
-one source call, on top of the unpaid budget's. Each paid wallet costs a deposit of at least 10 USDC,
+at most two source calls, on top of the unpaid budget's. Each paid wallet costs a deposit of at least 10 USDC,
 which it recovers once it declares from an allowed region. Past that budget a paid wallet is told to
 try again later, and `api_paid_declaration_budget_full` is a Warning raised at most once a minute.
 Its session-key requests take from both unpaid budgets.

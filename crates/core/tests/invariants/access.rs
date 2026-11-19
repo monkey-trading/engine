@@ -135,6 +135,8 @@ fn source() -> SigningKey {
     SigningKey::from_slice(&[0x77; 32]).unwrap()
 }
 
+/// Fresh, allowed and clear evidence for `request_hash`: a deposit's, which names a payer, names its
+/// request, and a client request's does before `V85`.
 fn evidence(
     engine: &Engine,
     now: Millis,
@@ -144,7 +146,8 @@ fn evidence(
 ) -> AccessEvidence {
     let mut screening = Screening {
         source: eip712::address(source().verifying_key()),
-        request_hash,
+        request_hash: (payer.is_some() || engine.protocol_version().binds_screening_to_request())
+            .then_some(request_hash),
         observed_at: now,
         account,
         payer,

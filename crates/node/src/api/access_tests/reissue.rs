@@ -35,6 +35,7 @@ async fn a_reissue_is_refused_for_an_account_sanctioned_or_geo_blocked_since_its
     let before = node.entries();
     let queries = node.source.lock().unwrap().requests.len();
     node.source.lock().unwrap().sanctioned.insert(account);
+    node.forget_decisions();
     let (status, refused) = node.post(&path, body.clone()).await;
     assert_eq!(
         (status, refused),
@@ -42,17 +43,19 @@ async fn a_reissue_is_refused_for_an_account_sanctioned_or_geo_blocked_since_its
     );
     node.source.lock().unwrap().sanctioned.clear();
     node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    node.forget_decisions();
     let (status, refused) = node.post(&path, body.clone()).await;
     assert_eq!((status, refused), (StatusCode::FORBIDDEN, json!({"error":"access refused","reason":"united_states"})));
     // Allowed, it reaches the payout schedule and queues.
     node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    node.forget_decisions();
     let (status, queued) = node.post(&path, body).await;
     assert_eq!((status, queued["status"].as_str()), (StatusCode::OK, Some("queued")), "{queued}");
     let requests = node.source.lock().unwrap().requests[queries..].to_vec();
     assert_eq!(requests.len(), 3);
+    // Each asks about the account and its client address, and names no request.
     for request in requests {
-        assert_eq!(serde_json::from_value::<eip712::B256>(request["request_hash"].clone()).unwrap(), hash);
-        assert_eq!((request["account"].clone(), request["peer"].clone()), (json!(account), json!("127.0.0.1")));
+        assert_eq!(request, json!({ "account": account, "payer": null, "peer": "127.0.0.1" }));
     }
     assert_eq!(node.entries(), before, "a reissue refusal sequences nothing");
 }
@@ -84,7 +87,9 @@ async fn a_reissue_for_an_approval_that_does_not_exist_is_refused_before_it_scre
     assert_eq!(node.source.lock().unwrap().requests.len(), queries, "no request was screened");
     assert_eq!(node.entries(), before, "a refused reissue sequences nothing");
 
-    // The account that holds the approval is screened and queued as before.
+    // The account that holds the approval is screened and queued as before: with no fresh decision
+    // kept, that screening is a call to the source.
+    node.forget_decisions();
     let (path, body) = reissue(&client, 1);
     assert_eq!(node.post(&path, body).await.0, StatusCode::OK);
     assert_eq!(node.source.lock().unwrap().requests.len(), queries + 1);

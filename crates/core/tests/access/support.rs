@@ -96,10 +96,12 @@ pub fn order_evidence(h: &Harness, request: &OrderRequest) -> AccessEvidence {
     evidence(h, hash, Some(request.account), None)
 }
 
+/// Fresh, allowed and clear evidence for `hash`: a deposit's, which names a payer, names its request, and
+/// a client request's does before `V85`.
 pub fn evidence(h: &Harness, hash: B256, account: Option<AccountId>, payer: Option<AccountId>) -> AccessEvidence {
     let mut screening = Screening {
         source: eip712::address(source().verifying_key()),
-        request_hash: hash,
+        request_hash: (payer.is_some() || h.engine.protocol_version().binds_screening_to_request()).then_some(hash),
         observed_at: h.ts,
         account,
         payer,

@@ -156,7 +156,7 @@ async fn screen_pending(access: Option<&AccessClient>, deposit: &AccessDeposit) 
     screen(
         access,
         &ScreeningRequest {
-            request_hash: deposit_screening_hash(deposit),
+            request_hash: Some(deposit_screening_hash(deposit)),
             account: deposit.account,
             payer: deposit.payer,
             peer: None,

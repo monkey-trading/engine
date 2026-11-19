@@ -13,6 +13,9 @@ pub(super) struct Samples {
     pub replies: BTreeMap<String, u64>,
     pub fills: u64,
     pub order_to_fill_us: Vec<u64>,
+    pub cold_order_to_fill_us: Vec<u64>,
+    pub lapsing_order_to_fill_us: Vec<u64>,
+    pub queued_order_to_fill_us: Vec<u64>,
     pub request_us: Vec<u64>,
     /// One subscriber's frame lags; once taken, each subscriber's, by its place.
     pub stream_lag_ms: Vec<u64>,
@@ -49,6 +52,9 @@ impl Samples {
         self.subscribers = self.subscribers.max(other.subscribers);
         self.fills += other.fills;
         self.order_to_fill_us.extend(other.order_to_fill_us);
+        self.cold_order_to_fill_us.extend(other.cold_order_to_fill_us);
+        self.lapsing_order_to_fill_us.extend(other.lapsing_order_to_fill_us);
+        self.queued_order_to_fill_us.extend(other.queued_order_to_fill_us);
         self.request_us.extend(other.request_us);
         self.stream_lag_ms.extend(other.stream_lag_ms);
         self.frames += other.frames;
@@ -71,6 +77,9 @@ impl Samples {
             replies: self.replies.clone(),
             fills: self.fills,
             order_to_fill_us: Quantiles::of(&mut self.order_to_fill_us.clone()),
+            cold_order_to_fill_us: Quantiles::of(&mut self.cold_order_to_fill_us.clone()),
+            lapsing_order_to_fill_us: Quantiles::of(&mut self.lapsing_order_to_fill_us.clone()),
+            queued_order_to_fill_us: Quantiles::of(&mut self.queued_order_to_fill_us.clone()),
             request_us: Quantiles::of(&mut self.request_us.clone()),
             stream_lag_ms: Quantiles::of(&mut self.stream_lag_ms.clone()),
             slowest_subscriber_p99_ms: slowest.unwrap_or(0),

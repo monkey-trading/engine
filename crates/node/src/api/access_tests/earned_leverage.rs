@@ -24,7 +24,8 @@ async fn dev_scenario_a_tiers_margin_floor_caps_leverage_and_withdrawals() {
     for (tier, (threshold, floor)) in genesis.params.volume_tiers.iter_mut().zip(tiers) {
         (tier.threshold, tier.day_divisor, tier.margin_floor_bps) = (Fixed::from_int(threshold), 1, floor);
     }
-    let mut node = Node::start_from("earned-leverage-dev-scenario", true, true, false, &genesis).await;
+    let mut node =
+        Node::start_from("earned-leverage-dev-scenario", true, true, false, &genesis, ProtocolVersion::LATEST).await;
     let a = key(0x83);
     let wallet = eip712::address(a.verifying_key());
     node.onboard(&a).await;

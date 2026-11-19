@@ -28,6 +28,39 @@ use crate::clock::now_ms;
 /// slot is given back as soon as the source answers.
 const SHARE_RETRY: Duration = Duration::from_secs(1);
 
+/// The slot a request's call to the source takes, decided only when it finds no fresh decision and
+/// makes one.
+pub(super) enum SlotFor {
+    /// Always this kind.
+    Kind(SlotKind),
+    /// The reserve's kind when the check holds on the API's engine copy, an order's otherwise.
+    Reducing(Box<dyn FnOnce(&Engine) -> bool + Send>),
+}
+
+impl SlotFor {
+    /// A request that claims to reduce risk, as `can_reduce` checks on the API's engine copy.
+    pub(super) fn reducing(can_reduce: impl FnOnce(&Engine) -> bool + Send + 'static) -> Self {
+        SlotFor::Reducing(Box::new(can_reduce))
+    }
+
+    /// The slot kind this request's call takes: for one that claims to reduce risk, one that may be the
+    /// reserve's (`Reducing`) when its check holds on the API's engine copy, and otherwise one outside
+    /// it, as an order's (`Opening`).
+    /// Error cases:
+    /// - the sequencer has stopped
+    async fn kind(self, s: &ApiState) -> Result<SlotKind, ApiError> {
+        let can_reduce = match self {
+            SlotFor::Kind(kind) => return Ok(kind),
+            SlotFor::Reducing(can_reduce) => can_reduce,
+        };
+        if s.read(can_reduce).await? {
+            return Ok(SlotKind::Reducing);
+        }
+        debug!("request takes a slot outside the screening reserve: the account has nothing it reduces");
+        Ok(SlotKind::Opening)
+    }
+}
+
 /// Places an order and returns the events it produced.
 /// Error cases:
 /// - the request is not authorised for its account
@@ -46,9 +79,9 @@ pub(super) async fn place_order(
         let hash = order_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
         let kind = if req.reduce_only {
             let (account, market) = (req.account, req.market);
-            reducing_slot(&s, move |engine| holds_position(engine, account, market)).await?
+            SlotFor::reducing(move |engine| holds_position(engine, account, market))
         } else {
-            SlotKind::Opening
+            SlotFor::Kind(SlotKind::Opening)
         };
         let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
         Command::AccessOrder { request: req, evidence }
@@ -112,8 +145,7 @@ pub(super) async fn close_all(
     let auth = req.auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
     let hash = close_all_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
     let (account, markets) = (req.account, req.closes.iter().map(|close| close.market).collect::<Vec<_>>());
-    let held = move |engine: &Engine| markets.iter().any(|&market| holds_position(engine, account, market));
-    let kind = reducing_slot(&s, held).await?;
+    let kind = SlotFor::reducing(move |engine| markets.iter().any(|&market| holds_position(engine, account, market)));
     let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
     let cmd = Command::AccessCloseAll { request: req, evidence };
     Ok(Json(s.submit(cmd).await?))
@@ -141,7 +173,7 @@ pub(super) async fn set_position_levels(
     let hash = position_levels_hash(&signature_domain(&s), &req, auth.nonce, auth.expires_at);
     // A level arranges a close, so it takes a slot as a close does.
     let (account, market) = (req.account, req.market);
-    let kind = reducing_slot(&s, move |engine| holds_position(engine, account, market)).await?;
+    let kind = SlotFor::reducing(move |engine| holds_position(engine, account, market));
     let evidence = api_screen(&s, peer, req.account, hash, kind).await?;
     Ok(Json(s.submit(Command::AccessSetPositionLevels { request: req, evidence }).await?))
 }
@@ -237,7 +269,7 @@ pub(super) async fn withdraw(
         let auth = auth.as_ref().ok_or(ApiError::Unauthorized("missing signature"))?;
         let hash = withdrawal_hash(&signature_domain(&s), b.account, b.amount, auth.nonce, auth.expires_at);
         let account = b.account;
-        let kind = reducing_slot(&s, move |engine| engine.withdrawable(account).is_positive()).await?;
+        let kind = SlotFor::reducing(move |engine| engine.withdrawable(account).is_positive());
         let evidence = api_screen(&s, peer, b.account, hash, kind).await?;
         Command::AccessWithdraw { request: b, evidence, payout_available: s.payouts_enabled }
     } else {
@@ -269,23 +301,8 @@ pub(super) async fn attest_eligibility(
     // they are screened: however many arrive, orders keep a slot.
     let auth = &request.auth;
     let hash = eligibility_hash(&signature_domain(&s), request.account, request.class, auth.nonce, auth.expires_at);
-    let evidence = api_screen(&s, peer, request.account, hash, SlotKind::Declaration).await?;
+    let evidence = api_screen(&s, peer, request.account, hash, SlotFor::Kind(SlotKind::Declaration)).await?;
     Ok(Json(s.submit(Command::AttestEligibility { request, evidence }).await?))
-}
-
-/// The slot a request that claims to reduce risk takes: one that may be the reserve's (`Reducing`) when
-/// `can_reduce` holds on the API's engine copy, and otherwise one outside it, as an order's (`Opening`).
-/// Error cases:
-/// - the sequencer has stopped
-async fn reducing_slot(
-    s: &ApiState,
-    can_reduce: impl FnOnce(&Engine) -> bool + Send + 'static,
-) -> Result<SlotKind, ApiError> {
-    if s.read(can_reduce).await? {
-        return Ok(SlotKind::Reducing);
-    }
-    debug!("request takes a slot outside the screening reserve: the account has nothing it reduces");
-    Ok(SlotKind::Opening)
 }
 
 /// Whether `account` holds a position in `market`.
@@ -300,12 +317,15 @@ fn client_ip(peer: &Option<Extension<ConnectInfo<SocketAddr>>>) -> Option<IpAddr
 
 /// The existing recorded deployment domain also binds development declarations.
 pub(super) fn signature_domain(state: &ApiState) -> eip712::Eip712Domain {
-    state.auth.domain().unwrap_or_else(|| eip712::domain(state.operator.chain_id, state.operator.vault))
+    crate::access::screening_domain(&state.auth, &state.operator)
 }
 
-/// Screens the client address: the socket peer, or the one a trusted proxy's PROXY protocol header
-/// names (`ConnectInfo`), never a user-supplied forwarding header, while the request holds a screening
-/// slot as `kind`.
+/// The evidence for `account`'s request from the client address: the socket peer, or the one a trusted
+/// proxy's PROXY protocol header names (`ConnectInfo`), never a user-supplied forwarding header. From
+/// `V85` a fresh decision kept for the account and address is attached at once; on a miss the request
+/// holds a screening slot of the kind `slot` gives while the source answers, and the answer is kept for
+/// the pair's next requests if it verifies. Before `V85` every request is screened on a decision
+/// naming its digest, `request_hash`, and none is kept.
 ///
 /// TODO: the host controls the network, so a malicious host can present any address as the peer, or
 /// as the configured proxy and name any client in its header; a relay or NAT on the host can present
@@ -317,18 +337,44 @@ pub(super) async fn api_screen(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     account: engine_core::types::AccountId,
     request_hash: eip712::B256,
-    kind: SlotKind,
+    slot: SlotFor,
 ) -> Result<AccessEvidence, ApiError> {
     let Some(Extension(ConnectInfo(peer))) = peer else {
         return Ok(AccessEvidence::Failed { reason: SourceFailure::MissingPeer });
     };
-    let claim = Claim { account, client: Some(peer.ip()), request: request_hash, kind };
-    let _slot = state.access.as_deref().map(|client| take_slot(client, claim)).transpose()?;
-    Ok(screen(
-        state.access.as_deref(),
-        &ScreeningRequest { request_hash, account: Some(account), payer: None, peer: Some(peer.ip()) },
-    )
-    .await)
+    let Some(client) = state.access.as_deref() else {
+        return Ok(AccessEvidence::Failed { reason: SourceFailure::NotConfigured });
+    };
+    let peer = peer.ip();
+    let reuse = reuses_decisions(state, client).await?;
+    if reuse && let Some(screening) = client.api_decisions.hit(account, peer, state.clock.now_ms()) {
+        return Ok(AccessEvidence::Screened(screening));
+    }
+    let claim = Claim { account, client: Some(peer), request: request_hash, kind: slot.kind(state).await? };
+    let _slot = take_slot(client, claim)?;
+    let query =
+        ScreeningRequest { request_hash: (!reuse).then_some(request_hash), ..ScreeningRequest::client(account, peer) };
+    let evidence = client.screen(&query).await;
+    if reuse && let AccessEvidence::Screened(screening) = &evidence {
+        let domain = signature_domain(state);
+        client.api_decisions.store(account, peer, screening, &domain, state.clock.now_ms(), true);
+    }
+    Ok(evidence)
+}
+
+/// Whether the log is at `V85` or later, so a request's decision covers its account and is kept: read
+/// from the API's engine copy until it first says so, as it does from then on.
+/// Error cases:
+/// - the sequencer has stopped
+async fn reuses_decisions(state: &ApiState, client: &AccessClient) -> Result<bool, ApiError> {
+    if client.api_decisions.reusing() {
+        return Ok(true);
+    }
+    let reuse = state.read(|engine| !engine.protocol_version().binds_screening_to_request()).await?;
+    if reuse {
+        client.api_decisions.reuse();
+    }
+    Ok(reuse)
 }
 
 /// A screening slot for `claim`, or the answer its refusal gets: a copy of a request still being
@@ -364,7 +410,12 @@ pub(super) async fn dev_deposit(State(s): State<ApiState>, Json(b): Json<AmountB
         let _slot = s.access.as_deref().map(|client| take_slot(client, claim)).transpose()?;
         let evidence = screen(
             s.access.as_deref(),
-            &ScreeningRequest { request_hash, account: deposit.account, payer: deposit.payer, peer: None },
+            &ScreeningRequest {
+                request_hash: Some(request_hash),
+                account: deposit.account,
+                payer: deposit.payer,
+                peer: None,
+            },
         )
         .await;
         Command::AccessDeposit { deposit, evidence }

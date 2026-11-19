@@ -78,6 +78,25 @@ async fn source_requests_carry_the_actual_peer_and_responses_keep_the_sources_ob
 }
 
 #[tokio::test]
+async fn a_client_requests_decision_names_no_request_and_one_naming_a_request_is_refused() {
+    let request = ScreeningRequest::client(AccountId([2; 20]), "203.0.113.9".parse().unwrap());
+    let valid = server(Behavior::Valid).await;
+    let AccessEvidence::Screened(screening) = client(&valid.url, 4096).screen(&request).await else {
+        panic!("valid source response")
+    };
+    assert_eq!(screening.request_hash, None);
+    assert_eq!(
+        valid.requests.lock().unwrap().as_slice(),
+        [json!({"account":request.account,"payer":null,"peer":"203.0.113.9"})],
+        "the query names no request"
+    );
+    // A source that names a request in answer to a query naming none answered another query.
+    let mismatched = server(Behavior::Mismatch).await;
+    let refused = client(&mismatched.url, 4096).screen(&request).await;
+    assert_eq!(refused, AccessEvidence::Failed { reason: SourceFailure::InvalidResponse });
+}
+
+#[tokio::test]
 async fn screening_requests_carry_a_user_agent() {
     let server = server(Behavior::Valid).await;
     let client = client(&server.url, 4096);
@@ -143,7 +162,7 @@ async fn decode_failures_log_the_error_position_but_no_response_values() {
 
 fn query() -> ScreeningRequest {
     ScreeningRequest {
-        request_hash: B256::repeat_byte(1),
+        request_hash: Some(B256::repeat_byte(1)),
         account: Some(AccountId([2; 20])),
         payer: None,
         peer: Some("203.0.113.9".parse().unwrap()),
@@ -198,7 +217,7 @@ async fn answer(
             let screening = Screening {
                 source: AccountId([0x11; 20]),
                 request_hash: if matches!(state.behavior, Behavior::Mismatch) {
-                    B256::ZERO
+                    Some(B256::ZERO)
                 } else {
                     serde_json::from_value(request["request_hash"].clone()).unwrap()
                 },

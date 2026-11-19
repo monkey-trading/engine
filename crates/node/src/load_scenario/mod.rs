@@ -8,7 +8,12 @@
 //! `SATURATED` of the time, a request is refused, or the traders reach their rate. Each leg prints order-to-fill and
 //! price-to-stamp at p50, p99 and p999, the sequencer's batch time, stream lag, the sequencer's busy
 //! share, and the process's CPU and resident memory, judged against #904's launch bar (`report`),
-//! and the ramp the first multiple at which each budget broke. The log the run wrote then replays to its
+//! and the ramp the first multiple at which each budget broke. The screening source answers each call
+//! after a remote source's round trip (`SOURCE_DELAY_MS`), and the bar holds the market orders of
+//! traders that sent a screened request within its bound, whose decisions the node's refreshes keep
+//! fresh, so any of them that waits for the source counts against it. The orders of traders it keeps
+//! no decision for, which wait for the source, of those between, and of fresh traders queued behind
+//! another trader's wait on their client's one connection print apart. The log the run wrote then replays to its
 //! roots from the same book, rebuilt (`sequencer::replay::replay_path_from`): the book is no log, so
 //! `engine replay` cannot start from it.
 //!
@@ -24,9 +29,9 @@
 //!
 //! Run by `scripts/dev-load.sh`; its variables size the run: `LOAD_ACCOUNTS` (100,000), `LOAD_TRADERS`
 //! (2,000), `LOAD_SUBSCRIBERS` (`api.max_subscribers`), `LOAD_LEG_SECS` (120), `LOAD_CRYPTO_RATE`
-//! (every crypto market's price commands a second, in place of each one's measured rate) and
+//! (every crypto market's price commands a second, in place of each one's measured rate),
 //! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections, at most two on
-//! CME Group's, whose stand-in reads its prices twice a second).
+//! CME Group's, whose stand-in reads its prices twice a second) and `LOAD_SOURCE_DELAY_MS` (200).
 
 pub(crate) mod generator;
 mod node;
@@ -87,6 +92,9 @@ const SATURATED: f64 = 0.9;
 const LINE_WITHIN: Duration = Duration::from_secs(10 * 60);
 /// How long every market has to be priced once the feeds start.
 const PRICED_WITHIN: Duration = Duration::from_secs(90);
+/// How long the screening source takes to answer [#1070]: a remote source's round trip, which a request
+/// with no fresh decision waits for.
+const SOURCE_DELAY_MS: u64 = 200;
 
 /// One leg's result.
 struct Run {
@@ -138,7 +146,8 @@ async fn run() {
     let rate = |measured: f64| std::env::var("LOAD_CRYPTO_RATE").map_or(measured, |rate| rate.parse().expect("a rate"));
     let crypto =
         CRYPTO_RATES.iter().map(|(market, measured)| (*market, rate(*measured) / CRYPTO_CONNECTIONS)).collect();
-    let mut venues = venues::start(Moves { crypto, rwa: env("LOAD_RWA_MOVES", RWA_MOVES) }).await;
+    let source_delay = Duration::from_millis(env("LOAD_SOURCE_DELAY_MS", SOURCE_DELAY_MS));
+    let mut venues = venues::start(Moves { crypto, rwa: env("LOAD_RWA_MOVES", RWA_MOVES) }, source_delay).await;
     let dir = scratch_dir("load");
     let (listener, api) = node::listen().await;
     let node = Node::start(engine, &dir, listener, &mut venues).await;
@@ -159,6 +168,7 @@ async fn run() {
         legs,
         ramp: None,
         windows: WINDOWS,
+        screening_bound_ms: u64::try_from(venues.access.max_age.as_millis()).expect("a bound in range"),
     };
     if env("LOAD_RAMP", 0) == 1 {
         plan.ramp = Some(Ramp { max: plan.ceiling(), ..RAMP });

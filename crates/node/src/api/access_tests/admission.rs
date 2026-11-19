@@ -104,10 +104,13 @@ async fn a_declaration_in_flight_holds_its_slot_and_leaves_orders_theirs() {
     assert_eq!(node.state.query(move |engine| engine.next_request_nonce(later)).await.unwrap(), 0);
     assert_eq!(logs.count("alert=\"api_declaration_slots_full\""), 1);
 
-    // An order screens through the slot declarations cannot hold.
+    // An order screens through the slot declarations cannot hold: with no fresh decision kept, it calls
+    // the source.
+    node.forget_decisions();
     let (status, events) = node.post("/v1/orders", order(&trader, 1)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"), "{events}");
+    assert_eq!(node.source.lock().unwrap().requests.len(), queries + 2, "the order called the source");
 
     // The held declaration finishes, which frees its slot for the next.
     gate.add_permits(1);
@@ -123,6 +126,8 @@ async fn exhausted_screening_capacity_neither_calls_the_source_nor_spends_a_clie
     let client = key(1);
     let account = eip712::address(client.verifying_key());
     node.onboard(&client).await;
+    // With no fresh decision kept, the order needs a call to the source, and so a slot.
+    node.forget_decisions();
     let occupied = node.state.access.as_ref().unwrap().api_slots.fill();
     let (entries, queries) = (settled_entries(&node).await, node.source.lock().unwrap().requests.len());
     assert_eq!(node.post("/v1/orders", order(&client, 1)).await.0, StatusCode::SERVICE_UNAVAILABLE);
@@ -134,6 +139,13 @@ async fn exhausted_screening_capacity_neither_calls_the_source_nor_spends_a_clie
     assert_eq!(status, StatusCode::OK);
     assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"));
     assert_eq!(node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap(), 2);
+    // The decision that order fetched backs the next one, which takes no slot however many are held.
+    let occupied = node.state.access.as_ref().unwrap().api_slots.fill();
+    let (status, events) = node.post("/v1/orders", order(&client, 2)).await;
+    assert_eq!(status, StatusCode::OK, "{events}");
+    assert!(events.as_array().unwrap().iter().any(|event| event["type"] == "fill"));
+    assert_eq!(node.source.lock().unwrap().requests.len(), queries + 1);
+    drop(occupied);
 }
 
 #[tokio::test]

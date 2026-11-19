@@ -130,6 +130,9 @@ impl Node {
             tls_public_key_sha256: tls.public_key_sha256,
         };
         let clock = Arc::new(SystemClock);
+        // The API's screening decisions, refreshed for active traders as the node refreshes them.
+        let domain = crate::access::screening_domain(&auth, &operator());
+        tasks.push(tokio::spawn(access.clone().refresh(domain, clock.clone())).abort_handle());
         let trusted = TrustedClock::new(clock.clone(), samples, Duration::from_secs(10));
         let limits = Arc::new(ApiLimits::new(&api).with_timing(&metrics.latency));
         let state = ApiState {

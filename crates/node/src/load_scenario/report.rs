@@ -340,6 +340,9 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
         replies.join(" ")
     );
     println!("LOAD leg={leg} order_to_fill_us {} bar={ORDER_TO_FILL_US:?}", us(&figures.order_to_fill_us));
+    println!("LOAD leg={leg} cold_order_to_fill_us {}", us(&figures.cold_order_to_fill_us));
+    println!("LOAD leg={leg} lapsing_order_to_fill_us {}", us(&figures.lapsing_order_to_fill_us));
+    println!("LOAD leg={leg} queued_order_to_fill_us {}", us(&figures.queued_order_to_fill_us));
     println!("LOAD leg={leg} request_us(client) {}", us(&figures.request_us));
     println!("LOAD leg={leg} api_request_us(node) {}", node_us(&node.request));
     let bar: Vec<u64> = PRICE_TO_STAMP_S.iter().map(|s| (s * 1e6) as u64).collect();

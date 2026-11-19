@@ -39,6 +39,10 @@ const MARK: i64 = 100;
 /// A request the scheduler hands out later than this after its schedule counts as late: the
 /// generator fell behind it.
 const LATE: Duration = Duration::from_millis(1);
+/// How long past twice the screening bound a trader's decision may still be kept: a refresh begun at
+/// the bound's end, whose decision lasts at most the bound, waits up to the source's timeout and a turn
+/// of the node's refresh loop to arrive.
+const REFRESH_SLACK: Duration = Duration::from_secs(10);
 /// How long a request may wait for its reply, and a client for its connection, before it counts as
 /// failed and the client gives up.
 const REPLY_WITHIN: Duration = Duration::from_secs(30);
@@ -55,6 +59,11 @@ pub(super) enum Kind {
 }
 
 impl Kind {
+    /// Whether the node screens a request of this kind: orders and close-alls, not cancels.
+    fn screened(self) -> bool {
+        matches!(self, Kind::Market | Kind::Limit | Kind::CloseAll)
+    }
+
     /// The kind's name in the figures.
     pub(super) fn name(self) -> &'static str {
         match self {
@@ -113,6 +122,9 @@ pub(super) struct Trader {
     rejection_said: bool,
     /// The statuses other than 200 and 409 whose reply this trader has written out.
     statuses_said: BTreeSet<u16>,
+    /// When the node last answered a screened request of this trader's: within the screening bound of
+    /// it, the node holds a fresh decision for the trader, which its refreshes keep fresh.
+    screened_at: Option<Instant>,
 }
 
 impl Trader {
@@ -133,6 +145,7 @@ impl Trader {
             next_client_id: 1,
             rejection_said: false,
             statuses_said: BTreeSet::new(),
+            screened_at: None,
         }
     }
 
@@ -335,6 +348,11 @@ pub(super) struct Client {
     pub traders: Vec<Trader>,
     pub units: Arc<BTreeMap<MarketId, Fixed>>,
     pub recorder: Recorder,
+    /// The node's screening bound (`plan::Plan::screening_bound_ms`).
+    pub screening_bound: Duration,
+    /// When the client's last screened request from a trader with no fresh decision, which may have
+    /// waited for the source, was answered.
+    pub slow_until: Option<Instant>,
 }
 
 impl Client {
@@ -394,11 +412,22 @@ impl Client {
     /// Sends one job and records its reply. Its time runs from when it was due to its reply, less the
     /// time the client took to sign it: a wait behind the client's previous request counts, and so
     /// does the scheduler's lateness, which `late` counts; the client's own signing does not. A
-    /// reply with a rejection in it is refused, as one with any status but 200 is.
+    /// reply with a rejection in it is refused, as one with any status but 200 is. A filled market
+    /// order is fresh when its trader had a screened request answered within the screening bound before
+    /// it, which the node's refreshes promise a fresh decision, and cold when it had none within twice
+    /// the bound and `REFRESH_SLACK`, so the node asked the source; between them, it is recorded apart.
+    /// A fresh order due before the client's last request that may have waited for the source was
+    /// answered queued behind it on the client's one connection, which another trader's own connection
+    /// would not, so it is recorded apart too.
     async fn send(&mut self, http: &mut Http, mut job: Job) {
         let trader = &mut self.traders[job.trader];
         trader.settle(&mut job);
         let late = job.dispatched.duration_since(job.due) > LATE;
+        let since = trader.screened_at.map(|at| at.elapsed());
+        let fresh = since.is_some_and(|since| since <= self.screening_bound);
+        let cold = since.is_none_or(|since| since > 2 * self.screening_bound + REFRESH_SLACK);
+        let queued = self.slow_until.is_some_and(|until| job.due < until);
+        let sending = Instant::now();
         let signing = Instant::now();
         let (path, body) = trader.request(&job, &self.units);
         let signed_in = signing.elapsed();
@@ -408,6 +437,12 @@ impl Client {
         let waited = job.due.elapsed().saturating_sub(signed_in).as_micros() as u64;
         let (outcome, fills, refused) = match sent {
             Ok((status, reply)) => {
+                if status == 200 && job.kind.screened() {
+                    trader.screened_at = Some(sending);
+                }
+                if job.kind.screened() && !fresh {
+                    self.slow_until = Some(Instant::now());
+                }
                 let reply: Value = serde_json::from_slice(&reply).unwrap_or_default();
                 let (fills, rejected) = trader.take(status, &reply);
                 let refused = status != 200 || rejected.is_some();
@@ -427,41 +462,16 @@ impl Client {
         samples.request_us.push(waited);
         samples.fills += fills;
         if job.kind == Kind::Market && fills > 0 {
-            samples.order_to_fill_us.push(waited);
+            let into = match (fresh, queued, cold) {
+                (true, false, _) => &mut samples.order_to_fill_us,
+                (true, true, _) => &mut samples.queued_order_to_fill_us,
+                (false, _, true) => &mut samples.cold_order_to_fill_us,
+                (false, _, false) => &mut samples.lapsing_order_to_fill_us,
+            };
+            into.push(waited);
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_cancel_or_close_all_whose_target_is_gone_goes_out_as_a_market_order() {
-        let mut trader = Trader::new(1);
-        let units = BTreeMap::from([(2, Fixed::from_int(50))]);
-        let job =
-            |kind| Job { trader: 0, kind, market: 2, side: Side::Buy, due: Instant::now(), dispatched: Instant::now() };
-        for kind in [Kind::Cancel, Kind::CancelAll, Kind::CloseAll] {
-            let mut gone = job(kind);
-            trader.settle(&mut gone);
-            assert_eq!(gone.kind, Kind::Market, "{kind:?} with nothing to act on");
-            assert_eq!(trader.request(&gone, &units).0, "/v1/orders");
-        }
-        {
-            let mut holding = trader.holding.lock().unwrap();
-            holding.resting.push(7);
-            holding.positions.insert(2, Side::Sell);
-        }
-        for (kind, path) in [
-            (Kind::Cancel, "/v1/orders/cancel"),
-            (Kind::CancelAll, "/v1/orders/cancel-all"),
-            (Kind::CloseAll, "/v1/positions/close-all"),
-        ] {
-            let mut held = job(kind);
-            trader.settle(&mut held);
-            assert_eq!(held.kind, kind, "{kind:?} with a target");
-            assert_eq!(trader.request(&held, &units).0, path);
-        }
-    }
-}
+mod tests;

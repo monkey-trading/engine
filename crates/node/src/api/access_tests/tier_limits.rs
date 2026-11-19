@@ -255,7 +255,7 @@ async fn tier_node(name: &str, account_seconds: u32, session_seconds: u32) -> (N
     let mut api = dev_config().api;
     api.request_bursts.account = NonZeroU32::new(account_seconds).unwrap();
     api.request_bursts.session_key = NonZeroU32::new(session_seconds).unwrap();
-    let mut node = Node::start_from(name, true, true, false, &genesis).await;
+    let mut node = Node::start_from(name, true, true, false, &genesis, ProtocolVersion::LATEST).await;
     node.state.limits = Arc::new(ApiLimits::with_quota(
         &api,
         |rate: RateLimit| Quota::with_period(Duration::from_secs(3600)).unwrap().allow_burst(rate.burst),

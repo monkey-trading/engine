@@ -27,6 +27,9 @@ pub(crate) enum SlotKind {
     Opening,
     /// A declaration: as `Opening`, while declarations hold fewer than half the slots, rounded up.
     Declaration,
+    /// The node's refresh of a kept decision: as `Opening`, but never the last slot outside the reserve,
+    /// so whatever declarations and refreshes hold, an order keeps one.
+    Refresh,
 }
 
 /// Why a request got no slot.
@@ -121,8 +124,9 @@ impl ScreeningSlots {
         }
     }
 
-    /// A slot for `claim`, held until the slot is dropped. A refusal for want of a free slot raises
-    /// `api_screening_slots_full`, and one for want of a declaration's `api_declaration_slots_full`.
+    /// A slot for `claim`, held until the slot is dropped. A request's refusal for want of a free slot
+    /// raises `api_screening_slots_full`, and one for want of a declaration's
+    /// `api_declaration_slots_full`; a refresh's raises nothing, as no request waits on it.
     /// Error cases:
     /// - a copy of the request holds a slot: `Duplicate`
     /// - its account or its client holds its share: `Share`
@@ -153,6 +157,7 @@ impl ScreeningSlots {
         let Some(refusal) = refused else { return Ok(ScreeningSlot { slots: self, claim, reserved }) };
         debug!(?refusal, kind = ?claim.kind, "screening slot refused");
         match refusal {
+            SlotRefusal::Full if claim.kind == SlotKind::Refresh => {}
             SlotRefusal::Full => self.full.raise(&"screening slots"),
             SlotRefusal::Declarations => self.declarations_full.raise(&"declaration screening slots"),
             SlotRefusal::Duplicate | SlotRefusal::Share => {}
@@ -166,6 +171,7 @@ impl ScreeningSlots {
         let room = match claim.kind {
             SlotKind::Reducing if !held.reserve.contains(&claim.account) => self.total,
             SlotKind::Reducing | SlotKind::Opening | SlotKind::Declaration => self.total - self.reserved,
+            SlotKind::Refresh => (self.total - self.reserved).saturating_sub(1),
         };
         if held.requests.contains(&claim.request) {
             Some(SlotRefusal::Duplicate)
@@ -288,15 +294,20 @@ mod tests {
     }
 
     #[test]
-    fn declarations_leave_an_order_a_slot_at_every_accepted_capacity() {
+    fn declarations_and_refreshes_leave_an_order_a_slot_at_every_accepted_capacity() {
         for total in 2..=17 {
             for reserved in 0..total / 2 {
                 let slots = pool(total, 1, total, reserved);
                 let declaring: Vec<_> =
                     (1..=total as u8).map_while(|n| slots.take(claim(n, n, n, SlotKind::Declaration)).ok()).collect();
                 assert!(!declaring.is_empty(), "a declaration takes a slot of {total}");
+                let refreshing: Vec<_> = (0x40..0x40 + total as u8)
+                    .map_while(|n| slots.take(claim(n, n, n, SlotKind::Refresh)).ok())
+                    .collect();
+                let held = (declaring.len(), refreshing.len());
                 let order = slots.take(claim(0xff, 0xff, 0xff, SlotKind::Opening));
-                assert!(order.is_ok(), "{} declarations of {total}, {reserved} reserved", declaring.len());
+                assert!(order.is_ok(), "{held:?} declarations and refreshes of {total}, {reserved} reserved");
+                assert!(slots.take(claim(0xfe, 0xfe, 0xfe, SlotKind::Refresh)).is_err(), "nor the reserve");
             }
         }
     }

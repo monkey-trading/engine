@@ -38,6 +38,8 @@ async fn one_wallets_burst_holds_only_its_share_of_the_screening_slots() {
     assert_eq!(status, StatusCode::OK, "{events}");
     // Two seconds refill both of the wallet's buckets: four requests each at tier 0's 2 a second.
     tokio::time::sleep(Duration::from_millis(2_200)).await;
+    // With no fresh decision kept, each request needs a call to the source, and so a slot.
+    node.forget_decisions();
 
     let gate = hold(&node, &[&wallet]);
     let asked = screened(&node);
@@ -47,8 +49,9 @@ async fn one_wallets_burst_holds_only_its_share_of_the_screening_slots() {
     assert!(until_in_flight(&node, &mut burst, asked + 1).await.is_none(), "the source holds the wallet's share");
     assert_eq!(screened(&node) - asked, 2, "the wallet's share of the slots");
 
-    let nonce = next_nonce(&node, address(&victim)).await;
+    let (nonce, before) = (next_nonce(&node, address(&victim)).await, screened(&node));
     let close = node.post("/v1/positions/close-all", close_all(&victim, &victim, nonce, &[1], 100_000)).await;
+    node.forget_decisions();
     let nonce = next_nonce(&node, address(&victim)).await;
     let withdraw = node.post("/v1/withdrawals", withdrawal(&victim, nonce)).await;
     let declare = node.post("/v1/eligibility", declaration(&newcomer, 0)).await;
@@ -57,6 +60,7 @@ async fn one_wallets_burst_holds_only_its_share_of_the_screening_slots() {
         [StatusCode::OK; 3],
         "another wallet's close-all, withdrawal and declaration: {close:?} {withdraw:?} {declare:?}"
     );
+    assert_eq!(screened(&node) - before, 3, "each of them called the source and took a slot");
 
     gate.add_permits(8);
     let statuses: Vec<_> = burst.await.into_iter().map(|(status, _)| status).collect();
@@ -106,10 +110,15 @@ async fn new_orders_leave_stop_losses_closes_and_withdrawals_the_reserved_slots(
     let (status, events, _) = send(&node, 3, Method::POST, "/v1/positions/levels", stop).await;
     let set = of_type(&events, "position_levels_set").len();
     assert_eq!((status, set), (StatusCode::OK, 1), "the stop loss takes a reserved slot: {events}");
+    // Each of the trader's requests finds no fresh decision kept, so calls the source and takes a slot.
+    node.forget_decisions();
+    let before = screened(&node);
     let (status, events, _) =
         send(&node, 3, Method::POST, "/v1/orders", signed_order(&trader, &trader, 3, 2, true)).await;
     assert!(status == StatusCode::OK && fills(&events), "the close takes a reserved slot: {events}");
+    node.forget_decisions();
     let (status, events, _) = send(&node, 3, Method::POST, "/v1/withdrawals", withdrawal(&trader, 4)).await;
+    assert_eq!(screened(&node) - before, 2, "the close and the withdrawal each called the source");
     assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("withdrawal_queued")), "{events}");
     assert_eq!(logs.warnings("api_screening_slots_full"), 1, "the operator hears of the refused order");
 
@@ -135,6 +144,8 @@ async fn a_repeat_declaration_and_a_copy_of_a_signed_order_hold_no_screening_slo
     assert_eq!(next_nonce(&node, address(&wallet)).await, 1, "nor uses a nonce");
     let (status, events) = node.post("/v1/eligibility", declaration(&newcomer, 0)).await;
     assert_eq!(status, StatusCode::OK, "{events}");
+    // With no fresh decision kept, each order needs a call to the source, and so a slot.
+    node.forget_decisions();
 
     let gate = hold(&node, &[&wallet]);
     let asked = screened(&node);
@@ -190,7 +201,7 @@ async fn production_like(name: &str) -> Node {
     let mut api = dev_config().api;
     api.request_bursts.account = NonZeroU32::new(2).unwrap();
     api.request_bursts.session_key = NonZeroU32::new(2).unwrap();
-    let mut node = Node::start_from(name, true, true, false, &genesis).await;
+    let mut node = Node::start_from(name, true, true, false, &genesis, ProtocolVersion::LATEST).await;
     node.state.limits = Arc::new(ApiLimits::new(&api));
     production_slots(&mut node);
     node

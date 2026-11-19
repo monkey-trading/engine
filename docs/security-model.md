@@ -80,11 +80,32 @@ Known limits:
 ## Account screening
 
 Before an account's first deposit is credited, or its first order is accepted, the account must sign
-an eligibility declaration. Declarations, orders and withdrawals each require fresh screening of the
-account, and of the client's network address, by the screening source that the log records. The
-source's evidence must be signed by the authority the log records, and it is bound by its freshness,
-its subject and the request it answers. A deposit from a payer confirmed as sanctioned is held
+an eligibility declaration. Declarations, orders, closes, withdrawals and payout reissues each need a
+fresh decision of the screening source that the log records, about the account and the client's
+network address. The decision must be signed by the authority the log records, and it must name the
+account. The engine accepts it only while its observation time is no older than the recorded
+freshness bound, and no more than a second later, than the time the trading server stamps the
+request. The trading server keeps one decision for each account and client address, and attaches it
+to each of that pair's requests while it is fresh. It asks the source again before the decision runs
+out for a pair that sent a request within the bound. A deposit's decision instead names the deposit
+that it screens, and backs only that deposit. A deposit from a payer confirmed as sanctioned is held
 uncredited, and the trading server publishes the evidence for the hold.
+
+A request's decision proves that the recorded source classified the account, and a client address,
+as the decision says, at an observation time within the bound before the request's stamp. Unless it
+names the request, it does not prove that the source was asked about that request, so:
+
+- A change in the source's classification, such as a new sanction or a client in a restricted
+  region, reaches an account's requests only when the trading server next receives a decision for
+  it. Until then, the earlier decision keeps backing the account's requests, for at most the bound
+  after its observation time.
+- The host, which can delay or drop the trading server's calls to the source, can hold back a newer
+  decision for as long.
+- A refused decision is reused in the same way, so an account stays refused until the trading
+  server receives a newer decision, and the source is not asked again on each of its requests.
+
+A log written before protocol `V85` binds each request's decision to that request, as the
+[version list](../crates/core/src/protocol/versions.rs) describes.
 
 Known limits:
 
@@ -100,19 +121,27 @@ Known limits:
   whole. A client with several addresses can still exhaust the shared budget, and new wallets are
   then refused until it refills. A wallet with a pending deposit declares outside those budgets,
   against a budget of its own.
-- The API's screening slots are shared in the same way. Each account and each client address holds
-  at most its share, a production trading server has at least 68 slots for each second of the
-  source's timeout, and a reserve of them goes only to requests that the account's current state
-  shows can reduce risk, such as closing a position it holds or withdrawing cash it has, one at a
-  time for an account. A client can still hold every slot while the source is answering if it has
+- The API's screening slots are shared in the same way. They bound the calls to the source that
+  the trading server makes, when a request finds no fresh decision and when it refreshes one. Each
+  account and each client address holds at most its share, a production trading server has at least
+  68 slots for each second of the source's timeout, and a reserve of them goes only to requests that
+  the account's current state shows can reduce risk, such as closing a position it holds or
+  withdrawing cash it has, one at a time for an account. Refreshes never take the reserve, nor the
+  last slot outside it. A client can still hold every slot while the source is answering if it has
   enough addresses and credited accounts: at the production values and a source that takes its full
   2 seconds, 68 accounts behind 34 addresses, two of the accounts holding a position or withdrawable
   cash.
+- The trading server keeps decisions for at most 50,000 accounts and addresses at once. Past that, a
+  request from a new account and address waits for the source each time, as no decision is kept
+  for it.
 - A hold for a confirmed sanction has no automatic release or refund.
 - Jurisdiction screening uses the address of the connection's peer or, behind a configured
   pass-through proxy, the client address in the proxy's PROXY protocol header. The host's network
   supplies both addresses, so neither is bounded against a host that relays or translates client
   connections.
+- The log carries no client address, so a replay cannot check which address a decision was made
+  for. The trading server attaches a decision only to requests from the address that it asked the
+  source about, and no check in the engine establishes that.
 - The engine checks the source's signature, freshness and subject, but it trusts the source's
   classifications. Their correctness rests on the source's provenance, which no check in the code
   establishes.

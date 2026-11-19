@@ -73,6 +73,8 @@ pub fn withdrawal(engine: &Engine, seed: u8, amount: Fixed, payout_available: bo
     Command::AccessWithdraw { request, evidence, payout_available }
 }
 
+/// Fresh, allowed and clear evidence signed by the test source: a deposit's, which names a payer,
+/// names `request_hash`, and a client request's does before `V85`.
 pub fn proof(
     engine: &Engine,
     request_hash: B256,
@@ -81,7 +83,8 @@ pub fn proof(
 ) -> AccessEvidence {
     let mut screening = Screening {
         source: self::account(0x77),
-        request_hash,
+        request_hash: (payer.is_some() || engine.protocol_version().binds_screening_to_request())
+            .then_some(request_hash),
         observed_at: engine.now(),
         account,
         payer,

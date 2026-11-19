@@ -5,6 +5,7 @@ mod admission;
 mod batch;
 mod bodies;
 mod cancel;
+mod decisions;
 mod declarations;
 mod earned_leverage;
 mod holding_fee;
@@ -131,6 +132,7 @@ async fn excluded_evm_orders_and_withdrawals_are_publicly_refused_before_the_uns
         (Jurisdiction::Unknown, "jurisdiction_unknown"),
     ] {
         node.source.lock().unwrap().jurisdiction = jurisdiction;
+        node.forget_decisions();
         let nonce = node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap();
         let refused = node.post("/v1/orders", order(&client, nonce)).await.1;
         assert_eq!(refused[0]["reason"], json!({"kind":"access","reason":expected}));
@@ -139,6 +141,7 @@ async fn excluded_evm_orders_and_withdrawals_are_publicly_refused_before_the_uns
         assert_eq!(refused[0]["type"], "withdrawal_rejected");
         assert_eq!(refused[0]["reason"], json!({"kind":"access","reason":expected}));
         node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+        node.forget_decisions();
         assert_eq!(node.post("/v1/withdrawals", withdrawal).await.0, StatusCode::CONFLICT);
     }
     let nonce = node.state.query(move |engine| engine.next_request_nonce(account)).await.unwrap();
@@ -157,10 +160,12 @@ async fn account_sanctions_and_bad_source_signatures_fail_closed_without_a_bogus
     let account = eip712::address(client.verifying_key());
     node.onboard(&client).await;
     node.source.lock().unwrap().sanctioned.insert(account);
+    node.forget_decisions();
     let refused = node.post("/v1/orders", order(&client, 1)).await.1;
     assert_eq!(refused[0]["reason"]["reason"], "account_sanctioned");
     node.source.lock().unwrap().sanctioned.clear();
     node.source.lock().unwrap().forged = true;
+    node.forget_decisions();
     let refused = node.post("/v1/orders", order(&client, 2)).await.1;
     assert_eq!(refused[0]["reason"]["reason"], "source_invalid");
     let mut forged = order(&key(2), 3);
@@ -257,11 +262,18 @@ impl Node {
     }
 
     async fn start_with_time(name: &str, mock_custody: bool, trusted: bool, gated: bool) -> Self {
-        Self::start_from(name, mock_custody, trusted, gated, &dev_config().genesis).await
+        Self::start_from(name, mock_custody, trusted, gated, &dev_config().genesis, ProtocolVersion::LATEST).await
     }
 
-    /// `start_with_time` from `genesis` instead of the dev config's.
-    async fn start_from(name: &str, mock_custody: bool, trusted: bool, gated: bool, genesis: &Genesis) -> Self {
+    /// `start_with_time` from `genesis` instead of the dev config's, with `version` activated.
+    async fn start_from(
+        name: &str,
+        mock_custody: bool,
+        trusted: bool,
+        gated: bool,
+        genesis: &Genesis,
+        version: ProtocolVersion,
+    ) -> Self {
         let (work, work_rx) = mpsc::channel(1024);
         let dir = scratch_dir(&format!("access-api-{name}"));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -303,7 +315,10 @@ impl Node {
             ..sequencer_config(&dir, manifest_tx)
         };
         let mut sequencer = Sequencer::recover(cfg, enclave.clone(), stream.clone(), withdrawals).unwrap();
-        sequencer.activate_protocol().unwrap();
+        match version {
+            ProtocolVersion::LATEST => sequencer.activate_protocol().unwrap(),
+            _ => sequencer.activate_protocol_at(version).unwrap(),
+        }
         sequencer.genesis(genesis).unwrap();
         if trusted {
             sequencer.trust(sample_around(stamps.as_ref())).unwrap();
@@ -356,7 +371,7 @@ impl Node {
         };
         assert_eq!(
             state.query(Engine::protocol_version).await.unwrap(),
-            if trusted { ProtocolVersion::LATEST } else { ProtocolVersion::V2 }
+            if trusted { version } else { ProtocolVersion::V2 }
         );
         let quotes = ["a", "b"]
             .map(|source| SourceQuote { source: source.into(), mid: Fixed::from_int(100000), ts: NOW, contract: None })

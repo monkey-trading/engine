@@ -415,6 +415,7 @@ async fn serve_node(
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
     let limits = Arc::new(ApiLimits::new(&cfg.api).with_timing(&metrics.latency));
+    ticker::start_screening_refresh(access.as_ref(), &client_auth, &operator, &mut tasks);
     let signing = Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock);
     let app = router(ApiState {
         protocol: engine_core::protocol::ProtocolVersion::LATEST,

@@ -141,7 +141,7 @@ fn future_or_action_mismatched_source_evidence_is_never_accepted() {
         let AccessEvidence::Screened(screening) = &mut evidence else { unreachable!() };
         match changed {
             0 => screening.observed_at += MAX_EVIDENCE_LEAD_MS + 1,
-            1 => screening.request_hash = B256::repeat_byte(1),
+            1 => screening.request_hash = Some(B256::repeat_byte(1)),
             2 => screening.payer = Some(client.account),
             3 => screening.source = client.account,
             // Evidence for the account's other signed action at the same nonce.

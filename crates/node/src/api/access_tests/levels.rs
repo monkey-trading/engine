@@ -101,13 +101,6 @@ pub(super) async fn set_levels(
     node.post("/v1/positions/levels", body).await
 }
 
-/// The digest `body`, a signed levels request, was signed over.
-fn signed_digest(body: &Value) -> eip712::B256 {
-    let request: PositionLevelsRequest = serde_json::from_value(body.clone()).unwrap();
-    let auth = request.auth.clone().unwrap();
-    eip712::position_levels_hash(&eip712::domain(31_337, VAULT), &request, auth.nonce, auth.expires_at)
-}
-
 /// The events of `events` of type `kind`.
 pub(super) fn of_type<'a>(events: &'a Value, kind: &str) -> Vec<&'a Value> {
     events.as_array().unwrap().iter().filter(|event| event["type"] == kind).collect()
@@ -167,7 +160,9 @@ async fn a_levels_request_is_one_screened_log_entry_on_one_nonce_and_a_session_k
     let (status, events) = order(&node, &client, BTC, Side::Buy, "1", market("100000"), levels(None, None)).await;
     assert_eq!((status, of_type(&events, "fill").len()), (StatusCode::OK, 1), "{events}");
 
-    // One request sets both levels: one screening of the request's own digest, one log entry, one nonce.
+    // One request sets both levels: one screening, one log entry, one nonce. With no fresh decision kept,
+    // the screening is one call, which asks about the account and its address and names no request.
+    node.forget_decisions();
     let screened = node.source.lock().unwrap().requests.len();
     let body = levels_body(&client, &client, 2, NOW + 60_000, BTC, levels(Some("102000"), Some("98000")));
     let (status, events) = node.post("/v1/positions/levels", body.clone()).await;
@@ -176,7 +171,7 @@ async fn a_levels_request_is_one_screened_log_entry_on_one_nonce_and_a_session_k
     assert_eq!((status, events), (StatusCode::OK, json!([set])));
     let requests = node.source.lock().unwrap().requests.clone();
     assert_eq!(requests.len(), screened + 1, "one screening request");
-    assert_eq!(requests[screened]["request_hash"], json!(signed_digest(&body)));
+    assert_eq!(requests[screened], json!({ "account": id, "payer": null, "peer": "127.0.0.1" }));
     assert_eq!(logged(&node, is_levels_request), 1);
     assert_eq!(node.get(&format!("/v1/accounts/{id}/nonce")).await["next_nonce"], 3);
 
@@ -232,6 +227,7 @@ async fn a_levels_request_refused_by_screening_sets_nothing_and_uses_its_nonce()
     assert_eq!((status, of_type(&events, "fill").len()), (StatusCode::OK, 1), "{events}");
 
     node.source.lock().unwrap().sanctioned.insert(id);
+    node.forget_decisions();
     let (status, events) = set_levels(&node, &client, &client, BTC, levels(None, Some("98000"))).await;
     assert_eq!(status, StatusCode::OK, "{events}");
     assert_eq!(

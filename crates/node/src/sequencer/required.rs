@@ -176,7 +176,8 @@ impl Sequencer {
         Some(Command::Admin(AdminCommand::SetFaultProof(config)))
     }
 
-    /// As `activate_protocol`, activating `version` instead of the latest, for tests of earlier rules.
+    /// As `activate_protocol`, activating `version` instead of the latest, for tests of earlier rules,
+    /// and recording the config's access policy as it does.
     /// Error cases:
     /// - the engine rejects any of them
     /// - the log cannot be written
@@ -185,6 +186,9 @@ impl Sequencer {
         let current = self.engine.protocol_version();
         let legacy = self.legacy_deposits.values().cloned().collect();
         let mut cmds = activation_commands(&self.engine, &self.client_auth, self.operator, legacy);
+        if let (None, Some(policy)) = (self.engine.access_policy(), &self.access_policy) {
+            cmds.push(Command::Admin(AdminCommand::SetAccessPolicy(policy.clone())));
+        }
         let activates = |cmd: &Command| {
             matches!(
                 cmd,

@@ -70,7 +70,9 @@ async fn cancel_all_and_close_all_are_one_screened_request_and_one_log_entry_eac
     let (status, events) = node.post("/v1/orders/cancel-all", cancel_all(&account, &account, 5)).await;
     assert_eq!((status, events), (StatusCode::OK, json!([])));
 
-    // One request closes the position, screened once whatever its length, and logs as one entry.
+    // One request closes the position, screened once whatever its length, and logs as one entry. With
+    // no fresh decision kept, that screening is one call to the source.
+    node.forget_decisions();
     let screened = node.source.lock().unwrap().requests.len();
     let (status, events) =
         node.post("/v1/positions/close-all", close_all(&account, &account, 6, &[1, 2], 100000)).await;
@@ -157,15 +159,19 @@ async fn a_close_all_with_refused_or_failed_screening_closes_nothing() {
 
     // A sanctioned account, a source answer that does not verify, and a barred jurisdiction each
     // refuse the request whole and log it, on its nonce.
+    // Each change of the source's answer is met once the decision kept before it has run out.
     node.source.lock().unwrap().sanctioned.insert(id);
+    node.forget_decisions();
     let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 2, &[1], 100000)).await;
     assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("account_sanctioned")));
     node.source.lock().unwrap().sanctioned.clear();
     node.source.lock().unwrap().forged = true;
+    node.forget_decisions();
     let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 3, &[1], 100000)).await;
     assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("source_invalid")));
     node.source.lock().unwrap().forged = false;
     node.source.lock().unwrap().jurisdiction = Jurisdiction::UnitedStates;
+    node.forget_decisions();
     let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 4, &[1], 100000)).await;
     assert_eq!((status, events[0]["reason"]["reason"].as_str()), (StatusCode::OK, Some("united_states")));
 
@@ -176,6 +182,7 @@ async fn a_close_all_with_refused_or_failed_screening_closes_nothing() {
 
     // The same request once screening passes closes the position.
     node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    node.forget_decisions();
     let (status, events) = node.post("/v1/positions/close-all", close_all(&account, &account, 5, &[1], 100000)).await;
     assert_eq!((status, types(&events)), (StatusCode::OK, vec!["order_accepted", "fill"]), "{events}");
     assert!(held_btc(&node, id).await.is_zero());

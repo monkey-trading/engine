@@ -225,7 +225,7 @@ fn evidence(
 ) -> AccessEvidence {
     let mut screening = Screening {
         source: eip712::address(source.verifying_key()),
-        request_hash,
+        request_hash: Some(request_hash),
         observed_at: h.ts,
         account,
         payer,

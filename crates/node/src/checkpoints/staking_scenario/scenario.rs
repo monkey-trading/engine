@@ -267,7 +267,8 @@ impl Scenario {
             access: Some(self.access.client.clone()),
             operator: self.operator,
             mock_custody: false,
-            clock: Arc::new(TestClock::at(NOW)),
+            // The sequencer's clock, as the node gives both: kept screening decisions age with it.
+            clock: self.clock.clone(),
             log_dir: self.dir.clone(),
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),

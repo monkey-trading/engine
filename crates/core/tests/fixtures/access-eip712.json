@@ -185,6 +185,56 @@
           "decision": "{\"source\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"request_hash\":\"0x1212121212121212121212121212121212121212121212121212121212121212\",\"observed_at\":1792540740000,\"account\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"payer\":null,\"jurisdiction\":\"allowed\",\"account_status\":\"clear\",\"payer_status\":\"unknown\"}"
         }
       }
+    },
+    {
+      "body": {
+        "source": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "observed_at": 1792540740000,
+        "account": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "payer": null,
+        "jurisdiction": "united_states",
+        "account_status": "clear",
+        "payer_status": "unknown",
+        "signature": "0x3bb2c7257bce58f282faae8c39ddbb106b1c2343a0a8510c0730d8953055fcdb21321b2bfcc0508043153a4f638586bd484bd42b7f7dde6d6e938cd2fa2196411c"
+      },
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "AccessScreening": [
+            {
+              "name": "decision",
+              "type": "string"
+            }
+          ]
+        },
+        "primaryType": "AccessScreening",
+        "domain": {
+          "name": "monkeytrading",
+          "version": "1",
+          "chainId": 31337,
+          "verifyingContract": "0x5fbdb2315678afecb367f032d93f642f64180aa3"
+        },
+        "message": {
+          "decision": "{\"source\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"observed_at\":1792540740000,\"account\":\"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266\",\"payer\":null,\"jurisdiction\":\"united_states\",\"account_status\":\"clear\",\"payer_status\":\"unknown\"}"
+        }
+      }
     }
   ]
 }

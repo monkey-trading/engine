@@ -134,7 +134,8 @@ an index: load only the rule whose hint matches the current action.
   whole-USDC partial approvals under the V22 rules; `merkle/withdrawal.rs` proves each approval
   against a root. `tests/corporate_actions/` exercises cash, calendars, splits and replay. Unit
   tests sit
-  against a root, with signed eligibility, authenticated screening evidence,
+  against a root, with signed eligibility, authenticated screening evidence (from `V85` a client request's evidence
+  is a decision for its account naming no request, `tests/screening_decisions.rs`),
   durable outage retries and uncredited custody holds in `access/`. Unit tests sit
   inline; protocol tests are in `tests/` by area, with the shared harness in `tests/common/`.
   `tests/common/launch_book/` builds a launch-scale book for the benchmarks (`tests/launch_book_benchmark.rs`, with
@@ -175,10 +176,13 @@ an index: load only the rule whose hint matches the current action.
   a chain or screening key holds on that listener, one lacking a vendor key or webhook runs with it off
   under `secret_missing`; a rotation needs a restart and says so; an approved upgrade moves the bundle,
   an election moves none), the
-  access-source screening (`access.rs`, signed decisions with bounded HTTP reads; `access/slots.rs`, the
-  API's screening slots: a share per account and per client, a reserve for the requests the API's engine
-  copy shows can reduce risk (`api/actions.rs`), one of its slots at a time per account, one slot per
-  signed request, and a production floor of 68 slots a second of `access.timeout`),
+  access-source screening (`access.rs`, signed decisions with bounded HTTP reads; `access/decisions.rs`, the
+  API's decisions, one per account and client address, verified, reused while fresh and bounded, refreshed
+  for pairs active within the bound by `access/refresh.rs`'s supervised loop; `access/slots.rs`, the
+  API's screening slots, bounding the calls the node makes, misses and refreshes: a share per account and per
+  client, a reserve for the requests the API's engine copy shows can reduce risk (`api/actions.rs`), one of
+  its slots at a time per account, one slot per signed request, and a production floor of 68 slots a second
+  of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
   byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
   replay`, `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published log, or with `--deposit` the
@@ -864,7 +868,10 @@ an index: load only the rule whose hint matches the current action.
   (`load_scenario/generator/`): 2,000 traders under session keys sending an open-loop Poisson mix of signed market and
   limit orders, cancels, cancel-alls and close-alls through the API's PROXY protocol peer from 100 client addresses, and
   every stream subscriber the template allows, half signed and some quoting; launch flow and ten times it, with
-  `--ramp` a doubling ramp printing the load at which each budget first breaks, each leg's figures against #904's bar, failing outside it under
+  `--ramp` a doubling ramp printing the load at which each budget first breaks, each leg's figures against #904's bar, the
+  bar holding the market orders of traders that sent a screened request within the screening bound, whose decisions the
+  node keeps fresh, under a source answering in 200 ms, and those of traders that wait for the source, or may, or that
+  queue behind another trader's wait on their client's connection, printed apart (#1070), failing outside it under
   a loaded runner's tolerance but for order-to-fill p50, held to a 10 ms regression guard until #1045 cuts the path, then the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-recovery-scale.sh`, the recovery dev scenario (`sequencer/recovery_scale/`, #908): a node's sequencer takes over
   the launch book on a test clock and writes 30 days of launch flow and 3 of ten times it on accelerated sequenced time
@@ -905,7 +912,9 @@ an index: load only the rule whose hint matches the current action.
   on every attestation fixture and `engine-wire` vector; `build-wasm-verifier.sh`, the browser
   verifier's reproducible npm package build (`--dev` for the scenario);
   `dev-access-enforcement.sh` checks signed eligibility, a wallet's setup before its first deposit, the fresh-account budgets (a retry-later answer, a
-  pending deposit past an empty share), API refusals,
+  pending deposit past an empty share), the reuse of a screening decision (a first order waiting on the source, the next
+  ones and a steady trader's asking nothing, counted at the source, a refusal reused, an expired decision fetched
+  again, under a six-second bound), API refusals,
   direct vault payer sanctions, automatic screening recovery and held collateral across restart,
   using `dev-access-fixture.sh` and `dev-access-cases.sh` for the explicit synthetic source and
   assertions; `dev-quotes.sh`, the executable quotes scenario run through the vault deposit scenario
@@ -1143,8 +1152,9 @@ Run from the repo root:
 - Node load dev scenario: `./scripts/dev-load.sh` (needs only Cargo; at the launch book's 100k accounts
   it builds the book twice, once for the run and once for its replay, and takes the run's legs of two
   minutes each; run it under `nice` in a quiet window); `--ramp` adds the ramp, and `LOAD_ACCOUNTS`,
-  `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE` and `LOAD_RWA_MOVES` size the
-  run (CI's job sets 10,000 accounts, 200 traders and 16 subscribers); a measured leg that breaks the bar runs once
+  `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE`, `LOAD_RWA_MOVES` and
+  `LOAD_SOURCE_DELAY_MS` (the screening source's answer time, 200 ms) size the run (CI's job sets 10,000
+  accounts, 200 traders and 16 subscribers); a measured leg that breaks the bar runs once
   more on the same node and fails only if the second run breaks it too, as does each 100k-account latency benchmark
   that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it

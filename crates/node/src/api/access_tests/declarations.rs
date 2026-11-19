@@ -32,6 +32,8 @@ async fn a_refused_declaration_is_public_and_its_deposit_waits_pending_for_an_al
                 source.sanctioned.clear();
             }
         }
+        // The source's new answer is met once the decision kept before it has run out.
+        node.forget_decisions();
         let (status, events) = node.post("/v1/eligibility", declaration(&client, nonce)).await;
         assert_eq!(status, StatusCode::OK, "{events}");
         assert_eq!(
@@ -54,6 +56,7 @@ async fn a_refused_declaration_is_public_and_its_deposit_waits_pending_for_an_al
         (source.jurisdiction, source.forged) = (Jurisdiction::Allowed, false);
         source.sanctioned.clear();
     }
+    node.forget_decisions();
     let (status, events) = node.post("/v1/eligibility", declaration(&client, 5)).await;
     assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
     assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), 1, "a recorded declaration is verified");

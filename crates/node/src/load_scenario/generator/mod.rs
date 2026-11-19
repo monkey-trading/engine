@@ -119,6 +119,8 @@ async fn run(plan: Plan) {
             traders: chunk.iter().map(|number| Trader::new(*number)).collect(),
             units: units.clone(),
             recorder: Recorder::default(),
+            screening_bound: Duration::from_millis(plan.screening_bound_ms),
+            slow_until: None,
         })
         .collect();
     let mut registering = JoinSet::new();

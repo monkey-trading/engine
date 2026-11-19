@@ -49,7 +49,8 @@ fn genesis() -> Genesis {
 #[tokio::test(flavor = "multi_thread")]
 async fn dev_scenario_new_risk_and_withdrawals_read_the_portfolio_requirement() {
     let genesis = genesis();
-    let mut node = Node::start_from("portfolio-new-risk-dev-scenario", true, true, false, &genesis).await;
+    let mut node =
+        Node::start_from("portfolio-new-risk-dev-scenario", true, true, false, &genesis, ProtocolVersion::LATEST).await;
     let (a, b, c) = (key(0xb1), key(0xb2), key(0xb3));
     let [a_id, b_id, c_id] = [&a, &b, &c].map(|client| eip712::address(client.verifying_key()));
     for client in [&a, &b, &c] {

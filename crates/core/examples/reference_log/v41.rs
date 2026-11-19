@@ -234,7 +234,7 @@ fn source() -> SigningKey {
 fn screened(h: &Harness, hash: eip712::B256, account: Option<AccountId>, payer: Option<AccountId>) -> AccessEvidence {
     let mut screening = Screening {
         source: eip712::address(source().verifying_key()),
-        request_hash: hash,
+        request_hash: Some(hash),
         observed_at: h.ts,
         account,
         payer,
