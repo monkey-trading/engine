@@ -1086,10 +1086,10 @@ the new key to register before the epoch's close.
 
 Once `heartbeatMisses` witnessed slots, 5 by default, pass with no head, anyone's `promote()` names
 the next qualified member. The vault moves its signer to that member's standby key, in a new signer
-epoch. The promotion prefers a member that held nothing of the turn, then a member that was drawn or
-skipped to and never received the keys, and takes the key holder last. A member that held the keys
-under an assignment of the turn is never named again in that turn. To read whether a member held the
-keys, run:
+epoch. The promotion names the next member in the turn's order that never received the keys of the
+turn, whether or not it was drawn or skipped to, and takes the key holder last. A member that held
+the keys under an assignment of the turn is never named again in that turn. To read whether a member
+held the keys, run:
 
 ```shell
 cast call $SCHEDULE 'heldKeys(uint64,address)(bool)' <turn> <candidate address> --rpc-url $RPC
@@ -1136,8 +1136,9 @@ The command prints the window in slots, followed by its minimum and maximum.
 
 Once the window passes with no latch, anyone's `skip()` names the next listed member in the turn's
 order that has held no assignment of the turn, other than the key holder. The skip creates a new
-generation, with no signer change. The key holder is the candidate whose assignment recorded the
-release that signed the newest head, whatever release it has moved to since. To find it, run:
+generation, with no signer change. The key holder is the candidate whose assignment, release move or
+naming as a turn's source recorded the release that signed the newest head, whatever release it has
+moved to since. To find it, run:
 
 ```shell
 HEAD_RELEASE=$(cast call $LOG_HEADS 'headRelease(uint64)(bytes32)' <epoch> --rpc-url $RPC)
@@ -1145,6 +1146,22 @@ cast call $SCHEDULE 'releaseCandidate(bytes32)(address)' $HEAD_RELEASE --rpc-url
 ```
 
 `<epoch>` is the vault's signer epoch. The second command prints the key holder's candidate address.
+When the first command prints zero, the epoch has no head yet, and the keys are where the epoch found
+them. They are with the member of the latest turn that a member took or a promotion reached, or else
+with the source of the earliest turn since, such as the operator in office when turns began or after
+an installation. To read a turn's source, its latest assignment and whether a head latched that
+assignment, run:
+
+```shell
+cast call $SCHEDULE 'sourceOf(uint64)(address)' <turn> --rpc-url $RPC
+cast call $SCHEDULE 'turnOf(uint64)((address,uint16,uint8,uint32,uint64,uint64,bytes32,address))' <turn> \
+  --rpc-url $RPC
+cast call $LOG_HEADS 'latches(uint64,uint16)(uint64,uint64,address,bytes32,uint64)' <turn> <position> \
+  --rpc-url $RPC
+```
+
+The second command prints the turn's latest member, position and reason (2 for a promotion), and the
+turn drawn before it. The third prints a latch time of zero when no head latched the assignment.
 
 - An unwitnessed slot, as during a chain outage, restarts the window.
 - A promotion's assignment is never skipped.

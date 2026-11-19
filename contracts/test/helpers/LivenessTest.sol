@@ -73,23 +73,27 @@ abstract contract LivenessTest is ScheduleTest {
     }
 
     /// @dev The member `promote` names now by the rule, walked independently over `memberAt`: of the
-    /// positions after the current one whose member the registry lists under its adopted key and that
-    /// holds a promotable standby key, the first that held nothing of the turn and is not the key holder;
-    /// else the first that held an assignment of it but not its keys and is not the key holder; else the
-    /// first that is the key holder holding no assignment, or a holder a promotion moved past.
+    /// positions after the current one, through one whole scan past the later of the weighted positions
+    /// and the current one, whose member the registry lists under its adopted key and that holds a
+    /// promotable standby key, the first that never held the turn's keys and is not the key holder,
+    /// whether or not it held an assignment; else the first that is the key holder holding no assignment,
+    /// or a holder a promotion moved past holding none.
     function _expectedPromotion() internal view returns (uint16 position, address member) {
         OperatorSchedule.Turn memory current = schedule.turnOf(turn);
         (,, address[] memory candidates,) = schedule.setOf(setId);
-        uint256 end = schedule.MAX_DRAW_POSITIONS() + candidates.length;
+        uint256 weighted = schedule.MAX_DRAW_POSITIONS();
+        uint256 end = (current.position < weighted ? weighted : uint256(current.position) + 1) + candidates.length;
         address holder = _keyHolder();
-        for (uint256 rank = 0; rank < 3; ++rank) {
+        for (uint256 pass = 0; pass < 2; ++pass) {
             for (position = current.position + 1; position < end; ++position) {
                 member = schedule.memberAt(setId, seed, turn, position);
                 bool assigned = schedule.heldTurn(turn, member);
-                bool keys = schedule.heldKeys(turn, member) || member == holder;
+                bool keys = schedule.heldKeys(turn, member);
+                bool holds = member == holder;
+                bool ranked = pass == 0 ? !keys && !holds : !assigned && (keys != holds);
                 if (
-                    (assigned ? 1 : 0) + (keys ? 2 : 0) == rank && registry.isListed(member)
-                        && registry.keyHolder(_key(member)) == member && schedule.promotable(member) != address(0)
+                    ranked && registry.isListed(member) && registry.keyHolder(_key(member)) == member
+                        && schedule.promotable(member) != address(0)
                 ) return (position, member);
             }
         }
@@ -97,11 +101,22 @@ abstract contract LivenessTest is ScheduleTest {
     }
 
     /// @dev The candidate whose enclave holds the keys: the one whose assignment recorded the release of
-    /// the signer epoch's newest head, or, before its first, the one whose standby key is the signer.
-    function _keyHolder() internal view returns (address) {
+    /// the signer epoch's newest head; before its first, walking back from the turn in effect over turns
+    /// whose latest assignment is neither latched nor a promotion, the member of the first that is, or
+    /// the source of the first turn drawn, the only one these suites draw while the registry names its own
+    /// operator: none installs one.
+    function _keyHolder() internal view returns (address holder) {
         bytes32 release = logHeads.headRelease(vault.signerEpoch());
-        if (release == 0) return schedule.standbyHolder(vault.checkpointSigner());
-        return schedule.releaseCandidate(release);
+        if (release != 0) return schedule.releaseCandidate(release);
+        (uint64 at, OperatorSchedule.Turn memory walked) = schedule.turnAt(uint64(block.timestamp));
+        while (true) {
+            (uint64 latchedAt,,,,) = logHeads.latches(at, walked.position);
+            if (walked.reason == 2 || latchedAt != 0) return walked.candidate;
+            holder = walked.source;
+            at = walked.prior;
+            if (at == 0) return holder;
+            walked = schedule.turnOf(at);
+        }
     }
 
     function _slot() internal view returns (uint64) {

@@ -149,6 +149,8 @@ contract PromotionTest is LivenessTest {
 
     function test_PromotionsPassSeveralSilentMembersInARow() public {
         _startTurn();
+        // Alice takes the turn: she holds its keys under her assignment and is never promoted in it.
+        _beat();
         address[3] memory promoted;
         uint16 last = 0;
         for (uint256 i = 0; i < 3; ++i) {
@@ -172,12 +174,16 @@ contract PromotionTest is LivenessTest {
 
     function test_OrderExhaustionRevertsNoQualifiedPosition() public {
         _startTurn();
-        // Bob, carol and dave held nothing of the turn; alice, drawn, never took its keys, so she comes
-        // last. Each then held the keys under a promotion, and none qualifies again.
+        // None of the four ever held the turn's keys: alice was drawn but never took them. Each is promoted
+        // once, holding the keys under that promotion, and none qualifies again.
+        address[4] memory promoted;
         for (uint256 i = 0; i < 4; ++i) {
             _lapse();
             schedule.promote();
-            assertEq(schedule.turnOf(turn).candidate == alice, i == 3);
+            promoted[i] = schedule.turnOf(turn).candidate;
+            for (uint256 j = 0; j < i; ++j) {
+                assertTrue(promoted[j] != promoted[i], "a member is never promoted twice in a turn");
+            }
         }
         _lapse();
         address signer = vault.checkpointSigner();
@@ -186,7 +192,9 @@ contract PromotionTest is LivenessTest {
         assertEq(vault.checkpointSigner(), signer);
     }
 
-    function test_AMemberThatHeldAnAssignmentOfTheTurnIsPassed() public {
+    /// Whether a drawn or skipped-to member took the keys is the key holder's choice, so an assignment
+    /// alone ranks a member no lower than one that held nothing of the turn: position decides.
+    function test_AMemberThatHeldTheKeysIsPassedAndOneThatHeldOnlyAnAssignmentIsNot() public {
         address[] memory order = new address[](5);
         (order[0], order[1], order[2], order[3], order[4]) = (alice, bob, bob, alice, carol);
         _startTurn(order);
@@ -194,14 +202,14 @@ contract PromotionTest is LivenessTest {
         (, uint16 position) = schedule.promote();
         assertEq(position, 1);
         assertEq(schedule.turnOf(turn).candidate, bob);
-        // Position 2 names bob again, who held the keys under his promotion, and position 3 alice, who
-        // held the draw but never the keys: carol, at position 4, held nothing of the turn and comes first.
+        // Position 2 names bob again, who held the keys under his promotion; position 3 names alice, who
+        // held the draw but never the keys, and she comes before carol at position 4.
         _lapse();
         (, position) = schedule.promote();
-        assertEq(position, 4);
-        assertEq(schedule.turnOf(turn).candidate, carol);
+        assertEq(position, 3);
+        assertEq(schedule.turnOf(turn).candidate, alice);
         assertTrue(schedule.heldKeys(turn, bob));
-        assertFalse(schedule.heldKeys(turn, alice));
+        assertFalse(schedule.heldTurn(turn, carol));
     }
 
     function test_AMemberWithoutAPromotableKeyOrListingIsPassed() public {
@@ -219,7 +227,7 @@ contract PromotionTest is LivenessTest {
     }
 
     /// Bob, at position 1, has no promotable key at the first promotion and registers one after it:
-    /// the second promotion goes on from position 2, never back to him.
+    /// the second promotion goes on from position 2, never back to position 1.
     function test_PositionsOnlyAdvanceWithinATurn() public {
         address[] memory order = new address[](4);
         (order[0], order[1], order[2], order[3]) = (alice, bob, carol, dave);
@@ -526,6 +534,7 @@ contract PromotionTest is LivenessTest {
         // The outgoing member drawn again: its continued generation names keys it no longer holds.
         _startTurn();
         _draw(turn + 1);
+        _beat();
         OperatorSchedule.Turn memory next = schedule.turnOf(turn + 1);
         assertEq(next.candidate, alice);
         assertEq(next.generation, schedule.turnOf(turn).generation, "a repeat turn continues its holder's");

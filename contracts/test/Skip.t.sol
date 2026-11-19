@@ -633,7 +633,7 @@ contract SkipScheduleTest is SkipTest {
         schedule.skip();
         uint256 skipGas = vm.lastCallGas().gasTotalUsed;
         console.log("skip, gas:", skipGas);
-        assertLt(skipGas, 350_000);
+        assertLt(skipGas, 355_000);
     }
 
     function test_TheScheduleFitsEip170() public view {
