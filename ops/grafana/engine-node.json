@@ -714,8 +714,8 @@
     {
       "type": "timeseries",
       "id": 26,
-      "title": "Stamp to stream publication",
-      "description": "From a command's stamp to its publication to stream subscribers, once its batch is durable.",
+      "title": "Stamp to stream send",
+      "description": "From a command's stamp to its send to each stream subscriber it goes to live.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

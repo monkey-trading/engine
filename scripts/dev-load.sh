@@ -11,14 +11,16 @@
 # batch time, stream lag, the sequencer's busy share, and the process's CPU and resident memory,
 # against the launch bar; the run's log then replays to its roots. It fails if either measured leg
 # breaks the bar, with a loaded runner's tolerance, or did not measure what it claims: a request
-# refused, rejected or unanswered, a subscriber that took no frame or lost its connection, or no
-# fill or stamped price.
+# refused, rejected or unanswered, a subscriber that took no frame, lost its connection or had not
+# taken the leg's last commands, or no fill or stamped price.
 #
 # Needs only Cargo: the venues and the screening source are loopback stand-ins, on free ports, with
 # private temporary data. The environment sizes the run: LOAD_ACCOUNTS (100000), LOAD_TRADERS (2000),
-# LOAD_SUBSCRIBERS (256), LOAD_LEG_SECS (120), LOAD_CRYPTO_RATE (each crypto market's price commands
-# a second, the median `dev-venue-load.sh --soak` prints) and LOAD_RWA_MOVES (each other market's mid
-# moves a second on each of its connections). CI runs it at 10,000 accounts.
+# LOAD_SUBSCRIBERS (256), LOAD_LEG_SECS (120), LOAD_CRYPTO_RATE (every crypto market's price commands
+# a second; by default each market's median second in `dev-venue-load.sh --soak`, whose busiest
+# second, 116 for BTC-USD, a run at LOAD_CRYPTO_RATE=116 holds throughout) and LOAD_RWA_MOVES (each
+# other market's mid moves a second on each of its connections, at most two on CME Group's). CI runs
+# it at 10,000 accounts.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ "${1:-}" == "--ramp" ]]; then

@@ -62,7 +62,8 @@ pub(super) struct Leg {
 }
 
 /// A ramp: legs from `from` times launch flow, each `factor` times the last, of `step_secs` each,
-/// until a budget breaks or `max` is passed.
+/// until every budget has broken, a leg did not measure what it claims, the sequencer is saturated,
+/// or `max` is passed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct Ramp {
     pub from: f64,
@@ -92,21 +93,23 @@ pub(super) struct Figures {
     pub sent: BTreeMap<String, u64>,
     pub replies: BTreeMap<String, u64>,
     pub fills: u64,
-    /// A market order from its hand-out to its client to its filled reply, at the client, less the
-    /// client's signing, in microseconds.
+    /// A market order from when it was due to its filled reply, at the client, less the client's
+    /// signing, in microseconds.
     pub order_to_fill_us: Quantiles,
-    /// Every request from its hand-out to its reply, less the client's signing, in microseconds.
+    /// Every request from when it was due to its reply, less the client's signing, in microseconds.
     pub request_us: Quantiles,
     /// A command frame's arrival at a subscriber after its stamp, in milliseconds, over every frame;
-    /// the highest of the subscribers' own p99s, which the launch bar holds each to; and the
-    /// subscribers that took no frame.
+    /// the highest of the subscribers' own p99s, which the launch bar holds each to; the subscribers
+    /// that took no frame; and those that had not taken a command stamped after the leg's end by
+    /// the end of its drain.
     pub stream_lag_ms: Quantiles,
     pub slowest_subscriber_p99_ms: u64,
     pub silent_subscribers: u64,
+    pub behind_subscribers: u64,
     pub frames: u64,
     pub quote_frames: u64,
     pub disconnects: u64,
-    /// Requests the scheduler handed out over two milliseconds after their schedule.
+    /// Requests the scheduler handed out over a millisecond after they were due.
     pub late: u64,
     /// Requests the node answered with anything but 200, or with a rejection, or that failed on the
     /// connection or its timeout.

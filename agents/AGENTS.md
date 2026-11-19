@@ -377,7 +377,8 @@ an index: load only the rule whose hint matches the current action.
   `sequencer/quotes.rs` holds each quote to that bound at its stamp) and a mock, Prometheus metrics
   on an operator
   listener (with, in `metrics/latency.rs`, a venue quote's receipt to its stamp, a signed request's
-  admission to its reply in `limits/`, a command's stamp to its stream publication, and the
+  admission to its reply in `limits/`, a command's stamp to its send to each live stream subscriber in
+  `api/stream/`, and the
   sequencer's busy time), and alert routing to webhooks with a bounded durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, a genesis market fewer venues quote than its `min_sources`, and a secret read
@@ -1074,7 +1075,7 @@ Run from the repo root:
   it builds the book twice, once for the run and once for its replay, and takes the run's legs of two
   minutes each; run it under `nice` in a quiet window); `--ramp` adds the ramp, and `LOAD_ACCOUNTS`,
   `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE` and `LOAD_RWA_MOVES` size the
-  run (CI's job sets 10,000 accounts, 200 traders and 32 subscribers)
+  run (CI's job sets 10,000 accounts, 200 traders and 16 subscribers)
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

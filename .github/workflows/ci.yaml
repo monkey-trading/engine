@@ -144,8 +144,10 @@ jobs:
                   | crates/node/src/stats/bench.rs \
                   | crates/node/src/stats/launch_bench.rs)
                   areas+=" rust scenario_tests" ;;
-                # The node load scenario drives the node it assembles from the sequencer, feeds and API.
-                crates/node/src/load_scenario/* | crates/node/src/sequencer/seeded.rs) areas+=" rust node_load" ;;
+                # The node load scenario drives the node it assembles from the sequencer, feeds and API;
+                # it and the mass-event benchmarks seed a sequencer with the launch book.
+                crates/node/src/load_scenario/*) areas+=" rust node_load" ;;
+                crates/node/src/sequencer/seeded.rs) areas+=" rust scenario_tests node_load" ;;
                 crates/node/src/api/admin_tests* | crates/node/src/sequencer/fixture_tests.rs)
                   areas+=" rust scenario_tests vault_deposits attestation_verifier" ;;
                 crates/node/src/checkpoints/scenario* | crates/node/src/checkpoints/tests*)
@@ -250,8 +252,9 @@ jobs:
                 # Read by the node's tests; the launch book's benchmarks build on the production genesis.
                 config/production-genesis.toml) areas+=" rust scenario_tests node_load" ;;
                 config/benchmark-publishers.toml | config/ct-watch.toml) areas+=" rust" ;;
-                # The launch values scenario deploys from it; the node's tests read the rest of ops/.
-                ops/runbooks/production-deployment.toml) areas+=" rust vault_deposits" ;;
+                # The launch values scenario deploys from it, and the launch book's emissions and staking
+                # start from it; the node's tests read the rest of ops/.
+                ops/runbooks/production-deployment.toml) areas+=" rust vault_deposits scenario_tests node_load" ;;
                 # The node load scenario's connections, limits and screening slots are the template's.
                 ops/runbooks/production-node.toml) areas+=" rust node_load" ;;
                 ops/*) areas+=" rust" ;;
@@ -982,9 +985,9 @@ jobs:
       - name: Run the venue load dev scenario
         run: ./scripts/dev-venue-load.sh
 
-  # The node load scenario at a tenth of the launch book, a tenth of its traders and an eighth of its
-  # stream subscribers, so the runner holds the node and the generator: the launch-flow and ten-times
-  # legs, two minutes each. The full-scale run and the ramp run by hand.
+  # The node load scenario at a tenth of the launch book, a tenth of its traders and a sixteenth of its
+  # stream subscribers, so the runner's four cores hold the node, its stand-ins and the generator: the
+  # launch-flow and ten-times legs, two minutes each. The full-scale run and the ramp run by hand.
   dev-load:
     needs: changes
     if: needs.changes.outputs.node_load == 'true'
@@ -1004,7 +1007,7 @@ jobs:
         env:
           LOAD_ACCOUNTS: "10000"
           LOAD_TRADERS: "200"
-          LOAD_SUBSCRIBERS: "32"
+          LOAD_SUBSCRIBERS: "16"
         run: ./scripts/dev-load.sh
 
   dev-loss-trigger:

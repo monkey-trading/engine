@@ -71,12 +71,13 @@ async fn follow(
     }
     while let Some(Ok(message)) = ws.next().await {
         let Message::Text(text) = message else { continue };
-        let lag = stamp_of(text.as_str()).map(|stamp| u64::try_from(now_ms() - stamp).unwrap_or(0));
+        let lag = stamp_of(text.as_str()).map(|stamp| (stamp, u64::try_from(now_ms() - stamp).unwrap_or(0)));
         let mut samples = recorder.lock().expect("a recorder");
         match lag {
-            Some(lag) => {
+            Some((stamp, lag)) => {
                 samples.frames += 1;
                 samples.stream_lag_ms.push(lag);
+                samples.newest_stamp = samples.newest_stamp.max(Some(stamp));
             }
             None if text.contains(r#""type":"quote""#) || text.contains(r#"\"type\":\"quote\""#) => {
                 samples.quote_frames += 1;

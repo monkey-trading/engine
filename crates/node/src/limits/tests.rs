@@ -326,13 +326,15 @@ async fn each_signed_request_admitted_is_timed_to_its_reply_and_nothing_else_is(
     use axum::Router;
     use axum::body::Body;
     use axum::middleware::from_fn_with_state;
-    use axum::routing::{get, post};
+    use axum::routing::{delete, get, post};
     use tower::ServiceExt;
 
-    let seconds = Histogram::new(LATENCY_BUCKETS);
-    let limits = Arc::new(ApiLimits::new(&section(1, 2)).with_request_timing(seconds.clone()));
+    let latency = crate::metrics::LatencyMetrics::default();
+    let seconds = latency.request.clone();
+    let limits = Arc::new(ApiLimits::new(&section(1, 3)).with_timing(&latency));
     let app = Router::new()
         .route("/signed", post(|| async { "replied" }))
+        .route("/revoked", delete(|| async { "revoked" }))
         .route("/read", get(|| async { "read" }))
         .layer(from_fn_with_state(limits, limit_client));
     let request = |method: &str, path: &str| {
@@ -340,15 +342,15 @@ async fn each_signed_request_admitted_is_timed_to_its_reply_and_nothing_else_is(
         request.extensions_mut().insert(ConnectInfo(SocketAddr::from(([203, 0, 113, 9], 4_000))));
         request
     };
-    for (method, path) in [("POST", "/signed"), ("GET", "/read")] {
+    for (method, path) in [("POST", "/signed"), ("DELETE", "/revoked"), ("GET", "/read")] {
         let response = app.clone().oneshot(request(method, path)).await.unwrap();
         assert_eq!(response.status(), axum::http::StatusCode::OK, "{method} {path}");
     }
-    assert_eq!(crate::metrics::latency::observed(&seconds).0, 1, "only the POST is a signed request");
-    // The client's burst of 2 is spent: a POST refused for its rate never reaches a reply's timing.
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 2, "only the POST and the DELETE are signed requests");
+    // The client's burst of 3 is spent: a request refused for its rate never reaches a reply's timing.
     let refused = app.oneshot(request("POST", "/signed")).await.unwrap();
     assert_eq!(refused.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(crate::metrics::latency::observed(&seconds).0, 1);
+    assert_eq!(crate::metrics::latency::observed(&seconds).0, 2);
 }
 
 // ── Helpers ──

@@ -363,7 +363,6 @@ impl Sequencer {
                 let _ = reply.send(state.clone());
             }
         }
-        let stamps: Vec<Instant> = outbox.iter().filter_map(|msg| msg.stamped()).collect();
         for msg in outbox {
             if let StreamBody::Withdrawal(w) = &msg.body
                 && self.withdrawals.send(w.clone()).is_err()
@@ -372,10 +371,6 @@ impl Sequencer {
                 error!(alert = "custody_unavailable", seq, %account, nonce, "signed withdrawal has no custody consumer");
             }
             let _ = self.stream.send(msg);
-        }
-        let published = self.clock.instant();
-        for stamped in stamps {
-            self.metrics.latency.stream_lag.observe(published.saturating_duration_since(stamped).as_secs_f64());
         }
         for reply in batch.syncs {
             let _ = reply.send(last_seq);

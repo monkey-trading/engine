@@ -50,6 +50,8 @@ const CRYPTO_UPDATES: f64 = 25.0;
 const HALF_SPREAD: &str = "0.01";
 /// How far a mid moves from the mark: half a basis point of it.
 const MOVE: &str = "0.005";
+/// The most moves a second CME Group's stand-in shows, which reads its prices every 500 ms.
+const CME_MOVES: f64 = 2.0;
 /// A CME stand-in token's life, CME's own.
 const TOKEN_LIFE_SECS: u64 = 1_799;
 /// A ping interval and delay bound no run reaches, for a connection to a stand-in that answers no
@@ -131,9 +133,11 @@ pub(super) async fn start(moves: Moves) -> Venues {
         let quoted = symbols.entry(conn.venue).or_default();
         quoted.extend(conn.symbols.iter().map(|symbol| (symbol.symbol.clone(), symbol.market)));
     }
-    let rwa = moves.rwa;
     let prices = |venue: Venue| -> Prices {
         let quoted = symbols.get(&venue).cloned().unwrap_or_default();
+        // CME Group's stand-in reads its prices twice a second, so its mids move at most that often:
+        // a faster move would read the same mid at every sample.
+        let rwa = if venue == Venue::Cme { moves.rwa.min(CME_MOVES) } else { moves.rwa };
         Arc::new(move |symbol: &str, ts: Millis| Some(book(*quoted.get(symbol)?, rwa, ts)))
     };
     let mut urls: BTreeMap<Venue, String> = BTreeMap::new();

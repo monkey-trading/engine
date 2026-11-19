@@ -1,6 +1,7 @@
 //! The held-sync bound: past `MAX_SYNC_HOLD` the sequencer takes no request, drained or new, and
 //! pages Critical `log_sync_held` once — from any wait on the sync, with nothing arriving — and the
-//! episode resolves once no batch in flight is past the bound, an earlier run's included.
+//! episode resolves once no batch in flight is past the bound, an earlier run's included. A batch
+//! released from any of those waits counts as the thread's busy time.
 
 use std::future::Future;
 use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender, channel};
@@ -12,6 +13,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::timeout;
 use tracing_subscriber::layer::SubscriberExt;
 
+use crate::clock::test_clock::TestClock;
 use crate::log::Manifest;
 use crate::sequencer::pipeline::Batch;
 use crate::sequencer::pipeline::hold::MAX_SYNC_HOLD;
@@ -195,15 +197,72 @@ async fn a_restart_resolves_an_episode_an_earlier_run_left_open() {
     assert_eq!(end.get("alert_resolved").map(String::as_str), Some("log_sync_held"));
 }
 
+#[tokio::test]
+async fn a_release_between_batches_counts_as_the_threads_busy_time() {
+    // Each wait releases a finished sync: found at the look, while waiting for a request, or while
+    // the pipeline is full. The release's own work, here 7 ms of the sequencer's clock, is busy time.
+    for (label, wait) in [("busy-at-look", Wait::Look), ("busy-for-request", Wait::Request), ("busy-full", Wait::Full)]
+    {
+        let clock = Arc::new(TestClock::default());
+        let (mut seq, permits, entered) = held_sequencer_on(label, clock.clone());
+        seq.sequence(Command::Tick).unwrap().unwrap();
+        let mut batch = Batch::default();
+        batch.later.push(Box::new(move || clock.advance(Duration::from_millis(7))));
+        let release = seq.stage(batch).unwrap();
+        seq.submit(release).unwrap();
+        entered.recv_timeout(SYNC_WAIT).expect("the thread starts the sync");
+        if wait == Wait::Full {
+            let pipeline = seq.pipeline.as_mut().unwrap();
+            pipeline.bound = pipeline.charged;
+        }
+        let (busy, shared) =
+            (seq.metrics.latency.sequencer_busy.clone(), seq.pipeline.as_ref().unwrap().shared.clone());
+        let spent = busy.get();
+        let (tx, mut rx) = mpsc::channel(4);
+        if wait == Wait::Look {
+            permits.send(Verdict::Pass).unwrap();
+            await_reported(&seq, 1);
+        }
+        let mut next = std::pin::pin!(seq.next_request(&mut rx));
+        if wait != Wait::Look {
+            let first = std::future::poll_fn(|cx| std::task::Poll::Ready(next.as_mut().poll(cx))).await;
+            assert!(first.is_pending(), "{label}: the sequencer waits with the sync held");
+            permits.send(Verdict::Pass).unwrap();
+            let done = shared.done.lock().unwrap();
+            let (_done, waited) = shared.ready.wait_timeout_while(done, SYNC_WAIT, |done| done.is_empty()).unwrap();
+            assert!(!waited.timed_out(), "{label}: the sync thread reports the sync");
+        }
+        tx.send(query()).await.unwrap();
+        let taken = timeout(SYNC_WAIT, next).await.expect("the sync finished");
+        assert!(matches!(taken.unwrap(), Some(Request::Query(_))));
+        assert!((busy.get() - spent - 0.007).abs() < 1e-9, "{label}: the release counts as busy time");
+    }
+}
+
 // ── Helpers ──
+
+/// Where the sequencer is when a sync finishes.
+#[derive(Clone, Copy, PartialEq)]
+enum Wait {
+    /// Before it looks for the next request.
+    Look,
+    /// While it waits for a request.
+    Request,
+    /// While it waits for the sync with the pipeline full.
+    Full,
+}
 
 /// A sequencer past genesis and trusted time whose log syncs each wait for a verdict the test sends,
 /// with one message on the returned receiver each time the thread starts a sync.
 pub(super) fn held_sequencer(label: &str) -> (Sequencer, StdSender<Verdict>, StdReceiver<()>) {
+    held_sequencer_on(label, Arc::new(TestClock::default()))
+}
+
+/// `held_sequencer`, on `clock`.
+fn held_sequencer_on(label: &str, clock: Arc<TestClock>) -> (Sequencer, StdSender<Verdict>, StdReceiver<()>) {
     let dir = scratch_dir(label);
     let (stream, _) = broadcast::channel(256);
     let (withdrawals, _custody) = mpsc::unbounded_channel();
-    let clock = Arc::new(crate::clock::test_clock::TestClock::default());
     let cfg = crate::sequencer::SequencerConfig {
         clock: clock.clone(),
         ..sequencer_config(&dir, watch::channel(Manifest::default()).0)

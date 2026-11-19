@@ -1,6 +1,6 @@
 //! What a client waits for, on the monotonic clock: a venue quote from its receipt to its stamp, a
-//! signed request from its admission to its reply, and a command from its stamp to its stream
-//! publication; and how much of the time the sequencer's thread is busy. The budgets the launch bar
+//! signed request from its admission to its reply, and a command from its stamp to its send to each
+//! stream subscriber; and how much of the time the sequencer's thread is busy. The budgets the launch bar
 //! sets (1, 5, 10, 25, 50 and 100 ms) are bucket bounds, so the share of observations within each
 //! is exact.
 
@@ -50,12 +50,13 @@ impl LatencyMetrics {
         );
         r.register(
             "api_request_seconds",
-            "Time from the API admitting a signed request (a POST) past its client's rate to its reply",
+            "Time from the API admitting a signed request (a POST or DELETE) past its client's rate to its reply",
             self.request.clone(),
         );
         r.register(
             "stream_lag_seconds",
-            "Time from a command's stamp to its publication to stream subscribers, once its batch is durable",
+            "Time from a command's stamp to its send to a stream subscriber, for each subscriber sent it live; a \
+             message a subscriber that fell behind reads back from the log is not timed",
             self.stream_lag.clone(),
         );
         r.register(

@@ -30,6 +30,7 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::task::JoinSet;
 use tokio::time::sleep_until;
 
+use crate::clock::now_ms;
 use crate::common::launch_book::{Rng, market_weights, production_harness};
 use crate::load_scenario::generator::record::{Recorder, Samples, take_all};
 use crate::load_scenario::generator::streams::Subscription;
@@ -226,7 +227,8 @@ async fn wait_subscribed(subscribers: &[Recorder]) {
 
 impl Scheduler {
     /// Runs `leg`'s schedule, reporting each of its `windows` as it ends, and returns the leg's
-    /// samples once its replies are in, or `DRAIN` has passed, with the requests still unanswered.
+    /// samples once its replies are in and every subscriber has taken a command stamped after its
+    /// end, or `DRAIN` has passed, with the requests still unanswered and the subscribers behind.
     async fn drive(&mut self, leg: &Leg, windows: u32) -> Samples {
         let rate = requests_per_second(leg.multiple);
         let start = Instant::now();
@@ -235,15 +237,16 @@ impl Scheduler {
         let (mut due, mut index, mut next_window) = (start, 0, start + window);
         let mut all = Samples::default();
         let (clients, subscribers) = (self.clients.clone(), self.subscribers.clone());
-        let close = |index: u32, all: &mut Samples, unanswered: u64| {
-            let samples = Samples { unanswered, ..take_all(&clients, &subscribers) };
+        // A window's samples; the last one's also count what the leg's drain left behind.
+        let close = |index: u32, all: &mut Samples, unanswered: u64, behind: u64| {
+            let samples = Samples { unanswered, behind, ..take_all(&clients, &subscribers) };
             report(&Line::Window { leg: leg.name.clone(), index, figures: samples.figures() });
             all.merge(samples);
         };
         loop {
             let now = Instant::now();
             if now >= next_window && index + 1 < windows {
-                close(index, &mut all, 0);
+                close(index, &mut all, 0, 0);
                 (index, next_window) = (index + 1, next_window + window);
                 continue;
             }
@@ -264,12 +267,29 @@ impl Scheduler {
                 None => tokio::task::yield_now().await,
             }
         }
+        let ended = now_ms();
         let drained = Instant::now() + DRAIN;
         while self.in_flight.load(Ordering::Acquire) > 0 && Instant::now() < drained {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        close(index, &mut all, self.in_flight.load(Ordering::Acquire));
+        let behind = self.await_streams(ended, drained).await;
+        close(index, &mut all, self.in_flight.load(Ordering::Acquire), behind);
         all
+    }
+
+    /// Waits until every subscriber has taken a command stamped after `ended`, the leg's end, so the
+    /// frames of the leg's last commands count in it, or until `drained`. Returns how many had not.
+    async fn await_streams(&self, ended: i64, drained: Instant) -> u64 {
+        loop {
+            let behind = self.subscribers.iter().filter(|recorder| {
+                recorder.lock().expect("a recorder").newest_stamp.is_none_or(|newest| newest <= ended)
+            });
+            let behind = behind.count() as u64;
+            if behind == 0 || Instant::now() >= drained {
+                return behind;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     /// The time to the next arrival of a Poisson process at `rate` a second.
@@ -392,5 +412,33 @@ mod tests {
             }
         }
         assert!(cancels > 0 && markets > 0, "{cancels} cancels, {markets} market orders");
+    }
+
+    #[tokio::test]
+    async fn a_leg_waits_for_every_subscriber_to_take_a_command_stamped_after_its_end() {
+        let ended = 1_000;
+        let subscriber =
+            |newest: Option<i64>| Recorder::new(Samples { newest_stamp: newest, ..Samples::default() }.into());
+        let scheduler = |subscribers| Scheduler {
+            rng: Rng::new(1),
+            slots: Vec::new(),
+            cursor: 0,
+            weights: Vec::new(),
+            jobs: Vec::new(),
+            in_flight: Arc::default(),
+            clients: Vec::new(),
+            subscribers,
+        };
+        let caught_up = scheduler(vec![subscriber(Some(ended + 1)), subscriber(Some(ended + 250))]);
+        let far = Instant::now() + Duration::from_secs(60);
+        assert_eq!(caught_up.await_streams(ended, far).await, 0);
+        // One took nothing since the window began, one only a command stamped at the leg's end.
+        let behind = scheduler(vec![subscriber(Some(ended + 1)), subscriber(None), subscriber(Some(ended))]);
+        let late = behind.subscribers[1].clone();
+        let drained = Instant::now() + Duration::from_millis(500);
+        let catching = tokio::spawn(async move { behind.await_streams(ended, drained).await });
+        late.lock().unwrap().newest_stamp = Some(ended + 5);
+        let left = tokio::time::timeout(Duration::from_secs(10), catching).await.expect("in time").expect("the task");
+        assert_eq!(left, 1, "the subscriber that took a later command catches up; the one at the end does not");
     }
 }

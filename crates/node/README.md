@@ -47,7 +47,7 @@ walks through this case and the others.
 The metrics include three latency histograms an operator watches under load. The first is the time
 a venue quote waits from its receipt to its stamp, `engine_price_to_stamp_seconds`. The second is
 the time from the API admitting a signed request to its reply, `engine_api_request_seconds`. The
-third is the time from a command's stamp to its publication on the stream,
+third is the time from a command's stamp to its send to each stream subscriber,
 `engine_stream_lag_seconds`. The counter `engine_sequencer_busy_seconds_total` grows by the time the
 sequencer's thread spends working, so its rate is the share of the time the thread is busy. The
 Grafana dashboard in [`ops/grafana/`](../../ops/grafana/) shows all four.
@@ -133,11 +133,13 @@ The benchmarks of the sequencer's latency at 100,000 accounts are ignored by def
 quiet machine. `sequencer::wait_bench` and `stats::launch_bench` give their commands in their
 module documentation.
 
-The load test runs a node on a launch-scale book of 100,000 accounts and loads it through its API,
-its stream and its feeds. Two thousand traders behind 100 client addresses send signed orders,
-cancels and close-alls, every stream subscriber the API allows reads the stream, and loopback
-stand-ins quote every launch market. It runs at launch flow and at ten times launch flow, two
-minutes each, and prints each run's latencies and the sequencer's busy share against the launch bar.
+The load test runs the server on a launch-scale book of 100,000 accounts and loads it through its
+API, its stream and its feeds. Two thousand traders behind 100 client addresses send signed orders,
+cancels, cancel-alls and close-alls, every stream subscriber the API allows reads the stream, and
+loopback stand-ins quote every launch market. It runs at launch flow and at ten times launch flow,
+two minutes each, and prints each run's latencies and the sequencer's busy share against the launch
+bar: the budgets for the time from an order to its fill, from a price to its stamp and from a stamp
+to each subscriber, and for the share of the time the sequencer is busy.
 It also prints the CPU and memory of the test's process, which holds the server, the stand-ins and
 the screening source. The clients run in a second process. The `--ramp` option then doubles the load
 each minute and prints the load at which each budget first breaks. At full size the test takes

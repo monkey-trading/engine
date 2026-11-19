@@ -263,8 +263,9 @@ pub(super) fn judge(figures: &Figures, node: &Delta) -> Vec<Breach> {
 }
 
 /// What keeps a leg from measuring what it claims, which no budget can show: a request refused,
-/// rejected or unanswered, no market order filled, a subscriber that took no frame or lost its
-/// connection, or no price stamped.
+/// rejected or unanswered, no market order filled, a subscriber that took no frame, lost its
+/// connection or had not taken the leg's last commands by the end of its drain, or no price
+/// stamped.
 pub(super) fn unmeasured(figures: &Figures, node: &Delta) -> Vec<String> {
     let gaps = [
         (figures.refused > 0, format!("{} requests refused, rejected or failed", figures.refused)),
@@ -272,6 +273,13 @@ pub(super) fn unmeasured(figures: &Figures, node: &Delta) -> Vec<String> {
         (figures.order_to_fill_us.count == 0, "no market order filled".to_owned()),
         (figures.silent_subscribers > 0, format!("{} subscribers took no frame", figures.silent_subscribers)),
         (figures.disconnects > 0, format!("{} subscriber connections ended", figures.disconnects)),
+        (
+            figures.behind_subscribers > 0,
+            format!(
+                "{} subscribers had not taken the leg's last commands by its drain's end",
+                figures.behind_subscribers
+            ),
+        ),
         (node.price_to_stamp.count == 0, "no price stamped".to_owned()),
     ];
     gaps.into_iter().filter(|(gap, _)| *gap).map(|(_, why)| why).collect()
@@ -336,7 +344,7 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
         figures.quote_frames,
         figures.disconnects
     );
-    println!("LOAD leg={leg} stream_publish_us(node) {}", node_us(&node.stream_lag));
+    println!("LOAD leg={leg} stream_send_us(node) {}", node_us(&node.stream_lag));
     println!("LOAD leg={leg} sequencer_batch_us {}", node_us(&node.batch));
     println!(
         "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} process_resident_mib={rss_mib}",
@@ -392,6 +400,7 @@ mod tests {
             ("filled", Figures { order_to_fill_us: Quantiles::default(), ..clean.clone() }),
             ("took no frame", Figures { silent_subscribers: 1, ..clean.clone() }),
             ("ended", Figures { disconnects: 1, ..clean.clone() }),
+            ("last commands", Figures { behind_subscribers: 1, ..clean.clone() }),
         ] {
             let gaps = unmeasured(&figures, &node);
             assert!(gaps.len() == 1 && gaps[0].contains(gap), "{gap}: {gaps:?}");

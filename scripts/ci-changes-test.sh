@@ -92,9 +92,10 @@ case_ pull_request "rust scenario_tests" crates/node/src/stats/bench.rs
 case_ pull_request "rust scenario_tests node_load" config/production-genesis.toml
 case_ pull_request "rust scenario_tests node_load" research/cap-calibration/data/derived/market_mix.csv
 case_ pull_request "rust scenario_tests node_load" crates/core/tests/common/launch_book/build.rs
-case_ pull_request "rust node_load" crates/node/src/load_scenario/mod.rs crates/node/src/load_scenario/generator/traders.rs \
-  crates/node/src/sequencer/seeded.rs
+case_ pull_request "rust node_load" crates/node/src/load_scenario/mod.rs crates/node/src/load_scenario/generator/traders.rs
+case_ pull_request "rust scenario_tests node_load" crates/node/src/sequencer/seeded.rs
 case_ pull_request "rust node_load" ops/runbooks/production-node.toml
+case_ pull_request "rust vault_deposits scenario_tests node_load" ops/runbooks/production-deployment.toml
 case_ pull_request "rust" config/ct-watch.toml
 case_ pull_request "rust attestation_verifier" crates/node/src/verify/tests/mod.rs
 case_ pull_request "rust short_turns" crates/core/tests/short_turns.rs

@@ -16,12 +16,14 @@
 //! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`), and only if they
 //! measured what they claim (`report::unmeasured`): every request answered 200 with no rejection, so
 //! every account stays within its tier's request rate and no request lacks a screening slot, every
-//! answer in, a market order filled, every subscriber taking frames, and prices stamped.
+//! answer in, a market order filled, every subscriber taking frames to the leg's last commands, and
+//! prices stamped.
 //!
 //! Run by `scripts/dev-load.sh`; its variables size the run: `LOAD_ACCOUNTS` (100,000), `LOAD_TRADERS`
 //! (2,000), `LOAD_SUBSCRIBERS` (`api.max_subscribers`), `LOAD_LEG_SECS` (120), `LOAD_CRYPTO_RATE`
 //! (every crypto market's price commands a second, in place of each one's measured rate) and
-//! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections).
+//! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections, at most two on
+//! CME Group's, whose stand-in reads its prices twice a second).
 
 mod generator;
 mod node;
@@ -207,8 +209,8 @@ async fn stress(tx: &mpsc::Sender<Request>) -> BTreeMap<usize, usize> {
     levels.await.expect("an answer")
 }
 
-/// Starts the generator, judges each leg it reports, and stops the ramp at the first that breaks a
-/// budget.
+/// Starts the generator, judges each leg it reports, and stops the ramp once every budget has broken,
+/// a leg did not measure what it claims, or the sequencer is saturated.
 async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let mut child = Command::new(std::env::current_exe().expect("this test binary"))
         .args(["--exact", "load_scenario::generator::load_generator", "--ignored", "--nocapture", "--test-threads=1"])
@@ -222,7 +224,9 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let (lines_tx, mut lines) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
-            if let Some(line) = line.strip_prefix("LOADGEN ") {
+            // libtest writes the test's name ahead of its first line, on the same line.
+            if let Some(at) = line.find("LOADGEN ") {
+                let line = &line[at + "LOADGEN ".len()..];
                 let _ = lines_tx.send(serde_json::from_str::<Line>(line).expect("a generator line"));
             }
         }

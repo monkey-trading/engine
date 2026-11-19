@@ -131,7 +131,7 @@ impl Node {
         };
         let clock = Arc::new(SystemClock);
         let trusted = TrustedClock::new(clock.clone(), samples, Duration::from_secs(10));
-        let limits = Arc::new(ApiLimits::new(&api).with_request_timing(metrics.latency.request.clone()));
+        let limits = Arc::new(ApiLimits::new(&api).with_timing(&metrics.latency));
         let state = ApiState {
             protocol: engine_core::protocol::ProtocolVersion::LATEST,
             tx: tx.clone(),

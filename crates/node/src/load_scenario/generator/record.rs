@@ -25,6 +25,10 @@ pub(super) struct Samples {
     pub late: u64,
     pub refused: u64,
     pub unanswered: u64,
+    /// The newest stamp of a command frame a subscriber took; once taken, every subscriber's.
+    pub newest_stamp: Option<i64>,
+    /// Subscribers that had not taken a command stamped after the leg's end by its drain's end.
+    pub behind: u64,
 }
 
 /// One task's samples, shared with the window's end.
@@ -53,6 +57,8 @@ impl Samples {
         self.late += other.late;
         self.refused += other.refused;
         self.unanswered += other.unanswered;
+        self.newest_stamp = self.newest_stamp.max(other.newest_stamp);
+        self.behind += other.behind;
     }
 
     /// What the samples show: the stream's lag over every frame, and the slowest subscriber's p99,
@@ -69,6 +75,7 @@ impl Samples {
             stream_lag_ms: Quantiles::of(&mut self.stream_lag_ms.clone()),
             slowest_subscriber_p99_ms: slowest.unwrap_or(0),
             silent_subscribers: silent as u64,
+            behind_subscribers: self.behind,
             frames: self.frames,
             quote_frames: self.quote_frames,
             disconnects: self.disconnects,
@@ -145,6 +152,9 @@ mod tests {
         let all = take_all(&[Recorder::new(one.into()), Recorder::new(two.into())], &[]);
         let figures = all.figures();
         assert_eq!((figures.fills, figures.sent["market"]), (3, 3));
+        let newest = |stamp| Recorder::new(Samples { newest_stamp: stamp, behind: 1, ..Samples::default() }.into());
+        let streams = take_all(&[], &[newest(Some(5)), newest(None), newest(Some(9))]);
+        assert_eq!((streams.newest_stamp, streams.figures().behind_subscribers), (Some(9), 3));
         assert_eq!(
             (figures.order_to_fill_us.count, figures.order_to_fill_us.p50, figures.order_to_fill_us.max),
             (3, 3, 5)
