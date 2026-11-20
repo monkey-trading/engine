@@ -141,6 +141,19 @@ impl std::fmt::Display for CopyChanged {
 
 impl std::error::Error for CopyChanged {}
 
+/// A confirmation the predecessor did not acknowledge: the keys are sealed, but it may still run.
+#[derive(Debug)]
+pub(crate) struct Unacknowledged;
+
+impl std::fmt::Display for Unacknowledged {
+    /// What happened.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the predecessor did not acknowledge the handover")
+    }
+}
+
+impl std::error::Error for Unacknowledged {}
+
 /// Why a predecessor refused a tail request before its stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -402,7 +415,11 @@ fn past_copy(follower: &Follower, tip: u64, bytes: &[u8]) -> anyhow::Result<(Off
 /// to hold the latest posted log head: the same seq and link.
 /// Error cases:
 /// - the replica ends elsewhere, or holds another link at the posted seq, or none
-fn ensure_tail_head(follower: &Follower, head: &Head, posted: Option<crate::log_heads::Head>) -> anyhow::Result<()> {
+pub(crate) fn ensure_tail_head(
+    follower: &Follower,
+    head: &Head,
+    posted: Option<crate::log_heads::Head>,
+) -> anyhow::Result<()> {
     let replica = follower.replica();
     ensure!(
         replica.last_seq() == Some(head.seq)

@@ -21,7 +21,7 @@ use tokio::net::TcpListener;
 use crate::config::{HistorySection, NodeConfig};
 use crate::handover::assigned::Bound;
 use crate::handover::stand_in::{Answer, serve_tail};
-use crate::handover::tail::{MAX_TAIL_BYTES, Prepared, read_tail, take_tail};
+use crate::handover::tail::{MAX_TAIL_BYTES, Prepared, Unacknowledged, ensure_tail_head, read_tail, take_tail};
 use crate::handover::{REPLY_TIMEOUT, tail_over, tail_room};
 use crate::history::HistoryPlan;
 use crate::history::derived::RowsStore;
@@ -168,13 +168,13 @@ pub(super) async fn hand_over(
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener");
     let address = listener.local_addr().expect("its address").to_string();
     let mut keys = KeySet::for_key(key).expect("the holder's keys");
-    keys.predecessor_head = Some(head);
+    keys.predecessor_head = Some(head.clone());
     let (served, _) = serve_tail(listener, DOMAIN, keys, vec![Answer::Tail(tail)]);
     let signer = AccountId(key.address());
     let prepared = Prepared { generation, signer, posted: None, bound: Bound::none() };
     let sealer = MockSealer { launch_digest: DIGEST };
     let started = Instant::now();
-    let taken = take_tail(cfg, &address, &sealer, &MockAttestor, &prepared, (follower, None)).await;
+    let taken = take_tail(cfg, &address, &sealer, &MockAttestor, &prepared, (&mut *follower, None)).await;
     let take = started.elapsed();
     served.abort();
     let confirmed = match taken {
@@ -183,8 +183,9 @@ pub(super) async fn hand_over(
             true
         }
         // A predecessor waits `REPLY_TIMEOUT` for the confirmation, which a take applying a tail for
-        // longer than that misses: a measurement, as the take's own time shows.
-        Err(error) if take >= REPLY_TIMEOUT => {
+        // longer than that misses: a measurement, as the take's own time shows, once the replica holds
+        // the tail. Any other failure fails the run.
+        Err(error) if unconfirmed(take, &error, ensure_tail_head(follower, &head, None).is_ok()) => {
             println!("RECOVERY tail bytes={} unconfirmed after {:.0} s: {error:#}", listing.bytes, take.as_secs_f64());
             false
         }
@@ -200,6 +201,13 @@ pub(super) async fn hand_over(
         refused.map_or("yes".to_owned(), |why| format!("no ({why})"))
     );
     switch
+}
+
+/// Whether a take that failed after `take` is a confirmation the predecessor's wait missed: it outlasted
+/// `REPLY_TIMEOUT`, the replica ends at the holder's final checkpoint (`at_head`), and the error is the
+/// predecessor's missing acknowledgement.
+fn unconfirmed(take: Duration, error: &anyhow::Error, at_head: bool) -> bool {
+    take >= REPLY_TIMEOUT && at_head && error.downcast_ref::<Unacknowledged>().is_some()
 }
 
 /// The member's node started from `follower`'s replica, with no replay, on its copy in `dir`, signing
@@ -219,4 +227,20 @@ pub(super) fn log_bytes(dir: &Path) -> u64 {
         .filter_map(|file| file.ok()?.metadata().ok())
         .map(|found| found.len())
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_missed_acknowledgement_past_the_wait_with_the_tail_taken_is_unconfirmed() {
+        let missed = anyhow::anyhow!("the connection closed").context(Unacknowledged);
+        let (late, early) = (REPLY_TIMEOUT, REPLY_TIMEOUT - Duration::from_secs(1));
+        assert!(unconfirmed(late, &missed, true));
+        assert!(!unconfirmed(early, &missed, true), "a take inside the wait missed nothing");
+        assert!(!unconfirmed(late, &missed, false), "a replica short of the holder's checkpoint took no tail");
+        let sealing = anyhow::anyhow!("the keys' write failed");
+        assert!(!unconfirmed(late, &sealing, true), "a failure that is not the acknowledgement's");
+    }
 }

@@ -130,6 +130,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         .err()
         .expect("started unacknowledged");
     assert!(format!("{err:#}").contains("did not acknowledge"), "{err:#}");
+    assert!(err.downcast_ref::<crate::handover::tail::Unacknowledged>().is_some(), "{err:#}");
     predecessor.await.unwrap();
 
     // The keys stay sealed here, so a later start opens them without a flag.
