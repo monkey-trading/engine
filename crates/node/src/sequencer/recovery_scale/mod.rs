@@ -3,7 +3,7 @@
 //! markets), then each way a node comes back on it, timed against #904's recovery bar.
 //!
 //! `flow` writes the log through a node's sequencer on accelerated sequenced time: `LAUNCH_SECS` of
-//! launch flow, then `TEN_TIMES_SECS` of ten times it, each market priced at `load_scenario`'s live
+//! launch flow, then a tenth as long of ten times it, each market priced at `load_scenario`'s live
 //! rate while its venue is open, printing each day's commands and bytes and failing a day that priced
 //! or filled nothing or rejected over 1% of its requests, or a flow that closes no emission period or
 //! staking epoch: the book starts both ten minutes after the flow's start, with the staking mirror's
@@ -33,10 +33,10 @@
 //! from the commands the markets' calendars give 30 days of launch flow and the replay's rate over the
 //! launch leg, to its last command. The environment sizes the run: `RECOVERY_ACCOUNTS` (100,000),
 //! `RECOVERY_TRADERS` (2,000), `RECOVERY_START_SECS` (how long after the book's clock, Monday 15:00 UTC,
-//! the flow starts: 0), `RECOVERY_LAUNCH_SECS` (30 days), `RECOVERY_TEN_TIMES_SECS` (3 days),
-//! `RECOVERY_CAPTURE_SECS` (300), `RECOVERY_SUFFIX_SECS` (300), `RECOVERY_TAILS` (bytes, comma-separated)
-//! and `RECOVERY_REPLAY_WORKERS` (the threads that check command seals ahead of each replay, the node's
-//! included: one per core).
+//! the flow starts: 0), `RECOVERY_LAUNCH_SECS` (30 days), `RECOVERY_TEN_TIMES_SECS` (a tenth of the
+//! launch leg: 3 days), `RECOVERY_CAPTURE_SECS` (300), `RECOVERY_SUFFIX_SECS` (300), `RECOVERY_TAILS`
+//! (bytes, comma-separated) and `RECOVERY_REPLAY_WORKERS` (the threads that check command seals ahead of
+//! each replay, the node's included: one per core).
 
 mod bench;
 mod cache;
@@ -79,9 +79,10 @@ use crate::test_support::scratch_dir;
 const ACCOUNTS: usize = 100_000;
 const TRADERS: usize = 2_000;
 const DAY_SECS: u64 = 86_400;
-/// The log [proposal]: 30 days of launch flow, then 3 days of ten times it.
+/// The log [proposal]: 30 days of launch flow, then a tenth as long of ten times it, so a run sized by
+/// its launch leg alone stays in proportion.
 const LAUNCH_SECS: u64 = 30 * DAY_SECS;
-const TEN_TIMES_SECS: u64 = 3 * DAY_SECS;
+const TEN_TIMES_DIVISOR: u64 = 10;
 /// The production template's `[snapshots] interval`, and the launch flow sequenced past the newest
 /// cache before the node stops: a hard stop just before the next capture.
 const CAPTURE_SECS: u64 = 300;
@@ -286,8 +287,10 @@ fn tails() -> Vec<u64> {
 fn write_log(node: &mut Node, flow: &mut Flow, log: &std::path::Path) -> Vec<Day> {
     let mut days = Vec::new();
     let (mut seq_at, mut bytes_at) = (node.seq.last_seq().unwrap_or(0), log_bytes(log));
-    let legs =
-        [(env("RECOVERY_LAUNCH_SECS", LAUNCH_SECS), 1.0), (env("RECOVERY_TEN_TIMES_SECS", TEN_TIMES_SECS), 10.0)];
+    let ten_times = std::env::var("RECOVERY_TEN_TIMES_SECS")
+        .ok()
+        .map(|secs| secs.parse().unwrap_or_else(|_| panic!("RECOVERY_TEN_TIMES_SECS")));
+    let legs = legs(env("RECOVERY_LAUNCH_SECS", LAUNCH_SECS), ten_times);
     assert!(legs[0].0 > 0, "RECOVERY_LAUNCH_SECS: the log needs launch flow to measure");
     for (secs, multiple) in legs {
         flow.run(node, Duration::from_secs(secs), multiple, |node, sequenced, took| {
@@ -316,6 +319,12 @@ fn write_log(node: &mut Node, flow: &mut Flow, log: &std::path::Path) -> Vec<Day
         });
     }
     days
+}
+
+/// The log's legs: `launch_secs` of launch flow, then `ten_times_secs` of ten times it, a tenth of the
+/// launch leg unless the run names it.
+fn legs(launch_secs: u64, ten_times_secs: Option<u64>) -> [(u64, f64); 2] {
+    [(launch_secs, 1.0), (ten_times_secs.unwrap_or(launch_secs / TEN_TIMES_DIVISOR), 10.0)]
 }
 
 /// One day of the log: its flow, where it ended, the commands and bytes it wrote, and what it sequenced.
@@ -372,5 +381,25 @@ mod closes_tests {
         // Ten-minute periods and 400-second epochs, from ten minutes in.
         let closed = node.closed();
         assert!(closed.periods > 0 && closed.epochs > 0, "{closed:?}");
+    }
+}
+
+#[cfg(test)]
+mod legs_tests {
+    use super::{DAY_SECS, LAUNCH_SECS, legs};
+
+    #[test]
+    fn a_run_sized_by_its_launch_leg_alone_scales_the_ten_times_leg() {
+        assert_eq!(legs(3_600, None), [(3_600, 1.0), (360, 10.0)]);
+    }
+
+    #[test]
+    fn the_default_run_writes_three_days_of_ten_times_flow() {
+        assert_eq!(legs(LAUNCH_SECS, None)[1], (3 * DAY_SECS, 10.0));
+    }
+
+    #[test]
+    fn a_named_ten_times_leg_stands() {
+        assert_eq!(legs(1_800, Some(300)), [(1_800, 1.0), (300, 10.0)]);
     }
 }

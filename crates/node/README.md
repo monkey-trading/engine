@@ -164,6 +164,9 @@ have, as the script's header and the `sequencer::recovery_scale` module document
 RECOVERY_LAUNCH_SECS=3600 nice ./scripts/dev-recovery-scale.sh
 ```
 
+The leg of ten times launch flow that follows the launch leg is a tenth as long, unless
+`RECOVERY_TEN_TIMES_SECS` names it, so the command above writes about an hour and six minutes of log.
+
 ## License
 
 Licensed under the Apache License, Version 2.0, whose text is in [LICENSE](../../LICENSE).
