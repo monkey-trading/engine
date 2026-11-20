@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
+use engine_core::event::Event;
 use engine_core::types::AccountId;
 use serde_json::Value;
 use tokio::sync::watch;
@@ -65,19 +66,13 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
         "before any withdrawal approval the paired cache must resume, so the sweep below covers it"
     );
     node.history_caught_up().await;
-    let retained = snapshot::candidates_readonly(node.cfg.snapshots.as_ref().unwrap()).unwrap();
-    node.submit(withdraw(40)).await;
-    // The withdrawal is approved under V22. No later checkpoint publishes a cache, since recovery
-    // would refuse it and it would retire the approval-free caches restart can still use.
+    // The withdrawal is approved under V22, and caches go on past it, each carrying the approval.
+    let approved = node.submit(withdraw(40)).await;
+    assert!(approved.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. })));
     for n in 0..15 {
         node.submit(deposit(1, &format!("whole37-settle-{n}"))).await;
         node.history_caught_up().await;
     }
-    assert_eq!(
-        snapshot::candidates_readonly(node.cfg.snapshots.as_ref().unwrap()).unwrap(),
-        retained,
-        "no cache is published once the engine holds a withdrawal approval"
-    );
     node.history_caught_up().await;
     let (cfg, reader) = node.stop().await;
     let http = Http::start(reader.clone()).await;
@@ -93,23 +88,23 @@ async fn dev_scenario_authenticated_history_and_paired_restart_preserve_all_publ
     let caches = cfg.snapshots.as_ref().unwrap();
     let domain =
         crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
-    // Newest-first recovery refuses every cache that holds a V22 withdrawal approval (payout
-    // delivery order is not cached) and every cache whose engine predates custody finality; it
-    // accepts the newest remaining candidate, which the retained pre-approval caches provide.
+    // Newest-first recovery refuses every cache whose engine predates custody finality and accepts
+    // the newest of the rest, which holds the approval.
     let recoverable = snapshot::candidates_readonly(caches)
         .unwrap()
         .iter()
         .filter_map(|path| {
             let (payload, engine) = snapshot::read(caches, path, domain.chain_id, domain.vault).unwrap();
-            (engine.deposit_finality_enabled() && engine.withdrawal_approvals().next().is_none())
-                .then_some(payload.offset.seq)
+            let approved = engine.withdrawal_approvals().next().is_some();
+            engine.deposit_finality_enabled().then_some((payload.offset.seq, approved))
         })
         .max();
-    assert!(recoverable.is_some(), "a pre-approval cache stays retained after the approval");
+    assert_eq!(recoverable.map(|(_, approved)| approved), Some(true), "the newest cache holds the approval");
     let node = Node::start_resuming(cfg, clock, genesis).await.unwrap();
     assert_eq!(
-        node.snapshot_seq, recoverable,
-        "newest-first recovery must skip approval-bearing and pre-finality caches"
+        node.snapshot_seq,
+        recoverable.map(|(seq, _)| seq),
+        "newest-first recovery must take the newest cache past the approval and skip pre-finality ones"
     );
     for n in 0..5 {
         node.submit(deposit(1, &format!("whole37-rotate-{n}"))).await;

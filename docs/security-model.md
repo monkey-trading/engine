@@ -521,10 +521,14 @@ Known limits:
   checked against a trusted attestation or the vault's authorized signer.
 - **Snapshots and local stores.** Optional recovery snapshots require attested signer pins
   provisioned independently, and they authenticate the complete snapshot, its deployment and its
-  checkpoint. With snapshots, account history and the segment catalog are read and updated only
-  through proofs against roots the trading server signed. Their signatures establish integrity, not
-  freshness, so the same independent check against custody applies, and a full `engine replay`
-  checks the log segments a snapshot skipped.
+  checkpoint. A snapshot also carries each withdrawal approval still unpaid at its checkpoint, with
+  the latest authorization the log holds for it, and leaves out those custody's finalized evidence
+  showed paid. A start from it checks each authorization logged after the checkpoint against the
+  pinned signer and a checkpoint root that the snapshot or the log holds, not against the vault's
+  signer-epoch history, which only full replay reads. With snapshots, account history and the
+  segment catalog are read and updated only through proofs against roots the trading server signed.
+  Their signatures establish integrity, not freshness, so the same independent check against custody
+  applies, and a full `engine replay` checks the log segments a snapshot skipped.
 - The alert outbox keeps pages on the host's disk. It checks their schema and rows, but cannot
   detect their deletion or rollback, and its age budget across restarts uses the host clock.
 - Without snapshots, the account history index is read from the host's disk with only its schema and

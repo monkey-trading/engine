@@ -2,12 +2,14 @@
 # Dev scenario for restarting from checkpoint snapshots, on a node with config/dev.toml's mocks,
 # checkpoints every 100 commands, and `[snapshots]` added, capturing every checkpoint:
 #   1. run the node, take its enclave address from the attestation line, and pin it;
-#   2. sequence 400 dev deposits, let history catch up and the snapshot writer store the newest
-#      checkpoint, stop the node, and restart it from its newest paired cache;
+#   2. sequence 400 dev deposits and a withdrawal, which mock custody approves and signs, let history
+#      catch up and the snapshot writer store the newest checkpoint, stop the node, and restart it
+#      from its newest paired cache, taken after the approval;
 #   3. sequence 3,600 more (a tenfold log and history), and stop and restart again the same way;
 #   4. corrupt the newest cache and restart once more.
-# Passes when every restart recovers from a cache and replays at most one checkpoint interval,
-# history serves every deposit once as soon as the API answers, the dashboard record says it begins
+# Passes when every restart recovers from a cache past the approval and replays at most one
+# checkpoint interval, the log holds one authorization of the withdrawal after every start, history
+# serves every deposit and the approval once as soon as the API answers, the dashboard record says it begins
 # after the cache (`from_genesis` false), the corrupt cache raises a
 # `snapshot_rejected` Warning and recovery uses an earlier cache, and `engine replay` verifies every
 # checkpoint the node wrote, the ones after the fallback included. Restart times are printed, not
@@ -97,15 +99,16 @@ wait_for_history() {
   done
   fail "history never served"
 }
-# Every history event of the account, paged with the cursors the route returns.
+# The account's history events of kind `$1`, deposits unless given, paged with the cursors the route
+# returns.
 history_events() {
-  python3 - "$api_port" "$account" <<'PY'
+  python3 - "$api_port" "$account" "${1:-deposited}" <<'PY'
 import http.client, json, ssl, sys
-port, account = int(sys.argv[1]), sys.argv[2]
+port, account, kind = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 conn = http.client.HTTPSConnection("127.0.0.1", port, context=ssl._create_unverified_context())
 count, before = 0, None
 while True:
-    path = f"/v1/accounts/{account}/history?limit=200" + (f"&before={before}" if before else "")
+    path = f"/v1/accounts/{account}/history?kind={kind}&limit=200" + (f"&before={before}" if before else "")
     conn.request("GET", path)
     response = conn.getresponse()
     body = json.loads(response.read())
@@ -129,6 +132,35 @@ for _ in range(n):
     response = conn.getresponse()
     body = response.read()
     assert response.status == 200, body
+PY
+}
+# Requests a withdrawal of `$1` for the account, which mock custody approves and signs after the
+# checkpoint at its seq, and prints that seq once history serves the approval.
+withdraw() {
+  local events seq
+  events="$(curl -sk --max-time 10 -X POST "https://127.0.0.1:$api_port/v1/withdrawals" \
+    -H 'content-type: application/json' -d "{\"account\":\"$account\",\"amount\":\"$1\"}")"
+  jq -e 'any(.[]; .type == "withdrawal_approved")' <<< "$events" > /dev/null || fail "no approval: $events"
+  for _ in $(seq 1 600); do
+    seq="$(curl -sk --max-time 5 "https://127.0.0.1:$api_port/v1/accounts/$account/history?kind=withdrawal_approved" \
+      | jq -r '.events[0].cursor // empty | split(":")[0]')"
+    [[ -n "$seq" ]] && { echo "$seq"; return 0; }
+    sleep 0.05
+  done
+  fail "history never served the approval"
+}
+# The account's withdrawal authorizations the log holds, read with the node stopped.
+authorizations() {
+  python3 - "$work/log" "$account" <<'PY'
+import json, pathlib, sys
+log, account = pathlib.Path(sys.argv[1]), sys.argv[2].lower()
+count = 0
+for segment in sorted(log.glob("[0-9]*.jsonl")):
+    for line in segment.read_text().splitlines():
+        entry = json.loads(line)
+        if entry.get("entry") == "withdrawal" and entry["account"].lower() == account and entry.get("authorization"):
+            count += 1
+print(count)
 PY
 }
 # The recovery line's `snapshot_seq` and command count, as "<snapshot_seq> <commands>".
@@ -206,16 +238,33 @@ stop_node
 sed -i.bak "s|^trusted_signers = \[\]|trusted_signers = [\"$enclave\"]|" "$work/node.toml"
 grep -qF "trusted_signers = [\"$enclave\"]" "$work/node.toml" || fail "pin not written"
 
+# Fails unless the log holds the withdrawal's one authorization and history served its approval once,
+# after start `$1`, whose node log names no approval it found unsigned.
+expect_one_authorization() {
+  [[ "$(authorizations)" == 1 ]] || fail "$1: the log holds $(authorizations) authorizations of the withdrawal"
+  [[ "$approvals" == 1 ]] || fail "$1: history served the approval $approvals times"
+  if grep -q 'the log ends before this approved withdrawal was signed' "$work/$1.log"; then
+    fail "$1: the start found the withdrawal unsigned"
+  fi
+}
+
 deposits=0
+approved_seq=""
 for target in 400 4000; do
   step "sequence dev deposits up to $target, then stop"
   start_node "grow-$target"
   wait_for_log "grow-$target" 'first trusted time sample: sequencing started'
   deposit $(( target - deposits ))
   deposits="$target"
+  if [[ -z "$approved_seq" ]]; then
+    approved_seq="$(withdraw 40)"
+    echo "withdrawal approved at seq $approved_seq"
+  fi
   wait_for_events "$deposits"
   wait_for_stored_checkpoint "grow-$target"
+  approvals="$(history_events withdrawal_approved)"
   stop_node
+  expect_one_authorization "grow-$target"
 
   step "restart from the newest cache with $deposits deposits in the log"
   start_node "restart-$target"
@@ -224,13 +273,16 @@ for target in 400 4000; do
   line="$(recovery "restart-$target")"
   read -r seq commands <<< "$line"
   [[ "$seq" != none ]] || fail "restart with $deposits deposits replayed the whole log"
+  (( seq >= approved_seq )) || fail "restart used cache $seq, from before the approval at $approved_seq"
   suffix=$(( commands - seq - 1 ))
   (( suffix <= interval )) || fail "restart replayed $suffix commands after the cache"
   expect_suffix_begin "$seq"
   served="$(history_events)"
   [[ "$served" == "$deposits" ]] || fail "history served $served of $deposits deposits"
+  approvals="$(history_events withdrawal_approved)"
   echo "restart scenario: deposits=$deposits log_commands=$commands restart_ms=$restart_ms suffix_commands=$suffix"
   stop_node
+  expect_one_authorization "restart-$target"
 done
 
 step "corrupt the newest cache and restart"
@@ -243,14 +295,17 @@ line="$(recovery fallback)"
 read -r seq commands <<< "$line"
 [[ "$seq" != none ]] || fail "the fallback replayed the whole log"
 (( seq < newest_seq )) || fail "recovery used cache $seq, not one before the corrupt $newest_seq"
+(( seq >= approved_seq )) || fail "the fallback used cache $seq, from before the approval at $approved_seq"
 grep -q 'WARN.*alert="snapshot_rejected"' "$work/fallback.log" || fail "no snapshot_rejected Warning"
 expect_suffix_begin "$seq"
 served="$(history_events)"
 [[ "$served" == "$deposits" ]] || fail "history served $served of $deposits deposits after the fallback"
+approvals="$(history_events withdrawal_approved)"
 stop_node
+expect_one_authorization fallback
 
 step "audit the whole log, including the checkpoints written after the fallback"
 "$engine" replay --log "$work/log" --signer "$enclave" | tee "$work/replay.log"
 grep -q '^verified: ' "$work/replay.log" || fail "replay did not verify"
 
-echo "PASS: each restart used a cache and a bounded suffix, and the corrupt cache fell back to an earlier one"
+echo "PASS: each restart used a cache past the approval and a bounded suffix and signed nothing again, and the corrupt cache fell back to an earlier one"

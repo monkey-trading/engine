@@ -11,6 +11,7 @@ use crate::checkpoints::Work;
 use crate::checkpoints::accounting::Accounting;
 use crate::checkpoints::signature;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent};
+use crate::snapshot::payouts::{Payouts, Restored};
 
 /// The independently finalized starting point of the concrete outstanding checkpoint chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +38,10 @@ pub(crate) struct RecoveryContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_work: Option<Work>,
     pub work: Vec<Work>,
+    /// What the engine's withdrawal approvals are owed, which only the log before the checkpoint
+    /// shows; absent while the engine holds none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payouts: Option<Payouts>,
 }
 
 impl RecoveryBase {
@@ -128,6 +133,22 @@ impl RecoveryContext {
             "snapshot checkpoint accounting mismatch"
         );
         Ok(())
+    }
+
+    /// The payout state replay continues from after `checkpoint`, at which the engine is `engine`.
+    /// Error cases:
+    /// - the engine holds an approval and the cache carries no payouts, or they do not restore
+    pub(crate) fn restore_payouts(&self, checkpoint: &Checkpoint, engine: &Engine) -> anyhow::Result<Restored> {
+        match &self.payouts {
+            Some(payouts) => payouts.restore(engine, checkpoint),
+            None => {
+                ensure!(
+                    engine.withdrawal_approvals().next().is_none(),
+                    "snapshot does not carry its withdrawal approvals' payouts; the full log is replayed instead"
+                );
+                Payouts::default().restore(engine, checkpoint)
+            }
+        }
     }
 
     /// Selects the exact outstanding work after a freshly supplied finalized checkpoint.

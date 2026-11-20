@@ -331,6 +331,7 @@ pub(super) fn fixture(label: &str) -> (SnapshotSection, EnclaveKey, Snapshot) {
             base: RecoveryBase::Ungated,
             base_work: None,
             work: Vec::new(),
+            payouts: None,
         },
     };
     (cfg, key, snapshot)

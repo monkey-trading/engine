@@ -503,14 +503,15 @@ public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 # engine, so a capture holds the sequencer only to sync the log and seal the catalog. A restart reads
 # the newest cache, checks the posted log head over the commands since the head, and replays at most
 # five minutes of flow; it still reads the whole log three times outside the cache, which grows with
-# the log (restart-and-recovery.md has the figures). No cache is taken once the engine holds a
-# withdrawal approval, so the first approval ends bounded restarts. With [snapshots], account history
-# is the authenticated index in this directory. Remove [snapshots] before rotation is turned on, as
-# operator-candidate.md says for every rotation-set member.
+# the log (restart-and-recovery.md has the figures). A cache carries the withdrawal approvals still
+# unpaid, with their latest authorizations, so a start from it signs again only what full replay
+# would. With [snapshots], account history is the authenticated index in this directory. Remove
+# [snapshots] before rotation is turned on, as operator-candidate.md says for every rotation-set
+# member.
 [snapshots]
 dir = "/data/snapshots"
 retain = 2
-interval = "5m" # OWNER: keep [snapshots] once the authenticated history index keeps up with ten times launch flow on the launch hardware, knowing the first withdrawal approval ends its bounded restarts
+interval = "5m" # OWNER: keep [snapshots] once the authenticated history index keeps up with ten times launch flow on the launch hardware
 max_bytes = 2147483648
 # Unpinned, every start replays the whole log and also rebuilds the history index from it, so a
 # first release, which creates the enclave key, leaves [snapshots] out (deploy-and-rollback.md).

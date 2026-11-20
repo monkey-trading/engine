@@ -418,6 +418,7 @@ impl Sequencer {
         }
         self.metrics.commands.inc();
         self.metrics.access_pending_deposits.set(self.engine.pending_deposits().len() as i64);
+        self.note_unsigned(events);
         for (event_index, event) in events.iter().enumerate() {
             alert_on(event);
             self.benchmark_alerts.note(event);

@@ -331,7 +331,7 @@ impl Sequencer {
             self.roots.releases.push((seq, root.into()));
         }
         self.command_link = crate::log::command_seal::checkpoint_link(&cp)?;
-        self.capture_payout_proofs(seq)?;
+        self.capture_payout_proofs(seq, root.into())?;
         if self.gate.is_some() {
             self.publish_checkpoint(&cp)?;
             if let Some(gate) = &mut self.gate {

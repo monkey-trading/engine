@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{Context, ensure};
 use engine_core::access::AccessReject;
+use engine_core::eip712::B256;
 use engine_core::merkle::WithdrawalApprovalProof;
 use engine_core::types::AccountId;
 use engine_core::withdrawal::WithdrawalApproval;
@@ -128,26 +129,27 @@ impl Sequencer {
         }
         let held = self.dedup_checkpoint_seq == Some(gate.parent.seq);
         if gate.parent.has_checkpoint && held && Some(gate.parent.seq) == self.engine.last_seq() {
-            let seq = gate.parent.seq;
-            self.capture_payout_proofs(seq)
+            let (seq, root) = (gate.parent.seq, gate.parent.root);
+            self.capture_payout_proofs(seq, root)
         } else {
             self.paced_checkpoint()
         }
     }
 
-    /// Captures each pending approval's first proof at the checkpoint at `seq`, which covers it: from
-    /// the engine's tree before it is detached, and otherwise from the root worker, whose answer
-    /// arrives as an outcome (`take_payout_proofs`). A payout is signed only once it has its proof.
+    /// Captures each pending approval's first proof at the checkpoint at `seq`, of root `root`, which
+    /// covers it: from the engine's tree before it is detached, and otherwise from the root worker,
+    /// whose answer arrives as an outcome (`take_payout_proofs`). A payout is signed only once it has
+    /// its proof.
     /// Error cases:
     /// - the root worker has stopped
-    pub(super) fn capture_payout_proofs(&mut self, seq: u64) -> anyhow::Result<()> {
+    pub(super) fn capture_payout_proofs(&mut self, seq: u64, root: B256) -> anyhow::Result<()> {
         let Some(gate) = &mut self.gate else { return Ok(()) };
         let unproved = std::mem::take(&mut gate.unproved);
         if unproved.is_empty() {
             return Ok(());
         }
         if self.roots.detached() {
-            return self.prove_payouts(seq, unproved.into_iter().collect());
+            return self.prove_payouts(seq, root, unproved.into_iter().collect());
         }
         for key in unproved {
             let payout = gate.payouts.get_mut(&key).expect("an unproved payout is pending");
@@ -440,6 +442,7 @@ impl Sequencer {
         let mut withdrawal = self.unsigned_payout(approval, authorization);
         withdrawal.signature = self.key.sign_payout(&withdrawal)?;
         self.record(LogEntry::Withdrawal(withdrawal))?;
+        self.note_signed((approval.account, approval.nonce));
         self.sync_log(true)
     }
 }

@@ -69,7 +69,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         expected.push(queued.try_recv().unwrap());
     }
     let offset = seq.outbox.last().unwrap().offset;
-    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
+    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap(), &expected[1].checkpoint);
     assert_eq!(
         context.base_work.as_ref().unwrap().checkpoint.seq,
         base,
@@ -154,6 +154,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
             base: snapshot::RecoveryBase::Ungated,
             base_work: None,
             work: Vec::new(),
+            payouts: None,
         },
     };
     let value = serde_json::to_value(snapshot).unwrap();
@@ -224,6 +225,7 @@ impl ReplayedLog {
                 },
                 base_work: replayed.recovery_anchor_work.clone(),
                 work: replayed.recovery_work.clone(),
+                payouts: None,
             },
         };
         snapshot::write(cache, &payload, &key).unwrap();

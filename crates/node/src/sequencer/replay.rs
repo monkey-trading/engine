@@ -65,6 +65,8 @@ pub(super) struct Replay {
     /// What a promotion's copy needs noted as it replays (see `unheld`).
     unheld: unheld::Noted,
     payout_order: Vec<((AccountId, u64), usize)>,
+    /// Approvals a cache's node had delivered before its checkpoint, which `payout_order` leaves out.
+    delivered: usize,
     requires_checkpoint_gate: bool,
     access_alerts: crate::sequencer::access::AccessAlerts,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
@@ -413,6 +415,7 @@ impl Replay {
             unpaid: self.accounting.unpaid(),
             checkpoint_signers: self.checkpoint_signers,
             payout_order: self.payout_order,
+            delivered: self.delivered,
             authorized: self.authorized,
             requires_checkpoint_gate: self.requires_checkpoint_gate,
             access_failed: self.access_alerts.failed(),

@@ -435,6 +435,7 @@ impl Node {
 }
 
 mod backlog;
+mod cache;
 mod claim_retirement;
 mod halt;
 mod origin;

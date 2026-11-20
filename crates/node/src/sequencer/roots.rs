@@ -56,8 +56,9 @@ pub(super) struct Roots {
     running: bool,
     /// Whether the worker holds the tree: the engine computes no root of its own.
     detached: bool,
-    /// Payout proofs asked of the worker and not yet answered, by the checkpoint they are asked at.
-    proving: BTreeMap<u64, usize>,
+    /// Payout proofs asked of the worker and not yet answered, by the checkpoint they are asked at,
+    /// with that checkpoint's root.
+    proving: BTreeMap<u64, (usize, B256)>,
     /// Since when a paced checkpoint has waited for root work.
     deferred: Option<TokioInstant>,
     /// Attempts that deferred for root work, so a retry that does not defer again ends the wait.
@@ -104,6 +105,11 @@ impl Roots {
     /// When a deferred checkpoint is taken whatever its root work.
     pub(super) fn deadline(&self) -> Option<TokioInstant> {
         self.deferred.map(|since| since + self.defer_max)
+    }
+
+    /// The checkpoints payout proofs are asked at and not yet answered, with their roots.
+    pub(super) fn proving(&self) -> impl Iterator<Item = (u64, B256)> + '_ {
+        self.proving.iter().map(|(seq, (_, root))| (*seq, *root))
     }
 
     /// A lower bound and deferral limit, for tests that reach them with a small book.
@@ -324,12 +330,17 @@ impl Sequencer {
         Ok(())
     }
 
-    /// Asks the worker for the first proofs of `approvals` at the checkpoint at `seq`.
+    /// Asks the worker for the first proofs of `approvals` at the checkpoint at `seq`, of root `root`.
     /// Error cases:
     /// - the worker has stopped
-    pub(super) fn prove_payouts(&mut self, seq: u64, approvals: Vec<(AccountId, u64)>) -> anyhow::Result<()> {
+    pub(super) fn prove_payouts(
+        &mut self,
+        seq: u64,
+        root: B256,
+        approvals: Vec<(AccountId, u64)>,
+    ) -> anyhow::Result<()> {
         self.roots.worker.prove(seq, approvals)?;
-        *self.roots.proving.entry(seq).or_default() += 1;
+        self.roots.proving.entry(seq).or_insert((0, root)).0 += 1;
         Ok(())
     }
 
@@ -342,8 +353,9 @@ impl Sequencer {
     /// - the worker has stopped
     pub(super) fn settle_payout_proofs(&mut self, posted: Option<u64>) -> anyhow::Result<()> {
         self.take_root_outcomes()?;
-        let due =
-            |proving: &BTreeMap<u64, usize>| posted.is_some_and(|posted| proving.range(..=posted).next().is_some());
+        let due = |proving: &BTreeMap<u64, (usize, B256)>| {
+            posted.is_some_and(|posted| proving.range(..=posted).next().is_some())
+        };
         while due(&self.roots.proving) {
             let outcome = self.roots.worker.next_outcome()?;
             self.take_root_outcome(outcome)?;
@@ -357,7 +369,7 @@ impl Sequencer {
     fn take_root_outcome(&mut self, outcome: Outcome) -> anyhow::Result<()> {
         match outcome {
             Outcome::Proved { seq, proofs } => {
-                if let Some(asked) = self.roots.proving.get_mut(&seq) {
+                if let Some((asked, _)) = self.roots.proving.get_mut(&seq) {
                     *asked -= 1;
                     if *asked == 0 {
                         self.roots.proving.remove(&seq);
