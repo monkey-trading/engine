@@ -225,11 +225,10 @@ async fn watcher_per_poll(per_poll: u64) -> ByMethod {
 
 /// Three providers answering the liveness rule's chain, the first counted, and that chain.
 fn liveness_quorum(calls: &Calls) -> (Vec<(String, Counted<Liveness>)>, Liveness) {
-    let mut state = ChainState::default();
-    state.members = (0xa1..=0xa3)
+    let members = (0xa1..=0xa3)
         .map(|byte| (Address::repeat_byte(byte), format!("member-{byte}:9000"), Address::repeat_byte(byte + 0x10)))
         .collect();
-    let chain = Liveness(Arc::new(Mutex::new(state)));
+    let chain = Liveness(Arc::new(Mutex::new(ChainState { members, ..ChainState::default() })));
     let providers = (0..3)
         .map(|i| {
             let counted = if i == 0 { calls.clone() } else { Calls::default() };
