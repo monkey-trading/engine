@@ -30,3 +30,25 @@ async fn a_stint_records_what_the_copy_appended_as_durable_with_its_sealer() {
     assert_eq!((durable.seq, durable.link), (last, head), "durable through the copy's last command");
     assert_eq!(status.sealer, enclave(), "the key that sealed it");
 }
+
+/// A stint syncs its copy once a burst of entries, not once an entry: a sync takes milliseconds, so a
+/// copy synced at every entry takes the stream no faster than its disk syncs, and trails the operator.
+/// Every entry is in the copy when the stint ends.
+#[tokio::test]
+async fn a_stint_syncs_its_copy_once_a_burst_not_once_an_entry() {
+    let operator = scratch_dir("standby-sync-burst-operator");
+    ticks(&operator, 60).await;
+    let frames: Vec<_> =
+        log_messages(&operator, Offset::start_of(0)).into_iter().map(|message| (By::Operator, message)).collect();
+    let taken = frames.len();
+    let (port, server, _) = operator_stream(frames).await;
+    let dir = scratch_dir("standby-sync-burst-copy");
+    let (mut writer, mut copied) = open_copy(&dir, 1024, Chain::new(DOMAIN, enclave())).unwrap();
+    let followed = Followed::from_standby(&standby_section(port));
+    follow(&mut writer, &mut copied, &config(), &followed, Duration::from_secs(1), None, None).await.unwrap();
+    server.abort();
+    let syncs = writer.sync_count();
+    assert!(syncs * 10 < taken, "{syncs} syncs for the {taken} entries of one burst");
+    drop(writer);
+    assert_eq!(entries(&dir), log_entries(&operator), "the copy lacks entries the stint took");
+}

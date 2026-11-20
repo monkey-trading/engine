@@ -12,9 +12,9 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::{FETCH_TIMEOUT, stream_url, tls};
 
-/// How often a member's copy is synced while it takes entries, for its confirmations.
+/// How often a follower's copy is synced while it takes entries: a member confirms what is synced.
 const SYNC_EVERY: Duration = Duration::from_millis(200);
-/// How long a member's stream may stay quiet after an entry before its copy is synced: an operator
+/// How long a follower's stream may stay quiet after an entry before its copy is synced: an operator
 /// whose checkpoint waits for a confirmation stamps nothing, so the stream goes quiet at once.
 const QUIET: Duration = Duration::from_millis(20);
 
@@ -125,26 +125,29 @@ pub(super) async fn follow_until(
     // The last command the copy appended in this stint, with the cumulative prefix after it: what a
     // sync makes durable, never what the replica applied before an append that failed.
     let mut appended: Option<(Head, Option<AccountId>)> = None;
-    // Every exit path flushes: a later stint resumes the stream from the copy's last command, so
-    // an unflushed append would be skipped forever.
+    // Every exit path syncs: a later stint resumes the stream from the copy's last command, so an
+    // unwritten append would be skipped forever.
     let followed = async {
         // A connection the host holds open but feeds nothing must not read as a working stint: no
         // frame, no evidence of anything.
         let mut frames = 0usize;
-        // With a member link, the copy is synced at most every `SYNC_EVERY` once it took entries, or
-        // once the stream stays quiet for `QUIET` after one, and its durable head recorded, so the
-        // operator's confirmations trail its log by little.
+        // The copy is synced at most every `SYNC_EVERY` once it took entries, or once the stream stays
+        // quiet for `QUIET` after one, never an entry at a time: a sync costs milliseconds, which
+        // would cap how fast the copy takes the stream. With a member link its durable head is
+        // recorded at each, so the operator's confirmations trail its log by little.
         let (mut unsynced, mut synced_at) = (false, Instant::now());
         loop {
-            if unsynced && let Some(link) = link.filter(|_| synced_at.elapsed() >= SYNC_EVERY) {
+            if unsynced && synced_at.elapsed() >= SYNC_EVERY {
                 writer.sync().context("syncing the copy")?;
-                durable(link, appended);
+                if let Some(link) = link {
+                    durable(link, appended);
+                }
                 (unsynced, synced_at) = (false, Instant::now());
             }
             let quiet = async {
-                match link.filter(|_| unsynced) {
-                    Some(_) => sleep(QUIET).await,
-                    None => std::future::pending().await,
+                match unsynced {
+                    true => sleep(QUIET).await,
+                    false => std::future::pending().await,
                 }
             };
             let frame = {
@@ -152,8 +155,8 @@ pub(super) async fn follow_until(
                 let message = tokio::select! {
                     () = &mut deadline => break,
                     () = quiet => {
+                        writer.sync().context("syncing the copy")?;
                         if let Some(link) = link {
-                            writer.sync().context("syncing the copy")?;
                             durable(link, appended);
                         }
                         (unsynced, synced_at) = (false, Instant::now());
@@ -213,7 +216,6 @@ pub(super) async fn follow_until(
                     }
                 }
                 copied.extend(message.offset, entry, chained);
-                writer.flush().context("flushing the copy")?;
                 unsynced = true;
             }
         }
