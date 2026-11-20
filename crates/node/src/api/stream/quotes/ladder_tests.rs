@@ -11,8 +11,8 @@ use engine_core::{Engine, Fixed};
 use super::ladder::{MarketQuote, Step, largest, market_quote};
 use super::tests::{INTERVAL, Rig, T0, TRADER, engine};
 
-const BTC: MarketId = 1;
-const ETH: MarketId = 2;
+pub(super) const BTC: MarketId = 1;
+pub(super) const ETH: MarketId = 2;
 const EUR_USD: MarketId = 10;
 const DE40: MarketId = 23;
 /// An account with 3 million USD, which runs out of margin before the house runs out of capacity.
@@ -26,12 +26,12 @@ fn fixed(text: &str) -> Fixed {
     text.parse().unwrap()
 }
 
-fn apply(engine: &mut Engine, ts: Millis, cmd: Command) -> Vec<Event> {
+pub(super) fn apply(engine: &mut Engine, ts: Millis, cmd: Command) -> Vec<Event> {
     let seq = engine.last_seq().map_or(0, |seq| seq + 1);
     engine.apply(&Sequenced { seq, ts, cmd }).unwrap()
 }
 
-fn price(engine: &mut Engine, market: MarketId, mid: Fixed, ts: Millis) {
+pub(super) fn price(engine: &mut Engine, market: MarketId, mid: Fixed, ts: Millis) {
     let quotes = ["a", "b"].map(|source| SourceQuote { source: source.into(), mid, ts, contract: None }).to_vec();
     apply(engine, ts, Command::Prices { market, quotes });
 }
@@ -44,15 +44,15 @@ fn funded(capital: i64) -> Engine {
     engine
 }
 
-fn deposit(engine: &mut Engine, account: AccountId, amount: Fixed) {
+pub(super) fn deposit(engine: &mut Engine, account: AccountId, amount: Fixed) {
     apply(engine, T0, Command::Deposit { account, amount, chain_ref: format!("0x{account}") });
 }
 
-fn read(engine: &Engine, account: AccountId, market: MarketId) -> MarketQuote {
+pub(super) fn read(engine: &Engine, account: AccountId, market: MarketId) -> MarketQuote {
     market_quote(engine, &engine.quoter(), account, market).expect("a listed market")
 }
 
-fn order(account: AccountId, market: MarketId, side: Side, qty: Fixed, quoted: Fixed, bps: i64) -> Command {
+pub(super) fn order(account: AccountId, market: MarketId, side: Side, qty: Fixed, quoted: Fixed, bps: i64) -> Command {
     Command::PlaceOrder(OrderRequest {
         account,
         client_id: 1,
@@ -67,7 +67,7 @@ fn order(account: AccountId, market: MarketId, side: Side, qty: Fixed, quoted: F
     })
 }
 
-fn fills(events: &[Event]) -> bool {
+pub(super) fn fills(events: &[Event]) -> bool {
     events.iter().any(|event| matches!(event, Event::Fill(_)))
 }
 

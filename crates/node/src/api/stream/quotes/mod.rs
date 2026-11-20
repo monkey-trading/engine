@@ -327,6 +327,8 @@ mod api_tests;
 #[cfg(test)]
 mod bench;
 #[cfg(test)]
+mod ladder_hedge_tests;
+#[cfg(test)]
 mod ladder_tests;
 #[cfg(test)]
 mod pacing_tests;
