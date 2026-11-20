@@ -7,6 +7,7 @@ use anyhow::{Result, ensure};
 use rusqlite::{Connection, TransactionBehavior};
 
 use crate::authenticated::blobs::{self, Compare};
+use crate::authenticated::reader::Checked;
 use crate::authenticated::staging::Staging;
 use crate::authenticated::{Root, Store, caller_key, db, geometry};
 
@@ -26,11 +27,13 @@ impl Store {
         self.write_transaction(
             root,
             |tx| {
-                let mut staging = Staging::new(tx, root)?;
+                let checked = Checked::default();
+                let mut staging = Staging::new(tx, root, &checked)?;
                 staging.value(key, Some((length, &mut source)))?;
                 let written = staging.finish()?;
                 ensure!(
-                    blobs::read_to(&mut blobs::Points::new(tx, &written), key, &mut std::io::sink())? == Some(length),
+                    blobs::read_to(&mut blobs::Points::new(tx, &written, &checked), key, &mut std::io::sink())?
+                        == Some(length),
                     "streamed value mismatch"
                 );
                 Ok(written)
@@ -58,14 +61,15 @@ impl Store {
         self.write_transaction(
             root,
             |tx| {
-                let mut staging = Staging::new(tx, root)?;
+                let checked = Checked::default();
+                let mut staging = Staging::new(tx, root, &checked)?;
                 for (key, value) in &sorted {
                     let mut source = Cursor::new(value.as_deref().unwrap_or_default());
                     let input = value.as_ref().map(|bytes| (bytes.len() as u64, &mut source));
                     staging.value(*key, input)?;
                 }
                 let written = staging.finish()?;
-                let mut points = blobs::Points::new(tx, &written);
+                let mut points = blobs::Points::new(tx, &written, &checked);
                 for (key, expected) in &sorted {
                     if let Some(expected) = expected {
                         let mut compare = Compare { expected, offset: 0 };

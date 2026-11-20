@@ -8,7 +8,7 @@ use jmt::storage::NodeKey;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::authenticated::reader::Reader;
+use crate::authenticated::reader::{Checked, Reader};
 use crate::authenticated::{INTERNAL, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, Root, codec, key_hash};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -65,7 +65,7 @@ pub(super) fn internal_key(namespace: &[u8; 32], tag: &[u8], suffix: &[u8]) -> R
 /// Error cases:
 /// - native storage access, structural checks or upstream point proof fails
 pub(super) fn point(conn: &Connection, root: &Root, key: KeyHash) -> Result<Option<Vec<u8>>> {
-    Reader::new(conn, root, false)?.read(key)
+    Reader::new(conn, root, false, &Checked::default())?.read(key)
 }
 
 /// Proves the persisted maintenance cursor; only the explicit pre-version root lacks it.

@@ -1,7 +1,7 @@
 //! Point lookups authenticated before upstream traversal, within one SQLite snapshot.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
 use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
@@ -11,19 +11,28 @@ use rusqlite::{Connection, params};
 use crate::authenticated::codec;
 use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
+/// The nodes one operation has checked against an authenticated parent, each with the hash it was
+/// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed
+/// once per operation, and a reader takes it only where its own checked parent names that hash.
+pub(super) type Checked = RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>;
+
 pub(super) struct Reader<'a> {
     conn: &'a Connection,
     root: Root,
     cache: RefCell<BTreeMap<NodeKey, Node>>,
+    /// The parents whose children this reader has loaded and checked.
+    prepared: RefCell<BTreeSet<NodeKey>>,
+    checked: &'a Checked,
     reads_left: Cell<usize>,
     bytes_left: Cell<usize>,
 }
 
 impl<'a> Reader<'a> {
-    /// Creates bounded per-operation state, authenticating the root before it can be traversed.
+    /// Creates bounded per-operation state, authenticating the root before it can be traversed, with
+    /// the nodes the operation has checked so far.
     /// Error cases:
     /// - the root is absent, malformed, or differs from the caller's trusted hash
-    pub(super) fn new(conn: &'a Connection, root: &Root, writing: bool) -> Result<Self> {
+    pub(super) fn new(conn: &'a Connection, root: &Root, writing: bool, checked: &'a Checked) -> Result<Self> {
         root.validate()?;
         let keys = if writing { PHYSICAL_UPDATES } else { 1 };
         let nodes = 1 + keys * 64 * 16;
@@ -31,13 +40,15 @@ impl<'a> Reader<'a> {
             conn,
             root: root.clone(),
             cache: RefCell::new(BTreeMap::new()),
+            prepared: RefCell::new(BTreeSet::new()),
+            checked,
             reads_left: Cell::new(nodes + keys * 8),
             bytes_left: Cell::new(nodes * MAX_NODE_BYTES + keys * MAX_STORED_VALUE * 4),
         };
         if let Some(version) = root.version {
             let key = codec::root_key(version)?;
-            let node = reader.fetch(&key)?;
-            ensure!(codec::hash(&node) == root.hash, "root node hash mismatch");
+            let node =
+                reader.checked(&key, root.hash).map_or_else(|| reader.check(&key, root.hash, "root node"), Ok)?;
             reader.cache.borrow_mut().insert(key, node);
         }
         Ok(reader)
@@ -134,14 +145,15 @@ impl<'a> Reader<'a> {
     /// - a direct child is unavailable, malformed, or inconsistent with its authenticated parent
     fn prepare_children(&self, key: &NodeKey, node: &Node) -> Result<()> {
         let Node::Internal(internal) = node else { return Ok(()) };
+        if self.prepared.borrow().contains(key) {
+            return Ok(());
+        }
         for (nibble, child) in internal.children_sorted() {
             let child_key = codec::child_key(key, u8::from(nibble), child.version)?;
-            let cached = self.cache.borrow().get(&child_key).cloned();
-            let loaded = match cached {
+            let loaded = match self.checked(&child_key, child.hash) {
                 Some(node) => node,
-                None => self.fetch(&child_key)?,
+                None => self.check(&child_key, child.hash, "child")?,
             };
-            ensure!(codec::hash(&loaded) == child.hash, "child hash mismatch");
             let count = match &loaded {
                 Node::Null => bail!("null child"),
                 Node::Leaf(_) => {
@@ -156,7 +168,24 @@ impl<'a> Reader<'a> {
             ensure!(count == child.leaf_count(), "child leaf count mismatch");
             self.cache.borrow_mut().insert(child_key, loaded);
         }
+        self.prepared.borrow_mut().insert(key.clone());
         Ok(())
+    }
+
+    /// The node at `key` the operation has checked to hash to `hash`, if it has.
+    fn checked(&self, key: &NodeKey, hash: [u8; 32]) -> Option<Node> {
+        self.checked.borrow().get(key).filter(|(_, checked)| *checked == hash).map(|(node, _)| node.clone())
+    }
+
+    /// Fetches the node at `key`, checks that it hashes to `hash`, its authenticated parent's for it, and
+    /// records it for the operation's other reads.
+    /// Error cases:
+    /// - the node is unavailable or malformed, or hashes otherwise (a `what` hash mismatch)
+    fn check(&self, key: &NodeKey, hash: [u8; 32], what: &str) -> Result<Node> {
+        let node = self.fetch(key)?;
+        ensure!(codec::hash(&node) == hash, "{what} hash mismatch");
+        self.checked.borrow_mut().insert(key.clone(), (node.clone(), hash));
+        Ok(node)
     }
 
     /// Charges one indexed SQL operation before it executes.

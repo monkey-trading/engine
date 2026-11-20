@@ -3,6 +3,7 @@
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, params};
 
+use crate::authenticated::reader::Checked;
 use crate::authenticated::receipts::{self, RetiredRow};
 use crate::authenticated::{MAX_RECEIPT_ROWS, MAX_UPDATES, Root, Store, batch, codec};
 
@@ -128,8 +129,9 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
         .iter()
         .map(|version| Ok((receipts::receipt_key(&root.namespace, *version)?, None)))
         .collect::<Result<Vec<_>>>()?;
-    let prepared = batch::prepare(conn, root, changes, queue.clone(), true)?;
-    batch::persist(conn, &prepared)?;
+    // Each read keeps nodes of its own: the checks after the deletions below must read the heads afresh.
+    let prepared = batch::prepare(conn, root, changes, queue.clone(), true, &Checked::default())?;
+    batch::persist(conn, &prepared, &Checked::default())?;
     for row in &retired {
         report.deleted += match row {
             RetiredRow::Node(key) => conn.execute(
