@@ -294,8 +294,11 @@ an index: load only the rule whose hint matches the current action.
   `engine replay --attestation` pairs one attestation with each signer), a rotation-set member's
   life (`node/member.rs`, #593: between its turns it follows the operator in effect, resolved from
   the registry's registered hostname and the vault's signer at the latest block each turn and after a failed
-  stint, `standby/operator.rs`, into a copy with a live replica built by one replay,
-  `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; at its turn it reads
+  stint, 1 s after the first and doubling to a stint, `standby/operator.rs`, into a copy with a live replica
+  built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; from a
+  minute before its own turn's boundary it holds its venue connections open with their quotes held back,
+  which its start lets through to its sequencer (#1058, `node/member/warm.rs`, `node/price_feeds.rs`,
+  `feeds/venue/live.rs`); at its turn it reads
   everything its start needs from the chain and takes its trusted time sample first, `node/ready.rs`,
   so nothing between the confirmation and its first command reads the chain or samples time, then
   takes only the tail past its tip, bound by range and SHA-256 inside the keys and checked against
@@ -387,7 +390,8 @@ an index: load only the rule whose hint matches the current action.
   signed statuses (`liveness/link.rs`), taking a member's status on its promotable standby key or, with
   none, on the key whose attestation its enclave verified (`liveness/operator/attested.rs`), signs heads
   and checkpoints only at a confirmed seq and only before the boundary from which another set may
-  apply (`sequencer/liveness.rs`), refuses to sequence before a start check (an empty log at genesis
+  apply (`sequencer/liveness.rs`, where a paced checkpoint holds stamps for at most 250 ms and is then
+  skipped, until 30 s of skipping makes the next wait in full under Warning `checkpoint_deferred`), refuses to sequence before a start check (an empty log at genesis
   starts unconfirmed, and a copy older than its prefix ring counts as no answer), stops commands once its log has run an interval of sequenced time from the first
   command past the newest confirmation, and fences answers, heads and commands by its own
   clock before the earliest promotion (`liveness/fence.rs`, `api/signing.rs`), with `/v1/operator`
@@ -829,7 +833,9 @@ an index: load only the rule whose hint matches the current action.
   start for A, B and C on a chain running on true time with five-minute turns: two boundaries at which
   the turn's member takes the keys by itself, logs `TurnTaken` and its admin key signs while the previous
   turn's is refused, the incumbent killed and the next member's standby key promoted, and the promoted
-  member's log replayed across the change of signer;
+  member's log replayed across the change of signer; each member prices from the scenario's venue
+  stand-in, and no node pages `market_no_price`, the log shows no gap as long as `no_price_after` across
+  either boundary, and the promoted member prices within its start budget;
   `dev-operator-faults.sh`, the operator faults scenario on Anvil, from `V70`: B's enclave, restarted
   by its host from an older copy of its log during B's turn, signs heads of two histories at one seq,
   anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn

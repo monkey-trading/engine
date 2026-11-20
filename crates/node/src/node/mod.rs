@@ -109,12 +109,12 @@ async fn serve_node(
 ) -> anyhow::Result<Ended> {
     // A member's start read the chain and sampled trusted time before it connected for the tail:
     // from the confirmation to its first command it reads neither (`ready`).
-    let (replica, taken, mut ready) = match member_start.map(|start| *start) {
-        Some(Start { replica, store, ready, moved }) => {
+    let (replica, taken, mut ready, warm) = match member_start.map(|start| *start) {
+        Some(Start { replica, store, ready, moved, feeds }) => {
             info!(after = moved.after, entries = moved.entries, bytes = moved.bytes, "starting from the replica");
-            (Some(replica), Some(store), Some(ready))
+            (Some(replica), Some(store), Some(ready), feeds)
         }
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
     match ready {
         Some(_) => *chain_read = true,
@@ -254,7 +254,7 @@ async fn serve_node(
     seq_cfg.history_sealing = history.sealing();
     seq_cfg.log_heads = log_heads_setup.as_ref().map(|setup| setup.publisher());
     let published = crate::handover::Published::new(stream_tx.subscribe(), log.last_seq(), log.last_checkpoint());
-    let status = crate::status::Status::watching(seq_cfg.log_heads.as_ref(), &metrics);
+    let mut status = crate::status::Status::watching(seq_cfg.log_heads.as_ref(), &metrics);
     let mut seq = Sequencer::recover_from(log, seq_cfg, key.clone(), stream_tx.clone(), withdrawals_tx)
         .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // Before activation and genesis sequence, so the record sees every command the log will hold.
@@ -295,7 +295,7 @@ async fn serve_node(
         }
         _ => {}
     }
-    let (tx, rx) = mpsc::channel::<Request>(CHANNEL_CAPACITY);
+    let ((tx, rx), warm) = price_feeds::channel(warm, &mut status.feeds);
     // A member's first stamps are admitted under the sample it took before connecting.
     let sample = ready.as_ref().map(|ready| ready.sample);
     if let Some(sample) = sample {
@@ -379,7 +379,7 @@ async fn serve_node(
     let operator_hostname = ticker::start_operator_hostname(cfg, &mut tasks, trusted())?;
     // The monitor exports quote times only for the sources this config still feeds.
     let sources = feeds::configured_sources(&cfg.feeds);
-    price_feeds::spawn(&mut tasks, cfg.feeds.clone(), delivered, &tx, &status.feeds)?;
+    price_feeds::start(&mut tasks, warm, (cfg.feeds.clone(), delivered), &tx, &status.feeds)?;
 
     let sealed = certificates.map(|certificates| Sealed { store: store.clone(), certificates, trusted: trusted() });
     let trusted_clock = trusted();

@@ -64,13 +64,14 @@ pub(crate) async fn run_with_cpu(
         let mut waiting = None;
         if member {
             if crate::node::member::standby::prepares(&cfg).await {
-                let prepared = waiting.insert(Member::new(&cfg, &start, metrics.clone(), sends.clone())?);
+                let member = Member::new(&cfg, &start, metrics.clone(), sends.clone())?.with_feeds(&delivered);
+                let prepared = waiting.insert(member);
                 // On the heap, as the member's turns below: a test awaits `run` on its own stack.
                 Box::pin(prepared.prepare_standby(&mut chain_read)).await;
             }
             crate::node::handover::check_rotation_switch(&cfg, &mut chain_read).await?;
             if waiting.is_none() {
-                waiting = Some(Member::new(&cfg, &start, metrics.clone(), sends.clone())?);
+                waiting = Some(Member::new(&cfg, &start, metrics.clone(), sends.clone())?.with_feeds(&delivered));
             }
         }
         let operator = cfg.operator()?.address;

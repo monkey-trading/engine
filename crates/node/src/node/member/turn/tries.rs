@@ -1,8 +1,9 @@
 //! A member's tries at its turn: what it counts toward leaving a holding to the start, what a failed
 //! tail handover pages, which failures rebuild the replica, the stale copy's catch-up before its first
-//! take, and the copy set aside for a whole-log take once the tries run out.
+//! take, the copy set aside for a whole-log take once the tries run out, and the wait after a failed
+//! follow stint.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use engine_core::types::AccountId;
@@ -56,6 +57,14 @@ impl Tries {
         self.failing_since = None;
         !std::mem::replace(&mut self.waiting, true)
     }
+}
+
+/// The wait before the next try after a failed stint that waited `retry`: twice as long, up to a
+/// `STINT`. After a handover the new operator serves its stream within seconds, so a member follows it
+/// soon after, and its confirmations let the new operator checkpoint; an operator that stays down is
+/// asked again at most once a `STINT`.
+pub(super) fn retry_after(retry: Duration) -> Duration {
+    retry.saturating_mul(2).min(STINT)
 }
 
 /// Pages what one source's failed tail handover for `turn` says: a predecessor that did not find the

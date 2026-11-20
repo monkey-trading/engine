@@ -21,7 +21,9 @@ use crate::log_check::answer::{Answering, CheckedHeads};
 use crate::log_heads::{Head, PostedHeads};
 use crate::metrics::Metrics;
 use crate::node::keys::{KeyStart, attestor_for, sealer};
+use crate::node::price_feeds::Warm;
 use crate::node::ready::Start;
+use crate::node::secrets::Delivered;
 use crate::standby::Follower;
 use crate::stats::Stats;
 use crate::tee::Attestor;
@@ -33,6 +35,7 @@ mod prepare;
 pub(crate) mod promoted;
 pub(crate) mod standby;
 pub(crate) mod turn;
+mod warm;
 
 /// How a node's run ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,6 +223,10 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     fallback: turn::Fallback,
     /// Held for each send from the liveness caller's account, shared with the process's fallback fixer.
     sends: Arc<crate::liveness::fallback::Sends>,
+    /// The delivered secrets its venue feeds authenticate with, where it opens them before its turn.
+    delivered: Option<&'a Delivered>,
+    /// The venue feeds it opened for its own next turn, which the node it starts takes (`warm`).
+    warm: Option<Warm>,
 }
 
 impl<'a> Member<'a> {
@@ -259,7 +266,17 @@ impl<'a> Member<'a> {
             answering,
             fallback,
             sends,
+            delivered: None,
+            warm: None,
         })
+    }
+}
+
+impl<'a, C, H, T> Member<'a, C, H, T> {
+    /// This member, opening its venue feeds a lead before each of its turns with `delivered`'s
+    /// credentials (`warm`).
+    pub(super) fn with_feeds(self, delivered: &'a Delivered) -> Self {
+        Self { delivered: Some(delivered), ..self }
     }
 }
 
@@ -295,6 +312,8 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             answering: answering.map(Arc::new),
             fallback: Default::default(),
             sends: Arc::default(),
+            delivered: None,
+            warm: None,
         }
     }
 }

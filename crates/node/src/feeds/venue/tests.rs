@@ -427,6 +427,21 @@ fn coinbase_on_either_host_resubscribes_one_product_alone_and_kraken_does_not() 
     assert_eq!(alone(Venue::Kraken), None);
 }
 
+/// A feed held back before its node runs is holding before it connects, and judges its markets' hours
+/// by those it was given, so a venue that may go quiet through a closure does, while a feed given none
+/// takes every market as open.
+#[test]
+fn a_held_back_feed_judges_closures_by_the_hours_it_was_given() {
+    let now = now_ms();
+    let closed = around_the_clock(Some((now - 3_600_000, now + 3_600_000)));
+    let held = |hours| Held { live: tokio::sync::watch::channel(false).1, hours: Arc::new(hours) };
+    let feed = kraken_feed(&[(1, "BTC/USD")], WAIT).held_back_by(held(BTreeMap::from([(1, closed)])));
+    assert!(!feed.expects_quotes(now), "a symbol of a closed market is expected to quote");
+    assert!(feed.holding(), "a feed held back from the outset is not holding before it connects");
+    let feed = kraken_feed(&[(1, "BTC/USD")], WAIT).held_back_by(held(BTreeMap::new()));
+    assert!(feed.expects_quotes(now), "with no hours given, a market counts as open");
+}
+
 // ── Helpers ──
 
 /// A Kraken feed for `symbols` that is never run, for calling its alert paths directly.

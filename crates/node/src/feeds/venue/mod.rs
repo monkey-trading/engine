@@ -25,6 +25,8 @@ mod delay;
 use delay::DelayProbe;
 mod emit;
 use emit::rearm;
+mod live;
+pub use live::Held;
 mod standing;
 use standing::{StandingBooks, redates};
 mod quotes;
@@ -35,6 +37,7 @@ use replace::Replacing;
 mod quiet;
 mod resubscribe;
 use resubscribe::Resubscription;
+mod session;
 mod setup;
 pub use setup::tls_config;
 mod status;
@@ -61,7 +64,7 @@ use engine_core::session::Schedule;
 use engine_core::types::{MarketId, Millis};
 use futures_util::StreamExt;
 use rustls::ClientConfig;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::{Instant, MissedTickBehavior, interval_at, sleep, timeout, timeout_at};
 use tracing::info;
 
@@ -153,6 +156,10 @@ struct VenueFeed {
     timing: Timing,
     tls: Arc<ClientConfig>,
     tx: mpsc::Sender<Request>,
+    /// Whether its quotes go to the sequencer yet (see `live`).
+    live: watch::Receiver<bool>,
+    /// Whether it held them back when it last looked.
+    holding: bool,
     /// Whether the venue is in an alerted outage that no fresh quote has ended yet.
     down: bool,
     /// Whether the current connection has sequenced a fresh quote: one the engine holds from this
@@ -211,7 +218,7 @@ struct VenueFeed {
 
 impl VenueFeed {
     /// A feed for `conn`, with no outage, refusal, or silence on record, and every symbol's
-    /// silence counted from now.
+    /// silence counted from now, sending its quotes to `tx` from the outset.
     fn new(
         conn: VenueConnection,
         credentials: Credentials,
@@ -235,6 +242,8 @@ impl VenueFeed {
             timing,
             tls,
             tx,
+            live: Held::never().live,
+            holding: false,
             down: false,
             quoted: false,
             subscribed: false,
@@ -284,7 +293,7 @@ impl VenueFeed {
     /// - a ping goes unanswered for `timing.timeout`, or cannot be sent within it
     /// - its bearer token cannot be had, or expires before a replacement on a fresh one takes over
     ///   (see `auth` and `replace`)
-    /// - the connection fails, or the sequencer has gone away
+    /// - the connection fails, or the sequencer, or the node its quotes were held back for, has gone away
     async fn relay(&mut self) -> anyhow::Result<Infallible> {
         self.open_token().await?;
         let connect = transport::connect(&self.conn, self.bearer(), self.tls.clone());
@@ -308,7 +317,7 @@ impl VenueFeed {
         // The engine's quote from an earlier connection says nothing of what this one sequenced.
         self.sent.clear();
         // Ask at once, so the first quotes are judged against the markets' hours.
-        if self.confirming.is_none() {
+        if !self.holds_back().await? && self.confirming.is_none() {
             self.confirming = Some(self.confirm().await?);
         }
 
@@ -336,6 +345,7 @@ impl VenueFeed {
         let mut replacing: Option<Replacing> = None;
         // The wait before trying again on a new token after a replacement fails.
         let mut retry = self.timing.reconnect_min;
+        let mut going_live = self.live.clone();
         loop {
             tokio::select! {
                 message = timeout_at(read_deadline, link.stream.next()) => {
@@ -363,6 +373,11 @@ impl VenueFeed {
                     }
                 }
                 _ = pings.tick() => self.ping(&mut link).await?,
+                live = going_live.changed(), if self.holding() => {
+                    live.map_err(|_| anyhow!("the node its quotes were held back for has gone"))?;
+                    // Taking the switch sends the kept quotes at once, behind the engine question.
+                    rearm(&mut emit_wake, self.emit(&mut buffered, &mut spent).await?);
+                }
                 answer = async {
                     match &mut self.confirming {
                         Some(reply) => reply.await,
@@ -414,6 +429,11 @@ impl VenueFeed {
                 _ = checks.tick() => {
                     self.publish_status();
                     self.allow_quiet(&adapter, &mut quiet, &mut read_deadline, read_timeout);
+                    // Held back, it asks the engine nothing and no count runs (see `live`).
+                    if self.holds_back().await? {
+                        waiting_since = Instant::now();
+                        continue;
+                    }
                     let resubscribing = self.check_quoting();
                     if !resubscribing.is_empty() {
                         self.resubscribe(&adapter, &mut link, &resubscribing).await?;
@@ -434,36 +454,6 @@ impl VenueFeed {
                 }
             }
         }
-    }
-
-    /// Whether the engine's last confirmed hours have `market` closed at `ts`. A market whose
-    /// hours are not known yet counts as open, and the engine refuses a quote outside them.
-    fn closed(&self, market: MarketId, ts: Millis) -> bool {
-        self.schedules.get(&market).is_some_and(|schedule| !schedule.is_open(ts))
-    }
-
-    /// Whether the engine's last confirmed hours keep `market` open from a quote's stamp `ts` or
-    /// host time `now`, whichever is earlier, to the later of `ts` and an interval after `now`, by
-    /// when the sequencer stamps a quote sent now: the span the engine checks, which a stamp ahead
-    /// of the host clock stretches. A span longer than `timing.stale_after` holds only a quote too
-    /// old to count, so only its two ends are checked.
-    fn in_session(&self, market: MarketId, ts: Millis, now: Millis) -> bool {
-        let Some(schedule) = self.schedules.get(&market) else { return true };
-        let interval = Millis::try_from(self.timing.interval.as_millis()).unwrap_or(Millis::MAX);
-        let stale_after = Millis::try_from(self.timing.stale_after.as_millis()).unwrap_or(Millis::MAX);
-        let (first, last) = (ts.min(now), ts.max(now.saturating_add(interval)));
-        if last.saturating_sub(first) > stale_after.saturating_add(interval) {
-            return schedule.is_open(first) && schedule.is_open(last);
-        }
-        schedule.open_throughout(first, last)
-    }
-
-    /// Whether any symbol should be quoting at host time `now`: one the engine takes, whose market
-    /// is open.
-    fn expects_quotes(&self, now: Millis) -> bool {
-        self.instruments
-            .iter()
-            .any(|(symbol, instrument)| !self.idle.contains(symbol) && !self.closed(instrument.market, now))
     }
 }
 

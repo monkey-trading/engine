@@ -137,7 +137,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         info!(turn = promotion.turn, position = promotion.position, %signer, after = tip,
             "promoted: starting from the copy under the standby key");
         let moved = Moved { after: before, entries: tip.saturating_sub(before), bytes: 0 };
-        Ok(Start { replica: Replica { follower, stats, history, marks }, store, ready, moved })
+        Ok(Start { replica: Replica { follower, stats, history, marks }, store, ready, moved, feeds: None })
     }
 
     /// A start's check for an earlier promotion's record (see the module doc): the start from the copy

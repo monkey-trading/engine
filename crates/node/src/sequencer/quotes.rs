@@ -55,6 +55,7 @@ impl Sequencer {
             // request to dequeue.
             return None;
         }
+        self.give_up_stalled_checkpoint();
         let (host_ms, now) = (self.clock.now_ms(), self.clock.instant());
         let ts = self.time.stamp(host_ms, self.last_ts, now);
         // The liveness rule's gate: fenced by the enclave's own clock, before the start check, while

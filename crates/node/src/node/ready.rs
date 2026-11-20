@@ -63,12 +63,13 @@ pub(crate) struct Ready {
 }
 
 /// A member's start: its replica, the keys its tail handover sealed, what it read before
-/// connecting, and what the handover moved.
+/// connecting, what the handover moved, and the venue feeds it opened ahead of its turn, if any.
 pub(crate) struct Start {
     pub replica: Replica,
     pub store: KeyStore,
     pub ready: Ready,
     pub moved: Moved,
+    pub feeds: Option<crate::node::price_feeds::Warm>,
 }
 
 /// What a tail handover moved: the bytes of the entries past the command at `after`, and how many of

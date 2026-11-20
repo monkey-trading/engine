@@ -78,6 +78,11 @@ impl Pending {
         self.read_hwm
     }
 
+    /// The venue stamp of the quote kept, if one is.
+    pub(super) fn kept_ts(&self) -> Option<Millis> {
+        self.quote.as_ref().map(|(quote, _)| quote.ts)
+    }
+
     /// Whether a quote waits.
     pub(super) fn waiting(&self) -> bool {
         self.quote.is_some()

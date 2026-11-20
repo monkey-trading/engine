@@ -52,6 +52,7 @@ mod moving;
 mod rollback;
 mod stop;
 mod take;
+mod warm;
 
 // ── Helpers ──
 
@@ -124,6 +125,8 @@ impl Fixture {
             answering: None,
             fallback: Default::default(),
             sends: Default::default(),
+            delivered: None,
+            warm: None,
         }
     }
 

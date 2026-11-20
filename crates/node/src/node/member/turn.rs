@@ -82,6 +82,14 @@ impl Holding {
             Self::Hold | Self::Follow(..) => None,
         }
     }
+
+    /// This member's own next turn's boundary, while it follows towards one.
+    fn own_next(&self) -> Option<Millis> {
+        match self {
+            Self::Follow(_, own_next) => *own_next,
+            Self::Hold | Self::Take(_) => None,
+        }
+    }
 }
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
@@ -99,7 +107,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             .inspect_err(|e| warn!("the member's provider backfill does not start: {e:#}"))
             .ok()
             .flatten();
-        let turn = self.follow_until_turn(&mut standby, following.as_ref()).await;
+        let mut turn = self.follow_until_turn(&mut standby, following.as_ref()).await;
+        self.hand_feeds(&mut turn);
         let staged = match following {
             Some(following) => Some(following.finish().await),
             None => None,
@@ -130,6 +139,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let mut follower: Option<Opened> = None;
         let mut followed: Option<(Followed, Option<u64>)> = None;
         let mut tries = Tries::default();
+        // How long a failed stint waits before the operator in effect is resolved again (`retry_after`).
+        let mut retry = RETRY_PAUSE;
         loop {
             if let (Some(following), Some((replica, ..))) = (following, &follower) {
                 following.observe(replica.replica().engine());
@@ -153,6 +164,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     }
                 }
                 Err(e) => self.episodes.blocked(Step::ReadTurn, e),
+            }
+            if let Ok(holding) = &holding {
+                self.warm_for(holding.taking().is_some(), holding.own_next(), follower.as_ref()).await;
             }
             let (turn, own_next) = match holding {
                 Ok(Holding::Hold) => return Ok(Turn::Hold),
@@ -210,7 +224,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                                 follower.take().expect("the follower took the tail");
                             let (replica, moved) =
                                 (Replica { follower, stats, history, marks }, Moved { after, entries, bytes });
-                            return Ok(Turn::Replica(Box::new(Start { replica, store, ready, moved })));
+                            return Ok(Turn::Replica(Box::new(Start { replica, store, ready, moved, feeds: None })));
                         }
                         Ok((Taken { store, .. }, _)) => {
                             info!(generation = store.generation(), "the node recovers the log it took from disk");
@@ -343,6 +357,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             }
             match replica.stint(self.cfg, operator, budget).await {
                 Ok(_) => {
+                    retry = RETRY_PAUSE;
                     self.episodes.followed(replica.confirmed());
                     if let Some(resolved) = self.moved_on(operator.enclave).await {
                         followed = Some((resolved, number));
@@ -367,10 +382,12 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         None => self.episodes.follow_failed(&operator.origin, &e),
                     }
                     // A failed stint re-resolves the operator in effect, the other of the one the
-                    // registry names and the one whose head is newest (#596).
+                    // registry names and the one whose head is newest (#596), soon after the first.
                     self.fallback.follow_holder = !self.fallback.follow_holder;
                     followed = None;
-                    tokio::time::sleep(self.before_own_turn(own_next, STINT).await).await;
+                    let wait = retry;
+                    retry = retry_after(retry);
+                    tokio::time::sleep(self.before_own_turn(own_next, wait).await).await;
                 }
             }
         }
@@ -474,7 +491,7 @@ pub(crate) use episodes::Episodes;
 use episodes::Step;
 pub(in crate::node::member) use tries::Stopping;
 pub(crate) use tries::set_copy_aside;
-use tries::{CopyRefused, SourcesFailed, Tries, catch_up, damaged, page_refusal, refused};
+use tries::{CopyRefused, SourcesFailed, Tries, catch_up, damaged, page_refusal, refused, retry_after};
 
 #[cfg(test)]
 mod tests;

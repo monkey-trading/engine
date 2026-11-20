@@ -4,7 +4,7 @@
 
 use crate::clock::now_ms;
 use crate::feeds::status::{Connection, FeedStatus, SymbolState, SymbolStatus};
-use crate::feeds::venue::{Credentials, Timing, VenueConnection, VenueFeed};
+use crate::feeds::venue::{Credentials, Held, Timing, VenueConnection, VenueFeed};
 use crate::sequencer::Request;
 use tokio::sync::mpsc;
 
@@ -24,18 +24,18 @@ impl Report {
 }
 
 /// As `run`, publishing what the connection's symbols are doing to `status` as its `index`th
-/// connection.
+/// connection, and holding its quotes back as `held` says (see `live`).
 /// Error cases:
-/// - the sequencer has gone away
+/// - the sequencer has gone away, or the node its quotes were held back for has
 pub async fn run_reporting(
     conn: VenueConnection,
     credentials: Credentials,
     timing: Timing,
     tls: std::sync::Arc<rustls::ClientConfig>,
-    tx: mpsc::Sender<Request>,
+    (tx, held): (mpsc::Sender<Request>, Held),
     (status, index): (FeedStatus, usize),
 ) -> anyhow::Result<()> {
-    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx);
+    let mut feed = VenueFeed::new(conn, credentials, timing, tls, tx).held_back_by(held);
     feed.report = Report::new(status, index);
     feed.run().await
 }

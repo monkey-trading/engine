@@ -64,7 +64,8 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         reassigned: None,
     };
     let moved = Moved { after: last, entries: 0, bytes: 0 };
-    let start = Start { replica: Replica { follower, stats, history, marks: Default::default() }, store, ready, moved };
+    let replica = Replica { follower, stats, history, marks: Default::default() };
+    let start = Start { replica, store, ready, moved, feeds: None };
     let metrics = Arc::new(Metrics::new());
     let (_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await.unwrap();

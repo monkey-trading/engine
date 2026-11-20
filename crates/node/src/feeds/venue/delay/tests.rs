@@ -164,3 +164,18 @@ fn a_replacement_keeps_the_stricter_bound_noted_for_each_quote_not_yet_sequenced
     assert_eq!(later.peek_not_after("ES:202703", 1_000), bound(start));
     assert_eq!(later.peek_not_after("ES:202612", 2_000), bound(start + Duration::from_secs(1)));
 }
+
+#[test]
+fn forgetting_before_a_kept_quote_keeps_its_bound_and_every_later_one() {
+    let at = Instant::now();
+    let (mut probe, payloads) = pinged(at, &[0]);
+    probe.answered(&payloads[0]);
+    [1_000, 1_005, 1_010].into_iter().for_each(|ts| probe.note_read("BTC/USD", ts, MS * 300));
+    probe.note_read("ETH/USD", 1_000, MS * 300);
+    probe.forget_before("BTC/USD", 1_005);
+    assert_eq!(probe.peek_not_after("BTC/USD", 1_000), None, "an older quote's bound is forgotten");
+    assert_eq!(probe.peek_not_after("BTC/USD", 1_005), Some((at + MS * 300).into_std()), "the kept quote's stays");
+    assert!(probe.peek_not_after("BTC/USD", 1_010).is_some(), "a later one stays");
+    assert!(probe.peek_not_after("ETH/USD", 1_000).is_some(), "another symbol's stays");
+    probe.forget_before("SOL/USD", 1_005);
+}

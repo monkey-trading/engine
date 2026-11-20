@@ -715,7 +715,12 @@ frame is verified against the vault's signer at the latest block. Your trading s
 these:
 
 - It keeps a copy of the log, with a live replica that one replay builds when it starts following.
-- It resolves the operator again at each boundary, and after a failed stint.
+- It resolves the operator again at each boundary, and after a failed stint: a second later, then
+  twice as long each time, up to a stint.
+- From a minute before its own turn's boundary, it holds its venue connections open beside the
+  incumbent's, with their quotes held back until it takes the turn, so it sends fresh quotes from its
+  first instruction. A vendor that streams one connection per account, as Alpaca does, therefore
+  needs each member's own keys.
 - It pins the latest posted log head as its replica passes that head.
 
 These alerts page what it finds. Each pages once per episode, and each resolves once the step works
@@ -957,6 +962,9 @@ it.
   hold is the history.
 - It stops taking commands while its log runs more than one interval past the newest confirmation,
   and raises `liveness_unconfirmed`.
+- A checkpoint at its regular pace stops commands for at most 250 ms while it waits for a member to
+  confirm its seq, and is skipped if none does. After 30 seconds of skipped checkpoints, the next one
+  waits however long a member takes, and the trading server raises `checkpoint_deferred`.
 - Through a benchmark-sync hold or a trusted-time halt, it posts held heads at the newest seq that a
   member confirmed, so no promotion follows.
 - It stops by its own clock 15 seconds before the earliest block time at which a promotion could

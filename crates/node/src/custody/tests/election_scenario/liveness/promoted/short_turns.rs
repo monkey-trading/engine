@@ -8,9 +8,14 @@
 //! while the previous turn's is refused; that with C, the incumbent, killed once its head latched its
 //! turn, the callers promote the next member, whose node serves from its copy under its standby key,
 //! whose admin key signs and whose first checkpoint lands; and that its log replays across the change of
-//! signer.
+//! signer. Each member prices the market from the scenario's venue stand-in: it checks that each turn's
+//! member opened its venue connection ahead of its boundary and its start let it through, that no node
+//! pages `market_no_price` before the kill, that the market goes unpriced across neither boundary for as
+//! long as `alerts.no_price_after`, measured from the log, and that the promoted member prices it within
+//! its start budget of the promotion being seen, printing each figure.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,24 +23,25 @@ use alloy::primitives::{Address, B256, U256};
 use alloy::sol_types::{SolCall, SolValue};
 use anyhow::{Context, ensure};
 use engine_core::auth::Operator;
-use engine_core::command::{AdminCommand, AdminRequest};
+use engine_core::command::{AdminCommand, AdminRequest, Command};
 use engine_core::event::Event;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, MarketId, Millis};
 use k256::ecdsa::SigningKey;
 use serde_json::Value;
 use tokio::time::sleep;
 
-use super::nodes::{Deployment, Seat};
-use super::{adopt, latestSeqCall, now_s, until};
+use super::nodes::{Deployment, MAX_AGE_MS, Seat};
+use super::{START_BUDGET, adopt, latestSeqCall, now_s, until};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::now_ms;
+use crate::config::NodeConfig;
 use crate::custody::tests::election_scenario::chain::Chain;
 use crate::custody::tests::election_scenario::liveness::{
     DIGEST_C, KEYS, RULE, checkpointSignerCall, drawCall, etch_arb_sys, latchesCall, receiveSeedCall, relayAliasCall,
     seedEpochCall, signerEpochCall, turnOfCall,
 };
 use crate::custody::tests::election_scenario::{DEPLOYER_DIGEST, DIGEST_A, DIGEST_B, address};
-use crate::log::CheckpointDomain;
+use crate::log::{CheckpointDomain, LogEntry};
 use crate::seed_relay::schedule::{BOUNDARY_OFFSET, TURN_SECS};
 use crate::sequencer::replay_path_with_attested;
 use crate::sequencer::withdrawal_scenario::client::Client;
@@ -43,6 +49,7 @@ use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::tee::EnclaveKey;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, MockSealer};
+use crate::test_support::{ANVIL_CONFIG, log_entries};
 
 alloy::sol! {
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
@@ -55,6 +62,10 @@ alloy::sol! {
 const SWITCH_BUDGET_SECS: u64 = 5;
 /// The least time left before a deadline that the scenario still relays or draws for.
 const LEAD_SECS: u64 = 60;
+/// The market the venue stand-in quotes.
+const MARKET: MarketId = 1;
+/// How long before a boundary the scenario starts to read whether the market is priced across it.
+const BEFORE_BOUNDARY_MS: Millis = 30_000;
 /// How long a member gets past its boundary to take the keys and log `TurnTaken`.
 const TAKE_WAIT: Duration = Duration::from_secs(120);
 /// How long a node that has just taken the keys gets to open sequencing to an admin request.
@@ -174,6 +185,20 @@ async fn run() -> anyhow::Result<()> {
              is refused",
             seats[holder].name, seats[previous.0].name
         );
+        let log = std::fs::read_to_string(seats[holder].log())?;
+        let opened = logged_at(&log, "opened the venue feeds ahead of this member's turn");
+        let opened =
+            opened.with_context(|| format!("{} opened no venue feed ahead of turn {next}", seats[holder].name))?;
+        let lead = Millis::try_from(boundary(next) * 1000)? - opened;
+        ensure!(lead > 0, "{} opened its venue feeds {} ms past turn {next}'s boundary", seats[holder].name, -lead);
+        ensure!(
+            log.contains("the venue feeds opened before the turn send their quotes"),
+            "turn {next} started them cold"
+        );
+        println!(
+            "PASS: {} opened its venue feeds {lead} ms ahead of turn {next}, and its start let them through",
+            seats[holder].name
+        );
         previous = (holder, seats[holder].admin.clone());
     }
 
@@ -186,6 +211,9 @@ async fn run() -> anyhow::Result<()> {
         (latch.member == c_candidate).then_some(())
     })
     .await?;
+    ensure!(!services.paged_any("market_no_price"), "a node paged market_no_price across the boundaries");
+    println!("PASS: no node paged market_no_price across the boundaries");
+    let killed_ms = now_ms();
     seats[2].kill().await?;
     let window = Duration::from_secs(RULE.0 * (u64::from(RULE.2) + 1) + RULE.1);
     let epoch = until("a promotion", window + Duration::from_secs(120), &mut seats[..2], async || {
@@ -193,6 +221,7 @@ async fn run() -> anyhow::Result<()> {
         (epoch > 1).then_some(epoch)
     })
     .await?;
+    let promoted_ms = now_ms();
     let signer = AccountId(chain.view(vault, checkpointSignerCall {}).await.into());
     let p = seats.iter().position(|seat| seat.standby == signer).context("the vault names no member's standby key")?;
     println!("PASS: with C killed, the callers promoted {}'s standby key in signer epoch {epoch}", seats[p].name);
@@ -226,7 +255,95 @@ async fn run() -> anyhow::Result<()> {
         replay_path_with_attested(&seats[p].log_dir(), Some(checkpoints), signers.clone(), Default::default())?;
     ensure!(replayed.checkpoint_signers == signers, "the replay names {:?}", replayed.checkpoint_signers);
     println!("PASS: {}'s log replays across the change of signer, each checkpoint by an attested key", seats[p].name);
+
+    // From the log: the market priced across both boundaries, up to C's kill, and soon after the promotion.
+    let entries = log_entries(&seats[p].log_dir());
+    // How long a market may go unpriced before a node pages `market_no_price`.
+    let no_price_after = NodeConfig::load(Path::new(ANVIL_CONFIG))?.alerts.no_price_after;
+    let no_price_after = Millis::try_from(no_price_after.as_millis())?;
+    let spans = unpriced(&entries, MARKET, MAX_AGE_MS);
+    let ms = |s: u64| Millis::try_from(s * 1000).expect("a boundary fits in milliseconds");
+    let windows = [
+        (first, ms(boundary(first)) - BEFORE_BOUNDARY_MS, ms(boundary(first + 1)) - BEFORE_BOUNDARY_MS),
+        (first + 1, ms(boundary(first + 1)) - BEFORE_BOUNDARY_MS, killed_ms),
+    ];
+    for (turn, from, to) in windows {
+        let within: Vec<Millis> = spans
+            .iter()
+            .filter(|(start, end)| *end > from && *start < to)
+            .map(|(s, e)| e.min(&to) - s.max(&from))
+            .collect();
+        let (longest, total) = (within.iter().max().copied().unwrap_or(0), within.iter().sum::<Millis>());
+        ensure!(longest < no_price_after, "across turn {turn}'s boundary the market went unpriced for {longest} ms");
+        println!(
+            "PASS: across turn {turn}'s boundary the market went unpriced for {total} ms in {} spans, the longest {longest} \
+             ms, under no_price_after",
+            within.len()
+        );
+    }
+    let first_price = entries.iter().find_map(|entry| match entry {
+        LogEntry::Command(c)
+            if c.sequenced.ts >= promoted_ms
+                && matches!(c.sequenced.cmd, Command::Prices { market, .. } if market == MARKET) =>
+        {
+            Some(c.sequenced.ts)
+        }
+        _ => None,
+    });
+    let waited = first_price.map(|ts| ts - promoted_ms).context("the promoted member never priced the market")?;
+    let budget = Millis::try_from(START_BUDGET.as_millis())?;
+    ensure!(waited <= budget, "the promoted member priced the market {waited} ms after the promotion");
+    println!(
+        "PASS: {} priced the market {waited} ms after the promotion, within its {START_BUDGET:?} start budget",
+        seats[p].name
+    );
     Ok(())
+}
+
+/// When `log`, a node's log, first logged a line holding `message`, in milliseconds: the line's leading
+/// RFC 3339 time, its colour codes stripped.
+fn logged_at(log: &str, message: &str) -> Option<Millis> {
+    let line = log.lines().find(|line| line.contains(message))?;
+    let mut plain = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            chars.by_ref().find(|c| *c == 'm');
+        } else {
+            plain.push(c);
+        }
+    }
+    let at = plain.split_whitespace().next()?;
+    Some(chrono::DateTime::parse_from_rfc3339(at).ok()?.timestamp_millis())
+}
+
+/// The spans, in milliseconds, in which `entries` leave `market` with no quote that counts: a quote
+/// counts from the stamp of the command that carried it until its venue stamp, no later than that
+/// stamp, plus `max_age_ms`, and the scenario's market needs one.
+fn unpriced(entries: &[LogEntry], market: MarketId, max_age_ms: Millis) -> Vec<(Millis, Millis)> {
+    let (mut spans, mut counts_until, mut last): (Vec<(Millis, Millis)>, Option<Millis>, Option<Millis>) =
+        (Vec::new(), None, None);
+    for entry in entries {
+        let LogEntry::Command(command) = entry else { continue };
+        let ts = command.sequenced.ts;
+        if let (Some(last), Some(until)) = (last, counts_until)
+            && until < ts
+        {
+            let start = until.max(last);
+            match spans.last_mut() {
+                Some((_, end)) if *end == start => *end = ts,
+                _ => spans.push((start, ts)),
+            }
+        }
+        if let Command::Prices { market: priced, quotes } = &command.sequenced.cmd
+            && *priced == market
+        {
+            let newest = quotes.iter().map(|quote| quote.ts.min(ts) + max_age_ms).max();
+            counts_until = counts_until.max(newest);
+        }
+        last = Some(ts);
+    }
+    spans
 }
 
 /// The boundary of `turn`, in seconds.

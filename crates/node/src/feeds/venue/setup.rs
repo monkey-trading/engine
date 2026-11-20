@@ -8,6 +8,7 @@ use anyhow::{Context, anyhow};
 use rustls::crypto::ring;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::time::{Instant, sleep};
+use tracing::info;
 
 use crate::config::VenuesSection;
 use crate::feeds::venue::{Timing, VenueFeed};
@@ -35,7 +36,10 @@ impl Timing {
 impl VenueFeed {
     /// Connects and relays until the connection fails, then retries: at once after a connection that
     /// sequenced fresh quotes of its own, though never within `timing.reconnect_min` of its attempt,
-    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`).
+    /// else after a backoff that doubles while attempts sequence none (see `next_attempt`). A drop while
+    /// the feed holds its quotes back (see `live`) is no outage: it is logged and raises no alert. The
+    /// switch's being set cuts its wait short, and the backoff starts again from the first attempt the
+    /// feed makes live, as a cold feed's does.
     /// Error cases:
     /// - the sequencer has gone away
     pub(super) async fn run(mut self) -> anyhow::Result<()> {
@@ -43,7 +47,7 @@ impl VenueFeed {
         self.publish_status();
         loop {
             (self.quoted, self.sent_own) = (false, false);
-            let attempted = Instant::now();
+            let (attempted, held) = (Instant::now(), !self.live());
             let Err(error) = self.relay().await;
             self.report.up = false;
             self.settle().await;
@@ -53,10 +57,23 @@ impl VenueFeed {
             }
             // Healthy only on its own quotes: the engine's fresh quote may be a sibling's.
             let healthy = self.quoted && self.sent_own;
-            let (wait, next) = next_attempt(backoff, healthy, attempted.elapsed(), &self.timing);
-            self.dropped(&error, wait);
-            self.publish_status();
-            sleep(wait).await;
+            // An attempt the feed began held back builds no backoff into its live ones.
+            let from = if held && self.live() { self.timing.reconnect_min } else { backoff };
+            let (wait, next) = next_attempt(from, healthy, attempted.elapsed(), &self.timing);
+            if self.live() {
+                self.dropped(&error, wait);
+                self.publish_status();
+                sleep(wait).await;
+            } else {
+                let (venue, feed) = (self.conn.venue.name(), self.conn.url.as_str());
+                let error = self.redact(&format!("{error:#}"));
+                info!(venue, feed, retry_in = ?wait, "a venue connection held back before its node runs dropped: {error}");
+                self.publish_status();
+                if self.wait_unless_live(wait).await {
+                    backoff = self.timing.reconnect_min;
+                    continue;
+                }
+            }
             backoff = next;
         }
     }

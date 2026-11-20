@@ -332,6 +332,9 @@ monotonic clock instead:
   once it reaches the engine.
 - A stall after an instruction is stamped delays that instruction, but not the stamp of any
   instruction after it.
+- A rotation-set member opens its venue connections a minute before its own turn, and holds their
+  quotes back until its sequencer runs. A quote kept that way is held at its stamp to the same
+  `max_delay` and `max_age_ms` as any other, so it gains no time.
 
 A quote that sets the price at which an order is executed was therefore sent by its venue at most
 about `max_delay` plus `max_age_ms` earlier. Under the production values of 2 seconds and 1 second,
@@ -1021,7 +1024,13 @@ number that another member's enclave confirmed holding. The operator therefore r
 checkpoints, only while another member confirms its log. It stops accepting instructions once its
 log runs more than one interval past the newest confirmation. A checkpoint is the log entry after
 its sequence number, so the operator stamps nothing past a checkpoint until another member confirms
-that sequence number. The pause lasts about one stream delivery, one sync and one round trip.
+that sequence number. For a member current with the log, the pause lasts about one stream delivery,
+one sync and one round trip. A checkpoint taken at the regular pace holds stamps for at most 250 ms:
+if no member confirms its sequence number by then, it is not signed, stamping goes on, and the next
+one covers that sequence number. So members that trail the log, as they do while they move to follow
+a new operator, cost no prices. Once such checkpoints have been skipped for 30 seconds, the next one
+waits for a member however long it takes, under Warning `checkpoint_deferred`. A handover's final
+checkpoint always waits.
 
 **Promotion.** Once `heartbeatMisses` witnessed slots pass with no head of the signer epoch, anyone
 may promote the next qualified member in the turn's order. The vault then moves its signer to that

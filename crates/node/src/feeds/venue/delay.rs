@@ -104,6 +104,14 @@ impl DelayProbe {
         self.not_after.get(symbol).and_then(|noted| noted.get(&ts).copied())
     }
 
+    /// Forgets the bounds noted for `symbol`'s quotes stamped before `ts`, keeping that one's: a feed
+    /// holding its quotes back (see `live`) keeps only its newest, and takes no bound until it sends.
+    pub(super) fn forget_before(&mut self, symbol: &str, ts: Millis) {
+        if let Some(noted) = self.not_after.get_mut(symbol) {
+            *noted = noted.split_off(&ts);
+        }
+    }
+
     /// When the bound on the age of `symbol`'s quote stamped `ts`, taken to sequence, runs out,
     /// forgetting it and any older. A quote with none noted, which a host clock stepping back can
     /// leave waiting behind one taken since, is already past it.
