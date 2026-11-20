@@ -8,7 +8,7 @@ use anyhow::{Context, ensure};
 
 use engine_core::types::AccountId;
 
-use crate::log::{self, CheckpointDomain, LogEntry, SegmentedLog};
+use crate::log::{self, CheckpointDomain, LogEntry, ReplayWorkers, SegmentedLog};
 use crate::sequencer::replay::{Replay, Replayed};
 
 #[cfg(test)]
@@ -46,7 +46,8 @@ pub fn replay_with_signer(
 }
 
 /// Replays the log at `path`, a single log file or a directory of segments with their manifest, as
-/// it reads it, for `engine replay`. A log that holds no checkpoint verifies nothing, so it fails.
+/// it reads it, for `engine replay`, its command seals checked ahead on a worker per core. A log that
+/// holds no checkpoint verifies nothing, so it fails.
 /// Error cases:
 /// - nothing is at `path`, or it cannot be read
 /// - the log fails its manifest check (see `SegmentedLog::open`) or replay (see `Replay::apply`)
@@ -59,19 +60,22 @@ pub fn replay_path(path: &Path) -> anyhow::Result<Replayed> {
 /// Error cases:
 /// - the log fails replay or conflicts with `domain` (see `replay_path`)
 pub fn replay_path_in_domain(path: &Path, domain: Option<CheckpointDomain>) -> anyhow::Result<Replayed> {
-    replay_path_with_trust(path, domain, None)
+    replay_path_with_trust(path, domain, None, ReplayWorkers::available())
 }
 
-/// Replays a published log with explicit authority for authenticating withdrawal releases.
+/// Replays a published log with explicit authority for authenticating withdrawal releases, its command
+/// seals checked ahead by `workers`.
 /// Error cases:
 /// - log, root, signature, domain or trusted signer validation fails
 pub fn replay_path_with_trust(
     path: &Path,
     domain: Option<CheckpointDomain>,
     signer: Option<AccountId>,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut replay = Replay::with_trust(domain, signer);
+    replay.check_seals_ahead(path, workers);
     if found.is_dir() {
         SegmentedLog::open(path, |entry| replay.apply(&entry))?;
     } else {
@@ -92,7 +96,8 @@ pub fn replay_path_with_trust(
 
 /// Replays the log directory at `path`, written by a sequencer that took over `engine`, a state no log
 /// holds, from that state, as `replay_path_with_trust` replays a whole log under `signer`: every
-/// command's events, every checkpoint's root and signature, and the command seals.
+/// command's events, every checkpoint's root and signature, and the command seals, checked ahead by
+/// `workers`.
 /// Error cases:
 /// - as `replay_path_with_trust`
 #[cfg(test)]
@@ -100,8 +105,10 @@ pub(crate) fn replay_path_from(
     engine: engine_core::Engine,
     path: &Path,
     signer: AccountId,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
     let mut replay = Replay::seeded(engine, None, signer);
+    replay.check_seals_ahead(path, workers);
     SegmentedLog::open(path, |entry| replay.apply(&entry))?;
     let replayed = replay.finish();
     replayed.origin.require_audit(signer)?;
@@ -116,7 +123,8 @@ pub(crate) fn replay_path_from(
 
 /// Replays a published log whose checkpoint signer changes at signer epochs the vault records,
 /// given an independently verified attestation for each signer: every checkpoint and every typed
-/// withdrawal must be one of `attested`, unlike `replay_path_with_trust`'s single pinned signer.
+/// withdrawal must be one of `attested`, unlike `replay_path_with_trust`'s single pinned signer. The
+/// command seals are checked ahead by `workers`.
 /// Error cases:
 /// - log, root, signature, or domain validation fails, or a checkpoint or typed withdrawal names
 ///   no attested signer
@@ -124,8 +132,9 @@ pub fn replay_path_with_attested(
     path: &Path,
     domain: Option<CheckpointDomain>,
     attested: BTreeSet<AccountId>,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
-    replay_attested(path, Replay::with_attested(domain, attested.clone()), attested)
+    replay_attested(path, Replay::with_attested(domain, attested.clone()), attested, workers)
 }
 
 /// Replays a copy of another node's log, which an archive or a predecessor supplied, as
@@ -139,15 +148,23 @@ pub(crate) fn replay_copy(
     path: &Path,
     domain: CheckpointDomain,
     attested: BTreeSet<AccountId>,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
-    replay_attested(path, Replay::copy(domain, attested.clone()), attested)
+    replay_attested(path, Replay::copy(domain, attested.clone()), attested, workers)
 }
 
-/// Runs `replay`, an attested replay of `attested`, over the log at `path`.
+/// Runs `replay`, an attested replay of `attested`, over the log at `path`, its command seals checked
+/// ahead by `workers`.
 /// Error cases:
 /// - as `replay_path_with_attested`
-fn replay_attested(path: &Path, mut replay: Replay, attested_set: BTreeSet<AccountId>) -> anyhow::Result<Replayed> {
+fn replay_attested(
+    path: &Path,
+    mut replay: Replay,
+    attested_set: BTreeSet<AccountId>,
+    workers: ReplayWorkers,
+) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
+    replay.check_seals_ahead(path, workers);
     if found.is_dir() {
         SegmentedLog::open(path, |entry| replay.apply(&entry))?;
     } else {
@@ -162,7 +179,8 @@ fn replay_attested(path: &Path, mut replay: Replay, attested_set: BTreeSet<Accou
     Ok(replayed)
 }
 
-/// Replays one exact finalized prefix with independently authenticated historical authorities.
+/// Replays one exact finalized prefix with independently authenticated historical authorities, its
+/// command seals checked ahead by `workers`.
 /// Error cases:
 /// - log, root, signature, authority, parent continuity, or finalized anchor validation fails
 pub(crate) fn replay_path_with_authorities(
@@ -171,10 +189,12 @@ pub(crate) fn replay_path_with_authorities(
     signer: AccountId,
     parent: crate::log::CheckpointParent,
     authorities: crate::checkpoints::SignerHistory,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut replay = Replay::with_recovery(Some(domain), Some(signer), parent);
     replay.set_authorities(authorities)?;
+    replay.check_seals_ahead(path, workers);
     let mut anchored = !parent.has_checkpoint;
     let mut visit = |entry: LogEntry| {
         if let LogEntry::Checkpoint(cp) = &entry

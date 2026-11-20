@@ -477,7 +477,8 @@ pub(crate) async fn sync_predecessor_log(
     // copy, is the authenticity check, as the standby's cold start does. It requires every seal,
     // so the copy's command prefix is the predecessor's.
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
-    crate::sequencer::replay_copy(dir, domain, signers).context("the restored log copy does not replay")?;
+    crate::sequencer::replay_copy(dir, domain, signers, cfg.node.replay_workers)
+        .context("the restored log copy does not replay")?;
     metrics.full_replays.inc();
     info!("the restored log copy replays to its tip");
     Ok(())

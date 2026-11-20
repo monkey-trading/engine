@@ -145,7 +145,7 @@ fn a_promoted_start_proves_approvals_only_at_a_checkpoint_its_log_holds() {
     let reissued = promoted.signed.try_recv().unwrap().authorization.unwrap();
     assert_eq!((reissued.checkpoint_seq, reissued.signer), (held.seq, AccountId(standby.address())));
     let attested = [AccountId(node.seq.key.address()), AccountId(standby.address())].into();
-    crate::sequencer::replay_path_with_attested(&copy, Some(node.domain()), attested)
+    crate::sequencer::replay_path_with_attested(&copy, Some(node.domain()), attested, Default::default())
         .expect("a replay of the promoted log checks every authorization's root");
 }
 

@@ -84,6 +84,7 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
+        replay.check_seals_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
         let mut fingerprint = Fingerprinter::new();
         let log = SegmentedLog::open(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;
@@ -137,7 +138,9 @@ fn candidate(
     if posted.is_some() || anchor.is_some() {
         let trusted = signer.context("snapshot recovery needs the trusted signer to verify the log's prefix")?;
         let (dir, certified, anchor) = (&cfg.node.log_dir, snapshot.context.command_prefix, anchor.map(|a| a.seq));
-        let verified = crate::log_heads::prefix::verify(dir, domain, trusted, posted, anchor, at.seq, certified)?;
+        let workers = cfg.node.replay_workers;
+        let verified =
+            crate::log_heads::prefix::verify(dir, domain, trusted, posted, anchor, at.seq, certified, workers)?;
         (posted_ts, anchor_ts) = (verified.posted_ts, verified.anchor_ts);
     }
     let pair = snapshot.pair.as_ref().context("engine-only cache requires full history migration")?;
@@ -184,6 +187,7 @@ fn candidate(
         Arc::new(catalog_store.clone()),
         Arc::new(move |root| probe.ensure_current(root)),
     ));
+    replay.check_seals_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
     let mut log =
         SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
             replay.apply(&entry)?;
@@ -309,5 +313,6 @@ fn plan(
         signer,
         source,
         catalog,
+        workers: cfg.node.replay_workers,
     }
 }

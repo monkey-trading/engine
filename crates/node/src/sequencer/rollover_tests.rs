@@ -266,7 +266,9 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
     log_entries(&rig.dir).iter().for_each(|entry| fingerprint.observe(entry).unwrap());
     let (view, rows) = (published_manifest(&rig.dir).borrow().clone(), RowsStore::new(&strict, 1_000_000));
-    rebuild_history_view(&rig.dir, view, &fingerprint.finish(), domain, Some(signer), &rows, &mut index).unwrap();
+    let expected = fingerprint.finish();
+    rebuild_history_view(&rig.dir, view, &expected, (domain, Some(signer)), &rows, &mut index, Default::default())
+        .unwrap();
     assert!(proves(&rows), "the strict rebuild stored the rows");
 }
 

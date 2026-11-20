@@ -48,7 +48,7 @@ async fn a_copy_whose_seals_are_spelt_otherwise_holds_its_writers_head() {
             });
             let mut member = replica(&copy).unwrap_or_else(|e| panic!("{what}: the replica refused it: {e:#}"));
             assert_eq!(member.pin(last, head), Some(true), "{what}: the copy holds another head than the operator's");
-            crate::sequencer::replay_copy(&copy, DOMAIN, [enclave()].into())
+            crate::sequencer::replay_copy(&copy, DOMAIN, [enclave()].into(), Default::default())
                 .unwrap_or_else(|e| panic!("{what}: the copy's replay refused it: {e:#}"));
         }
     }
@@ -74,11 +74,14 @@ async fn a_copy_that_dropped_or_replaced_a_seal_is_refused() {
             let copy = scratch_dir(&format!("copies-unsealed-{case}-{how}"));
             copy_log(&operator, &copy);
             rewrite_command(&copy, seq, change);
-            crate::sequencer::replay_path_with_attested(&copy, Some(DOMAIN), [enclave()].into())
+            crate::sequencer::replay_path_with_attested(&copy, Some(DOMAIN), [enclave()].into(), Default::default())
                 .unwrap_or_else(|e| panic!("{what}: a later checkpoint no longer covers it: {e:#}"));
             for (taker, refused) in [
                 ("the replica", replica(&copy).err()),
-                ("a copy's replay", crate::sequencer::replay_copy(&copy, DOMAIN, [enclave()].into()).err()),
+                (
+                    "a copy's replay",
+                    crate::sequencer::replay_copy(&copy, DOMAIN, [enclave()].into(), Default::default()).err(),
+                ),
             ] {
                 let refused = refused.unwrap_or_else(|| panic!("{what}: {taker} took the copy"));
                 assert!(
@@ -331,9 +334,10 @@ async fn a_takeover_refuses_a_copy_that_dropped_or_replaced_a_seal() {
         let takeover = Takeover { seq: last.seq, root: last.root, signer: enclave() };
         let (archive, origins) = (archive::archive_client(false).unwrap(), ["http://127.0.0.1:9".to_owned()]);
         let copied = Chain::new(DOMAIN, enclave());
-        let refused = finalize(&archive, (DOMAIN, [enclave()].into()), &origins, &dir, &takeover, copied)
-            .await
-            .expect_err("the takeover truncated a copy without its writer's seals");
+        let refused =
+            finalize(&archive, (DOMAIN, [enclave()].into(), Default::default()), &origins, &dir, &takeover, copied)
+                .await
+                .expect_err("the takeover truncated a copy without its writer's seals");
         assert!(format!("{refused:#}").contains("seq 0 carries no seal by an accepted signer"), "{how}: {refused:#}");
         assert_eq!(log_entries(&dir), before, "{how}: the refused copy changed");
     }
@@ -408,11 +412,18 @@ fn sealed_by(dir: &std::path::Path, seq: u64) -> String {
 fn folded(dir: &std::path::Path) -> (Option<u64>, Option<(Vec<crate::history::marks::fold::Folded>, Millis)>) {
     let marks = Rc::new(RefCell::new(MarkFold::default()));
     let kept = (None, Some(marks.clone()), None, None);
-    let follower =
-        Follower::open_pinned(dir, SEGMENT_COMMANDS, DOMAIN, enclave(), [enclave()].into(), kept, (None, &[]), |_| {
-            Ok(())
-        })
-        .unwrap_or_else(|e| panic!("the replica refused the copy: {e:#}"));
+    let follower = Follower::open_pinned(
+        dir,
+        SEGMENT_COMMANDS,
+        Default::default(),
+        DOMAIN,
+        enclave(),
+        [enclave()].into(),
+        kept,
+        (None, &[]),
+        |_| Ok(()),
+    )
+    .unwrap_or_else(|e| panic!("the replica refused the copy: {e:#}"));
     (follower.replica().last_seq(), marks.take().into_buckets())
 }
 
@@ -445,7 +456,8 @@ fn link_before(dir: &std::path::Path, seq: u64) -> B256 {
 /// confirmation that ends the predecessor (its refusal, as `Err`), then the start `node::run` makes
 /// against `posted`, the head the predecessor posted (its refusal, as `Ok(Some)`).
 fn confirmed_then_started(dir: &std::path::Path, posted: crate::log_heads::Head) -> Result<Option<String>, String> {
-    crate::sequencer::replay_copy(dir, DOMAIN, [enclave()].into()).map_err(|refused| format!("{refused:#}"))?;
+    crate::sequencer::replay_copy(dir, DOMAIN, [enclave()].into(), Default::default())
+        .map_err(|refused| format!("{refused:#}"))?;
     let log = crate::sequencer::Sequencer::read_log_with_authorities(
         dir,
         Some(DOMAIN),
@@ -456,6 +468,7 @@ fn confirmed_then_started(dir: &std::path::Path, posted: crate::log_heads::Head)
         None,
         None,
         Some(posted.seq),
+        Default::default(),
     )
     .expect("recovery under the handed-over key replays the log");
     let rpc_dir = dir.with_extension("heads-rpc");

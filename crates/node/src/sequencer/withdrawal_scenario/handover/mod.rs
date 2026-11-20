@@ -270,8 +270,12 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     // A's tip, and the combined log replays across the handover.
     wait_latest_seq(&mut node.chain, a_tip + 1).await?;
     let signer = engine_core::types::AccountId(a_enclave.into());
-    let replayed =
-        crate::sequencer::replay_path_with_attested(&b_dir.join("log"), None, [signer].into_iter().collect())?;
+    let replayed = crate::sequencer::replay_path_with_attested(
+        &b_dir.join("log"),
+        None,
+        [signer].into_iter().collect(),
+        Default::default(),
+    )?;
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq >= a_tip),
         "the replayed log has no checkpoint at or past A's final checkpoint"

@@ -347,7 +347,8 @@ async fn run() -> anyhow::Result<()> {
     mining.abort();
     let signers: BTreeSet<AccountId> = [AccountId(signing.address()), signer].into();
     let checkpoints = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
-    let replayed = replay_path_with_attested(&seats[p].log_dir(), Some(checkpoints), signers.clone())?;
+    let replayed =
+        replay_path_with_attested(&seats[p].log_dir(), Some(checkpoints), signers.clone(), Default::default())?;
     ensure!(replayed.checkpoint_signers == signers, "the replay names {:?}", replayed.checkpoint_signers);
     println!("PASS: {}'s log replays across the change of signer, each checkpoint by an attested key", seats[p].name);
     Ok(())

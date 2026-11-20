@@ -5,7 +5,7 @@ use engine_core::types::{AccountId, Millis};
 
 use crate::history::authenticated::Index;
 use crate::history::derived::{RowsStore, Taken};
-use crate::log::{CheckpointDomain, LogEntry, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, ReplayWorkers, SegmentedLog};
 use crate::sequencer::ReplayedLog;
 use crate::sequencer::replay::Replay;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,21 +50,23 @@ impl ReplayedLog {
 }
 
 /// Uses the first pass's actual byte commitments, never a newly loaded unsigned manifest, and writes each
-/// command's derived rows to `rows`.
+/// command's derived rows to `rows`. It runs at startup, before the sequencer, so its command seals are
+/// checked ahead by `workers`.
 /// Error cases:
 /// - checked rereading, strict replay, exact history updates or full-prefix comparison fails
 pub(crate) fn rebuild_history_view(
     dir: &std::path::Path,
     view: crate::log::Manifest,
     expected: &crate::history::rebuild::ReplayFingerprint,
-    domain: CheckpointDomain,
-    signer: Option<AccountId>,
+    (domain, signer): (CheckpointDomain, Option<AccountId>),
     rows: &RowsStore,
     index: &mut Index,
+    workers: ReplayWorkers,
 ) -> Result<()> {
     let mut reader =
         crate::log::LogReader::open(dir, crate::log::Offset::start_of(0), tokio::sync::watch::channel(view).1)?;
     let mut replay = Replay::with_trust(Some(domain), signer);
+    replay.check_seals_ahead(dir, workers);
     let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
     let mut batch = Vec::with_capacity(REBUILD_BATCH);
     while let Some((_, entry)) = reader.next_entry()? {
@@ -87,7 +89,8 @@ pub(crate) fn rebuild_history_view(
 }
 
 /// Rebuilds only into a fresh unpublished generation, never from the damaged SQL rows, and writes each
-/// command's derived rows to `rows`.
+/// command's derived rows to `rows`. It runs beside the live sequencer, so it checks each command seal in
+/// place rather than take cores from it.
 /// Error cases:
 /// - strict replay, source IO, a verified history update or the exact expected prefix check fails
 pub(crate) fn rebuild_history_prefix(

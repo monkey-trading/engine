@@ -19,7 +19,7 @@ use crate::config::{HistorySection, SnapshotSection};
 use crate::history::derived::{Deriver, RowsStore};
 use crate::history::marks::{Retentions, Store};
 use crate::history::{History, HistoryCheck, PageQuery};
-use crate::log::{CheckpointDomain, LogReader, Manifest, Offset, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, LogReader, Manifest, Offset, ReplayWorkers, SegmentedLog};
 use crate::node::marks::recovery_sink;
 use crate::sequencer::recovery_scale::Base;
 use crate::sequencer::recovery_scale::flow::Node;
@@ -72,22 +72,28 @@ pub(super) struct Restarted {
 }
 
 /// `engine replay`'s replay of the log in `dir` from the book: every command's events, every
-/// checkpoint's root and signature, and the command seals, under `signer`.
-pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId) -> Replayed {
+/// checkpoint's root and signature, and the command seals, under `signer`, checked ahead by `workers`.
+pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId, workers: ReplayWorkers) -> Replayed {
     let engine = base.engine();
     let started = Instant::now();
-    let replayed = replay_path_from(engine, dir, signer).expect("the log replays to its roots from the book");
+    let replayed = replay_path_from(engine, dir, signer, workers).expect("the log replays to its roots from the book");
     Replayed { commands: replayed.commands, checkpoints: replayed.checkpoints, took: started.elapsed() }
 }
 
 /// A node's recovery of the log in `dir` by full replay, as `node::recovery` reads a log with no cache:
 /// the history index checked against each entry, each mark seeding the marks cache in `run`, each
-/// command recorded into the dashboard record, then the sequencer opened on the log, signing with `key`,
-/// and its first command.
+/// command recorded into the dashboard record, the command seals checked ahead by `workers`, then the
+/// sequencer opened on the log, signing with `key`, and its first command.
 /// Error cases:
 /// - the log does not replay, the marks cache cannot be opened or seeded, or the sequencer refuses the
 ///   log or its first command
-pub(super) fn recover(base: &Base, dir: &Path, run: &Path, key: Arc<EnclaveKey>) -> anyhow::Result<Recovered> {
+pub(super) fn recover(
+    base: &Base,
+    dir: &Path,
+    run: &Path,
+    key: Arc<EnclaveKey>,
+    workers: ReplayWorkers,
+) -> anyhow::Result<Recovered> {
     let history = HistorySection { dir: run.join("history"), ..dev_config().history };
     let marks = Rc::new(RefCell::new(Store::open_in(&run.join("marks"), Retentions::defaults(), key.marks_key())?));
     let (sink, failed, _) = recovery_sink(&marks);
@@ -95,9 +101,8 @@ pub(super) fn recover(base: &Base, dir: &Path, run: &Path, key: Arc<EnclaveKey>)
     let engine = base.engine();
     let started = Instant::now();
     let signer = AccountId(key.address());
-    let log = Sequencer::read_log_from(engine, dir, (DOMAIN, signer), Some(sink), Some(stats()), |entry| {
-        check.observe(entry)
-    })?;
+    let observe = |entry: &LogEntry| check.observe(entry);
+    let log = Sequencer::read_log_from(engine, dir, (DOMAIN, signer), Some(sink), Some(stats()), observe, workers)?;
     ensure!(!failed.get(), "seeding the marks cache from the log failed");
     let replayed =
         Replayed { commands: log.replayed.commands, checkpoints: log.replayed.checkpoints, took: started.elapsed() };
@@ -124,9 +129,10 @@ pub(super) fn capture(node: &mut Node, section: &SnapshotSection, key: &EnclaveK
 
 /// A restart of the log in `dir` from the newest cache in `section`, to its first command: the cache
 /// read as recovery reads one (`snapshot::read`), every command after it replayed onto it, read from
-/// the log through `manifest`, the writer's published view, under `key`'s address, then a sequencer
-/// started on that replay, signing with `key`, and its first command. The sequencer writes to a log of
-/// its own under `run`, so the node's log stays as it was for the recovery by full replay.
+/// the log through `manifest`, the writer's published view, under `key`'s address, its seals checked
+/// ahead by `workers` as recovery's suffix replay checks them, then a sequencer started on that replay,
+/// signing with `key`, and its first command. The sequencer writes to a log of its own under `run`, so
+/// the node's log stays as it was for the recovery by full replay.
 /// Error cases:
 /// - no cache is there, it does not read, the commands after it do not replay onto it, or the
 ///   sequencer refuses the replay or its first command
@@ -136,6 +142,7 @@ pub(super) fn restart(
     manifest: watch::Receiver<Manifest>,
     run: &Path,
     key: Arc<EnclaveKey>,
+    workers: ReplayWorkers,
 ) -> anyhow::Result<Restarted> {
     let started = Instant::now();
     let path = snapshot::candidates(section)?.into_iter().next().context("a cache")?;
@@ -143,6 +150,7 @@ pub(super) fn restart(
     let (at, before) = (cache.checkpoint.seq, cache.progress.checkpoints);
     let mut replay = Replay::from_snapshot(engine, cache, DOMAIN, Some(AccountId(key.address())), None)?;
     replay.record_stats_with(stats());
+    replay.check_seals_ahead(dir, workers);
     let mut reader = LogReader::open(dir, Offset::start_of(at + 1), manifest)?;
     let read = started.elapsed();
     let suffix_started = Instant::now();

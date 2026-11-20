@@ -358,6 +358,17 @@ against their chain, their vault and their named signer. Each new checkpoint als
 sequence number and root of its predecessor, which the vault compares atomically, so two publishers
 with one key cannot both extend the vault's chain.
 
+A replay checks the enclave's seal on each instruction on a pool of threads, one per core unless
+`node.replay_workers` or `engine replay --replay-workers` sets another number. A second reader of the
+log's files finds each sealed instruction ahead of the replay, and the threads check its seal while
+the replay applies the instructions before it. The replay applies an instruction only once its own
+seal has been checked, and in log order. It uses a thread's verdict only for the seal and the
+chained digest that it computed itself from the instruction it applies. Any other seal it checks
+itself, and once the second reader passes an instruction the replay never reaches, it checks every
+later seal itself. A host that serves different bytes to the two readers therefore changes only which
+thread checks a seal, and a seal that fails stops the replay at its instruction with the same error. A
+log that cannot be read a second time, such as a pipe, is checked entirely by the replay's own thread.
+
 With `[log_heads]` configured, the enclave also signs log heads. A log head states the sequence
 number of the newest instruction the trading server has released, and a running digest of every
 instruction up to it. Checkpoints do not reset the digest, so a posted head commits to the whole

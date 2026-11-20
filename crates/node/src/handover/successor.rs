@@ -25,7 +25,7 @@ use crate::handover::{
     Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
     confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
-use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
+use crate::log::{CheckpointDomain, LogEntry, Manifest, ReplayWorkers, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
 use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Platform, Release, Sealer};
@@ -108,7 +108,8 @@ pub(crate) async fn take_with(
         None => crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?.0,
     };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
-    take_segments(&mut stream, dir, domain, &tails, log_tip, &head, signers, metrics).await?;
+    take_segments(&mut stream, dir, (domain, cfg.node.replay_workers), &tails, log_tip, &head, signers, metrics)
+        .await?;
     let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
@@ -211,8 +212,9 @@ pub(super) async fn ask(
 /// Takes the whole segments the keys name (`tails`) past the copy's listed tip `log_tip` into the
 /// log in `dir`, each checked against its listing and chained to the one before, then requires the
 /// whole log to replay, authenticated against every signer the vault recorded and every command sealed
-/// by one of them, to the handed-over checkpoint: the confirmation ends the predecessor, so an invalid
-/// transfer, or a copy whose command prefix is not the predecessor's, must be caught here.
+/// by one of them, the seals checked ahead by `workers`, to the handed-over checkpoint: the confirmation
+/// ends the predecessor, so an invalid transfer, or a copy whose command prefix is not the predecessor's,
+/// must be caught here.
 /// The replay counts in `metrics.full_replays`.
 /// Error cases:
 /// - a segment is missing, differs from its listing, breaks the chain, or cannot be written
@@ -221,7 +223,7 @@ pub(super) async fn ask(
 pub(super) async fn take_segments(
     stream: &mut TcpStream,
     dir: &Path,
-    domain: CheckpointDomain,
+    (domain, workers): (CheckpointDomain, ReplayWorkers),
     tails: &[SegmentInfo],
     log_tip: Option<u64>,
     head: &Head,
@@ -237,7 +239,8 @@ pub(super) async fn take_segments(
     if tails.is_empty() {
         info!("the predecessor handed no log segments over: the restored log already reaches the head");
     }
-    let replayed = crate::sequencer::replay_copy(dir, domain, signers).context("the restored log does not replay")?;
+    let replayed =
+        crate::sequencer::replay_copy(dir, domain, signers, workers).context("the restored log does not replay")?;
     metrics.full_replays.inc();
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq == head.seq && cp.root == head.root),

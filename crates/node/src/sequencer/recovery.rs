@@ -1,6 +1,7 @@
 //! Pure recovery validation and restoration of authenticated durable checkpoint work.
 
 use super::*;
+use crate::log::ReplayWorkers;
 use crate::sequencer::replay::Replay;
 
 impl ReplayedLog {
@@ -196,14 +197,15 @@ impl Sequencer {
         domain: Option<crate::log::CheckpointDomain>,
         signer: Option<AccountId>,
         parent: Option<crate::log::CheckpointParent>,
-        mut observe: impl FnMut(&LogEntry),
+        observe: impl FnMut(&LogEntry),
     ) -> anyhow::Result<ReplayedLog> {
-        Self::read_log_with_authorities(dir, domain, signer, parent, Default::default(), &mut observe, None, None, None)
+        let (authorities, workers) = (Default::default(), ReplayWorkers::available());
+        Self::read_log_with_authorities(dir, domain, signer, parent, authorities, observe, None, None, None, workers)
     }
 
-    /// Replays accepted history while requiring the current signer for the unanchored tail.
-    /// `capture`, when set, records the cumulative command-prefix digest at that seq from the
-    /// replayed bytes for the posted-head check.
+    /// Replays accepted history while requiring the current signer for the unanchored tail, its command
+    /// seals checked ahead by `workers`. `capture`, when set, records the cumulative command-prefix digest
+    /// at that seq from the replayed bytes for the posted-head check.
     /// Error cases:
     /// - trusted history is inconsistent, or ordinary replay/recovery validation fails
     #[allow(clippy::too_many_arguments)]
@@ -217,6 +219,7 @@ impl Sequencer {
         marks: Option<crate::history::marks::MarkSink>,
         stats: Option<crate::stats::Stats>,
         capture: Option<u64>,
+        workers: ReplayWorkers,
     ) -> anyhow::Result<ReplayedLog> {
         let mut replay = parent
             .map_or_else(|| Replay::with_trust(domain, signer), |parent| Replay::with_recovery(domain, signer, parent));
@@ -224,11 +227,12 @@ impl Sequencer {
         if let Some(seq) = capture {
             replay.capture_link_at(seq);
         }
-        Self::replay_log(replay, dir, observe, marks, stats)
+        Self::replay_log(replay, dir, observe, marks, stats, workers)
     }
 
     /// Reads the log in `dir` through `replay`, as recovery reads a whole log: each mark handed to
-    /// `marks`, each command recorded into `stats`, and `observe` seeing each entry first.
+    /// `marks`, each command recorded into `stats`, `observe` seeing each entry first, and the command
+    /// seals checked ahead by `workers`.
     /// Error cases:
     /// - the log cannot be read, or fails its manifest check or replay
     pub(super) fn replay_log(
@@ -237,6 +241,7 @@ impl Sequencer {
         mut observe: impl FnMut(&LogEntry),
         marks: Option<crate::history::marks::MarkSink>,
         stats: Option<crate::stats::Stats>,
+        workers: ReplayWorkers,
     ) -> anyhow::Result<ReplayedLog> {
         if let Some(sink) = marks {
             replay.sample_marks_with(sink);
@@ -244,6 +249,7 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
+        replay.check_seals_ahead(dir, workers);
         let log = SegmentedLog::open(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)

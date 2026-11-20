@@ -27,7 +27,8 @@
 //! launch flow and the replay's rate. The environment sizes the run: `RECOVERY_ACCOUNTS` (100,000),
 //! `RECOVERY_TRADERS` (2,000), `RECOVERY_START_SECS` (how long after the book's clock, Monday 15:00
 //! UTC, the flow starts: 0), `RECOVERY_LAUNCH_SECS` (30 days), `RECOVERY_TEN_TIMES_SECS` (3 days),
-//! `RECOVERY_SUFFIX_SECS` (an hour) and `RECOVERY_TAILS` (bytes, comma-separated).
+//! `RECOVERY_SUFFIX_SECS` (an hour), `RECOVERY_TAILS` (bytes, comma-separated) and
+//! `RECOVERY_REPLAY_WORKERS` (the threads that check command seals ahead of each replay: one per core).
 
 mod flow;
 mod handover;
@@ -47,6 +48,7 @@ use crate::common::launch_book::{Mix, NamedCounts, build};
 use crate::config::{HistorySection, SnapshotSection};
 use crate::history::derived::RowsStore;
 use crate::load_scenario::{CRYPTO_RATES, RWA_MOVES};
+use crate::log::ReplayWorkers;
 use crate::sequencer::recovery_scale::flow::{Flow, Node, Sequenced};
 use crate::sequencer::recovery_scale::handover::{
     Switch, build_replica, copy_log, hand_over, log_bytes, member_config,
@@ -160,9 +162,14 @@ async fn run() {
     println!("RECOVERY log seq={} bytes={log_total} rss_mib={}", last.seq, rss_mib());
 
     // `engine replay`'s replay, then the restart from the cache.
-    let replayed = replay(&base, &log, signer);
+    let cores = std::thread::available_parallelism().expect("the cores this process may use");
+    let workers = env("RECOVERY_REPLAY_WORKERS", cores);
+    println!("RECOVERY replay_workers={workers}");
+    let workers = ReplayWorkers::from(workers);
+    let replayed = replay(&base, &log, signer, workers);
     print_replay("engine_replay", &replayed);
-    let restarted = restart(&section, &log, manifest, &run, key.clone()).expect("the node restarts from the cache");
+    let restarted =
+        restart(&section, &log, manifest, &run, key.clone(), workers).expect("the node restarts from the cache");
     print_replay("cache_suffix", &restarted.suffix);
     println!(
         "RECOVERY restart_from_cache read_s={:.1} suffix_s={:.1} start_s={:.2}",
@@ -173,7 +180,7 @@ async fn run() {
     assert_eq!(restarted.last_seq, Some(last.seq), "the restart from the cache replays the whole log after it");
 
     // A node's recovery by full replay, to its first command, which then holds the log.
-    let recovered = recover(&base, &log, &run, key.clone()).expect("the node recovers the log");
+    let recovered = recover(&base, &log, &run, key.clone(), workers).expect("the node recovers the log");
     print_replay("node_recovery", &recovered.replayed);
     println!(
         "RECOVERY node_recovery start_s={:.2} first_command_s={:.1} rss_mib={}",
@@ -190,7 +197,7 @@ async fn run() {
     let rows = Arc::new(RowsStore::new(&history_dir, retention));
     let member_history =
         HistorySection { dir: run.join("member-history"), ..crate::test_support::dev_config().history };
-    let (mut follower, built) = build_replica(&base, &copy, signer, (rows.clone(), &member_history));
+    let (mut follower, built) = build_replica(&base, &copy, (signer, workers), (rows.clone(), &member_history));
     // The copy and the index hold the log from its first command to the recovered node's first.
     let held = holder.seq.last_seq().unwrap_or(0) + 1 - first_seq(&log);
     println!("RECOVERY replica_build commands={held} s={:.1} rss_mib={}", built.as_secs_f64(), rss_mib());

@@ -17,8 +17,9 @@
 # Needs only Cargo; private temporary data under TMPDIR. The log needs disk: about the bytes a day it
 # prints, times the days run. The environment sizes the run: RECOVERY_ACCOUNTS (100000),
 # RECOVERY_TRADERS (2000), RECOVERY_START_SECS (0: the flow starts at the book's clock, Monday 15:00
-# UTC), RECOVERY_LAUNCH_SECS (2592000), RECOVERY_TEN_TIMES_SECS (259200), RECOVERY_SUFFIX_SECS (3600)
-# and RECOVERY_TAILS (bytes, comma-separated). CI runs it at 10,000 accounts and half an hour of flow
+# UTC), RECOVERY_LAUNCH_SECS (2592000), RECOVERY_TEN_TIMES_SECS (259200), RECOVERY_SUFFIX_SECS (3600),
+# RECOVERY_TAILS (bytes, comma-separated) and RECOVERY_REPLAY_WORKERS (the threads that check command
+# seals ahead of each replay: one per core). CI runs it at 10,000 accounts and half an hour of flow
 # across the US shares' close.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"

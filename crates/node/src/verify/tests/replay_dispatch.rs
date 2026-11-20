@@ -83,7 +83,7 @@ async fn dev_scenario_replay_dispatch_trusts_the_attested_signer() -> anyhow::Re
     std::fs::write(&root_path, pem(&chain.ark))?;
 
     // The library path replays the same log with the key as the independently trusted signer.
-    let replayed = crate::replay_path_with_trust(&log_path, Some(domain), Some(signer))?;
+    let replayed = crate::replay_path_with_trust(&log_path, Some(domain), Some(signer), Default::default())?;
     assert_eq!((replayed.commands, replayed.checkpoints), (5, 1));
 
     let binary = engine_binary()?;

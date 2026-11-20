@@ -1,6 +1,7 @@
 //! Read-only origin validation shared by full replay and snapshot suffix replay.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::command::Command;
@@ -9,7 +10,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 
 use crate::log::command_seal::{checkpoint_link, command_link};
-use crate::log::{Checkpoint, CheckpointDomain, CommandEntry};
+use crate::log::{Checkpoint, CheckpointDomain, CommandEntry, ReplayWorkers, SealsAhead};
 
 /// Tracks tentative replay spans until independent authority covers them.
 #[derive(Default)]
@@ -29,6 +30,8 @@ pub(crate) struct Origin {
     /// A copy of another node's log: every command a checkpoint covers must carry a seal by an accepted
     /// signer, as its writer wrote it (see `copy`).
     copy: bool,
+    /// The seals of the commands still to come, checked ahead of them (`check_ahead`).
+    ahead: Option<SealsAhead>,
 }
 
 impl Origin {
@@ -55,6 +58,24 @@ impl Origin {
         Self { copy: true, ..Self::with_attested(Some(domain), attested) }
     }
 
+    /// Has the seals of the commands this replay applies from `from` on, in the log at `path`, checked
+    /// ahead of them by `workers`, until `stop_checking_ahead` (`SealsAhead`): each is still checked
+    /// before its command applies, with the same verdict.
+    pub(crate) fn check_ahead(&mut self, path: &Path, from: u64, workers: ReplayWorkers) {
+        self.ahead = SealsAhead::start(path, from, self.link, workers);
+    }
+
+    /// Checks every later seal in place, stopping the checks ahead (`check_ahead`).
+    pub(crate) fn stop_checking_ahead(&mut self) {
+        self.ahead = None;
+    }
+
+    /// How many seals' verdicts this replay took from the checks ahead (`check_ahead`).
+    #[cfg(test)]
+    pub(crate) fn seals_taken_ahead(&self) -> u64 {
+        self.ahead.as_ref().map_or(0, SealsAhead::taken_ahead)
+    }
+
     /// Checks a present seal before applying a command and retains every uncovered span.
     /// Error cases:
     /// - encoding, domain, events, or the present cryptographic seal is invalid
@@ -64,7 +85,10 @@ impl Origin {
         if let Some(seal) = &command.seal {
             ensure!(command.events.is_some(), "sealed command lacks logged events");
             ensure!(self.domain.is_none_or(|domain| domain == seal.domain), "command seal deployment mismatch");
-            seal.verify(link)?;
+            match &mut self.ahead {
+                Some(ahead) => ahead.verify(command.sequenced.seq, seal, link)?,
+                None => seal.verify(link)?,
+            }
             trusted = match &self.attested {
                 Some(attested) => attested.contains(&seal.signer) && self.domain == Some(seal.domain),
                 None => self.signer == Some(seal.signer) && self.domain == Some(seal.domain),

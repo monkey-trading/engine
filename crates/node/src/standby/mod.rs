@@ -53,7 +53,7 @@ mod replica;
 pub(crate) use replica::Follower;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, ReplayWorkers, SegmentedLog};
 use crate::node::member::turn::COMING_UP;
 use crate::telemetry::Telemetry;
 
@@ -132,7 +132,7 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().context("custody.vault")? };
     // A poisoned cold start must surface now, not when the operator is already gone.
     let signers = async || operator::copy_signers(cfg, &chain, &operator).await;
-    backfill::prepare(&archive, &operator, dir, domain, signers).await?;
+    backfill::prepare(&archive, &operator, dir, (domain, cfg.node.replay_workers), signers).await?;
     let (mut writer, mut copied) =
         open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, operator.enclave))?;
     info!(operator = %operator.origin, enclave = %operator.enclave, "standby following the operator in effect");
@@ -154,8 +154,8 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 };
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
-                let finalized =
-                    finalize(&archive, (domain, signers), &operator.origins(), dir, &takeover, copied).await;
+                let checked = (domain, signers, cfg.node.replay_workers);
+                let finalized = finalize(&archive, checked, &operator.origins(), dir, &takeover, copied).await;
                 if let Err(e) = finalized {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
@@ -289,14 +289,14 @@ fn open_copy_replayed<R>(
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the
 /// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
 /// that extend `copied`, then replays the whole copy in `domain` against `signers`, every command
-/// sealed by one of them, requires that checkpoint and truncates the copy after it, dropping the
-/// unsigned tail.
+/// sealed by one of them, its seals checked ahead by `workers`, requires that checkpoint and truncates
+/// the copy after it, dropping the unsigned tail.
 /// Error cases:
 /// - the archive refresh fails hard, the copy does not replay against `signers`, or it holds no
 ///   checkpoint at the vault's latest
 async fn finalize(
     archive: &reqwest::Client,
-    (domain, signers): (CheckpointDomain, std::collections::BTreeSet<AccountId>),
+    (domain, signers, workers): (CheckpointDomain, std::collections::BTreeSet<AccountId>, ReplayWorkers),
     origins: &[String],
     dir: &std::path::Path,
     takeover: &Takeover,
@@ -321,7 +321,7 @@ async fn finalize(
     // the keys that signed this copy's payouts (`operator::copy_signers`), and every command must carry
     // one's seal, so the copy's command prefix is the one the operator posted heads of. A cold start's
     // backfill passes the same replay before the standby follows onto it.
-    backfill::replay_refreshed(dir, domain, signers).context("refusing to truncate the copy")?;
+    backfill::replay_refreshed(dir, (domain, workers), signers).context("refusing to truncate the copy")?;
     // The resume point is the latest checkpoint in the published log that the outgoing key
     // signed and that extends the vault's latest root: the anchor itself, then every later
     // checkpoint of the copy that continues the outgoing key's signed parent chain. Checkpoints

@@ -9,7 +9,7 @@ use engine_core::Engine;
 use engine_core::command::Command;
 use engine_core::types::AccountId;
 
-use crate::log::{Checkpoint, CheckpointDomain, LogEntry};
+use crate::log::{Checkpoint, CheckpointDomain, LogEntry, ReplayWorkers};
 use crate::sequencer::replay::Replay;
 use crate::sequencer::{ReplayedLog, Sequencer};
 use crate::snapshot::Snapshot;
@@ -39,7 +39,8 @@ impl Sequencer {
 
     /// Reads the log in `dir`, written by a sequencer that took over `base`, as recovery reads a whole
     /// log (`read_log_with_authorities`): replayed from `base` under `signer` in `domain`, each mark
-    /// handed to `marks` and each command recorded into `stats`, `observe` seeing each entry first.
+    /// handed to `marks` and each command recorded into `stats`, `observe` seeing each entry first, and
+    /// the command seals checked ahead by `workers`.
     /// Error cases:
     /// - the log cannot be read, or fails its manifest check or replay
     pub(crate) fn read_log_from(
@@ -49,8 +50,9 @@ impl Sequencer {
         marks: Option<crate::history::marks::MarkSink>,
         stats: Option<crate::stats::Stats>,
         observe: impl FnMut(&LogEntry),
+        workers: ReplayWorkers,
     ) -> anyhow::Result<ReplayedLog> {
-        Self::replay_log(Replay::seeded(base, Some(domain), signer), dir, observe, marks, stats)
+        Self::replay_log(Replay::seeded(base, Some(domain), signer), dir, observe, marks, stats, workers)
     }
 
     /// The cache a capture at `checkpoint`, the last one written, would publish, unpaired: the engine

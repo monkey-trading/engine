@@ -23,7 +23,7 @@ use crate::checkpoints::Takeover;
 use crate::config::NodeConfig;
 use crate::history::derived::RowsStore;
 use crate::history::marks::fold::MarkFold;
-use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, offset_of};
+use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, LogWriter, Manifest, Offset, ReplayWorkers, offset_of};
 use crate::log_check::answer::CheckedHeads;
 use crate::log_heads::Head;
 use crate::sequencer::ReplayedLog;
@@ -82,6 +82,7 @@ impl Follower {
         Self::open_pinned(
             dir,
             segment_commands,
+            ReplayWorkers::available(),
             domain,
             enclave,
             signers,
@@ -91,15 +92,15 @@ impl Follower {
         )
     }
 
-    /// `open`, pinning the posted log head `posted` as the replay passes it (see `LiveReplay::pin`),
-    /// so a replica built long after that head still holds it, keeping the links and checkpoints at
-    /// the seqs `keep` names (see `LiveReplay::keep`), with `marks`, folding each mark the replica
-    /// applies, from the build on, into it, and with `checked`, recording each checkpoint it verifies
-    /// there (`LiveReplay::record_checked_with`), and with `rows`, the store each command's derived rows
-    /// are written to as the replica applies them (`LiveReplay::store_rows_in`); an `observe` that fails
-    /// ends the build. A tail after the copy's last checkpoint that no accepted signer sealed is copied
-    /// aside to `<dir>.unaccepted-<seq>`, paged as Critical `copy_tail_unaccepted`, and cut back (`cut`),
-    /// and the replica rebuilt.
+    /// `open`, with the command seals checked ahead of the build by `workers`, pinning the posted log head
+    /// `posted` as the replay passes it (see `LiveReplay::pin`), so a replica built long after that head
+    /// still holds it, keeping the links and checkpoints at the seqs `keep` names (see `LiveReplay::keep`),
+    /// with `marks`, folding each mark the replica applies, from the build on, into it, and with `checked`,
+    /// recording each checkpoint it verifies there (`LiveReplay::record_checked_with`), and with `rows`, the
+    /// store each command's derived rows are written to as the replica applies them
+    /// (`LiveReplay::store_rows_in`); an `observe` that fails ends the build. A tail after the copy's last
+    /// checkpoint that no accepted signer sealed is copied aside to `<dir>.unaccepted-<seq>`, paged as
+    /// Critical `copy_tail_unaccepted`, and cut back (`cut`), and the replica rebuilt.
     /// Error cases:
     /// - see `open`, or `observe` fails
     /// - the copy holds such a tail and no checkpoint before it, or the tail cannot be kept or cut
@@ -107,6 +108,7 @@ impl Follower {
     pub(crate) fn open_pinned(
         dir: &std::path::Path,
         segment_commands: u64,
+        workers: ReplayWorkers,
         domain: CheckpointDomain,
         enclave: AccountId,
         signers: BTreeSet<AccountId>,
@@ -119,20 +121,25 @@ impl Follower {
             keep.iter().for_each(|seq| replica.keep(*seq));
             recording(replica, &records)
         };
-        Self::open_with(dir, segment_commands, (domain, enclave, signers.clone()), fresh, posted, observe)
+        Self::open_with((dir, segment_commands, workers), (domain, enclave, signers.clone()), fresh, posted, observe)
     }
 
-    /// Opens the copy in `dir`, building its replica from `fresh` as it is read (see `open_pinned`).
+    /// Opens the copy in `dir`, building its replica from `fresh` as it is read, its command seals checked
+    /// ahead by `workers` (see `open_pinned`).
     /// Error cases:
     /// - see `open_pinned`
     fn open_with(
-        dir: &std::path::Path,
-        segment_commands: u64,
+        (dir, segment_commands, workers): (&std::path::Path, u64, ReplayWorkers),
         (domain, enclave, recorded): (CheckpointDomain, AccountId, BTreeSet<AccountId>),
         fresh: impl Fn() -> LiveReplay,
         posted: Option<(u64, B256)>,
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
+        let fresh = || {
+            let mut replica = fresh();
+            replica.check_seals_ahead(dir, workers);
+            replica
+        };
         let (mut opened, mut previous) = (VecDeque::new(), None);
         let mut apply = |replica: &mut LiveReplay, entry: &LogEntry| {
             observe(entry)?;
@@ -155,13 +162,13 @@ impl Follower {
             Ok(())
         };
         let chain = Chain::new(domain, enclave);
-        let opened_copy = open_copy_replayed(dir, segment_commands.max(1), chain.clone(), &fresh, &mut apply)
+        let opened_copy = open_copy_replayed(dir, segment_commands.max(1), chain.clone(), fresh, &mut apply)
             .context("the copy does not replay")?;
         // A tail no accepted signer sealed is not the operator's history to vouch for: a reorged
         // promotion's, or one a host or an archive forged. It is kept aside as evidence and cut back to
         // the last checkpoint, which an accepted signer's seals reach, and the stream refills it.
         let mut replays = 1;
-        let (writer, mut copied, replica) = match opened_copy.2.unaccepted_from() {
+        let (writer, mut copied, mut replica) = match opened_copy.2.unaccepted_from() {
             None => opened_copy,
             Some((seq, sealer)) => {
                 let replica = &opened_copy.2;
@@ -186,10 +193,12 @@ impl Follower {
                 let to = Takeover { seq: checkpoint.seq, root: checkpoint.root, signer };
                 super::cut::cut_marked(dir, &to).context("cutting the copy's unaccepted tail")?;
                 replays += 1;
-                open_copy_replayed(dir, segment_commands.max(1), chain, &fresh, &mut apply)
+                open_copy_replayed(dir, segment_commands.max(1), chain, fresh, &mut apply)
                     .context("the copy does not replay")?
             }
         };
+        // The stream's entries are applied one at a time, each seal checked as it arrives.
+        replica.stop_checking_seals_ahead();
         // The stream may carry commands a recorded signer sealed that no checkpoint the copy holds names,
         // as a promoted epoch's before its first, which a cut, now or at an earlier open, dropped: the
         // stream's refill takes them, as a tail does.

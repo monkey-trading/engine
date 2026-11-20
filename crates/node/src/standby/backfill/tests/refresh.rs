@@ -18,9 +18,16 @@ async fn a_failed_takeover_leaves_the_copy_marked_as_it_was() {
         let dir = scratch_dir(&format!("backfill-takeover-{}", case.replace(' ', "-")));
         start(&followed(&served, &served), &dir, self::signers()).await.unwrap();
         let copied = crate::standby::chain::Chain::new(DOMAIN, signer);
-        crate::standby::finalize(&archive_client(false).unwrap(), (DOMAIN, signers), &origins, &dir, &unheld, copied)
-            .await
-            .expect_err("a takeover without its anchor");
+        crate::standby::finalize(
+            &archive_client(false).unwrap(),
+            (DOMAIN, signers, Default::default()),
+            &origins,
+            &dir,
+            &unheld,
+            copied,
+        )
+        .await
+        .expect_err("a takeover without its anchor");
         assert!(!needed(&dir), "{case}: the copy is no longer marked");
         assert!(!dir.join(REFRESH).exists(), "{case}: the refresh record outlived the takeover");
     }
@@ -52,7 +59,8 @@ async fn a_refresh_the_takeover_never_committed_is_dropped() {
         match crashed {
             true => start(&followed(&served, &served), &dir, signers()).await.unwrap(),
             false => {
-                let refused = replay_refreshed(&dir, DOMAIN, signers()).expect_err("the refreshed copy replayed");
+                let refused = replay_refreshed(&dir, (DOMAIN, Default::default()), signers())
+                    .expect_err("the refreshed copy replayed");
                 assert!(format!("{refused:#}").contains("which are dropped"), "{case}: {refused:#}");
             }
         }
@@ -81,7 +89,8 @@ async fn a_refresh_whose_drop_fails_keeps_the_refusal_and_its_record() {
     // A directory under a segment's name, which no removal of a file takes away.
     let stuck = dir.join(format!("{:020}.jsonl", last.last_seq + 1_000));
     std::fs::create_dir_all(stuck.join("held")).unwrap();
-    let refused = replay_refreshed(&dir, DOMAIN, signers()).expect_err("the refreshed copy replayed");
+    let refused =
+        replay_refreshed(&dir, (DOMAIN, Default::default()), signers()).expect_err("the refreshed copy replayed");
     let message = format!("{refused:#}");
     // The refusal, the replay's own: the segment the refresh added does not open beside the stuck one.
     assert!(message.contains("is followed by another segment"), "the refusal was lost: {message}");
@@ -110,10 +119,16 @@ async fn a_takeover_drops_a_refreshed_segment_its_replay_refuses() {
     drop(writer);
     let unheld = crate::checkpoints::Takeover { seq: u64::MAX, root: "0x00".into(), signer };
     let origins = [serve(&mirror).await];
-    let refused =
-        crate::standby::finalize(&archive_client(false).unwrap(), (DOMAIN, signers()), &origins, &dir, &unheld, copied)
-            .await
-            .expect_err("the takeover took a refreshed segment no replay admits");
+    let refused = crate::standby::finalize(
+        &archive_client(false).unwrap(),
+        (DOMAIN, signers(), Default::default()),
+        &origins,
+        &dir,
+        &unheld,
+        copied,
+    )
+    .await
+    .expect_err("the takeover took a refreshed segment no replay admits");
     assert!(format!("{refused:#}").contains("which are dropped"), "{refused:#}");
     assert_eq!(std::fs::read_to_string(dir.join(MANIFEST)).unwrap(), before, "the copy's listings");
     assert!(!dir.join(&altered.file).exists(), "the refreshed segment is still there");

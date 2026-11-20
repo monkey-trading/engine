@@ -27,7 +27,7 @@ use crate::history::HistoryPlan;
 use crate::history::derived::RowsStore;
 use crate::history::marks::Retentions;
 use crate::history::marks::fold::MarkFold;
-use crate::log::{LogEntry, MANIFEST, Manifest, PrefixRing};
+use crate::log::{LogEntry, MANIFEST, Manifest, PrefixRing, ReplayWorkers};
 use crate::log_check::answer::CheckedHeads;
 use crate::sequencer::recovery_scale::Base;
 use crate::sequencer::recovery_scale::flow::{Flow, Node, SEGMENT_COMMANDS};
@@ -86,12 +86,12 @@ pub(super) fn copy_log(from: &Path, to: &Path) -> anyhow::Result<()> {
 
 /// The member's replica of its copy in `dir`, built by one replay from the book as a member builds
 /// it, with the time it took: recording every command into a dashboard record, folding every mark,
-/// recording the checkpoints it verifies, writing each rollover's rows to `rows`, and checking the
-/// history index in `history` against every entry.
+/// recording the checkpoints it verifies, writing each rollover's rows to `rows`, checking the history
+/// index in `history` against every entry, and with the command seals checked ahead by `workers`.
 pub(super) fn build_replica(
     base: &Base,
     dir: &Path,
-    signer: AccountId,
+    (signer, workers): (AccountId, ReplayWorkers),
     (rows, history): (Arc<RowsStore>, &HistorySection),
 ) -> (Follower, Duration) {
     // Decoded before the clock starts, as the other replays' books are: a member's own build starts
@@ -106,9 +106,9 @@ pub(super) fn build_replica(
         plan.observe(entry);
         Ok(())
     };
-    let follower =
-        Follower::open_seeded(dir, SEGMENT_COMMANDS, (DOMAIN, signer, [signer].into()), records, fresh, observe)
-            .expect("the copy replays from the book");
+    let copy = (dir, SEGMENT_COMMANDS, workers);
+    let follower = Follower::open_seeded(copy, (DOMAIN, signer, [signer].into()), records, fresh, observe)
+        .expect("the copy replays from the book");
     (follower, started.elapsed())
 }
 

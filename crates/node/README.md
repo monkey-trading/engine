@@ -20,7 +20,7 @@ operator's signing tools.
 | Command | Purpose |
 | --- | --- |
 | `engine run` | Runs the trading server. `--new-key` seals new keys for a release that has none, `--predecessor <host:port>` takes the keys from the running release once the vault makes this release current, and `--standby` follows the operator in effect as a standby copy. |
-| `engine replay` | Replays a log directory, a downloaded archive or a single log file, and checks every state root and checkpoint signature. With `--attestation`, it also requires every checkpoint signer to be a verified enclave. |
+| `engine replay` | Replays a log directory, a downloaded archive or a single log file, and checks every state root and checkpoint signature. With `--attestation`, it also requires every checkpoint signer to be a verified enclave. It checks the instruction seals on one thread per core, or on the number `--replay-workers` names. |
 | `engine exit-proof` | Builds, from a published log alone, the proofs and vault calls with which an account recovers its funds through the vault's exit. |
 | `engine verify-attestation` | Checks an enclave's attestation against a release manifest. |
 | `engine verify-response`, `engine verify-frames` | Check a saved signed answer, or a saved signed stream connection, against the attested key. |
@@ -81,7 +81,7 @@ default. Every section refuses keys it does not know.
 
 | Sections | What they configure |
 | --- | --- |
-| `[node]`, `[logging]` | The API's address, the log directory and segment size, the checkpoint interval, client authentication and the log level |
+| `[node]`, `[logging]` | The API's address, the log directory and segment size, the checkpoint interval, client authentication, the threads that check instruction seals in a replay, and the log level |
 | `[api]` | Connection and request limits, timeouts, browser origins, the PROXY protocol and the ACME certificate |
 | `[tee]`, `[operator]` | Attestation, key sealing, the handover and secrets listeners, and the operator's public key |
 | `[custody]`, `[checkpoints]`, `[log_heads]` | The vault, its RPC providers, the operator registry's contracts, checkpoint posting and log head posting |

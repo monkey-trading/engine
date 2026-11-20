@@ -436,7 +436,7 @@ async fn scenario() {
     let dir = holder.stop().await;
     // The log carries signed withdrawals, which a replay checks against the enclave's key.
     let domain = crate::log::CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
-    let replayed = replay_path_with_trust(&dir, Some(domain), Some(signer)).expect("the log replays to its roots");
+    let replayed = replay_path_with_trust(&dir, Some(domain), Some(signer), Default::default()).unwrap();
     let engine = &replayed.engine;
     assert_eq!((engine.daily_turns().clone(), engine.operator().copied(), office_of(engine)), live);
     let commands = logged_commands(&dir);

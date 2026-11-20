@@ -184,6 +184,7 @@ fn a_new_key_refuses_old_key_checkpoints_the_vault_never_accepted() {
             None,
             None,
             None,
+            Default::default(),
         )
     };
     let error = read(&accepted).err().unwrap();

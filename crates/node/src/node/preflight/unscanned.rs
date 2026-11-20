@@ -162,7 +162,8 @@ async fn old_funded_anchor(name: &str) -> (NodeConfig, CheckpointParent) {
     assert!(!applied.await.unwrap().is_empty());
     drop(tx);
     task.await.unwrap().unwrap();
-    let mut replayed = replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer)).unwrap();
+    let mut replayed =
+        replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer), Default::default()).unwrap();
     assert_eq!(replayed.engine.custody_checkpoint(), None);
     assert_eq!(replayed.engine.house_cash(), Fixed::from_int(10));
     let parent = log_entries(&cfg.node.log_dir)
@@ -194,7 +195,7 @@ async fn old_funded_anchor(name: &str) -> (NodeConfig, CheckpointParent) {
     writer.append(&LogEntry::Checkpoint(cp.clone())).unwrap();
     writer.sync().unwrap();
     drop(writer);
-    let audit = replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer)).unwrap();
+    let audit = replay_path_with_trust(&cfg.node.log_dir, Some(domain), Some(signer), Default::default()).unwrap();
     assert_eq!(audit.engine.last_seq(), Some(cp.seq), "read-only root audit remains supported");
     assert!(matches!(log_entries(&cfg.node.log_dir).last(), Some(LogEntry::Checkpoint(last)) if last == &cp));
     (cfg, CheckpointParent { has_checkpoint: true, seq: cp.seq, root: cp.root.parse().unwrap() })
