@@ -321,6 +321,8 @@ impl Replay {
                 self.signed.insert((w.account, w.nonce));
             }
             LogEntry::Checkpoint(cp) => {
+                // The run of seals before the checkpoint is checked first: it is the earlier fault.
+                self.origin.end_run()?;
                 if cp.deferred_withdrawals {
                     self.deferred.extend(
                         self.approved.drain(..).map(|(account, amount, nonce)| (cp.seq, account, amount, nonce)),
@@ -387,8 +389,9 @@ impl Replay {
     /// What the entries applied so far replay to.
     pub(super) fn finish(mut self) -> Replayed {
         self.origin.stop_checking_ahead();
-        // A replay checking roots ahead settles its read (`settled`) before it finishes, taking its tree back.
+        // A replay settles its read (`settled`) before it finishes, taking its tree back and ending its run.
         assert!(!self.roots.on_thread(), "a replay finishes with its engine holding its tree");
+        assert!(!self.origin.run_open(), "a replay finishes with its last run of seals checked");
         self.anchor_unheld().expect("an engine holding its tree computes its root in place");
         let recovery_base = match self.recovery_origin {
             None => Some(RecoveryBase::Ungated),
@@ -451,11 +454,13 @@ pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
 
-/// Replays `entries`, a whole log held in memory (see `Replay`).
+/// Replays `entries`, a whole log held in memory (see `Replay`), its command seals checked at the end of
+/// each run (`SealChecks::RunEnds`).
 /// Error cases:
 /// - an entry fails replay (see `Replay::apply`)
 pub fn replay(entries: &[LogEntry]) -> anyhow::Result<Replayed> {
     let mut replay = Replay::default();
+    replay.check_run_ends();
     replay.check_roots_ahead();
     let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
     replay.settled(applied)?;
@@ -486,3 +491,5 @@ use signed::ensure_signed;
 
 #[cfg(test)]
 mod origin_tests;
+#[cfg(test)]
+mod run_ends_tests;

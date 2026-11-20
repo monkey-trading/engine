@@ -10,7 +10,8 @@
 //! root when the next checkpoint comes, or when it settles (`settled`): before it reports an error of
 //! its own or of its read, so a root that differs is reported at its checkpoint, ahead of any later
 //! entry's fault, and before it finishes, when it takes the tree back into its engine
-//! (`Engine::attach_tree`). At most one root is computed at a time.
+//! (`Engine::attach_tree`). At most one root is computed at a time. A replay checking its seals at the
+//! end of each run (`check_run_ends`) checks the open run the same way, after the root still due.
 
 use std::panic;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
@@ -23,7 +24,7 @@ use engine_core::merkle::tree::StateTree;
 use engine_core::merkle::{CommitInputs, TreeEvent};
 use tracing::warn;
 
-use crate::log::LogEntry;
+use crate::log::{LogEntry, SealChecks};
 use crate::sequencer::replay::Replay;
 
 /// Jobs the replay may send ahead of the root it waits for: a root's commit and the tree events of the
@@ -199,34 +200,57 @@ impl Replay {
         }
     }
 
-    /// Has this replay check the seals of the log at `path` ahead of it on `workers` (`check_seals_ahead`)
-    /// and compute its roots on a thread of their own (`check_roots_ahead`), as a whole replay does. The
-    /// caller settles its read (`settled`) before it finishes it.
-    pub(in crate::sequencer) fn check_ahead(&mut self, path: &std::path::Path, workers: crate::log::ReplayWorkers) {
-        self.check_seals_ahead(path, workers);
+    /// Has this replay check the seals of the log at `path` as `seals` says, ahead of it on workers or at
+    /// the end of each run (`check_seals_ahead`, `check_run_ends`), and compute its roots on a thread of
+    /// their own (`check_roots_ahead`), as a whole replay does. The caller settles its read (`settled`)
+    /// before it finishes it.
+    pub(in crate::sequencer) fn check_ahead(&mut self, path: &std::path::Path, seals: SealChecks) {
+        match seals {
+            SealChecks::Every(workers) => self.check_seals_ahead(path, workers),
+            SealChecks::RunEnds => self.check_run_ends(),
+        }
         self.check_roots_ahead();
     }
 
-    /// Applies the log's next entry (`apply_entry`), reporting, for an entry that fails, a root still
-    /// due that differs from the log's first: it is the earlier fault.
+    /// Has this replay check every later seal's form, and in full only the last seal of each run of one
+    /// signer's seals (`Origin::check_run_ends`), as `engine replay` does. The caller settles its read
+    /// (`settled`) before it finishes it, which checks the last run.
+    pub(in crate::sequencer) fn check_run_ends(&mut self) {
+        self.origin.check_run_ends();
+    }
+
+    /// Applies the log's next entry (`apply_entry`), reporting, for an entry that fails, an earlier fault
+    /// first (`earlier_fault`).
     /// Error cases:
     /// - as `apply_entry`
     pub(in crate::sequencer) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
-        self.apply_entry(entry).map_err(|failed| self.roots.check_due().err().unwrap_or(failed))
+        self.apply_entry(entry).map_err(|failed| self.earlier_fault().unwrap_or(failed))
     }
 
-    /// What `read`, this replay's read of a log, gives, with its roots settled: an error the read gives,
-    /// from an entry the replay or the caller refused or from the read itself, after any root still due
-    /// that differs from the log's, the earlier fault; and once the read succeeds, the last root checked
-    /// and the tree taken back into the engine, so `finish` hands on an engine that computes its own
-    /// roots. A replay that checks roots ahead settles its read with it.
+    /// What `read`, this replay's read of a log, gives, with its roots and seals settled: an error the
+    /// read gives, from an entry the replay or the caller refused or from the read itself, after any
+    /// earlier fault (`earlier_fault`); and once the read succeeds, the last root checked and the tree
+    /// taken back into the engine, so `finish` hands on an engine that computes its own roots, and then
+    /// the last run of seals checked. A replay that checks roots ahead or run ends settles its read with it.
     /// Error cases:
     /// - the read fails, or a root still due differs from the log's, or the root thread has stopped
+    /// - the last run's seal does not verify (`Origin::end_run`)
     pub(in crate::sequencer) fn settled<T>(&mut self, read: anyhow::Result<T>) -> anyhow::Result<T> {
         match read {
-            Err(failed) => Err(self.roots.check_due().err().unwrap_or(failed)),
-            Ok(read) => self.roots.take_back(&mut self.engine).map(|()| read),
+            Err(failed) => Err(self.earlier_fault().unwrap_or(failed)),
+            Ok(read) => {
+                self.roots.take_back(&mut self.engine)?;
+                self.origin.end_run()?;
+                Ok(read)
+            }
         }
+    }
+
+    /// A fault before the entry the replay is at, which it reports ahead of that entry's: a root still due
+    /// that differs from the log's, at the last checkpoint; else the open run's seal that does not verify,
+    /// over the commands since that checkpoint, the entry's own command among them once its seal is taken.
+    fn earlier_fault(&mut self) -> Option<anyhow::Error> {
+        self.roots.check_due().err().or_else(|| self.origin.end_run().err())
     }
 }
 

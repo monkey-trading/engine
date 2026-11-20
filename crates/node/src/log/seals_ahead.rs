@@ -33,6 +33,17 @@ const AHEAD: usize = 1024;
 #[serde(transparent)]
 pub struct ReplayWorkers(NonZeroUsize);
 
+/// How a replay checks its command seals.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SealChecks {
+    /// Every seal's form, and in full the last seal of each run of one signer's seals, which signs a
+    /// link chaining every command of the run (`Origin::check_run_ends`): `engine replay`'s check.
+    #[default]
+    RunEnds,
+    /// Every seal in full before its command applies, ahead of the replay on this many workers.
+    Every(ReplayWorkers),
+}
+
 /// The reader and workers checking a replay's command seals ahead of it; stopped and joined when
 /// dropped.
 pub(crate) struct SealsAhead {

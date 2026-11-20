@@ -19,7 +19,7 @@ use crate::config::HistorySection;
 use crate::history::derived::{Deriver, RowsStore};
 use crate::history::marks::{Retentions, Store};
 use crate::history::{History, HistoryCheck, PageQuery};
-use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, ReplayWorkers};
+use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, ReplayWorkers, SealChecks};
 use crate::node::marks::recovery_sink;
 use crate::sequencer::Sequencer;
 use crate::sequencer::recovery_scale::Base;
@@ -57,11 +57,11 @@ pub(super) struct Recovered {
 }
 
 /// `engine replay`'s replay of the log in `dir` from the book: every command's events, every
-/// checkpoint's root and signature, and the command seals, under `signer`, checked ahead by `workers`.
-pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId, workers: ReplayWorkers) -> Replayed {
+/// checkpoint's root and signature, and the command seals, under `signer`, checked as `seals` says.
+pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId, seals: SealChecks) -> Replayed {
     let engine = base.engine();
     let started = Instant::now();
-    let replayed = replay_path_from(engine, dir, signer, workers).expect("the log replays to its roots from the book");
+    let replayed = replay_path_from(engine, dir, signer, seals).expect("the log replays to its roots from the book");
     Replayed { commands: replayed.commands, checkpoints: replayed.checkpoints, took: started.elapsed() }
 }
 

@@ -84,7 +84,7 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
-        replay.check_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
+        replay.check_ahead(&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
         let mut fingerprint = Fingerprinter::new();
         let log = SegmentedLog::open_ahead(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;
@@ -189,7 +189,7 @@ fn candidate(
         Arc::new(catalog_store.clone()),
         Arc::new(move |root| probe.ensure_current(root)),
     ));
-    replay.check_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
+    replay.check_ahead(&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
     let suffix = SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
         replay.apply(&entry)?;
         if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)

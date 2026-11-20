@@ -58,7 +58,7 @@ use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::config::HistorySection;
 use crate::history::derived::RowsStore;
 use crate::load_scenario::{CRYPTO_RATES, RWA_MOVES};
-use crate::log::ReplayWorkers;
+use crate::log::{ReplayWorkers, SealChecks};
 use crate::sequencer::recovery_scale::flow::{Flow, Node, Sequenced};
 use crate::sequencer::recovery_scale::handover::{
     Switch, build_replica, copy_log, hand_over, log_bytes, member_config,
@@ -210,7 +210,7 @@ async fn run() {
     println!("RECOVERY log seq={} bytes={log_total} rss_mib={}", last.seq, rss_mib());
 
     // `engine replay`'s replay, then the restart from the cache.
-    let replayed = replay(&base, &log, signer, workers);
+    let replayed = replay(&base, &log, signer, SealChecks::RunEnds);
     print_replay("engine_replay", &replayed);
     let restarted = cache::restart(&cfg, key.clone(), (interval, end_ts), &run.join("restart"))
         .await
@@ -324,6 +324,15 @@ struct Day {
 fn rates(engine: &Engine) -> BTreeMap<MarketId, f64> {
     let crypto: BTreeMap<MarketId, f64> = CRYPTO_RATES.into_iter().collect();
     engine.markets().keys().map(|id| (*id, crypto.get(id).copied().unwrap_or(RWA_MOVES * RWA_CONNECTIONS))).collect()
+}
+
+/// The CPU time the process has used on all its threads, in seconds, from `ps`'s `[[dd-]hh:]mm:ss[.ss]`.
+fn cpu_secs() -> f64 {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("ps").args(["-o", "time=", "-p", &pid]).output().expect("ps runs");
+    let time = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let (days, clock) = time.split_once('-').map_or((0.0, time.as_str()), |(d, c)| (d.parse().unwrap_or(0.0), c));
+    days * 86_400.0 + clock.split(':').fold(0.0, |total, part| total * 60.0 + part.parse::<f64>().unwrap_or(0.0))
 }
 
 /// The process's resident memory, in MiB.
