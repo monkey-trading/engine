@@ -69,7 +69,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
         expected.push(queued.try_recv().unwrap());
     }
     let offset = seq.outbox.last().unwrap().offset;
-    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap(), &expected[1].checkpoint);
+    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
     assert_eq!(
         context.base_work.as_ref().unwrap().checkpoint.seq,
         base,

@@ -175,7 +175,7 @@ impl Node {
             }
         }
         let offset = offset.unwrap();
-        let context = self.seq.recovery_context(self.seq.snapshot_base.clone().unwrap(), cp);
+        let context = self.seq.recovery_context(self.seq.snapshot_base.clone().unwrap());
         let payload = self.seq.snapshot_payload(cp.clone(), self.seq.progress.clone(), context, offset).unwrap();
         let cache = self.cache();
         snapshot::write(&cache, &payload, &self.seq.key).unwrap();

@@ -90,7 +90,7 @@ impl Sequencer {
             // A missing finalized witness cannot become a digest or zero accounting.
             return Ok(());
         };
-        let context = self.recovery_context(base, &checkpoint);
+        let context = self.recovery_context(base);
         let deferred = Deferred { checkpoint, progress: self.progress.clone(), context };
         if self.captures.due.is_some_and(|due| self.engine.now() < due) {
             self.captures.uncaptured = Some(deferred);
@@ -101,7 +101,8 @@ impl Sequencer {
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
     /// status may have moved on since; with a capture in flight, keeps it for shutdown instead, and
-    /// the capture stays due. No command has been applied since the checkpoint.
+    /// the capture stays due. No command has been applied since the checkpoint, and no withdrawal
+    /// entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
@@ -159,9 +160,9 @@ impl Sequencer {
         Ok(())
     }
 
-    /// The recovery facts at the checkpoint just written, `checkpoint`: concrete outstanding work,
-    /// accounting, deferred withdrawals, the payouts owed, and the finalized base.
-    pub(super) fn recovery_context(&self, base: snapshot::RecoveryBase, checkpoint: &Checkpoint) -> RecoveryContext {
+    /// The recovery facts at the checkpoint just written: concrete outstanding work, accounting,
+    /// deferred withdrawals, and the finalized base. `snapshot_fields` adds the payouts owed.
+    pub(super) fn recovery_context(&self, base: snapshot::RecoveryBase) -> RecoveryContext {
         RecoveryContext {
             commands: self.next_seq,
             command_prefix: self.command_prefix,
@@ -173,18 +174,22 @@ impl Sequencer {
             base,
             base_work: self.snapshot_anchor_work.clone(),
             work: self.snapshot_work.clone(),
-            payouts: self.owed_payouts(checkpoint),
+            payouts: None,
         }
     }
 
-    /// The approvals still owed a delivery at the checkpoint just written, `checkpoint`, in payout
-    /// order, with the roots of the earlier checkpoints their proofs were taken or are being taken at;
-    /// `None` while the engine holds no approval. The gate holds each unpaid approval and its latest
-    /// authorization; without one, mock custody owes only the approvals it has yet to sign.
+    /// The approvals still owed a delivery at `checkpoint`, which the log ends at, in payout order,
+    /// with the roots of the earlier checkpoints their proofs were taken or are being taken at; `None`
+    /// while the engine holds no approval. The gate holds each unpaid approval and its latest
+    /// authorization; without one, mock custody owes only the approvals it has yet to sign. Built only
+    /// for a capture that is taken, it costs a clone of each owed approval's latest authorization.
     fn owed_payouts(&self, checkpoint: &Checkpoint) -> Option<snapshot::Payouts> {
         self.engine.withdrawal_approvals().next()?;
         let mut owed: Vec<_> = match &self.gate {
-            Some(gate) => (gate.payouts.iter().map(|(&key, payout)| (key, payout.order.1, payout.latest.clone())))
+            Some(gate) => gate
+                .payouts
+                .iter()
+                .map(|(&key, payout)| (key, payout.order.1, payout.latest.clone()))
                 .chain(gate.backlog.iter().map(|(key, index, latest)| (*key, *index, latest.clone())))
                 .collect(),
             None => self.captures.unsigned.iter().map(|&(key, index)| (key, index, None)).collect(),
@@ -266,7 +271,8 @@ impl Sequencer {
     }
 
     /// A cache's fields at this checkpoint, whose entry is at `offset`, with the progress and
-    /// recovery facts it had when written, but the engine, which `encoding` gives.
+    /// recovery facts it had when written and the payouts it owes, but the engine, which `encoding`
+    /// gives.
     /// Error cases:
     /// - recovery context validation fails
     fn snapshot_fields(
@@ -276,6 +282,7 @@ impl Sequencer {
         context: RecoveryContext,
         offset: crate::log::Offset,
     ) -> anyhow::Result<Snapshot> {
+        let context = RecoveryContext { payouts: self.owed_payouts(&checkpoint), ..context };
         let snapshot = Snapshot {
             schema: 2,
             chain_id: self.chain_id,

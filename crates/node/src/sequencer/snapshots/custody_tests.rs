@@ -72,7 +72,7 @@ fn a_gated_cache_restores_canonical_coverage_and_refuses_inherited_provenance() 
     let last = last.unwrap();
     assert_eq!((last.deposits, last.coverage), (2, DepositCoverage::Canonical));
     let offset = seq.outbox.last().unwrap().offset;
-    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap(), &last.checkpoint);
+    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
     assert_eq!(context.deferred.len(), 1, "the approval awaits its checkpoint");
     let captured = seq.snapshot_payload(last.checkpoint.clone(), seq.progress.clone(), context, offset).unwrap();
     seq.flush().unwrap();
@@ -160,7 +160,7 @@ fn a_cache_holding_a_v22_approval_restores_its_payouts_as_full_replay_does() {
     }
     let last = last.unwrap();
     let offset = seq.outbox.last().unwrap().offset;
-    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap(), &last.checkpoint);
+    let context = seq.recovery_context(seq.snapshot_base.clone().unwrap());
     assert!(context.deferred.is_empty(), "V22 approvals wait in the payout gate, not the deferred list");
     let captured = seq.snapshot_payload(last.checkpoint.clone(), seq.progress.clone(), context, offset).unwrap();
     seq.flush().unwrap();
