@@ -1,13 +1,14 @@
 //! From `V86` a close-out step scores a group's later members at the NAV `Engine::house_nav` reads once
 //! the earlier fills are booked, which values each closed position at its mark, so a member's projected
 //! stress level is the one its fill pays even where a mark stands apart from the index the account is
-//! valued and filled at (#1084). Before `V86` the step took the NAV from the index. Each case runs under
-//! the close-out oracle, which checks that every fill reads the NAV its step scored it at.
+//! valued and filled at (#1084). Before `V86` the step took the NAV from the index. Outside a deferred catch-up's
+//! check, a log brings every market to a close-out's time before it runs, so these cases set a mark apart from its
+//! index by editing the encoded state. Each case runs under the close-out oracle, which checks that every fill reads the NAV its step scored
+//! it at.
 
 use std::cell::Cell;
 
 use super::*;
-use engine_core::CloseoutOracle;
 use engine_core::fixed::Rounding;
 
 const V85: ProtocolVersion = ProtocolVersion::V85;
@@ -80,30 +81,36 @@ fn from_v86_a_group_whose_members_can_trade_closes_whole_or_waits_whatever_its_m
 
 #[test]
 fn from_v86_a_winning_first_leg_and_fractional_holdings_score_the_later_member_at_the_nav_it_reads() {
-    // A pair holder, BTC long against ETH short, and a second client holding the other way round, each in
-    // sizes off whole units by up to a dollar's worth, so each market's clients' PnL at the mark rounds apart
-    // from the closed position's own. BTC rises, then ETH rises further: the pair closes out, BTC first at a
-    // gain that pays the profit fee, and the oracle checks ETH's fill reads the NAV the step scored it at.
+    // A pair holder, BTC long against ETH short, and a second client holding the other way round, at a BTC price
+    // and in sizes off whole units, so BTC's clients' PnL at the mark, rounded once over the market, moves by other
+    // than the closed position's own PnL rounded alone. BTC rises, then ETH rises further: the pair closes out, BTC
+    // first at a gain that pays the profit fee, and the oracle checks ETH's fill reads the NAV the step scored it at.
     let config = Config { cases: 24, rng_seed: RngSeed::Fixed(0x1086), failure_persistence: None, ..Config::default() };
-    let winning_first_legs = Cell::new(0);
+    let (winning_first_legs, rounded_apart) = (Cell::new(0), Cell::new(0));
     let strategy = (0i64..1_000_000_000, 0i64..1_000_000_000, 100i64..1_000, 3_000i64..6_000, 1i64..20);
     TestRunner::new(config)
-        .run(&strategy, |(btc_odd, eth_odd, btc_up, eth_up, floor)| {
+        .run(&strategy, |(odd, price_odd, btc_up, eth_up, floor)| {
             let mut h = genesis_with_grid(V86, pairs(floor * 500), 750, 0);
             checked(&mut h);
             let (a, b) = (client(&mut h, 1, "60000"), client(&mut h, 2, "1000000"));
-            h.price(BTC, "100000");
+            let open = f("100000") + Fixed::from_raw(i128::from(price_odd));
+            h.price(BTC, &open.to_string());
             h.price(ETH, "4000");
-            let qty = |dollars: i64, odd: i64, price: &str| {
-                (Fixed::from_int(dollars) + Fixed::from_raw(i128::from(odd))).div_rounded(f(price), Rounding::Down)
+            let qty = |dollars: i64, price: Fixed| {
+                let notional = Fixed::from_int(dollars) + Fixed::from_raw(i128::from(odd));
+                notional.div_rounded(price, Rounding::Down).to_string()
             };
             for (client, side, dollars) in [(&a, Side::Buy, 200_000), (&b, Side::Sell, 50_000)] {
-                only_fill(&trade(&mut h, client, BTC, side, &qty(dollars, btc_odd, "100000").to_string(), "100000"));
-                let opposite = if side == Side::Buy { Side::Sell } else { Side::Buy };
-                only_fill(&trade(&mut h, client, ETH, opposite, &qty(dollars, eth_odd, "4000").to_string(), "4000"));
+                only_fill(&trade(&mut h, client, BTC, side, &qty(dollars, open), &open.to_string()));
+                only_fill(&trade(&mut h, client, ETH, side.opposite(), &qty(dollars, f("4000")), "4000"));
             }
-            let btc = f("100000") + f("100000").mul_bps(btc_up);
-            h.price(BTC, &btc.to_string());
+            h.price(BTC, &(open + open.mul_bps(btc_up)).to_string());
+            let market = &h.engine.markets()[&BTC];
+            let (held, mark) = (h.engine.accounts()[&a.account].position(BTC), market.mark.expect("priced"));
+            let clients = |qty: Fixed, cost: Fixed| mark.mul(qty) - cost;
+            let moved = clients(market.client_qty, market.client_cost)
+                - clients(market.client_qty - held.qty, market.client_cost - held.cost());
+            let apart = moved != held.unrealised(mark, V86);
             let events = h.price(ETH, &(f("4000") + f("4000").mul_bps(eth_up)).to_string());
             let closed: Vec<&Fill> =
                 fills(&events).into_iter().filter(|fill| fill.account == a.account && fill.liquidation).collect();
@@ -112,19 +119,16 @@ fn from_v86_a_winning_first_leg_and_fractional_holdings_score_the_later_member_a
                 && first.profit_fee.is_positive()
             {
                 winning_first_legs.set(winning_first_legs.get() + 1);
+                rounded_apart.set(rounded_apart.get() + u32::from(apart));
             }
             Ok(())
         })
         .unwrap();
     assert!(winning_first_legs.get() > 0, "no case closed the pair with a winning first leg");
+    assert!(rounded_apart.get() > 0, "no such case moved the market's PnL by other than the position's own");
 }
 
 // ── Helpers ──
-
-/// Runs `h`'s engine under the close-out oracle from now on; an engine decoded afresh runs without it.
-fn checked(h: &mut Harness) {
-    h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
-}
 
 /// Takes ETH's close-spread ceiling away and raises stress level 1's spread to the whole price, so ETH's close
 /// does not price at level 1, and marks BTC at `btc_mark`.

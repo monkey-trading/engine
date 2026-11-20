@@ -183,7 +183,7 @@ fn a_groups_later_member_is_scored_at_the_nav_the_gap_starts_earlier_fills_leave
     // Nikkei, which does, would close alone. From `V86` the NAV is `Engine::house_nav`'s, at the same marks.
     for version in [V81, ProtocolVersion::V86] {
         let mut h = commodity_gap_book(version, "16600");
-        h.engine.set_closeout_oracle(engine_core::CloseoutOracle { verify: true, ..Default::default() });
+        checked(&mut h);
         let events = at_the_gap(&mut h);
         let closed: Vec<MarketId> =
             fills(&events).into_iter().filter(|fill| fill.liquidation).map(|fill| fill.market).collect();

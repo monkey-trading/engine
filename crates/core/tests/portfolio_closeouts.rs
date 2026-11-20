@@ -16,11 +16,11 @@ use common::events::{fills, only_fill};
 use common::portfolio::{genesis_with_grid, pairs};
 use common::weekend::{GOLD, OIL, client};
 use common::{AAPL, BTC, Client, ETH, Harness, f};
-use engine_core::Fixed;
 use engine_core::event::{Event, Fill};
 use engine_core::portfolio::PortfolioGrid;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Side};
+use engine_core::{CloseoutOracle, Fixed};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 
@@ -244,6 +244,11 @@ fn eth_capped_at_the_house_nav(
     state["params"]["stress_levels"][1]["trigger"] = serde_json::json!({ "utilisation_bps": 10_000 });
     h.engine = serde_json::from_value(state).expect("the engine decodes");
     assert_eq!(h.engine.house_nav(), eth_notional(h) + margin);
+}
+
+/// Runs `h`'s engine under the close-out oracle from now on; an engine decoded afresh runs without it.
+fn checked(h: &mut Harness) {
+    h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
 }
 
 /// `client`'s equity and the close-out level of the requirement its close-out reads, at the marks.
