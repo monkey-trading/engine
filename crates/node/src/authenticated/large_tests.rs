@@ -130,7 +130,8 @@ fn workspace_hasher_matches_published_sha256_jmt_roots_and_proofs() -> Result<()
     let (dir, _store) = fresh()?;
     let conn = raw(&dir)?;
     let empty = Root::empty([57; 32]);
-    let reader = crate::authenticated::reader::Reader::new(&conn, &empty, true)?;
+    let checked = Default::default();
+    let reader = crate::authenticated::reader::Reader::new(&conn, &empty, true, &checked)?;
     let key = crate::authenticated::key_hash(&empty.namespace, b"same key")?;
     let updates = vec![(key, Some(b"same exact value".to_vec()))];
     let custom = jmt::JellyfishMerkleTree::<_, crate::authenticated::Hasher>::new(&reader);

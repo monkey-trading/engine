@@ -1,7 +1,7 @@
 //! Point lookups authenticated before upstream traversal, within one SQLite snapshot.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
 use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
@@ -11,33 +11,71 @@ use rusqlite::{Connection, params};
 use crate::authenticated::codec;
 use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
+/// The most nodes an operation keeps checked: a writing reader's node budget.
+pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
+
+/// The nodes one operation has checked against an authenticated parent, each with the hash it was
+/// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed once
+/// per operation until the operation has checked its limit of nodes and forgotten them, and a reader
+/// takes it only where its own checked parent names that hash.
+pub(super) struct Checked {
+    nodes: RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>,
+    limit: usize,
+}
+
 pub(super) struct Reader<'a> {
     conn: &'a Connection,
     root: Root,
     cache: RefCell<BTreeMap<NodeKey, Node>>,
+    /// The parents whose children this reader has loaded and checked.
+    prepared: RefCell<BTreeSet<NodeKey>>,
+    checked: &'a Checked,
     reads_left: Cell<usize>,
     bytes_left: Cell<usize>,
 }
 
+impl Default for Checked {
+    /// An operation's checked nodes, at most `CHECKED_NODES` at a time.
+    fn default() -> Self {
+        Self { nodes: RefCell::default(), limit: CHECKED_NODES }
+    }
+}
+
+#[cfg(test)]
+impl Checked {
+    /// An operation's checked nodes, at most `limit` at a time.
+    pub(super) fn with_limit(limit: usize) -> Self {
+        Self { nodes: RefCell::default(), limit }
+    }
+
+    /// The nodes recorded, for a test to inspect or forge.
+    pub(super) fn nodes(&self) -> &RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>> {
+        &self.nodes
+    }
+}
+
 impl<'a> Reader<'a> {
-    /// Creates bounded per-operation state, authenticating the root before it can be traversed.
+    /// Creates bounded per-operation state, authenticating the root before it can be traversed, with
+    /// the nodes the operation has checked so far.
     /// Error cases:
     /// - the root is absent, malformed, or differs from the caller's trusted hash
-    pub(super) fn new(conn: &'a Connection, root: &Root, writing: bool) -> Result<Self> {
+    pub(super) fn new(conn: &'a Connection, root: &Root, writing: bool, checked: &'a Checked) -> Result<Self> {
         root.validate()?;
         let keys = if writing { PHYSICAL_UPDATES } else { 1 };
-        let nodes = 1 + keys * 64 * 16;
+        let nodes = node_budget(keys);
         let reader = Self {
             conn,
             root: root.clone(),
             cache: RefCell::new(BTreeMap::new()),
+            prepared: RefCell::new(BTreeSet::new()),
+            checked,
             reads_left: Cell::new(nodes + keys * 8),
             bytes_left: Cell::new(nodes * MAX_NODE_BYTES + keys * MAX_STORED_VALUE * 4),
         };
         if let Some(version) = root.version {
             let key = codec::root_key(version)?;
-            let node = reader.fetch(&key)?;
-            ensure!(codec::hash(&node) == root.hash, "root node hash mismatch");
+            let node =
+                reader.recorded(&key, root.hash).map_or_else(|| reader.check(&key, root.hash, "root node"), Ok)?;
             reader.cache.borrow_mut().insert(key, node);
         }
         Ok(reader)
@@ -134,14 +172,15 @@ impl<'a> Reader<'a> {
     /// - a direct child is unavailable, malformed, or inconsistent with its authenticated parent
     fn prepare_children(&self, key: &NodeKey, node: &Node) -> Result<()> {
         let Node::Internal(internal) = node else { return Ok(()) };
+        if self.prepared.borrow().contains(key) {
+            return Ok(());
+        }
         for (nibble, child) in internal.children_sorted() {
             let child_key = codec::child_key(key, u8::from(nibble), child.version)?;
-            let cached = self.cache.borrow().get(&child_key).cloned();
-            let loaded = match cached {
+            let loaded = match self.recorded(&child_key, child.hash) {
                 Some(node) => node,
-                None => self.fetch(&child_key)?,
+                None => self.check(&child_key, child.hash, "child")?,
             };
-            ensure!(codec::hash(&loaded) == child.hash, "child hash mismatch");
             let count = match &loaded {
                 Node::Null => bail!("null child"),
                 Node::Leaf(_) => {
@@ -156,7 +195,29 @@ impl<'a> Reader<'a> {
             ensure!(count == child.leaf_count(), "child leaf count mismatch");
             self.cache.borrow_mut().insert(child_key, loaded);
         }
+        self.prepared.borrow_mut().insert(key.clone());
         Ok(())
+    }
+
+    /// The node at `key` the operation has checked to hash to `hash`, if it has.
+    fn recorded(&self, key: &NodeKey, hash: [u8; 32]) -> Option<Node> {
+        self.checked.nodes.borrow().get(key).filter(|(_, checked)| *checked == hash).map(|(node, _)| node.clone())
+    }
+
+    /// Fetches the node at `key`, checks that it hashes to `hash`, its authenticated parent's for it, and
+    /// records it for the operation's other reads, forgetting every recorded node first once the operation
+    /// holds its limit of them, so an operation of any size holds no more than one writing reader may.
+    /// Error cases:
+    /// - the node is unavailable or malformed, or hashes otherwise (a `what` hash mismatch)
+    fn check(&self, key: &NodeKey, hash: [u8; 32], what: &str) -> Result<Node> {
+        let node = self.fetch(key)?;
+        ensure!(codec::hash(&node) == hash, "{what} hash mismatch");
+        let mut checked = self.checked.nodes.borrow_mut();
+        if checked.len() >= self.checked.limit {
+            checked.clear();
+        }
+        checked.insert(key.clone(), (node.clone(), hash));
+        Ok(node)
     }
 
     /// Charges one indexed SQL operation before it executes.
@@ -237,4 +298,9 @@ impl TreeReader for Reader<'_> {
     fn get_rightmost_leaf(&self) -> Result<Option<(NodeKey, LeafNode)>> {
         bail!("rightmost-leaf scans are unsupported")
     }
+}
+
+/// The nodes a reader of `keys` point paths may load: the root and each path's 64 levels of 16 children.
+const fn node_budget(keys: usize) -> usize {
+    1 + keys * 64 * 16
 }

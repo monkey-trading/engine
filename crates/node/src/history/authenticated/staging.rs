@@ -3,11 +3,17 @@
 use anyhow::Result;
 
 use crate::authenticated::{Lease, Root, Store};
+use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
 use crate::history::authenticated::overlay::Overlay;
 use crate::history::authenticated::state::{STATE_KEY, State};
 
-/// A physical staging preference, not a bound on commands, payloads, accounts, or expiry.
-pub(super) const STAGED_KEYS: usize = 32;
+/// A physical staging preference, not a bound on commands, payloads, accounts, or expiry: about the
+/// keys one update of launch flow's commands writes, so such an update commits about once.
+pub(super) const STAGED_KEYS: usize = 128;
+
+/// The value bytes a stage holds before it commits, proved old values and staged ones, whatever its keys:
+/// 32 payload chunks, which a large event's chunks, written or expired, reach well before `STAGED_KEYS`.
+pub(super) const STAGED_BYTES: usize = 32 * PAYLOAD_CHUNK_BYTES;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
@@ -33,20 +39,15 @@ impl Staged {
     /// - private-root lease admission fails
     pub fn new(store: &Store, root: &Root, mut state: State) -> Result<Self> {
         state.complete = false;
-        Ok(Self {
-            store: store.clone(),
-            root: root.clone(),
-            state,
-            overlay: Overlay::new(store, root),
-            _pin: store.lease(root)?,
-        })
+        let pin = store.lease(root)?;
+        Ok(Self { store: store.clone(), root: root.clone(), state, overlay: Overlay::session(store, &pin), _pin: pin })
     }
 
     /// Commits after finite work; the caller finishes one small header operation before this check.
     /// Error cases:
     /// - any exact update proof, durable commit, lease, or observer failure
     pub fn flush_if_full(&mut self, observe: &mut impl FnMut(&Root, StageInfo) -> Result<()>) -> Result<()> {
-        if self.overlay.len() >= STAGED_KEYS {
+        if self.overlay.len() >= STAGED_KEYS || self.overlay.held_bytes() >= STAGED_BYTES {
             self.flush(observe)?;
         }
         Ok(())
@@ -76,8 +77,8 @@ impl Staged {
         let root = self.store.update(&self.root, updates)?;
         let pin = self.store.lease(&root)?;
         self.root = root;
+        self.overlay = Overlay::session(&self.store, &pin);
         self._pin = pin;
-        self.overlay = Overlay::new(&self.store, &self.root);
         if !self.state.complete {
             observe(&self.root, info)?;
         }

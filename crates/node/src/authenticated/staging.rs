@@ -8,11 +8,14 @@ use jmt::{KeyHash, SimpleHasher};
 use rusqlite::Connection;
 
 use crate::authenticated::blobs::{self, Blob, Points};
+use crate::authenticated::reader::Checked;
 use crate::authenticated::receipts::{self, Queue};
 use crate::authenticated::{Hasher, MAX_UPDATES, Root, batch};
 
 pub(super) struct Staging<'a> {
     conn: &'a Connection,
+    /// The nodes the update has checked, which every batch's reads share.
+    checked: &'a Checked,
     pub root: Root,
     /// Descriptor reads under the current staged root, renewed whenever a batch advances it.
     points: Points<'a>,
@@ -22,14 +25,16 @@ pub(super) struct Staging<'a> {
 }
 
 impl<'a> Staging<'a> {
-    /// Proves the original maintenance queue before accepting logical changes.
+    /// Proves the original maintenance queue before accepting logical changes, sharing the nodes
+    /// `checked` across the update's reads.
     /// Error cases:
     /// - a queue/root proof or cursor check fails
-    pub(super) fn new(conn: &'a Connection, root: &Root) -> Result<Self> {
+    pub(super) fn new(conn: &'a Connection, root: &Root, checked: &'a Checked) -> Result<Self> {
         Ok(Self {
             conn,
+            checked,
             root: root.clone(),
-            points: Points::new(conn, root),
+            points: Points::new(conn, root, checked),
             queue: receipts::queue(conn, root)?,
             pending: BTreeMap::new(),
             wrote: false,
@@ -95,10 +100,10 @@ impl<'a> Staging<'a> {
             return Ok(());
         }
         let changes = std::mem::take(&mut self.pending).into_iter().collect();
-        let prepared = batch::prepare(self.conn, &self.root, changes, self.queue.clone(), false)?;
-        batch::persist(self.conn, &prepared)?;
+        let prepared = batch::prepare(self.conn, &self.root, changes, self.queue.clone(), false, self.checked)?;
+        batch::persist(self.conn, &prepared, self.checked)?;
         self.root = prepared.root;
-        self.points = Points::new(self.conn, &self.root);
+        self.points = Points::new(self.conn, &self.root, self.checked);
         self.queue.hi = self.root.version.ok_or_else(|| anyhow::anyhow!("missing staged version"))? + 1;
         self.wrote = true;
         Ok(())

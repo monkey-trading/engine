@@ -3,7 +3,9 @@
 use std::sync::{Arc, Weak};
 
 use anyhow::{Result, ensure};
+use rusqlite::Connection;
 
+use crate::authenticated::reader::Checked;
 use crate::authenticated::{Inner, Root, Store, blobs, caller_key, db};
 
 /// A blocking reader/snapshot owns a clone until it actually finishes, independently of async waiters.
@@ -11,6 +13,15 @@ use crate::authenticated::{Inner, Root, Store, blobs, caller_key, db};
 pub struct Lease {
     store: Store,
     pin: Arc<Pin>,
+}
+
+/// Reads of one leased root over one read connection and one SQLite transaction, sharing the nodes they
+/// check, for a caller that reads many keys of one root in a row. From its first read until it is
+/// dropped it holds the database's shared lock, so its caller drops it before writing the store.
+pub struct Session {
+    lease: Lease,
+    conn: Option<Connection>,
+    checked: Checked,
 }
 
 pub(super) struct Pin {
@@ -143,9 +154,14 @@ impl Lease {
         let mut conn = self.store.read_connection()?;
         let tx = conn.transaction()?;
         db::validate(&tx)?;
-        let value = blobs::read(&mut blobs::Points::new(&tx, root), key)?;
+        let value = blobs::read(&mut blobs::Points::new(&tx, root, &Checked::default()), key)?;
         tx.commit()?;
         Ok(value)
+    }
+
+    /// A session of reads of this lease's root; nothing is read before its first read.
+    pub fn session(&self) -> Session {
+        Session { lease: self.clone(), conn: None, checked: Checked::default() }
     }
 
     /// Streams proved chunks without allocating the logical length; output is provisional until success.
@@ -157,9 +173,29 @@ impl Lease {
         let mut conn = self.store.read_connection()?;
         let tx = conn.transaction()?;
         db::validate(&tx)?;
-        let length = blobs::read_to(&mut blobs::Points::new(&tx, root), key, &mut sink)?;
+        let length = blobs::read_to(&mut blobs::Points::new(&tx, root, &Checked::default()), key, &mut sink)?;
         tx.commit()?;
         Ok(length)
+    }
+}
+
+impl Session {
+    /// As `Lease::read`, over the session's connection and transaction, whose schema is checked once,
+    /// at its first read.
+    /// Error cases:
+    /// - as `Lease::read`
+    pub fn read(&mut self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let key = caller_key(&self.lease.root().namespace, key)?;
+        let conn = match &mut self.conn {
+            Some(conn) => conn,
+            None => {
+                let conn = self.lease.store.read_connection()?;
+                conn.execute_batch("BEGIN")?;
+                db::validate(&conn)?;
+                self.conn.insert(conn)
+            }
+        };
+        blobs::read(&mut blobs::Points::new(conn, self.lease.root(), &self.checked), key)
     }
 }
 

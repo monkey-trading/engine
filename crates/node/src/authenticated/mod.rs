@@ -22,7 +22,7 @@ mod receipts;
 mod staging;
 mod versions;
 mod write;
-pub use versions::Lease;
+pub use versions::{Lease, Session};
 mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
@@ -201,6 +201,8 @@ fn key_hash(namespace: &[u8; 32], key: &[u8]) -> Result<jmt::KeyHash> {
     Ok(jmt::KeyHash(hasher.finalize()))
 }
 
+#[cfg(test)]
+mod checked_tests;
 #[cfg(test)]
 mod gc_tests;
 #[cfg(test)]

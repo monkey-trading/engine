@@ -20,6 +20,7 @@ use crate::test_support::scratch_dir;
 
 mod api;
 mod batch;
+mod bench;
 mod derived;
 mod faults;
 mod maintenance;

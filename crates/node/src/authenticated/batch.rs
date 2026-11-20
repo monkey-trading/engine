@@ -7,7 +7,7 @@ use jmt::storage::TreeUpdateBatch;
 use jmt::{JellyfishMerkleTree, RootHash};
 use rusqlite::{Connection, params};
 
-use crate::authenticated::reader::Reader;
+use crate::authenticated::reader::{Checked, Reader};
 use crate::authenticated::receipts::{Queue, Receipt, RetiredRow, queue_key, receipt_key};
 use crate::authenticated::{
     Changes, Hasher, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, MAX_STORED_VALUE, MAX_UPDATES, PHYSICAL_UPDATES, Root, codec,
@@ -18,7 +18,8 @@ pub(super) struct Prepared {
     pub batch: TreeUpdateBatch,
 }
 
-/// Proves placeholder and final transitions from the same old root and requires exact retirements.
+/// Proves placeholder and final transitions from the same old root and requires exact retirements,
+/// with the nodes the operation has `checked`.
 /// Error cases:
 /// - wrong queue/key bounds, failed old/new proofs, overflow or different two-pass retirement sets
 pub(super) fn prepare(
@@ -27,6 +28,7 @@ pub(super) fn prepare(
     changes: Changes,
     mut queue: Queue,
     maintenance: bool,
+    checked: &Checked,
 ) -> Result<Prepared> {
     ensure!(changes.len() <= MAX_UPDATES, "physical batch must be chunked");
     let version = old
@@ -48,7 +50,7 @@ pub(super) fn prepare(
     let mut receipt = Receipt { old: old.clone(), version, maintenance, rows: Vec::new() };
     exact.insert(receipt_key, Some(serde_json::to_vec(&receipt)?));
     // Both passes read the same immutable old root, so they share one checked node cache.
-    let reader = Reader::new(conn, old, true)?;
+    let reader = Reader::new(conn, old, true, checked)?;
     let preliminary = generate(&reader, old, exact.iter().map(|(k, v)| (*k, v.clone())).collect())?;
     receipt.rows = retirements(&reader, old, &preliminary.batch, &preliminary.exact, version)?;
     ensure!(receipt.rows.len() <= MAX_RECEIPT_ROWS, "receipt exceeds derived physical-batch envelope");
@@ -150,10 +152,11 @@ fn retirements(
     Ok(rows.into_iter().collect())
 }
 
-/// Inserts immutable nodes and live values, then proves every exact written result in this transaction.
+/// Inserts immutable nodes and live values, then proves every exact written result in this transaction,
+/// reading each new node back, with the nodes the operation has `checked`.
 /// Error cases:
 /// - version collision, malformed generated node or mismatch in actual persisted bytes
-pub(super) fn persist(conn: &Connection, prepared: &Prepared) -> Result<()> {
+pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked) -> Result<()> {
     let root = &prepared.root;
     let version = root.version.ok_or_else(|| anyhow::anyhow!("unversioned generated root"))?;
     for (key, node) in prepared.batch.node_batch.nodes() {
@@ -174,7 +177,7 @@ pub(super) fn persist(conn: &Connection, prepared: &Prepared) -> Result<()> {
             )?;
         }
     }
-    let reader = Reader::new(conn, root, true)?;
+    let reader = Reader::new(conn, root, true, checked)?;
     for ((_, key), expected) in prepared.batch.node_batch.values() {
         ensure!(reader.read(*key)?.as_deref() == expected.as_deref(), "persisted exact physical value mismatch");
     }

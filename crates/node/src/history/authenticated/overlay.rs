@@ -6,19 +6,36 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::authenticated::{Root, Store};
+use crate::authenticated::{Lease, Root, Session, Store};
 
 pub(super) struct Overlay {
     store: Store,
     root: Root,
+    /// One read connection and transaction for every old value a private stage proves, when it has one.
+    session: Option<Session>,
     reads: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Bytes of every value held so far, proved old values and staged ones, rewrites included.
+    held: usize,
 }
 
 impl Overlay {
     /// Fixes the exact old root for one bounded proof-verified private update.
     pub fn new(store: &Store, root: &Root) -> Self {
-        Self { store: store.clone(), root: root.clone(), reads: BTreeMap::new(), writes: BTreeMap::new() }
+        Self {
+            store: store.clone(),
+            root: root.clone(),
+            session: None,
+            reads: BTreeMap::new(),
+            writes: BTreeMap::new(),
+            held: 0,
+        }
+    }
+
+    /// As `new` at `pin`'s root, proving every old value over one read session of it, which `finish`
+    /// ends before the stage is written.
+    pub fn session(store: &Store, pin: &Lease) -> Self {
+        Self { session: Some(pin.session()), ..Self::new(store, pin.root()) }
     }
 
     /// Decodes a local known write or a point-proved old value/absence.
@@ -51,6 +68,7 @@ impl Overlay {
     /// - old-value proof fails
     pub fn put_bytes(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.prove_old(&key)?;
+        self.held = self.held.saturating_add(value.len());
         self.writes.insert(key, Some(value));
         Ok(())
     }
@@ -69,6 +87,12 @@ impl Overlay {
         self.writes.len()
     }
 
+    /// Counts the bytes of the values held, proved old values and staged ones, rewrites included, for
+    /// staging's memory bound.
+    pub fn held_bytes(&self) -> usize {
+        self.held
+    }
+
     /// Counts buffered key/value bytes for the source-level bounded-staging regression.
     #[cfg(test)]
     pub fn buffered_bytes(&self) -> usize {
@@ -79,7 +103,7 @@ impl Overlay {
             .fold(0usize, usize::saturating_add)
     }
 
-    /// Emits one sorted unique exact update set and omits final no-ops.
+    /// Emits one sorted unique exact update set and omits final no-ops, ending the read session.
     pub fn finish(self) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
         self.writes.into_iter().filter(|(key, value)| self.reads.get(key) != Some(value)).collect()
     }
@@ -89,7 +113,12 @@ impl Overlay {
     /// - any storage/proof error
     fn prove_old(&mut self, key: &[u8]) -> Result<()> {
         if !self.reads.contains_key(key) {
-            let value = self.store.read(&self.root, key).context("proving old history value")?;
+            let value = match &mut self.session {
+                Some(session) => session.read(key),
+                None => self.store.read(&self.root, key),
+            };
+            let value = value.context("proving old history value")?;
+            self.held = self.held.saturating_add(value.as_ref().map_or(0, Vec::len));
             self.reads.insert(key.to_vec(), value);
         }
         Ok(())

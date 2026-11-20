@@ -7,15 +7,17 @@ use jmt::{KeyHash, SimpleHasher};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::authenticated::reader::Reader;
+use crate::authenticated::reader::{Checked, Reader};
 use crate::authenticated::receipts::internal_key;
 use crate::authenticated::{CHUNK_BYTES, Hasher, PHYSICAL_UPDATES, Root};
 
 /// Point reads under one root sharing one checked node cache. The cache is renewed after
-/// `PHYSICAL_UPDATES` reads, so each reader stays within its finite per-operation envelope.
+/// `PHYSICAL_UPDATES` reads, so each reader stays within its finite per-operation envelope; the nodes
+/// the operation has checked carry over.
 pub(super) struct Points<'a> {
     conn: &'a Connection,
     root: Root,
+    checked: &'a Checked,
     reader: Option<Reader<'a>>,
     used: usize,
 }
@@ -28,9 +30,10 @@ pub(super) struct Blob {
 }
 
 impl<'a> Points<'a> {
-    /// Starts reads under `root`; nothing is read until the first point.
-    pub(super) fn new(conn: &'a Connection, root: &Root) -> Self {
-        Self { conn, root: root.clone(), reader: None, used: 0 }
+    /// Starts reads under `root` with the nodes the operation has `checked`; nothing is read until the
+    /// first point.
+    pub(super) fn new(conn: &'a Connection, root: &Root, checked: &'a Checked) -> Self {
+        Self { conn, root: root.clone(), checked, reader: None, used: 0 }
     }
 
     /// Returns exact verified bytes or verified absence of one physical key.
@@ -44,7 +47,7 @@ impl<'a> Points<'a> {
             Some(reader) => reader,
             None => {
                 self.used = 0;
-                self.reader.insert(Reader::new(self.conn, &self.root, true)?)
+                self.reader.insert(Reader::new(self.conn, &self.root, true, self.checked)?)
             }
         };
         self.used += 1;
