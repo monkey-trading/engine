@@ -621,27 +621,35 @@ read. They must also agree on the vault's deposit count in that block, read by i
 header of every block a deposit is in, whose hash must be the deposit's. The window's last block
 becomes the boundary.
 
-Each poll, after its window read, reads the header of the boundary it started from again and compares
-its hash with the one stored. A block's hash commits to its parent's, and so to every block below it. A
-reorganisation at or below the boundary therefore changes the boundary's hash, including one that lands
-between the poll's two reads. One above the boundary changes no block the scan had read. On a mismatch,
-the scan drops the poll's window and walks back through the stored window ends, halving the stretch
-each time, to the highest end that still matches. It then reads again from there, and reconciliation
-moves or reverses whatever the new chain does not hold. A reorganisation deeper than every stored end sends the scan back
+Each poll reads the header of the boundary it started from again and compares its hash with the one
+stored. Each provider reads that header after its own log read for the poll's window, and the quorum
+votes on the window and the boundary as one answer, so no majority can join a window from one branch to
+a boundary from another. A window joins the scan only once its boundary holds. A block's hash commits to
+its parent's, and so to every block below it. A reorganisation at or below the boundary therefore
+changes the boundary's hash. One above the boundary changes no block the scan had read. On a mismatch,
+the scan walks back through the stored window ends, halving the stretch each time, to the highest end
+that still matches, and reads again from there. A walk that a failed read stops sends the scan back to
+the finalised frontier instead, so a mismatch once seen is not forgotten. Reconciliation then moves or
+reverses whatever the new chain does not hold. A reorganisation deeper than every stored end sends the scan back
 to the finalised frontier. That frontier's header is read each poll, and a change to it is refused as
 inconsistent. One boundary read a poll therefore detects every reorganisation of blocks the scan has
 read that is still in place at the poll. Reading every block's header found the same reorganisations,
 and a block with no deposit changes no state.
 
-What the boundary read does not catch is a chain that changes three times: to another branch before a
-poll's window read, back before its boundary read, and to the other branch again by the next poll. In
-that case the stored window ends come from two branches, and the next boundary read matches only the
-newer one. Before any principal is released, the trading server therefore
-reads the frontier's blocks again once they are final, which no reorganisation can change. It reads the
-header of every block a released receipt is in and the vault's deposit count at the frontier. On any
-difference, it scans again from the finalised frontier. A deposit credited from such a window is
-therefore reversed or moved, as after any reorganisation before finality, at the latest when its block
-becomes final, and never released.
+What the boundary read does not catch is a strict majority of providers that each answer one poll's
+window from a new branch and the boundary, read after it in the same answer, from the branch the scan
+holds, as backends behind a load balancer can during a reorganisation. The stored window ends then come
+from two branches, and the next boundary read matches only the newer one.
+
+Principal is therefore released only against the block the release tag names, with reads executed in
+that block by the hash the quorum voted with the tag, so a scan that differs from the chain the tag
+commits to is never released. The finalised frontier moves only to that block, once the scan covers
+it. Before it moves, the trading server reads, in that block, the vault's deposit count and its record
+of every deposit it releases: the payer, amount and beneficiary. It also reads the header of every block
+such a deposit is in. On any difference, it scans again from the finalised frontier. A deposit credited
+from a window that straddled a reorganisation, or from providers answering from a branch the release
+tag has left, is therefore reversed or moved, as after any reorganisation before finality, at the latest
+once the release tag passes its block, and never released.
 
 When the quorum proves that a deposit was reversed before finality, the engine debits it once,
 raises a Critical alert, and runs the usual close-out, writing off against the house any loss on an
@@ -781,9 +789,11 @@ epoch closes only once that frontier has passed the epoch's end, so no epoch's c
 set that the mirror has not brought up to the epoch's end.
 
 The mirror reads a window of finalised blocks in one log read over its range. A strict majority of
-the custody providers must agree on it together with their header at the window's end, read through
-the quorum. Final blocks never change, so that header binds the window, and the frontier the mirror
-records is read again each poll. The header of every block an event is in is read through the quorum,
+the custody providers must agree on it together with their header at the window's end. A window that
+ends at the block the release tag names must end on the hash the quorum voted with the tag. One that
+ends below it, in a catch-up, is read with each provider's header at the release tag's block in the same
+voted answer, which must hold the tag's hash, so either way the window is bound to the release tag's
+chain. The frontier the mirror records is read again each poll. The header of every block an event is in is read through the quorum,
 and the event must be on that block. Each such block is also read again by its hash, and the mirror
 stops if those reads disagree with the range read. A provider whose log backend holds another fork
 therefore cannot add an event. A log backend that lags cannot drop one from a block where it returns

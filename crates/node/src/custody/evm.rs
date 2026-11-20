@@ -26,8 +26,8 @@ use crate::custody::stall::{PollError, Polled, Stall};
 use crate::custody::watchdog::Watchdog;
 use crate::sequencer::Request;
 pub use types::{
-    Beneficiary, BlockRef, Finality, HeadSupport, PostedHead, StakingEvent, StakingEventKind, VaultDeposit,
-    VaultIdentity, VaultReader,
+    Beneficiary, BlockRef, Finality, HeadSupport, PostedHead, RangedDeposits, StakingEvent, StakingEventKind,
+    VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
 };
 mod legacy;
 mod lifecycle;

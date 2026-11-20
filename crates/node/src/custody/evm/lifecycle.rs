@@ -68,7 +68,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.chain.prune_below(checkpoint.block);
         }
         if eligible < from {
-            self.mirror_staking(tx, release.tagged.map(|tag| tag.number.min(eligible))).await?;
+            self.mirror_staking(tx, release.tagged, release.tagged.map(|tag| tag.number.min(eligible))).await?;
             return Ok(Polled::Waiting);
         }
         let release_at = if let Some(released) = release.tagged {
@@ -83,14 +83,19 @@ impl<V: VaultReader> DepositWatcher<V> {
             .await
             .map_err(PollError::Fatal)?;
         self.resume_confirmed_scan(checkpoint, from, next_id)?;
-        // The boundary is read after the window, so a reorganisation between the two reads is caught; a
-        // window that fails is checked too, as a reorganisation below it can be why.
-        let boundary = self.chain.top();
-        let advanced = self.advance_confirmed_scan(eligible).await;
-        if !self.check_boundary(checkpoint.map(|p| p.block), boundary).await? {
+        // Each provider reads the boundary after its window, in one voted answer, and the window joins the
+        // scan only once the boundary holds. A window that fails is checked too, by a read of the boundary
+        // alone, as a reorganisation below it can be why.
+        let floor = checkpoint.map(|p| p.block);
+        let boundary = self.chain.top().filter(|(top, _)| floor.is_none_or(|floor| *top > floor));
+        let window = self.read_window(eligible, boundary.map(|(number, _)| number)).await;
+        let observed = window.as_ref().ok().and_then(Option::as_ref).and_then(|window| window.boundary);
+        if !self.check_boundary(floor, boundary, observed).await? {
             return Ok(self.behind(from, eligible));
         }
-        advanced?;
+        if let Some(window) = window? {
+            self.commit_window(window);
+        }
         let to = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists").number;
         // A lagging quorum tag drops the eligible block below the scan end or an already credited receipt;
         // the scan is ahead, so this waits out the tag without arming the lag watchdog, and the poll loop
@@ -145,19 +150,15 @@ impl<V: VaultReader> DepositWatcher<V> {
         if deferred {
             return Ok(self.behind(from, eligible));
         }
-        if let Some(number) = release_at.filter(|number| *number >= from).map(|number| number.min(to)) {
-            // The frontier is the release tag's block, or the scan's end below it; both are final.
-            let scan_end = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists");
-            let finalised = release.tagged.filter(|released| released.number == number).unwrap_or(scan_end);
-            if finalised.number != number {
-                return Err(PollError::unsettled(anyhow!("the finalised frontier {number} has no known hash")));
-            }
-            if !self.verify_final(from, finalised).await? {
+        // The frontier moves only to the block the release tag names, once the scan covers it, so every read
+        // that releases principal is bound to the hash the quorum voted with the tag.
+        if let Some(released) = release.tagged.filter(|released| released.number >= from && released.number <= to) {
+            if !self.verify_final(from, released).await? {
                 return Ok(self.behind(from, eligible));
             }
-            self.finalise_confirmed_scan(tx, finalised.number, finalised.hash).await?;
+            self.finalise_confirmed_scan(tx, released.number, released.hash).await?;
         }
-        self.mirror_staking(tx, release_at).await?;
+        self.mirror_staking(tx, release.tagged, release_at).await?;
         self.finish_confirmed_read(tx, to, eligible).await
     }
 

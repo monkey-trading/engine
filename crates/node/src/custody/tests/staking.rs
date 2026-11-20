@@ -81,8 +81,7 @@ async fn mirror_range(
         cursor,
         &dir.join("staking-cursor.json"),
         &mut range,
-        from,
-        end_at(to),
+        (from, end_at(to), None),
         (true, true, true, true),
         None,
     )

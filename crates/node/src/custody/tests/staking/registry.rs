@@ -142,8 +142,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut cursor,
         &dir.join("staking-cursor.json"),
         &mut AdaptiveSize::new(1_000),
-        1,
-        end_at(3),
+        (1, end_at(3), None),
         (false, true, true, true),
         None,
     )
@@ -160,8 +159,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut cursor,
         &dir.join("staking-cursor.json"),
         &mut AdaptiveSize::new(1_000),
-        1,
-        end_at(3),
+        (1, end_at(3), None),
         (true, true, true, true),
         None,
     )

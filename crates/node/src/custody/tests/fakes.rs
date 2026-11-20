@@ -21,7 +21,8 @@ use crate::clock::now_ms;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{
-    Beneficiary, BlockRef, DepositWatcher, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
+    Beneficiary, BlockRef, DepositWatcher, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity,
+    VaultReader, VaultRecord,
 };
 use crate::log::{LogEntry, Manifest};
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
@@ -234,6 +235,10 @@ impl VaultReader for FakeChain {
             bail!("block {} is not canonical", at.hash);
         }
         Ok(chain.deposits.iter().filter(|d| d.block <= at.number).count() as u64)
+    }
+
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        self.0.lock().unwrap().record(at, id)
     }
 
     async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {

@@ -9,16 +9,20 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, Bytes, U256};
 use anyhow::{Context, bail};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
 
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{BlockRef, Finality, HeadSupport, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    BlockRef, Finality, HeadSupport, RangedDeposits, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
+    VaultRecord,
+};
 use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 
+mod deposits;
 mod posted_head;
 mod staking;
 
@@ -211,25 +215,32 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
     /// Error cases:
     /// - no quorum, or a provider cannot return the range's last block
     async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
-        self.ranged_deposits(from, to).await.map(|(_, deposits)| deposits)
+        self.ranged_deposits(from, to, None).await.map(|ranged| ranged.deposits)
     }
 
-    /// Identical complete log sets with the hash of the range's last block, each provider's read after its
-    /// own header there; a lagging absence cannot vote.
-    /// Error cases:
-    /// - no quorum, or a provider cannot return the range's last block
-    async fn ranged_deposits(&self, from: u64, to: u64) -> anyhow::Result<(B256, Vec<VaultDeposit>)> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            r.ranged_deposits(from, to).await
-        }))
-        .await;
-        self.vote("deposits", answers).map(|v| v.0)
+    /// Identical windows, each provider's reads voted as one answer (`deposits`).
+    async fn ranged_deposits(&self, from: u64, to: u64, boundary: Option<u64>) -> anyhow::Result<RangedDeposits> {
+        self.voted_window(from, to, boundary).await
+    }
+
+    /// The same record at the same canonical block hash (`deposits`).
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        self.voted_record(at, id).await
     }
 
     /// Identical staking event sets over the range, anchored to the hash of its last block (`staking`).
     async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
-        self.ranged_staking_events(from, to).await
+        self.ranged_staking_events(from, to, None).await
+    }
+
+    /// `staking_events`, each provider's answer also bound to `release` (`staking`).
+    async fn released_staking_events(
+        &self,
+        from: u64,
+        to: BlockRef,
+        release: Option<BlockRef>,
+    ) -> anyhow::Result<Vec<StakingEvent>> {
+        self.ranged_staking_events(from, to, release).await
     }
 
     /// Identical staking event sets, each provider's read pinned to every block's hash (`staking`).
@@ -237,16 +248,9 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         self.hash_pinned_staking_events(blocks).await
     }
 
-    /// Identical counts at the same canonical block hash.
-    /// Error cases:
-    /// - no quorum
+    /// Identical counts at the same canonical block hash (`deposits`).
     async fn deposit_count(&self, at: BlockRef) -> anyhow::Result<u64> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            r.deposit_count(at).await
-        }))
-        .await;
-        self.vote("deposit_count", answers).map(|v| v.0)
+        self.voted_count(at).await
     }
 
     /// The same registry at the same canonical block hash, or `None` where the staking contract has

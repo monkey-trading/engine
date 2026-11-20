@@ -177,3 +177,76 @@ async fn a_deposit_the_scan_missed_is_found_by_the_count_at_the_final_frontier()
     assert_eq!(node.read(|e| e.custody_checkpoint().map(|p| (p.block, p.deposit_count))).await, Some((12, 1)));
     node.stop().await;
 }
+
+#[tokio::test]
+async fn a_walk_back_that_a_failed_read_stops_scans_again_from_the_finalised_frontier() {
+    let dir = scratch("boundary-failed-walk");
+    let node = Node::start_confirmed(&dir);
+    let (chains, mut scan) = scanned(&dir, &node, &[]).await;
+    set_head(&chains, 18);
+    for chain in &chains {
+        fork(chain, 12, 18);
+    }
+    // A poll's header reads, on each chain: the two finality votes, the frontier, the window's last block
+    // and the boundary; the walk back's first read comes next, and two providers fail it.
+    for chain in &chains[..2] {
+        let mut state = chain.0.lock().unwrap();
+        let walk = state.header_calls + 5;
+        state.fail_header_reads.push(walk);
+    }
+    let before = chains[2].reads().len();
+    assert!(matches!(scan.poll(&node.tx).await, Err(PollError::Stalled(Stall::Rpc(_)))));
+    catch_up(&mut scan, &node.tx).await;
+    assert_eq!(reads_since(&chains[2], before)[1], (3, 6), "the mismatch seen is not forgotten");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_provider_answering_its_window_and_boundary_from_two_branches_joins_no_majority() {
+    let dir = scratch("boundary-mixed-answer");
+    let node = Node::start_confirmed(&dir);
+    let (chains, mut scan) = scanned(&dir, &node, &[]).await;
+    set_head(&chains, 18);
+    // The chain reorganised from block 12. One provider has it all; one reads the window's blocks from the
+    // new branch but its boundary, block 14, from a backend still on the old; one has not seen it.
+    fork(&chains[0], 12, 18);
+    fork(&chains[1], 15, 18);
+    let before = chains[0].reads().len();
+    assert!(scan.poll(&node.tx).await.is_err(), "no two answers agree on the window and its boundary");
+    assert_eq!(scan.chain.top().map(|(number, _)| number), Some(14), "the window does not join the scan");
+    for chain in &chains[1..] {
+        fork(chain, 12, 18);
+    }
+    catch_up(&mut scan, &node.tx).await;
+    let reads = reads_since(&chains[0], before);
+    // The failed poll's window, the window whose answer shows the boundary moved, then the rescan; the
+    // failed read narrowed the windows that follow.
+    assert_eq!(
+        (reads[0], reads[1].0, reads[2].0),
+        ((15, 18), 15, 11),
+        "the scan reads again above the last end that matches"
+    );
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_receipt_the_vault_records_otherwise_at_the_release_block_is_never_released() {
+    let dir = scratch("boundary-release-record");
+    let node = Node::start_confirmed(&dir);
+    let credited = confirmed_deposit(0, 9, 100);
+    let (chains, mut scan) = scanned(&dir, &node, std::slice::from_ref(&credited)).await;
+    // The release tag's chain holds deposit 0 for the house, on a block whose header still matches: only
+    // the vault's record, read in the release tag's block, shows it.
+    let housed = VaultDeposit { beneficiary: Beneficiary::House, ..credited.clone() };
+    for chain in &chains {
+        chain.remove(&credited);
+        chain.add(housed.clone());
+    }
+    set_release(&chains, Some(14));
+    assert_eq!(scan.poll(&node.tx).await.unwrap(), Polled::Read { caught_up: false });
+    assert_eq!(node.read(|e| e.custody_checkpoint().unwrap().block).await, 2, "the frontier waits");
+    let reference = format!("{:020}:{}:{}:{}", 9, credited.block_hash, credited.tx_hash, credited.log_index);
+    let finalised = node.read(move |e| e.recorded_deposit(&reference).map(|d| d.status == DepositStatus::Finalised));
+    assert_eq!(finalised.await, Some(false), "the credited receipt is not released");
+    node.stop().await;
+}

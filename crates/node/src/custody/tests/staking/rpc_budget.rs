@@ -11,7 +11,7 @@ use alloy::primitives::{Address, B256, Bytes, U256};
 
 use super::*;
 use crate::custody::QuorumBlock;
-use crate::custody::evm::PostedHead;
+use crate::custody::evm::{PostedHead, VaultRecord};
 use crate::custody::stall::Polled;
 use crate::liveness::chain::{LivenessDomain, members, pending_fallback, promotable, view};
 use crate::liveness::fake::{ChainState, DOMAIN, LOG_HEADS, VAULT as LIVENESS_VAULT, answer};
@@ -76,6 +76,10 @@ impl<R: VaultReader + Sync> VaultReader for Counted<R> {
     async fn deposit_count(&self, at: BlockRef) -> anyhow::Result<u64> {
         self.1.add("eth_call", 1);
         self.0.deposit_count(at).await
+    }
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        self.1.add("eth_call", 2);
+        self.0.deposit_record(at, id).await
     }
     async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         self.1.add("eth_getLogs", 1);

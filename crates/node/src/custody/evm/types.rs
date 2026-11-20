@@ -38,29 +38,58 @@ pub trait VaultReader {
     fn deposits(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<VaultDeposit>>> + Send;
 
     /// `deposits`, with the hash of block `to` as the same reader reports it, read first, so a reader
-    /// that does not serve the range's last block refuses rather than answering it as empty.
+    /// that does not serve the range's last block refuses rather than answering it as empty; and, with
+    /// `boundary`, that block's hash, read after the logs, so one answer holds both the window and the
+    /// block it builds on.
     /// Error cases:
-    /// - either read fails, or the header answers for another height
+    /// - a read fails, or a header answers for another height
     fn ranged_deposits(
         &self,
         from: u64,
         to: u64,
-    ) -> impl Future<Output = anyhow::Result<(B256, Vec<VaultDeposit>)>> + Send {
-        // Futures do nothing until awaited, so the header is read before the logs.
-        let (header, deposits) = (self.headers(to, to), self.deposits(from, to));
+        boundary: Option<u64>,
+    ) -> impl Future<Output = anyhow::Result<RangedDeposits>> + Send {
+        // Futures do nothing until awaited, so the reads run in this order.
+        let (end, deposits) = (self.headers(to, to), self.deposits(from, to));
+        let below = boundary.map(|number| (number, self.headers(number, number)));
         async move {
-            let header = crate::custody::quorum::last_header(header.await?, to)?;
-            Ok((header.hash, deposits.await?))
+            let end = crate::custody::quorum::last_header(end.await?, to)?.hash;
+            let deposits = deposits.await?;
+            let boundary = match below {
+                Some((number, read)) => Some(crate::custody::quorum::last_header(read.await?, number)?.hash),
+                None => None,
+            };
+            Ok(RangedDeposits { end, deposits, boundary })
         }
     }
 
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
 
+    /// The vault's record of deposit `id` in block `at`, which the endpoint must hold as canonical. A
+    /// reader that cannot read it refuses.
+    fn deposit_record(&self, at: BlockRef, id: u64) -> impl Future<Output = anyhow::Result<VaultRecord>> + Send {
+        let _ = (at, id);
+        async { anyhow::bail!("this reader does not read deposit records") }
+    }
+
     /// Every staking and operator registry event in blocks `from..=to.number`, in chain order, from one
     /// log read over the range. A reader that reports `to` with another hash refuses.
     fn staking_events(&self, from: u64, to: BlockRef)
     -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+
+    /// `staking_events`, with the answer also bound to `release`, the block the release tag names, when it
+    /// is above the range: a quorum takes each provider's header there after its log read, in the same
+    /// voted answer, and refuses one that differs. A reader with one source answers as `staking_events`.
+    fn released_staking_events(
+        &self,
+        from: u64,
+        to: BlockRef,
+        release: Option<BlockRef>,
+    ) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send {
+        let _ = release;
+        self.staking_events(from, to)
+    }
 
     /// The same events at each of `blocks`, in chain order, each read by its canonical block hash, so an
     /// empty answer is bound to that block. A reader that cannot read them refuses.
@@ -137,6 +166,24 @@ pub struct PostedHead {
     pub epoch: u64,
     /// `(seq, link)`, or `None` before the epoch's first post.
     pub head: Option<(u64, B256)>,
+}
+
+/// The vault's record of one deposit: its funding caller, the zero address for a booked surplus; its USDC
+/// base units; and its beneficiary, the zero address for the house's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VaultRecord {
+    pub payer: Address,
+    pub units: U256,
+    pub account: Address,
+}
+
+/// One reader's answer for a window of blocks: its deposits, its last block's hash, and the hash of the
+/// block it builds on, when asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RangedDeposits {
+    pub end: B256,
+    pub deposits: Vec<VaultDeposit>,
+    pub boundary: Option<B256>,
 }
 
 /// A block by height and hash.

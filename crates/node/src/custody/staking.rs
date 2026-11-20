@@ -209,8 +209,9 @@ impl StakingCursor {
 }
 
 /// Mirrors every staking event in `from..=end` that the engine has not credited, then advances the
-/// cursor to `end + 1`. `end` is the header, read through the quorum, of a block at or below the
-/// Ethereum-finalised boundary: staking mirrors have no reversal, so blocks above it wait for finality.
+/// cursor to `end + 1`. `end` is the header, read through the quorum, of a block at or below `release`,
+/// the block the release tag names: staking mirrors have no reversal, so blocks above it wait for finality.
+/// The range read is bound to `release` when `end` is below it (`released_staking_events`).
 /// Events hold, with the cursor, until `InitStaking` has applied: a mirror the engine would refuse as
 /// premature is never sequenced, and a cursor that has not moved only makes the next poll read the same
 /// blocks again. The events come from one read over the range, which must match `end`'s hash even when
@@ -239,8 +240,7 @@ pub(super) async fn mirror<V: VaultReader>(
     cursor: &mut StakingCursor,
     cursor_path: &Path,
     range: &mut AdaptiveSize,
-    from: u64,
-    end: BlockLink,
+    (from, end, release): (u64, BlockLink, Option<BlockRef>),
     (bound, schedule_bound, vote_bound, fault_bound): (bool, bool, bool, bool),
     turns: Option<alloy::primitives::Address>,
 ) -> Result<(), PollError> {
@@ -253,7 +253,7 @@ pub(super) async fn mirror<V: VaultReader>(
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
         return Ok(());
     }
-    let events = match reader.staking_events(from, BlockRef { number: to, hash: block_hash }).await {
+    let events = match reader.released_staking_events(from, BlockRef { number: to, hash: block_hash }, release).await {
         Ok(events) => events,
         // A response-size or timeout limit is met with a narrower range on the retry, as for deposits.
         Err(cause) => {

@@ -152,3 +152,22 @@ async fn a_changed_staking_frontier_block_is_refused_as_inconsistent() {
     assert_eq!(node.read(|engine| engine.staking().unwrap().completed_through).await, Some(frontier));
     node.stop().await;
 }
+
+#[tokio::test]
+async fn a_staking_range_read_bound_to_another_release_block_is_refused() {
+    let chains = poll_chains(64);
+    let quorum =
+        Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();
+    quorum.identity().await.unwrap();
+    let to = BlockRef { number: 16, hash: canonical_hash(16) };
+    let release = BlockRef { number: 64, hash: canonical_hash(64) };
+    assert!(quorum.released_staking_events(0, to, Some(release)).await.is_ok());
+    // Every provider's header at the release block is on another chain than the tag the quorum voted.
+    let elsewhere = BlockRef { hash: B256::repeat_byte(0x64), ..release };
+    let error = quorum.released_staking_events(0, to, Some(elsewhere)).await.unwrap_err();
+    assert!(format!("{error:#}").contains("release block differs"), "{error:#}");
+    // A release block at the range's end binds nothing more than the range's own end does.
+    assert!(
+        quorum.released_staking_events(0, to, Some(BlockRef { hash: B256::repeat_byte(0x16), ..to })).await.is_ok()
+    );
+}

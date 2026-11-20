@@ -26,7 +26,9 @@ use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl, redact};
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
+};
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -34,6 +36,8 @@ sol! {
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
     event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
+    function depositRecords(uint256 id) external view returns (address payer, uint96 amount);
+    function depositAccounts(uint256 id) external view returns (address account);
     function usdc() external view returns (address);
     function signerEpoch() external view returns (uint64);
 }
@@ -189,6 +193,20 @@ impl VaultReader for VaultRpc {
                 format!("reading depositCount at block {}; the endpoint must serve past state", at.number)
             })?;
         decode_count(&out)
+    }
+
+    /// `depositRecords(id)` and `depositAccounts(id)`, each executed in block `at`, which the endpoint must
+    /// hold as canonical.
+    /// Error cases:
+    /// - a call fails or times out, or its result does not decode
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        let (block, id) = (BlockId::hash_canonical(at.hash), U256::from(id));
+        let out = self.call(depositRecordsCall { id }.abi_encode(), block).await.context("reading a deposit record")?;
+        let record = depositRecordsCall::abi_decode_returns(&out).context("decoding a deposit record")?;
+        let out =
+            self.call(depositAccountsCall { id }.abi_encode(), block).await.context("reading a deposit's account")?;
+        let account = depositAccountsCall::abi_decode_returns(&out).context("decoding a deposit's account")?;
+        Ok(VaultRecord { payer: record.payer, units: U256::from(record.amount.to::<u128>()), account })
     }
 
     /// The registry the configured staking contract records as its deployer, read in the

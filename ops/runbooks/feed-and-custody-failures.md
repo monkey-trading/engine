@@ -660,9 +660,10 @@ The watcher's 21 calls a poll are 12 block headers, 6 `eth_call`, 2 `eth_getLogs
 
 It reads no header for each block. A block's hash commits to every block below it, so the boundary's
 header, read again each poll, detects any reorganisation of the blocks the scan has read
-(`docs/security-model.md`). A block that holds a deposit costs one more header when it is scanned and
-another once it is final, before its principal is released. A block that holds a mirrored event costs
-one more header and one more `eth_getLogs`, which reads it again by its hash.
+(`docs/security-model.md`). A deposit costs one more header when its block is scanned, and, before its
+principal is released, another header and two `eth_call` that read the vault's record of it in the
+release tag's block. A block that holds a mirrored event costs one more header and one more
+`eth_getLogs`, which reads it again by its hash.
 
 A member's follow stint reads, at the latest agreed block, whether a promotion names its standby key and
 whether the schedule still lists the key as promotable. It also reads the posted log head it pins its

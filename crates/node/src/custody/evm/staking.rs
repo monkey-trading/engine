@@ -26,10 +26,12 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// Mirrors the configured staking contract's events, and the operator registry's with them,
     /// through the Ethereum-finalised boundary this poll read (`release_at`), never the merely confirmed
     /// scan end: a staking mirror has no reversal, so a reorged event must never become a permanent engine
-    /// balance. Final blocks never change, so the window's last block, read through the quorum, binds the
-    /// window, and the authenticated frontier it records is read again each poll. Catch-up runs in bounded
-    /// chunks, the cursor advancing per chunk. Without a staking contract, a finalised boundary, or before
-    /// `InitStaking` has applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`).
+    /// balance. A window that ends at the block the release tag names, `release`, must end on the hash the
+    /// quorum voted with the tag; one that ends below it, in a catch-up, is read with each provider's
+    /// header there in the same voted answer, so it is bound to the tag's chain too. The authenticated
+    /// frontier a window records is read again each poll. Catch-up runs in bounded chunks, the cursor
+    /// advancing per chunk. Without a staking contract, a finalised boundary, or before `InitStaking` has
+    /// applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`).
     /// Error cases:
     /// - stalled: a staking read fails, an event is not on the canonical block there, or the engine refuses
     ///   a mirror
@@ -37,6 +39,7 @@ impl<V: VaultReader> DepositWatcher<V> {
     pub(super) async fn mirror_staking(
         &mut self,
         tx: &mpsc::Sender<Request>,
+        release: Option<BlockRef>,
         release_at: Option<u64>,
     ) -> Result<(), PollError> {
         let Some(mut to) = release_at else { return Ok(()) };
@@ -71,6 +74,9 @@ impl<V: VaultReader> DepositWatcher<V> {
         // `staking::mirror`).
         to = to.min(from.saturating_add(self.staking_range.get() - 1));
         let end = self.header_at(to).await?;
+        if release.is_some_and(|release| release.number == to && release.hash != end.hash) {
+            return Err(PollError::unsettled(anyhow!("the staking window's end is not the release tag's block")));
+        }
         // The registry whose elections mirror must be the one that deployed the staking contract.
         // A window ending before the contract's deployment has no code to read and nothing that
         // could name another registry, so the binding is checked again at the end of a later
@@ -190,8 +196,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             cursor,
             path,
             &mut self.staking_range,
-            from,
-            end,
+            (from, end, release),
             (bound, schedule_bound, vote_bound, fault_bound),
             turns,
         )

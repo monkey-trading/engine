@@ -78,8 +78,7 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
             &mut cursor,
             &dir.join("staking-cursor.json"),
             &mut AdaptiveSize::new(1_000),
-            1,
-            end_at(3),
+            (1, end_at(3), None),
             (true, true, true, true),
             None,
         )
@@ -128,8 +127,7 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
         &mut cursor,
         &dir.join("staking-cursor.json"),
         &mut AdaptiveSize::new(1_000),
-        1,
-        end_at(3),
+        (1, end_at(3), None),
         (true, true, true, true),
         None,
     )
