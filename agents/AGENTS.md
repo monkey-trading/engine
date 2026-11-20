@@ -408,7 +408,8 @@ an index: load only the rule whose hint matches the current action.
   Advanced Trade and, as the same source, Exchange's `level2_batch` (`feeds/coinbase_exchange.rs`),
   and Kraken on two connections, so either keeps its venue's leg: Massive and TraderMade over WebSocket, with API keys from the delivered secrets the config names, or in a
   development build environment variables, and CME Group's WebSocket API for its exchanges'
-  futures (`feeds/cme/`), whose handshake carries an OAuth bearer token the node fetches with a
+  futures (`feeds/cme/`, tested code no launch config uses: the seven CME-traded launch markets price from
+  Massive's futures feed alone at `min_sources = 1`, the owner's decision of 2026-11-20), whose handshake carries an OAuth bearer token the node fetches with a
   delivered client ID and secret (`feeds/venue/auth.rs`), each connection replaced before its token
   expires by one opened beside it on the next (`feeds/venue/replace.rs`), and, for the US shares
   beside Massive, Alpaca's consolidated (SIP) stock feed (`feeds/alpaca/`), whose login message carries
@@ -599,7 +600,7 @@ an index: load only the rule whose hint matches the current action.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
-  `api_key_secret`, a CME connection's `oauth.client_id_secret` and `oauth.client_secret_secret`, an
+  `api_key_secret`, a CME connection's `oauth.client_id_secret` and `oauth.client_secret_secret` (none in the production template), an
   Alpaca connection's `key_pair.key_id_secret` and `key_pair.secret_key_secret`, or
   `url_secret`, with `[tee.sealing.secrets]` to receive them; a `production` build
   refuses `api_key_env` and `url_env`, but for `run --standby`, which no enclave runs.

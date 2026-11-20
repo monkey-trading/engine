@@ -64,8 +64,8 @@ trading server or with the operator.
      RPC and screening URLs out in full, read its webhook URLs with `url_env`, and keep the file
      private. A production build allows this for `run --standby` on a configuration with
      `[standby]`.
-   - A standby runs no feeds, so the vendor connections stay as written, including the CME
-     connection and the names of its OAuth secrets. A configuration with `[standby]` loads without a
+   - A standby runs no feeds, so the vendor connections stay as written, including the names
+     of the secrets they read. A configuration with `[standby]` loads without a
      listener for the secrets they name, and nothing reads them. The same file started without
      `--standby` is refused, because a trading server that runs feeds must be able to receive their
      keys.

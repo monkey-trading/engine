@@ -242,10 +242,10 @@ fn a_standby_needs_no_listener_for_the_vendor_keys_it_never_reads_and_a_node_sti
 }
 
 // Runs in the production lane too, which filters on `production_build`: the release config a
-// candidate registers, with `[standby]` and the changes `standby.md` makes, loads with the CME
-// connection as written and no `[tee.sealing.secrets]`.
+// candidate registers, with `[standby]` and the changes `standby.md` makes, loads with its vendor
+// connections as written and no `[tee.sealing.secrets]`.
 #[test]
-fn a_production_build_loads_the_release_config_with_cme_as_a_standby_without_a_listener() {
+fn a_production_build_loads_the_release_config_as_a_standby_without_a_listener() {
     let [template, publishers, genesis] =
         ["ops/runbooks/production-node.toml", "config/benchmark-publishers.toml", "config/production-genesis.toml"]
             .map(|path| std::fs::read_to_string(format!("{}/../../{path}", env!("CARGO_MANIFEST_DIR"))).unwrap());
@@ -253,7 +253,9 @@ fn a_production_build_loads_the_release_config_with_cme_as_a_standby_without_a_l
     let listener = "[tee.sealing.secrets]\n\
                     # Where the operator delivers secrets. Forward it from the operator's addresses, not the public.\n\
                     listen = \"0.0.0.0:9472\"\n";
-    assert!(release.contains(listener) && release.contains("venue = \"cme\""));
+    // The launch template has no CME Group connection or OAuth secret (owner's decision of 2026-11-20).
+    assert!(!release.contains("venue = \"cme\"") && !release.contains("cme_api"));
+    assert!(release.contains(listener) && release.contains("venue = \"massive\""));
     // `standby.md`: no listener, RPC and screening URLs written out, webhooks from the environment.
     let mut standby = release.replace(listener, "");
     for (secret, env) in [("alerts_critical_url", "ALERTS_CRITICAL_URL"), ("alerts_warning_url", "ALERTS_WARNING_URL")]
@@ -271,7 +273,7 @@ fn a_production_build_loads_the_release_config_with_cme_as_a_standby_without_a_l
     let with_section = cfg(&format!("{standby}\n{STANDBY}"));
     with_section.validate().unwrap();
     with_section.refuse_environment_secrets_at_load(true).unwrap();
-    assert!(with_section.named_secrets().unwrap().iter().any(|named| named.name.to_string() == "cme_api_id"));
+    assert!(with_section.named_secrets().unwrap().iter().any(|named| named.name.to_string() == "massive_api_key"));
     with_section.validate_secrets_on_a_node().unwrap_err();
 }
 

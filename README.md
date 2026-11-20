@@ -26,7 +26,7 @@ monkeytrading has not launched and holds no real funds.
 | --- | --- |
 | Engine and trading server | Runs end to end on a single machine |
 | Crypto prices | Live from Coinbase and Kraken |
-| FX, index, commodity and share prices | Tested against local stand-ins for Massive, TraderMade, CME Group and Alpaca; the vendor accounts are not yet in place |
+| FX, index, commodity and share prices | Tested against local stand-ins for Massive, TraderMade and Alpaca; the vendor accounts are not yet in place |
 | Custody vault, MONKEY, staking and operator rotation | Tested on local Anvil chains; no contract has been deployed |
 | Account screening | Tested against a synthetic source; the production source has not been chosen |
 | Enclave | The SEV-SNP image builds reproducibly, and its verifier accepts test-signed reports; the image has not yet run on SEV-SNP hardware |
@@ -51,7 +51,7 @@ point is one hundredth of one percent.
 | --- | --- | --- | --- |
 | BTC-USD, ETH-USD, SOL-USD | Coinbase, Kraken | Always open | 25 bps |
 | EUR-USD, GBP-USD, USD-JPY, AUD-USD | Massive, TraderMade | Sunday 17:00 to Friday 17:00, New York time | 5 bps |
-| US500, US100, US30, JP225, XAU-USD, XAG-USD, WTI | Massive, CME Group | CME Globex sessions; JP225 follows Osaka Exchange | 10 bps |
+| US500, US100, US30, JP225, XAU-USD, XAG-USD, WTI | Massive | CME Globex sessions; JP225 follows Osaka Exchange | 10 bps |
 | 20 US shares, from AAPL to ORCL | Massive, Alpaca | 09:30 to 16:00 New York time, excluding NYSE holidays | 10 bps |
 
 Every order is executed against the house at the reference price, plus a spread for a buy or less a

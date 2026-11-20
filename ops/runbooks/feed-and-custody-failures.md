@@ -232,12 +232,14 @@ time its listing names.
 Use this procedure when `venue_token_failed` fires, or when `venue_message_refused` or
 `venue_feed_down` names CME Group, whose venue is `cme`.
 
-Markets 20 to 22, 25 and 30 to 32 are priced from Massive and from CME Group's own WebSocket API. A
-CME Group connection's handshake carries a bearer token. The trading server fetches the token from
+The launch configuration has no CME Group connection: markets 20 to 22, 25 and 30 to 32 are priced
+from Massive's futures feed alone (owner's decision of 2026-11-20), so these alerts do not fire on a
+launch node. For those markets, `venue_feed_down` naming Massive means no price at all, because
+`min_sources = 1` and Massive is their only source. This procedure applies only to a configuration
+that adds a CME Group connection. Such a connection's handshake carries a bearer token. The trading server fetches the token from
 CME Group's token endpoint with the API ID and its password, which are the delivered secrets that
 the connection's `oauth` names. Without both secrets, the connection stays off under
-`secret_missing`, and those markets have Massive as their only source, which is no price at
-`min_sources = 2`.
+`secret_missing`.
 
 Three quarters of the way through a token's life, the trading server fetches the next token while
 the connection streams, opens a second connection with it, and switches to the second connection
@@ -289,8 +291,7 @@ Match the alert to its case:
   Group's own message examples send no such future, so such a message is a shape that CME Group's
   field table does not promise.
 
-**How to tell it is resolved.** The alerts resolve, and `engine_market_priced` reads `1` for markets
-20 to 22, 25 and 30 to 32 while they are open.
+**How to tell it is resolved.** The alerts resolve.
 
 **When to escalate.** Take refusals with undefined codes, and refused top-of-book messages, to CME
 Group with the API ID.
@@ -707,8 +708,8 @@ its answer is stale, the affected action is refused and nothing else changes:
 
 ## How a price exists
 
-Each market needs at least `min_sources` quotes, which is 2 for every launch market, that are no
-older than its `max_age_ms`, which is 1 second, and that agree to within its `max_divergence_bps`.
+Each market needs at least `min_sources` quotes, which is 2 for every launch market except the
+seven futures markets described below, that are no older than its `max_age_ms`, which is 1 second, and that agree to within its `max_divergence_bps`.
 Otherwise the market has no price. No order in it can be executed, including an order that closes a
 position, and positions in it that fall below the close-out level wait until the market has a price
 again.
@@ -719,3 +720,5 @@ mark, which is the last price before the market closed, however old that price i
 
 A market priced from two sources has no price when either source fails, or goes quiet for longer
 than `max_age_ms`. That holds for the crypto markets and for the markets that data vendors price.
+The seven futures markets (20 to 22, 25 and 30 to 32) take `min_sources = 1` and price from Massive's
+futures feed alone, so they have no price while Massive's futures connection is down or quiet.

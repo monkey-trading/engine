@@ -300,8 +300,12 @@ but it cannot alter them.
 
 A production build refuses a configuration in which fewer venues quote a launch market, or any
 futures contract that its listing names, than the market's `min_sources`. Every production market
-needs fresh quotes from two venues, so a delay beyond the bounds below on either venue leaves the
-market without a price. Two connections to one venue, such as Coinbase's Advanced Trade and Exchange
+but the seven CME-traded futures markets needs fresh quotes from two venues, so a delay beyond the
+bounds below on either venue leaves the market without a price. Those seven (US500, US100, US30,
+JP225, XAU-USD, XAG-USD and WTI) take `min_sources = 1` and price from Massive's futures feed alone,
+by the owner's decision of 2026-11-20, because Massive's futures data derives from CME's. They have no
+price while Massive is unavailable, and no second source checks a Massive print, so a bad print
+within `max_age_ms` sets their price. Two connections to one venue, such as Coinbase's Advanced Trade and Exchange
 feeds or Kraken's two connections, carry one source name. The engine holds one quote per source, the
 later-stamped, so a venue read twice still counts once, and either connection keeps the venue's part
 of the price while the other fails.
@@ -354,7 +358,7 @@ Known limits:
   from the venue still quoting. That is half the limit, plus the rounding to whole basis points.
   Beyond it, the market has no price.
 - Re-dating rests on these venues writing a ping reply behind everything they sent before reading
-  the ping, as they were measured to do. The Massive, TraderMade, CME Group and Alpaca connections
+  the ping, as they were measured to do. The Massive, TraderMade and Alpaca connections
   were not measured and re-date nothing, and neither does the Coinbase Exchange connection.
 - The ping bound holds against the host, which cannot make a ping reply overtake what the venue sent
   before it. It does not hold against a venue that lags upstream of its own send queue. Coinbase has
@@ -740,7 +744,7 @@ attestation.
 
 The trading server's credentials reach it only encrypted to a one-time key whose quote proves that
 an enclave of the release holds it. They are its RPC provider keys, its market-data vendor keys and
-OAuth client credentials, its screening source key, the seed relayer's Ethereum provider and beacon
+key pairs, its screening source key, the seed relayer's Ethereum provider and beacon
 node URLs, and its alert webhook URLs. The operator's tool checks the quote against the release
 manifest before it encrypts the bundle, and the bundle must carry the signature of the operator key
 in effect. The attested configuration names which secret each field reads, and fixes each RPC
