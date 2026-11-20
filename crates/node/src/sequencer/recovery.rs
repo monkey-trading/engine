@@ -302,7 +302,8 @@ impl Sequencer {
             legacy_approvals,
             unreleased,
             payout_order,
-            authorized,
+            delivered,
+            mut authorized,
             access_failed,
             last_marks,
             derived,
@@ -427,7 +428,7 @@ impl Sequencer {
             // it at this seq.
             let mut approval_checkpointed =
                 last_signed_checkpoint.as_ref().is_some_and(|cp| Some(cp.seq) == sequencer.engine.last_seq());
-            for approval in unreleased {
+            for approval in sequencer.owe_unsigned(unreleased, &payout_order) {
                 let _span = info_span!("command", id = sequencer.engine.last_seq()).entered();
                 warn!(account = %approval.account, nonce = approval.nonce, "the log ends before this approved withdrawal was signed");
                 if !approval_checkpointed {
@@ -440,10 +441,9 @@ impl Sequencer {
         if let Some(gate) = &mut sequencer.gate {
             gate.pending.extend(deferred);
             anyhow::ensure!(
-                payout_order.len() == sequencer.engine.withdrawal_approvals().count(),
+                payout_order.len() + delivered == sequencer.engine.withdrawal_approvals().count(),
                 "immutable approval lacks its validated event order"
             );
-            let mut authorized = authorized;
             gate.backlog = payout_order.into_iter().map(|(key, index)| (key, index, authorized.remove(&key))).collect();
         }
         sequencer.load_backlog()?;

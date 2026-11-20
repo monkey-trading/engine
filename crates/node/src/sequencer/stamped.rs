@@ -77,10 +77,14 @@ impl Sequencer {
         Ok(Stamped(Some(message)))
     }
 
-    /// Appends an entry to the log and queues it for the stream at its offset.
+    /// Appends an entry to the log and queues it for the stream at its offset. After a withdrawal entry,
+    /// shutdown takes no capture of the checkpoint before it: a cache seals the log at its checkpoint.
     /// Error cases:
     /// - the log cannot be written
     pub(super) fn record(&mut self, entry: LogEntry) -> anyhow::Result<Offset> {
+        if matches!(entry, LogEntry::Withdrawal(_)) {
+            self.captures.uncaptured = None;
+        }
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));
         Ok(offset)

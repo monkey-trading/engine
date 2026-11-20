@@ -10,6 +10,8 @@ pub(crate) mod head;
 pub(crate) mod lifecycle;
 pub(crate) mod paired;
 pub(crate) mod payloads;
+mod payouts;
+pub(crate) use payouts::{Owed, Payouts};
 pub(crate) mod pins;
 mod references;
 pub(crate) mod sealing;

@@ -58,10 +58,12 @@ pub struct Replayed {
     pub unpaid: Fixed,
     /// Named checkpoint signers, for comparison with independently trusted attestations.
     pub checkpoint_signers: BTreeSet<AccountId>,
-    /// Every approval with its event index, in FIFO order.
+    /// Every approval with its event index, in FIFO order, but those a cache's node had delivered.
     pub(crate) payout_order: Vec<((AccountId, u64), usize)>,
-    /// The latest authorization each signed approval holds. A recovery from a checkpoint snapshot
-    /// sees only the suffix after it.
+    /// Approvals a recovery cache's node had delivered before its checkpoint, paid at a finalized
+    /// block or signed under mock custody, which `payout_order` leaves out; none after a full replay.
+    pub(crate) delivered: usize,
+    /// The latest authorization each signed approval holds, but those a cache's node had delivered.
     pub(crate) authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
     pub(crate) requires_checkpoint_gate: bool,
     /// Whether the log ends inside an access-source failure episode.

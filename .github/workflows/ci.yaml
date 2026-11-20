@@ -288,7 +288,7 @@ jobs:
                 scripts/dev-rpc-proxy.py) areas+=" $anvil production_secrets log_heads" ;;
                 scripts/dev-alert-audit.py) areas+=" vault_deposits log_heads" ;;
                 scripts/dev-access-fixture.sh)
-                  areas+=" vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
+                  areas+=" vault_deposits dashboard_data proxy_protocol batch_orders production_secrets snapshot_restart" ;;
                 scripts/dev-metrics-alerts.sh) areas+=" metrics_alerts" ;;
                 scripts/dev-alert-outbox.sh) areas+=" alert_outbox" ;;
                 scripts/dev-browser-origin.sh) areas+=" browser_origin" ;;

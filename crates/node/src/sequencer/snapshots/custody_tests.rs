@@ -116,10 +116,10 @@ fn a_gated_cache_restores_canonical_coverage_and_refuses_inherited_provenance() 
     assert!(mismatch.to_string().contains("accounting mismatch"), "{mismatch:#}");
 }
 
-/// A cache whose engine holds a V22 withdrawal approval refuses snapshot recovery: the cache does
-/// not carry payout delivery order, so recovery replays the full log instead.
+/// A cache whose engine holds a V22 withdrawal approval restores its payout order, authorizations
+/// and unsigned approvals as full replay of the same log gives them.
 #[test]
-fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
+fn a_cache_holding_a_v22_approval_restores_its_payouts_as_full_replay_does() {
     let dir = scratch_dir("snapshot-v22-approval");
     let key = Arc::new(EnclaveKey::test_key());
     let signer = AccountId(key.address());
@@ -168,8 +168,15 @@ fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
     snapshot::write(&cache, &captured, &key).unwrap();
     let path = snapshot::candidates_readonly(&cache).unwrap().remove(0);
     let (cached, engine) = snapshot::read(&cache, &path, domain.chain_id, domain.vault).unwrap();
-    let refused = Replay::from_snapshot(engine, cached, domain, Some(signer), Some(parent)).err().unwrap();
-    assert!(refused.to_string().contains("cannot restore withdrawal payout order"), "{refused:#}");
+    let restored = Replay::from_snapshot(engine, cached, domain, Some(signer), Some(parent)).unwrap().finish();
+    let mut full = Replay::with_recovery(Some(domain), Some(signer), parent);
+    SegmentedLog::open(&dir, |entry| full.apply(&entry)).unwrap();
+    let full = full.finish();
+    assert_eq!(restored.payout_order.len(), 1, "the approval keeps its place in payout order");
+    assert_eq!(restored.payout_order, full.payout_order);
+    assert_eq!(restored.authorized, full.authorized);
+    assert_eq!(restored.unreleased, full.unreleased, "the approval is still unsigned");
+    assert_eq!((restored.delivered, full.delivered), (0, 0));
 }
 
 fn custody(seq: &mut Sequencer, cmd: Command) {

@@ -43,12 +43,9 @@ impl Replay {
             &snapshot.progress.activations,
             &snapshot.context.deferred,
         )?;
-        // TODO: a snapshot does not carry payout delivery order yet, so a log that approved a
-        // withdrawal recovers by full replay, which validates every approval's event order.
-        ensure!(
-            engine.withdrawal_approvals().next().is_none(),
-            "snapshot recovery cannot restore withdrawal payout order; the full log is replayed instead"
-        );
+        // The approvals still owed, their latest authorizations, and the roots a later one names, as
+        // the log before the checkpoint gave them; replay checks every withdrawal entry after it.
+        let payouts = snapshot.context.restore_payouts(&snapshot.checkpoint, &engine)?;
         ensure!(
             trusted_signer
                 .is_none_or(|signer| { snapshot.context.checkpoint_signers.iter().all(|named| *named == signer) }),
@@ -129,6 +126,11 @@ impl Replay {
             genesis,
             last_checkpoint_ts,
             approved: context.unsigned.into(),
+            payout_order: payouts.payout_order,
+            delivered: payouts.delivered,
+            authorized: payouts.authorized,
+            signed: payouts.signed,
+            payout_checkpoints: payouts.roots,
             logs_events: context.logs_events,
             accounting: context.accounting,
             deferred: context.deferred,

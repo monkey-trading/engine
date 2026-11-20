@@ -154,6 +154,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
             base: snapshot::RecoveryBase::Ungated,
             base_work: None,
             work: Vec::new(),
+            payouts: None,
         },
     };
     let value = serde_json::to_value(snapshot).unwrap();
@@ -224,6 +225,7 @@ impl ReplayedLog {
                 },
                 base_work: replayed.recovery_anchor_work.clone(),
                 work: replayed.recovery_work.clone(),
+                payouts: None,
             },
         };
         snapshot::write(cache, &payload, &key).unwrap();

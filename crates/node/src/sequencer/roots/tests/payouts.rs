@@ -140,8 +140,8 @@ fn a_payout_release_waits_only_for_proofs_at_checkpoints_the_vault_has_posted() 
     // started, and one at a later checkpoint the worker has yet to answer, as behind a rollover's
     // writes, is not.
     let release = node.seq.roots.worker.hold().expect("the worker takes the hold");
-    node.seq.prove_payouts(posted, vec![(TRADER, 1)]).expect("the worker takes the ask");
-    node.seq.roots.proving.insert(posted + 1, 1);
+    node.seq.prove_payouts(posted, B256::ZERO, vec![(TRADER, 1)]).expect("the worker takes the ask");
+    node.seq.roots.proving.insert(posted + 1, (1, B256::ZERO));
     let (settled, done) = std::sync::mpsc::channel();
     let settling = std::thread::spawn(move || {
         let outcome = node.seq.settle_payout_proofs(Some(posted));
@@ -156,7 +156,7 @@ fn a_payout_release_waits_only_for_proofs_at_checkpoints_the_vault_has_posted() 
     outcome.expect("the worker answers");
     assert_eq!(
         node.seq.roots.proving,
-        BTreeMap::from([(posted + 1, 1)]),
+        BTreeMap::from([(posted + 1, (1, B256::ZERO))]),
         "only the posted checkpoint's proof is taken"
     );
 }

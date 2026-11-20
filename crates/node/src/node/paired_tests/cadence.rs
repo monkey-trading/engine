@@ -1,6 +1,7 @@
 //! The capture cadence through the node's startup order: a cache at a start's first checkpoint, then
 //! one every `[snapshots] interval` of sequenced time, and one at shutdown; a capture that finds one in
-//! flight, or that the history owner cannot take, stays due; a handover's sealed log is not captured;
+//! flight, or that the history owner cannot take, stays due; a handover's sealed log, or a checkpoint
+//! a withdrawal entry follows, is not captured at shutdown;
 //! a node without a stats worker encodes its caches itself; a restart resumes from the newest.
 
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use crate::node::paired_tests::harness::{Node, configuration};
 use crate::node::paired_tests::publication::{collect_alerts, write_alert_lines};
 use crate::sequencer::Request;
 use crate::snapshot;
-use crate::test_support::{deposit, log_entries};
+use crate::test_support::{deposit, log_entries, withdraw};
 
 const INTERVAL: Duration = Duration::from_secs(3_600);
 
@@ -112,6 +113,26 @@ async fn a_handover_takes_no_capture_of_the_log_it_sealed() {
     drop((reader, collector));
     let lines = write_alert_lines(router);
     assert!(lines.iter().all(|line| line.severity.is_none()), "no capture of the sealed log fails: {lines:#?}");
+    assert_eq!(snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap(), before);
+}
+
+/// Mock custody signs an approval right after the checkpoint that covers it, which the interval leaves
+/// uncaptured; shutdown then takes no capture of it, since a cache seals the log at its checkpoint.
+#[tokio::test]
+async fn a_withdrawal_signed_after_an_uncaptured_checkpoint_leaves_it_uncaptured() {
+    let mut cfg = configuration("paired-cadence-withdrawal");
+    cfg.snapshots.as_mut().unwrap().interval = INTERVAL;
+    let (collector, router) = collect_alerts();
+    let clock = Arc::new(TestClock::at(SystemClock.now_ms()));
+    let node = Node::start_at(cfg, clock).await.unwrap();
+    deposits(&node, "first", 3).await;
+    let before = caches(&node);
+    node.submit(withdraw(1)).await;
+    node.history_caught_up().await;
+    let (cfg, reader) = node.stop().await;
+    drop((reader, collector));
+    let lines = write_alert_lines(router);
+    assert!(lines.iter().all(|line| line.severity.is_none()), "no shutdown capture fails: {lines:#?}");
     assert_eq!(snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap(), before);
 }
 

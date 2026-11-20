@@ -6,7 +6,8 @@
 mod paired_recovery;
 
 use anyhow::Context;
-use engine_core::types::Millis;
+use engine_core::event::Event;
+use engine_core::types::{AccountId, Millis};
 use tracing::warn;
 
 use crate::log::{Checkpoint, CheckpointDomain};
@@ -30,6 +31,9 @@ pub(super) struct Captures {
     pub(super) uncaptured: Option<Deferred>,
     /// The stamp from which a checkpoint's capture is due; `None` until the first capture.
     due: Option<Millis>,
+    /// Approvals mock custody has yet to sign, with their event indices: it signs them once the
+    /// checkpoint covering them is written, so a capture of that checkpoint still owes them.
+    unsigned: Vec<((AccountId, u64), usize)>,
     /// How long each capture held the sequencer's thread, from its permit to its handover, whether
     /// the history owner took it or not. For the recovery scenario.
     #[cfg(test)]
@@ -97,19 +101,12 @@ impl Sequencer {
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
     /// status may have moved on since; with a capture in flight, keeps it for shutdown instead, and
-    /// the capture stays due. No command has been applied since the checkpoint.
-    /// Nothing is captured once the engine holds a withdrawal approval: a cache does not carry the
-    /// order approvals are paid in, which only full replay validates. The caches written before the
-    /// first approval stay, so such a node restarts from the newest of them, or by full replay when
-    /// none is left, and its restart time grows with the log written since.
+    /// the capture stays due. No command has been applied since the checkpoint, and no withdrawal
+    /// entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
         let Some(endpoint) = self.sealing.clone() else { return Ok(()) };
-        if self.engine.withdrawal_approvals().next().is_some() {
-            self.captures.uncaptured = None;
-            return Ok(());
-        }
         let Some(permit) = endpoint.try_permit() else {
             // Shutdown captures it after all if no later checkpoint follows.
             self.captures.uncaptured = Some(deferred);
@@ -164,8 +161,8 @@ impl Sequencer {
     }
 
     /// The recovery facts at the checkpoint just written: concrete outstanding work, accounting,
-    /// deferred withdrawals, and the finalized base.
-    fn recovery_context(&self, base: snapshot::RecoveryBase) -> RecoveryContext {
+    /// deferred withdrawals, and the finalized base. `snapshot_fields` adds the payouts owed.
+    pub(super) fn recovery_context(&self, base: snapshot::RecoveryBase) -> RecoveryContext {
         RecoveryContext {
             commands: self.next_seq,
             command_prefix: self.command_prefix,
@@ -177,7 +174,73 @@ impl Sequencer {
             base,
             base_work: self.snapshot_anchor_work.clone(),
             work: self.snapshot_work.clone(),
+            payouts: None,
         }
+    }
+
+    /// The approvals still owed a delivery at `checkpoint`, which the log ends at, in payout order,
+    /// with the roots of the earlier checkpoints their proofs were taken or are being taken at; `None`
+    /// while the engine holds no approval. The gate holds each unpaid approval and its latest
+    /// authorization; without one, mock custody owes only the approvals it has yet to sign. Built only
+    /// for a capture that is taken, it costs a clone of each owed approval's latest authorization.
+    fn owed_payouts(&self, checkpoint: &Checkpoint) -> Option<snapshot::Payouts> {
+        self.engine.withdrawal_approvals().next()?;
+        let mut owed: Vec<_> = match &self.gate {
+            Some(gate) => gate
+                .payouts
+                .iter()
+                .map(|(&key, payout)| (key, payout.order.1, payout.latest.clone()))
+                .chain(gate.backlog.iter().map(|(key, index, latest)| (*key, *index, latest.clone())))
+                .collect(),
+            None => self.captures.unsigned.iter().map(|&(key, index)| (key, index, None)).collect(),
+        };
+        owed.sort_by_cached_key(|&((account, nonce), index, _)| {
+            let approval = self.engine.withdrawal_approval(account, nonce).expect("an owed payout is an approval");
+            (approval.approved_seq, index)
+        });
+        let owed = owed.into_iter().map(|((account, nonce), event_index, latest)| snapshot::Owed {
+            account,
+            nonce,
+            event_index,
+            latest,
+        });
+        let proofs = self.gate.iter().flat_map(|gate| gate.payouts.values().filter_map(|payout| payout.proof.as_ref()));
+        let roots = proofs.map(|proof| (proof.seq, proof.root)).chain(self.roots.proving());
+        let roots = roots.filter(|(seq, _)| *seq < checkpoint.seq).collect();
+        Some(snapshot::Payouts { owed: owed.collect(), roots })
+    }
+
+    /// Notes the approvals among a command's `events` that mock custody signs once their checkpoint
+    /// is written, so a capture of that checkpoint owes them. A gate holds its own.
+    pub(super) fn note_unsigned(&mut self, events: &[Event]) {
+        if self.gate.is_some() {
+            return;
+        }
+        for (index, event) in events.iter().enumerate() {
+            if let Event::WithdrawalApproved { account, nonce, .. } = event
+                && self.engine.withdrawal_approval(*account, *nonce).is_some()
+            {
+                self.captures.unsigned.push(((*account, *nonce), index));
+            }
+        }
+    }
+
+    /// Notes the approvals recovery found unsigned, `unreleased`, with their indices in `order`, as
+    /// `note_unsigned` does for a command's, and gives them back for mock custody to sign.
+    pub(super) fn owe_unsigned(
+        &mut self,
+        unreleased: Vec<engine_core::withdrawal::WithdrawalApproval>,
+        order: &[((AccountId, u64), usize)],
+    ) -> Vec<engine_core::withdrawal::WithdrawalApproval> {
+        let unsigned =
+            |key: &(AccountId, u64)| unreleased.iter().any(|approval| (approval.account, approval.nonce) == *key);
+        self.captures.unsigned.extend(order.iter().filter(|(key, _)| unsigned(key)));
+        unreleased
+    }
+
+    /// Forgets an approval mock custody has signed: a later checkpoint owes it nothing.
+    pub(super) fn note_signed(&mut self, key: (AccountId, u64)) {
+        self.captures.unsigned.retain(|(unsigned, _)| *unsigned != key);
     }
 
     /// The engine at the checkpoint after the command at `seq`, the last applied: due from the stats
@@ -196,7 +259,7 @@ impl Sequencer {
     /// Error cases:
     /// - as `snapshot_fields`, or the engine cannot be encoded
     #[cfg(test)]
-    fn snapshot_payload(
+    pub(super) fn snapshot_payload(
         &self,
         checkpoint: Checkpoint,
         progress: snapshot::Progress,
@@ -209,7 +272,8 @@ impl Sequencer {
     }
 
     /// A cache's fields at this checkpoint, whose entry is at `offset`, with the progress and
-    /// recovery facts it had when written, but the engine, which `encoding` gives.
+    /// recovery facts it had when written and the payouts it owes, but the engine, which `encoding`
+    /// gives.
     /// Error cases:
     /// - recovery context validation fails
     fn snapshot_fields(
@@ -219,6 +283,7 @@ impl Sequencer {
         context: RecoveryContext,
         offset: crate::log::Offset,
     ) -> anyhow::Result<Snapshot> {
+        let context = RecoveryContext { payouts: self.owed_payouts(&checkpoint), ..context };
         let snapshot = Snapshot {
             schema: 2,
             chain_id: self.chain_id,

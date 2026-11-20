@@ -197,8 +197,7 @@ impl Sequencer {
     /// checkpoint, once admitted, is written before the stop's reply and the loop ends, so what the
     /// handover hands over is never behind the last sequenced command.
     /// Error cases:
-    /// - the log cannot be written or synced; the node must stop rather than acknowledge
-    ///   undurable commands
+    /// - the log cannot be written or synced; the node stops rather than acknowledging undurable commands
     /// - the engine rejects a queued required command
     pub async fn run(mut self, mut rx: mpsc::Receiver<Request>) -> anyhow::Result<()> {
         let mut batch = Batch::default();
@@ -419,6 +418,7 @@ impl Sequencer {
         }
         self.metrics.commands.inc();
         self.metrics.access_pending_deposits.set(self.engine.pending_deposits().len() as i64);
+        self.note_unsigned(events);
         for (event_index, event) in events.iter().enumerate() {
             alert_on(event);
             self.benchmark_alerts.note(event);

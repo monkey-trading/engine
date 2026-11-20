@@ -1,6 +1,7 @@
 //! Paired recovery through the node's startup order: preflight, activation, and restart.
 
 mod anchor;
+mod approvals;
 mod cadence;
 mod custody;
 pub(crate) mod harness;

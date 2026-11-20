@@ -239,7 +239,9 @@ an index: load only the rule whose hint matches the current action.
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery, one due
   every `[snapshots] interval` of sequenced time and at shutdown, the sequencer sealing the catalog and
-  staging the stats worker's encode of its copy (`sequencer/snapshots.rs`), and a posted log head
+  staging the stats worker's encode of its copy (`sequencer/snapshots.rs`), each carrying the
+  withdrawal approvals still unpaid, their latest authorizations and the roots of the checkpoints
+  their proofs are at (`snapshot/payouts.rs`), and a posted log head
   under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
@@ -864,7 +866,8 @@ an index: load only the rule whose hint matches the current action.
   `dev-dashboard-data.sh`, the dashboard data scenario: signed trades both ways in two markets and a
   MONKEY period closing, each new route's figures checked and verified with `engine verify-response`, and
   the series compared across a restart;
-  `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario;
+  `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario, with a withdrawal
+  before the caches it restarts from;
   `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
   stand-in log (`dev-ct-log.py`), a webhook stand-in, a foreign-key certificate, a restart
   rotation, and a log outage;
@@ -1160,7 +1163,8 @@ Run from the repo root:
   dev only, refused in a `production` build); its dev scenario: `./scripts/dev-ct-watch.sh` (needs
   `python3`, OpenSSL 3, `curl`, and `jq`; loopback stand-ins only)
 - Snapshot restart dev scenario: `./scripts/dev-snapshot-restart.sh` (needs `python3`, `curl`, and
-  `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
+  `jq`; runs a dev node with `[snapshots]` and a synthetic signed access source on private temporary
+  data and public Roughtime servers)
 - Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
   as the vault scenario; exercises sequencer/core withdrawal approval eligibility while #23 owns payout)
 - RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive and TraderMade
