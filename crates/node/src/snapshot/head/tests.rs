@@ -100,6 +100,7 @@ fn fixture(label: &str) -> (SnapshotSection, CheckpointDomain, StoreId, Store, E
     let cfg = SnapshotSection {
         dir: scratch_dir(label),
         retain: NonZeroUsize::new(3).unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: NonZeroUsize::new(16 * 1024 * 1024).unwrap(),
         trusted_signers: vec![AccountId(key.address())],
     };

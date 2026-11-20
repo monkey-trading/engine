@@ -226,14 +226,17 @@ an index: load only the rule whose hint matches the current action.
   is refused at serve time),
   the dashboard record (`stats/`, held in memory and rebuilt from the log's replay through a sink in it,
   with no file to roll back: `series.rs` 1m/1h/1d buckets with `[stats]` retention, `snapshot.rs` and
-  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}` (beside, from `V55`, what closing it pays, `close_fees`, and from `V60` the weekend margin each position needs, `weekend_margins`, served from `api/reads.rs`), `activity.rs`
+  `closeout.rs` the full scan of every account at most once per `api.stats_interval` of sequenced time and a light one (totals only) every `api.stats_light_interval`, taken by `background.rs`'s worker over a copy of the engine so it never holds the sequencer, the same copy encoding each recovery cache's engine at its checkpoint, and, from the full scan's rule, each position's `closeouts` price in `GET /v1/accounts/{address}` (beside, from `V55`, what closing it pays, `close_fees`, and from `V60` the weekend margin each position needs, `weekend_margins`, served from `api/reads.rs`), `activity.rs`
   the bounded MONKEY feed, `view.rs` the answers) served signed from `api/stats.rs` and `/v1/house`:
   `/v1/house/positions`, `/v1/monkey`, `/v1/monkey/activity`, `/v1/monkey/distributions` (`distributions.rs`: the
   closed epochs, their operator-share recipients and skipped ranges, in a ring of `[stats] distribution_limit`) and
   `/v1/stats/series`, each stating where its data begins (`stats::bench` measures the scan at 100k accounts),
   dated benchmark ingestion (`benchmarks/` and the separate `admin/benchmark_feed.rs` signing worker
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
-  optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery,
+  optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery, one due
+  every `[snapshots] interval` of sequenced time and at shutdown, the sequencer sealing the catalog and
+  staging the stats worker's encode of its copy (`sequencer/snapshots.rs`), and a posted log head
+  under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP, given only to a guest whose kernel times on the
@@ -882,11 +885,15 @@ an index: load only the rule whose hint matches the current action.
   the launch book on a test clock and writes 30 days of launch flow and 3 of ten times it on accelerated sequenced time
   (`flow.rs`: the template's ticks, each market's price commands at `load_scenario`'s live rates while its venue is
   open, and the load generator's request mix from the book's traders, signed and screened, in `orders.rs`), printing
-  each day's commands and bytes, then writes a cache at its checkpoint and an hour of flow past it; on that log it
-  times `engine replay`'s replay, a node's recovery by full replay to its first command with the marks cache seeded
-  (`Sequencer::read_log_from`, a whole log's read started from the book), the restart from the cache
-  (`snapshot::read`, the commands past it, and the sequencer's start; the cache is unpaired, so a paired cache's history
-  and catalog checks are left out), a member's replica build (`Follower::open_seeded`) and the history index's catch-up,
+  each day's commands and bytes, the node pairing caches as one with `[snapshots]` does (`paired.rs`: the history owner,
+  the stats worker's encodes, a capture every `RECOVERY_CAPTURE_SECS`, each capture's hold on the sequencer against
+  500 ms), then takes a cache at a checkpoint and five minutes of flow past it before a hard stop (`cache.rs`); on that
+  log it times `engine replay`'s replay, the restart from the cache on a copy of the log and its caches
+  (`Sequencer::read_paired_log` with the head posted an hour before the log's end, then the start checks and the first
+  command, with the cache's read, the posted head's check, the full prefix pass it replaces and one whole-log read timed
+  apart), a node's recovery by full replay to its first command with the marks cache seeded
+  (`Sequencer::read_log_from`, a whole log's read started from the book), a member's replica build
+  (`Follower::open_seeded`) and the history index's catch-up,
   and tail handovers grown under launch flow to about 1 MiB, 64 MiB and 1 MiB under `MAX_TAIL_BYTES`, each read by the
   holder (`read_tail`) and taken through `take_tail` from the stand-in predecessor, each window with the member's start
   from its replica; it starts emissions and staking inside the flow, with the staking mirror's frontier reported each
@@ -960,7 +967,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the recovery dev scenario at 10,000 accounts and half an hour of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -1168,8 +1175,9 @@ Run from the repo root:
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
   `RECOVERY_LAUNCH_SECS` set to the days that fit, and read the 30-day replay's projection);
   `RECOVERY_ACCOUNTS`, `RECOVERY_TRADERS`, `RECOVERY_LAUNCH_SECS`, `RECOVERY_TEN_TIMES_SECS`,
-  `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and half an hour of flow),
-  and `RECOVERY_REPLAY_WORKERS` bounds the threads that check seals ahead of each replay (one per core)
+  `RECOVERY_CAPTURE_SECS`, `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and
+  twenty-one minutes of flow, which the first emission period and staking epoch end in), and `RECOVERY_REPLAY_WORKERS`
+  bounds the threads that check seals ahead of each replay, the node's included (one per core)
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

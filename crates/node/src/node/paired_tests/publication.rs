@@ -187,14 +187,14 @@ async fn at_frontier(node: &Node) -> crate::history::runtime::TestState {
 
 /// Collects alert lines through the node's alert layer, the history owner's included, until the
 /// guard drops.
-fn collect_alerts() -> (DefaultGuard, Router) {
+pub(super) fn collect_alerts() -> (DefaultGuard, Router) {
     keep_callsites_interested();
     let (layer, router) = alerts::channel(Routes::default(), Arc::new(Metrics::new()));
     (set_default(registry().with(layer.with_filter(filter_fn(is_alert_callsite)))), router)
 }
 
 /// The `snapshot_write_failed` lines `router` received, in order.
-fn write_alert_lines(router: Router) -> Vec<AlertLine> {
+pub(super) fn write_alert_lines(router: Router) -> Vec<AlertLine> {
     router.queued().into_iter().filter(|line| line.name == "snapshot_write_failed").collect()
 }
 

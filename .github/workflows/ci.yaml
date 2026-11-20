@@ -1021,14 +1021,15 @@ jobs:
           LOAD_SUBSCRIBERS: "16"
         run: ./scripts/dev-load.sh
 
-  # The recovery scenario at a tenth of the launch book and its traders, on half an hour of launch flow
-  # from 20:45 UTC, across the US shares' close, and five minutes of ten times it, with tails of 64 KiB
-  # and 1 MiB. The full-scale run is by hand.
+  # The recovery scenario at a tenth of the launch book and its traders, on twenty minutes of launch flow
+  # from 20:57 UTC, across the US shares' close, and one minute of ten times it, in which the first
+  # emission period and staking epoch end and which the node's authenticated history indexes before its
+  # cache, with tails of 64 KiB and 1 MiB. The full-scale run is by hand.
   dev-recovery-scale:
     needs: changes
     if: needs.changes.outputs.recovery_scale == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1043,9 +1044,9 @@ jobs:
         env:
           RECOVERY_ACCOUNTS: "10000"
           RECOVERY_TRADERS: "200"
-          RECOVERY_START_SECS: "20700"
-          RECOVERY_LAUNCH_SECS: "1800"
-          RECOVERY_TEN_TIMES_SECS: "300"
+          RECOVERY_START_SECS: "21420"
+          RECOVERY_LAUNCH_SECS: "1200"
+          RECOVERY_TEN_TIMES_SECS: "60"
           RECOVERY_SUFFIX_SECS: "300"
           RECOVERY_TAILS: "65536,1048576"
         run: ./scripts/dev-recovery-scale.sh

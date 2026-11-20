@@ -107,7 +107,7 @@ impl Replay {
         } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
         // The base's own command is the snapshot engine's last: its time is the anchor's when the
-        // vault finalized the base. An anchor under the base is the prefix pass's to stamp.
+        // vault finalized the base. An anchor under the base is the anchor pass's to stamp.
         let recovery_anchor_ts =
             recovery_anchor.as_ref().filter(|anchor| anchor.seq == checkpoint.seq).map(|_| engine.now());
         // The pinned snapshot envelope signs all engine bytes, including legacy staking references.

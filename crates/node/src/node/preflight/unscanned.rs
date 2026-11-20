@@ -92,6 +92,7 @@ async fn reject_outstanding(cached: bool) {
         let cache = crate::config::SnapshotSection {
             dir: cfg.node.log_dir.parent().unwrap().join("cache"),
             retain: std::num::NonZeroUsize::new(2).unwrap(),
+            interval: std::time::Duration::ZERO,
             max_bytes: std::num::NonZeroUsize::new(32 * 1024 * 1024).unwrap(),
             trusted_signers: vec![signer],
         };

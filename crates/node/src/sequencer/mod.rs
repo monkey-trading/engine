@@ -155,9 +155,8 @@ pub struct Sequencer {
     snapshot_work: Vec<crate::checkpoints::Work>,
     snapshot_anchor_work: Option<crate::checkpoints::Work>,
     snapshot_signers: BTreeSet<AccountId>,
-    /// The newest checkpoint, with its recovery facts as they stood then, when its capture was
-    /// skipped because another was in flight.
-    uncaptured: Option<snapshots::Deferred>,
+    /// When a recovery cache is next due, and the newest checkpoint not captured, for shutdown.
+    captures: snapshots::Captures,
     /// Live mark reporting for the derived marks cache, and the dashboard record fed beside it.
     marks: marks::Marks,
     house: house::Latest,
@@ -292,7 +291,7 @@ impl Sequencer {
         self.settle_async().await?;
         // A frozen sequencer — a detected log rollback — writes no final checkpoint: what it would
         // attest is exactly what must not stand as healthy history.
-        if !self.frozen() && (self.last_checkpoint != self.engine.last_seq() || self.uncaptured.is_some()) {
+        if !self.frozen() && (self.last_checkpoint != self.engine.last_seq() || self.captures.uncaptured.is_some()) {
             let final_checkpoint = self.last_checkpoint != self.engine.last_seq();
             if let Some(endpoint) = self.sealing.clone()
                 && tokio::time::timeout(SHUTDOWN_CAPTURE_WAIT, endpoint.idle()).await.is_err()
@@ -305,6 +304,7 @@ impl Sequencer {
                 });
             }
             if final_checkpoint {
+                self.capture_next_checkpoint();
                 self.checkpoint()?;
                 if self.checkpoint_waits.is_some() {
                     info!(
@@ -312,10 +312,10 @@ impl Sequencer {
                         "no final checkpoint at shutdown: no member of the turn's set has confirmed holding its seq"
                     );
                 }
-            } else if let Some(deferred) = self.uncaptured.take() {
-                // The last command's checkpoint found a capture in flight; history accepts a
-                // capture of the checkpoint it has just indexed. Its seal is collected like any
-                // checkpoint's.
+            } else if let Some(deferred) = self.captures.uncaptured.take() {
+                // The last command's checkpoint was not due or found a capture in flight; history
+                // accepts a capture of the checkpoint it has just indexed. Its seal is collected like
+                // any checkpoint's.
                 self.capture(deferred)?;
                 self.maintain_catalog();
             }

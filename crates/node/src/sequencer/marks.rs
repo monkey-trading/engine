@@ -45,6 +45,11 @@ impl Marks {
         }
     }
 
+    /// The dashboard record, whose worker also encodes recovery caches, once the node attaches it.
+    pub(super) fn stats(&self) -> Option<&crate::stats::Stats> {
+        self.stats.as_ref()
+    }
+
     /// The stats worker's jobs from the batch so far, for `deliver_stats` once it is durable.
     pub(super) fn stage_stats(&self) -> Vec<crate::stats::background::Job> {
         self.stats.as_ref().map(crate::stats::Stats::stage).unwrap_or_default()

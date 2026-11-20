@@ -17,6 +17,7 @@ async fn a_start_counts_its_full_replay_with_or_without_snapshots() {
         cfg.snapshots = snapshots.then(|| SnapshotSection {
             dir: root.join("snapshots"),
             retain: 4.try_into().unwrap(),
+            interval: std::time::Duration::ZERO,
             max_bytes: (16 * 1024 * 1024).try_into().unwrap(),
             trusted_signers: Vec::new(),
         });

@@ -19,15 +19,25 @@ their output call a running trading server a node.
 - **The log lines go to the serial console.** Capture the guest's serial console to a file on the
   host, and keep it. Every `alert =` line that this runbook mentions is read there, and the webhook
   receives the same alerts as pages.
-- **A restart replays the whole log, so it takes longer as the log grows.** The production template
-  leaves `[snapshots]` off, so every start replays every instruction in the log before it sequences
-  again, and the API answers nothing meanwhile. The replay checks the instructions' seals on a pool of
+- **A restart replays the log past the newest recovery cache, and still reads the whole log.** The
+  production template takes a cache every five minutes of sequenced time. A start reads the newest
+  cache, checks the posted log head over the instructions since the head, replays at most about five
+  minutes of instructions, and sequences again; the API answers nothing meanwhile. On a book of
+  100,000 accounts, a debug build on a shared development machine did this in about 20 seconds from
+  a cache five minutes of launch flow old. Outside the cache, the start reads the whole log three
+  times, for its signer history and the takeover cut, at about 120,000 instructions a second there,
+  so each weekday of launch flow, about 9.8 million instructions, adds about four minutes.
+- **Some starts replay much more.** A release without `[snapshots]`, as a first release is, replays
+  every instruction in the log at each start. The replay checks the instructions' seals on a pool of
   threads, one per core unless `node.replay_workers` sets another number, so it runs faster on more
-  cores. On a book of 100,000 accounts, a debug build on a shared development machine, with six
-  threads checking seals, recovered about 6,300 instructions a second, seeding the marks cache and
-  the dashboard record as it went. A weekday of launch flow logs about 9.8 million instructions, so
-  each such day adds about 26 minutes to a restart, and 30 days of launch flow, about 246 million
-  instructions, add about 11 hours. Plan a restart's downtime from the length of the log.
+  cores. The same machine, with six threads checking seals, recovered about 6,300 instructions a
+  second, seeding the marks cache and the dashboard record as it went, so each weekday of launch flow
+  adds about 26 minutes, and 30 days of launch flow, about 246 million instructions, add about 11
+  hours. With `[snapshots]`, a start that finds no usable cache
+  (`snapshot_rejected`) replays the whole log and also rebuilds the history index from it, which
+  takes longer still. Once the trading server holds a withdrawal approval it takes no new cache,
+  since a cache does not carry approvals, so each start replays from the last cache before the first
+  approval, and the replay grows with the log after it. Plan a restart's downtime from these.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
   chip open the same sealed keys. The enclave address, the signer epoch, the TLS key and therefore
   `$PIN`, the certificate, and the outstanding withdrawal authorisations are unchanged. A restart
@@ -230,7 +240,11 @@ heads are kept for each signer epoch, and the new epoch starts with none.
    differs.
 
 3. **If the refusal is at the same sequence number with a different link, this is a fork, not a
-   disk problem.** The key sequenced on another copy. Stop, and call the owner.
+   disk problem.** The key sequenced on another copy. Stop, and call the owner. A start from a
+   recovery cache refuses in the same way when the instructions after the head, through the cache,
+   do not give the cache's digest: a fork, or those instructions are damaged on the disk. To tell
+   them apart, run `engine replay` on a copy of the log: a damaged instruction fails its seal check
+   there. Damaged instructions are a disk problem: follow step 4 for a copy that holds them.
 
 4. Otherwise, find a copy that holds the missing range. Look first at a standby's copy, as
    [Running as a standby](standby.md) describes, and then at the archive mirrors. A mirror holds
@@ -265,7 +279,9 @@ affected.
 
    **Changes the live system.** The owner must approve the restart.
 
-2. Remove `history/`, and nothing else.
+2. Without `[snapshots]`, remove `history/`, and nothing else. With `[snapshots]`, the account
+   history index is in `snapshots/`: remove `snapshots/` and `history/`, and nothing else. The
+   recovery caches go with them, so this start replays the whole log.
 
 3. Start the VM. The rebuild is a replay, so allow time in proportion to the length of the log.
 
@@ -278,6 +294,7 @@ Use this table when part of the data disk is lost or damaged.
 | What is lost | Effect | What to do |
 | --- | --- | --- |
 | `history/` only | Nothing is lost, and the index rebuilds. | Follow [Rebuild the derived stores](#rebuild-the-derived-stores). |
+| `snapshots/` | The recovery caches, and with `[snapshots]` the account history index and the segment catalog. The books are not affected. | Start the trading server. It replays the whole log, rebuilds the index and the catalog, and takes a cache again at its first checkpoint. |
 | `alerts/` | Pages not yet delivered are lost. | Start the trading server. The outbox is created empty. Check `engine_alert_pages_pending`. |
 | The cursors | The deposit and staking scans start again from `custody.evm.start_block`, and credit nothing twice. | Start the trading server. The scan is slow to catch up, and `custody_deposits_lagging` fires meanwhile. |
 | The log | The books. | Find a copy that reaches the vault's `latestSeq`, as [A log shorter than the vault](#a-log-shorter-than-the-vault) describes. |

@@ -9,13 +9,17 @@
 //! the batch is durable in the log, and a read queues behind them, so a read sees every command
 //! whose reply its caller has had and none that a crash could take back.
 //!
+//! The copy also encodes the engine for a checkpoint's recovery cache (`Job::Encode`), so the
+//! sequencer never holds a price while a large state encodes. While an encode is queued or runs,
+//! reads go to the sequencer instead, so no read, and no request admitted on one, waits behind it.
+//!
 //! The worker is as deterministic as replay: `Engine::apply` is its only mutator, and it is fed the
 //! commands the log holds. If it stops, or its copy would differ, the record scans on the
 //! sequencer's thread as it did before, and an alert says so.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use engine_core::Engine;
 use engine_core::command::Sequenced;
@@ -31,9 +35,24 @@ const QUEUE: usize = 100_000;
 /// One step of the worker's queue, in the order the sequencer produced it.
 pub(crate) enum Job {
     Apply(Box<Sequenced>),
-    Scan { seq: u64, ts: Millis, layout: Layout, full: bool },
+    Scan {
+        seq: u64,
+        ts: Millis,
+        layout: Layout,
+        full: bool,
+    },
     Read(ReadJob),
+    /// Encodes the copy for the recovery cache of the checkpoint after the command at `seq`, which
+    /// was stamped `ts`, and sends the encoding, or why there is none, to `reply`.
+    Encode {
+        seq: u64,
+        ts: Millis,
+        reply: SyncSender<Encoded>,
+    },
 }
+
+/// The engine's encoding at a checkpoint, or why the worker has none.
+pub(crate) type Encoded = Result<String, String>;
 
 /// A read of the worker's copy of the engine.
 pub(crate) type ReadJob = Box<dyn FnOnce(&Engine) + Send>;
@@ -44,6 +63,11 @@ pub(crate) struct Reader {
     jobs: SyncSender<Job>,
     /// Commands handed over, shared with the worker's handle.
     sent: Arc<AtomicU64>,
+    /// Encodes handed over that the worker has not finished, shared with it.
+    encodes: Arc<AtomicUsize>,
+    /// Held while a read checks `encodes` and queues, and while an encode is counted, so no read
+    /// that found none pending is queued behind one.
+    admission: Arc<Mutex<()>>,
 }
 
 impl Reader {
@@ -51,15 +75,28 @@ impl Reader {
     /// the worker runs takes the record's lock, so the caller must not hold it. `false` once the
     /// worker has stopped.
     pub(super) fn send(&self, job: Job) -> bool {
-        let command = matches!(job, Job::Apply(_));
+        let (command, encode) = (matches!(job, Job::Apply(_)), matches!(job, Job::Encode { .. }));
+        // Counted before it is queued, and between reads, so no read queues behind it.
+        if encode {
+            let _admission = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
+            self.encodes.fetch_add(1, Ordering::AcqRel);
+        }
         let sent = self.jobs.send(job).is_ok();
         self.sent.fetch_add(u64::from(sent && command), Ordering::Relaxed);
+        self.encodes.fetch_sub(usize::from(encode && !sent), Ordering::AcqRel);
         sent
     }
 
     /// Queues `read` to run on the worker's copy, after every command delivered so far. Hands it
-    /// back when the worker has stopped or its queue is full, for the caller to run elsewhere.
+    /// back when the worker has stopped, its queue is full, or an encode is queued or running, for
+    /// the caller to run elsewhere.
     pub(crate) fn read(&self, read: ReadJob) -> Result<(), ReadJob> {
+        // Held to the queueing, which never waits, so an encode counted after the check is queued
+        // after this read.
+        let _admission = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.encodes.load(Ordering::Acquire) > 0 {
+            return Err(read);
+        }
         match self.jobs.try_send(Job::Read(read)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(Job::Read(read)) | TrySendError::Disconnected(Job::Read(read))) => Err(read),
@@ -81,6 +118,9 @@ pub(super) struct Background {
     in_flight: usize,
     /// Commands handed over, and commands the worker has applied.
     sent: Arc<AtomicU64>,
+    /// Encodes handed over that the worker has not finished, and the readers' admission to it.
+    encodes: Arc<AtomicUsize>,
+    admission: Arc<Mutex<()>>,
     #[cfg(test)]
     applied: Arc<AtomicU64>,
 }
@@ -96,13 +136,18 @@ impl Background {
         let (jobs, work) = sync_channel(QUEUE);
         let (reply, done) = channel();
         let applied = Arc::new(AtomicU64::new(0));
-        let counter = Arc::clone(&applied);
-        std::thread::Builder::new().name("stats-scan".into()).spawn(move || run(state, &work, &reply, &counter))?;
+        let encodes = Arc::new(AtomicUsize::new(0));
+        let counters = (Arc::clone(&applied), Arc::clone(&encodes));
+        std::thread::Builder::new()
+            .name("stats-scan".into())
+            .spawn(move || run(state, &work, &reply, (&counters.0, &counters.1)))?;
         Ok(Self {
             jobs,
             done,
             in_flight: 0,
             sent: Arc::default(),
+            encodes,
+            admission: Arc::default(),
             #[cfg(test)]
             applied,
         })
@@ -110,7 +155,12 @@ impl Background {
 
     /// A handle for queueing jobs and reads.
     pub(super) fn reader(&self) -> Reader {
-        Reader { jobs: self.jobs.clone(), sent: Arc::clone(&self.sent) }
+        Reader {
+            jobs: self.jobs.clone(),
+            sent: Arc::clone(&self.sent),
+            encodes: Arc::clone(&self.encodes),
+            admission: Arc::clone(&self.admission),
+        }
     }
 
     /// Commands handed over that the worker has not applied yet.
@@ -159,7 +209,14 @@ impl Background {
     }
 }
 
-fn run(state: Vec<u8>, work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Done>, applied: &AtomicU64) {
+/// The worker's loop over `work`, from the engine `state` encodes, counting each command it applies in
+/// `applied` and each encode it finishes off `encodes`.
+fn run(
+    state: Vec<u8>,
+    work: &Receiver<Job>,
+    reply: &std::sync::mpsc::Sender<Done>,
+    (applied, encodes): (&AtomicU64, &AtomicUsize),
+) {
     let decoded = serde_json::from_slice(&state);
     // The encoding is as large as the engine; it is not kept for the life of the thread.
     drop(state);
@@ -193,6 +250,21 @@ fn run(state: Vec<u8>, work: &Receiver<Job>, reply: &std::sync::mpsc::Sender<Don
                 if reply.send(Done::Scan(Box::new(snapshot))).is_err() {
                     return;
                 }
+            }
+            Job::Encode { seq, ts, reply: encoded } => {
+                // A copy out of step with the checkpoint would encode another state: it stops, as a
+                // scan's does, and the capture fails rather than wait.
+                if (engine.last_seq(), engine.now()) != (Some(seq), ts) {
+                    let reason = format!("the copy is at {:?}, not seq {seq} at {ts}", engine.last_seq());
+                    encodes.fetch_sub(1, Ordering::AcqRel);
+                    let _ = encoded.send(Err(reason.clone()));
+                    let _ = reply.send(Done::Failed(reason));
+                    return;
+                }
+                let encoding = serde_json::to_string(&engine).map_err(|error| format!("encoding the copy: {error}"));
+                // Reads come back to the copy before the encoding is handed over.
+                encodes.fetch_sub(1, Ordering::AcqRel);
+                let _ = encoded.send(encoding);
             }
         }
     }

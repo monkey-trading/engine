@@ -18,7 +18,7 @@ use alloy::primitives::B256;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
-use engine_core::types::{MarketId, Millis};
+use engine_core::types::{AccountId, MarketId, Millis};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::checkpoints::{Health, Registry, Work};
@@ -30,9 +30,10 @@ use crate::common::session_keys::HOUR_MS;
 use crate::common::{CHAIN_ID, Client, VAULT, operator};
 use crate::log::{Checkpoint, Manifest};
 use crate::sequencer::recovery_scale::orders::Traders;
-use crate::sequencer::{ReplayedLog, Sequencer, SequencerConfig};
+use crate::sequencer::{ReplayedLog, Sequencer, SequencerConfig, StreamMsg};
+use crate::snapshot::sealing::Endpoint;
 use crate::tee::EnclaveKey;
-use crate::test_support::{sample_around, sequencer_config};
+use crate::test_support::{sample_around, sequencer_config, stats};
 
 /// The template's `[node]` cadences (`ops/runbooks/production-node.toml`): a checkpoint and a
 /// segment every 1,000 commands, and a tick every 250 ms.
@@ -73,16 +74,25 @@ pub(super) struct Closed {
     pub epochs: u64,
 }
 
+/// A node's link to its history owner, when its log pairs recovery caches: the endpoint its captures
+/// go through, and the stream the owner's feed follows.
+pub(super) struct Pairing {
+    pub sealing: Endpoint,
+    pub stream: broadcast::Sender<Arc<StreamMsg>>,
+}
+
 /// What a node's sequencer is configured with: the book's deployment, operator and screening source,
-/// and the template's cadences.
+/// the template's cadences, and `sealing`, where its captures go, when its log pairs caches.
 fn config<'a>(
     dir: &'a Path,
     clock: Arc<TestClock>,
     sink: mpsc::Sender<Work>,
     manifest: watch::Sender<Manifest>,
+    sealing: Option<Endpoint>,
 ) -> SequencerConfig<'a> {
     SequencerConfig {
         clock,
+        history_sealing: sealing,
         access_policy: Some(engine_core::access::AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }),
         checkpoints: Some(sink),
         checkpoint_every: CHECKPOINT_EVERY,
@@ -101,12 +111,42 @@ fn config<'a>(
 }
 
 impl Node {
-    /// A node that takes over `book` with an empty log in `dir`, signing with `key`.
-    pub(super) fn start(book: engine_core::Engine, dir: &Path, key: Arc<EnclaveKey>) -> Self {
+    /// A node that takes over `book` on `log`, the empty log read from `dir`, signing with `key`, with
+    /// the stats worker whose copy encodes the caches `pairing`'s history owner publishes.
+    /// Error cases:
+    /// - the start checks refuse the log, or the sequencer refuses the book
+    pub(super) fn start(
+        book: engine_core::Engine,
+        log: ReplayedLog,
+        dir: &Path,
+        key: Arc<EnclaveKey>,
+        pairing: Pairing,
+    ) -> anyhow::Result<Self> {
         let clock = Arc::new(TestClock::at(book.now() + 1_000));
         let (sink, queued) = mpsc::channel(1 << 16);
         let (published, manifest) = watch::channel(Manifest::default());
-        let cfg = config(dir, clock.clone(), sink, published);
+        let cfg = config(dir, clock.clone(), sink, published, Some(pairing.sealing));
+        log.validate_recovery(&cfg, AccountId(key.address()))?;
+        let mut seq = Sequencer::recover_from(log, cfg, key, pairing.stream, mpsc::unbounded_channel().0)?;
+        // The stats worker's copy starts from the book, as a node's from the state it recovered, before
+        // the first command and checkpoint, which `take_over_checkpointed` writes otherwise.
+        seq.take_over(book);
+        seq.track_stats(stats());
+        seq.trust(sample_around(clock.as_ref()))?;
+        anyhow::ensure!(seq.sequence(Command::Tick)?.is_some(), "trusted time refused the first stamp");
+        seq.checkpoint()?;
+        seq.flush()?;
+        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() };
+        node.settle();
+        Ok(node)
+    }
+
+    /// A node with no paired caches that takes over `book` with an empty log in `dir`, signing with `key`.
+    pub(super) fn unpaired(book: engine_core::Engine, dir: &Path, key: Arc<EnclaveKey>) -> Self {
+        let clock = Arc::new(TestClock::at(book.now() + 1_000));
+        let (sink, queued) = mpsc::channel(1 << 16);
+        let (published, manifest) = watch::channel(Manifest::default());
+        let cfg = config(dir, clock.clone(), sink, published, None);
         let mut seq =
             Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("an empty log");
         seq.trust(sample_around(clock.as_ref())).expect("a trusted time sample");
@@ -116,14 +156,30 @@ impl Node {
         node
     }
 
-    /// The node `log`, read from `dir`, recovers into, signing with `key`, as a restart does.
-    pub(super) fn recovered(log: ReplayedLog, dir: &Path, key: Arc<EnclaveKey>) -> anyhow::Result<Self> {
+    /// The node `log`, read from `dir`, recovers into, signing with `key`, as a restart does: with
+    /// `pairing`, after the start checks, and with the stats worker a node with paired caches runs.
+    /// Error cases:
+    /// - the start checks or the sequencer refuse the log
+    pub(super) fn recovered(
+        log: ReplayedLog,
+        dir: &Path,
+        key: Arc<EnclaveKey>,
+        pairing: Option<Pairing>,
+    ) -> anyhow::Result<Self> {
         let at = log.replayed.engine.now() + 1_000;
         let clock = Arc::new(TestClock::at(at));
         let (sink, queued) = mpsc::channel(1 << 16);
         let (published, manifest) = watch::channel(Manifest::default());
-        let cfg = config(dir, clock.clone(), sink, published);
-        let seq = Sequencer::recover_from(log, cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0)?;
+        let (sealing, stream) = pairing.map_or((None, broadcast::channel(16).0), |p| (Some(p.sealing), p.stream));
+        let paired = sealing.is_some();
+        let cfg = config(dir, clock.clone(), sink, published, sealing);
+        if paired {
+            log.validate_recovery(&cfg, AccountId(key.address()))?;
+        }
+        let mut seq = Sequencer::recover_from(log, cfg, key, stream, mpsc::unbounded_channel().0)?;
+        if paired {
+            seq.track_stats(stats());
+        }
         Ok(Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() })
     }
 

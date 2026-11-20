@@ -215,7 +215,7 @@ fn unconfirmed(take: Duration, error: &anyhow::Error, at_head: bool) -> bool {
 pub(super) fn start_from_replica(follower: Follower, dir: &Path, key: Arc<EnclaveKey>) -> (Node, Duration) {
     let started = Instant::now();
     let log = follower.into_log(None, AccountId(key.address()), None).expect("the replica finishes as a log");
-    let mut node = Node::recovered(log, dir, key).expect("the member's node starts from its replica");
+    let mut node = Node::recovered(log, dir, key, None).expect("the member's node starts from its replica");
     node.first_command().expect("the member's first command");
     (node, started.elapsed())
 }
