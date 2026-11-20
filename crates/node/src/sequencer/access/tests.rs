@@ -170,33 +170,8 @@ fn a_levels_request_drives_the_source_episode_by_its_own_screening() {
 
 #[test]
 fn a_failed_screening_in_a_reorganisation_outweighs_a_passed_one() {
-    use alloy::primitives::B256;
-    use engine_core::deposits::{DepositBeneficiary, DepositStatus, ReceiptMove};
-    let receipt = |byte: u8| DepositReceipt {
-        block: u64::from(byte),
-        block_hash: B256::repeat_byte(byte),
-        tx_hash: B256::repeat_byte(byte),
-        log_index: 0,
-        transaction_deposit_index: 0,
-        deposit_id: u64::from(byte),
-        beneficiary: DepositBeneficiary::Trader { account: ACCOUNT },
-        amount: Fixed::ONE,
-    };
-    let moved = |byte: u8| ReceiptMove {
-        receipt: receipt(byte),
-        observed_at_seq: 0,
-        replacement: receipt(byte + 1),
-        replacement_reversed_at_seq: None,
-        payer: None,
-        evidence: None,
-    };
-    let reorganisation = Command::CustodyReorganisation { moves: vec![moved(1), moved(3)] };
-    let credited = Event::CustodyDepositChanged {
-        receipt: receipt(2),
-        status: DepositStatus::Unfinalised,
-        principal_delta: Fixed::ONE,
-        uncredited: None,
-    };
+    let reorganisation = Command::CustodyReorganisation { moves: vec![moved(1, Some(0)), moved(3, Some(0))] };
+    let credited = credited(2);
     let pending = Event::DepositPending {
         chain_ref: receipt(4).reference(),
         account: Some(ACCOUNT),
@@ -212,6 +187,30 @@ fn a_failed_screening_in_a_reorganisation_outweighs_a_passed_one() {
     let mut state = AccessAlerts { failed: true, since: 0 };
     state.note(&Engine::default(), &reorganisation, &[credited]);
     assert!(!state.failed, "a reorganisation whose screenings all passed resolves the episode");
+}
+
+#[test]
+fn a_reorganisation_resolves_an_episode_only_by_a_screening_observed_since_the_failure() {
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let mut engine = Engine::default();
+    engine.apply(&engine_core::command::Sequenced { seq: 0, ts: 10_000, cmd: Command::Tick }).expect("in sequence");
+    let mut state = AccessAlerts::default();
+    state.note(&engine, &command(), &[refused(AccessReject::SourceUnavailable)]);
+    assert!(state.failed);
+    // The credited move's screening came before the failure; a move with none, or one the events do not
+    // credit, says nothing of the source since.
+    let reorganise = |credited_at, other_at| Command::CustodyReorganisation {
+        moves: vec![moved(1, credited_at), moved(3, other_at)],
+    };
+    for (cmd, resolved) in [
+        (reorganise(Some(9_999), Some(10_000)), false),
+        (reorganise(None, Some(10_000)), false),
+        (reorganise(Some(10_000), Some(9_999)), true),
+    ] {
+        state.note(&engine, &cmd, &[credited(2)]);
+        assert_eq!(!state.failed, resolved, "{cmd:?}");
+    }
+    assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), 1);
 }
 
 #[test]
@@ -253,19 +252,45 @@ fn a_decision_observed_before_the_failure_resolves_nothing_and_a_later_one_does(
     assert_eq!(logs.count("alert_resolved=\"access_source_failed\""), 1);
 }
 
+/// A receipt for the deposit `byte`.
+fn receipt(byte: u8) -> DepositReceipt {
+    use engine_core::deposits::DepositBeneficiary;
+    DepositReceipt {
+        block: u64::from(byte),
+        block_hash: alloy::primitives::B256::repeat_byte(byte),
+        tx_hash: alloy::primitives::B256::repeat_byte(byte),
+        log_index: 0,
+        transaction_deposit_index: 0,
+        deposit_id: u64::from(byte),
+        beneficiary: DepositBeneficiary::Trader { account: ACCOUNT },
+        amount: Fixed::ONE,
+    }
+}
+
+/// A move of receipt `byte` to the next, its replacement screened at `observed_at` if given.
+fn moved(byte: u8, observed_at: Option<Millis>) -> engine_core::deposits::ReceiptMove {
+    engine_core::deposits::ReceiptMove {
+        receipt: receipt(byte),
+        observed_at_seq: 0,
+        replacement: receipt(byte + 1),
+        replacement_reversed_at_seq: None,
+        payer: None,
+        evidence: observed_at.map(screened),
+    }
+}
+
+/// The event crediting receipt `byte` on its screening.
+fn credited(byte: u8) -> Event {
+    Event::CustodyDepositChanged {
+        receipt: receipt(byte),
+        status: engine_core::deposits::DepositStatus::Unfinalised,
+        principal_delta: Fixed::ONE,
+        uncredited: None,
+    }
+}
+
 /// An access order carrying a decision observed at `observed_at`.
 fn order_on(observed_at: Millis) -> Command {
-    let screening = engine_core::access::Screening {
-        source: ACCOUNT,
-        request_hash: None,
-        observed_at,
-        account: Some(ACCOUNT),
-        payer: None,
-        jurisdiction: engine_core::access::Jurisdiction::Allowed,
-        account_status: engine_core::access::SanctionsStatus::Clear,
-        payer_status: engine_core::access::SanctionsStatus::Clear,
-        signature: engine_core::eip712::Signature::ZERO,
-    };
     let request = engine_core::command::OrderRequest {
         account: ACCOUNT,
         client_id: 1,
@@ -278,5 +303,21 @@ fn order_on(observed_at: Millis) -> Command {
         take_profit: None,
         stop_loss: None,
     };
-    Command::AccessOrder { request, evidence: AccessEvidence::Screened(screening) }
+    Command::AccessOrder { request, evidence: screened(observed_at) }
+}
+
+/// A passed screening of `ACCOUNT` observed at `observed_at`.
+fn screened(observed_at: Millis) -> AccessEvidence {
+    let screening = engine_core::access::Screening {
+        source: ACCOUNT,
+        request_hash: None,
+        observed_at,
+        account: Some(ACCOUNT),
+        payer: None,
+        jurisdiction: engine_core::access::Jurisdiction::Allowed,
+        account_status: engine_core::access::SanctionsStatus::Clear,
+        payer_status: engine_core::access::SanctionsStatus::Clear,
+        signature: engine_core::eip712::Signature::ZERO,
+    };
+    AccessEvidence::Screened(screening)
 }

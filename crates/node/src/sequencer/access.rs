@@ -43,9 +43,7 @@ impl AccessAlerts {
         let health = is_access_command(cmd).then(|| source_health(engine, cmd, events)).flatten();
         match health {
             Some(SourceHealth::Failed(_)) => (self.failed, self.since) = (true, engine.now()),
-            Some(SourceHealth::Verified) if self.failed && observed_at(cmd).is_some_and(|at| at < self.since) => {
-                return None;
-            }
+            Some(SourceHealth::Verified) if self.failed && predates(engine, cmd, events, self.since) => return None,
             Some(SourceHealth::Verified) => self.failed = false,
             None => {}
         }
@@ -116,6 +114,31 @@ fn source_health(engine: &Engine, cmd: &Command, events: &[Event]) -> Option<Sou
         return Some(results.find(|result| matches!(result, SourceHealth::Failed(_))).unwrap_or(first));
     }
     events.iter().find_map(health)
+}
+
+/// Whether the screening that made `cmd`'s result verified was observed before `since`, the latest
+/// failure, so it says nothing of the source since. A reorganisation's result is verified by the moves
+/// whose own screening passed, found by their replacement's reference, so it predates `since` unless
+/// one of them carries a decision observed at or after it.
+fn predates(engine: &Engine, cmd: &Command, events: &[Event], since: Millis) -> bool {
+    let Command::CustodyReorganisation { moves } = cmd else {
+        return observed_at(cmd).is_some_and(|at| at < since);
+    };
+    let observed_since = |reference: &str| {
+        moves.iter().any(|move_| {
+            move_.replacement.reference() == reference
+                && matches!(&move_.evidence, Some(AccessEvidence::Screened(screening)) if screening.observed_at >= since)
+        })
+    };
+    !events.iter().any(|event| {
+        let reference = match event {
+            Event::CustodyDepositChanged { receipt, .. } => receipt.reference(),
+            Event::DepositHeld { chain_ref, .. } | Event::DepositPending { chain_ref, .. } => chain_ref.clone(),
+            _ => return false,
+        };
+        source_health(engine, cmd, std::slice::from_ref(event)) == Some(SourceHealth::Verified)
+            && observed_since(&reference)
+    })
 }
 
 /// When the source observed the decision `cmd` carries, if it carries one.
