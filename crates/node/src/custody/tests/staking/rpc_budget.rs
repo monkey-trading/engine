@@ -10,10 +10,12 @@ use std::sync::{Arc, Mutex};
 use alloy::primitives::{Address, B256, Bytes, U256};
 
 use super::*;
+use crate::custody::QuorumBlock;
+use crate::custody::evm::PostedHead;
 use crate::custody::stall::Polled;
 use crate::liveness::chain::{LivenessDomain, members, pending_fallback, view};
 use crate::liveness::fake::{ChainState, DOMAIN, LOG_HEADS, VAULT as LIVENESS_VAULT, answer};
-use crate::standby_key::chain::{AgreedBlock, QuorumBlock, StandbyChain, StandbyDomain};
+use crate::standby_key::chain::{StandbyChain, StandbyDomain};
 
 const DAY: f64 = 86_400.0;
 
