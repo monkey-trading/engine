@@ -1152,7 +1152,8 @@ Run from the repo root:
   dev only, refused in a `production` build); its dev scenario: `./scripts/dev-ct-watch.sh` (needs
   `python3`, OpenSSL 3, `curl`, and `jq`; loopback stand-ins only)
 - Snapshot restart dev scenario: `./scripts/dev-snapshot-restart.sh` (needs `python3`, `curl`, and
-  `jq`; runs a dev node with `[snapshots]` on private temporary data and public Roughtime servers)
+  `jq`; runs a dev node with `[snapshots]` and a synthetic signed access source on private temporary
+  data and public Roughtime servers)
 - Deposit finality dev scenario: `./scripts/dev-deposit-finality.sh` (same Anvil/Foundry requirements
   as the vault scenario; exercises sequencer/core withdrawal approval eligibility while #23 owns payout)
 - RWA price feeds dev scenario: `./scripts/dev-rwa-feeds.sh` (loopback Massive and TraderMade

@@ -58,6 +58,8 @@ pub(super) struct Replay {
     /// ordinary recovery, which pins one authority instead.
     attested: Option<BTreeSet<AccountId>>,
     checkpoint_signers: BTreeSet<AccountId>,
+    /// The roots of the checkpoints a typed authorization may name: every one the log holds, and, from a
+    /// cache, those it carries and its own.
     payout_checkpoints: BTreeMap<u64, engine_core::eip712::B256>,
     takings: crate::log_check::Takings,
     authorities: BTreeMap<u64, crate::checkpoints::AcceptedCheckpoint>,
@@ -71,7 +73,8 @@ pub(super) struct Replay {
     access_alerts: crate::sequencer::access::AccessAlerts,
     /// Approvals a withdrawal entry signed, for `finish` to report the durable ones it lacks.
     signed: BTreeSet<(AccountId, u64)>,
-    /// The latest typed authorization each approval holds in this log.
+    /// The latest typed authorization each approval holds in this log; from a cache, only of the
+    /// approvals it still owed and those signed after it.
     authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
     /// The recovery-time marks sink: takes each market's mark as it changes, to seed the derived
     /// marks cache. Nothing without one: `engine replay` does not seed a cache.

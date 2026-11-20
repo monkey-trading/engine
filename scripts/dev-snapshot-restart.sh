@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Dev scenario for restarting from checkpoint snapshots, on a node with config/dev.toml's mocks,
-# checkpoints every 100 commands, and `[snapshots]` added, capturing every checkpoint:
+# Dev scenario for restarting from checkpoint snapshots, on a node with config/dev.toml's mocks, a
+# synthetic signed access source, checkpoints every 100 commands, and `[snapshots]` added, capturing
+# every checkpoint:
 #   1. run the node, take its enclave address from the attestation line, and pin it;
 #   2. sequence 400 dev deposits and a withdrawal, which mock custody approves and signs, let history
 #      catch up and the snapshot writer store the newest checkpoint, stop the node, and restart it
@@ -15,20 +16,27 @@
 # checkpoint the node wrote, the ones after the fallback included. Restart times are printed, not
 # gated.
 #
-# Needs python3, curl, and jq. API_PORT and METRICS_PORT override 18280 and 19664;
-# SCENARIO_ARTIFACTS keeps the node logs.
+# Needs python3, curl, and jq. API_PORT and METRICS_PORT override 18280 and 19664, and
+# ACCESS_SOURCE_PORT a free port; SCENARIO_ARTIFACTS keeps the node logs.
 set -Eeuo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 api_port="${API_PORT:-18280}"
 metrics_port="${METRICS_PORT:-19664}"
-account="0x3737373737373737373737373737373737373737"
+export ACCESS_SOURCE_PORT="${ACCESS_SOURCE_PORT:-$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}"
+vault="0x0000000000000000000000000000000000000000"
+# Anvil's published account 1, whose key signs the account's declaration and withdrawal.
+account="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+account_key="59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
 interval=100
 node_pid=""
+access_fixture_pid=""
 
 cleanup() {
-  if [[ -n "$node_pid" ]]; then kill "$node_pid" 2>/dev/null || true; wait "$node_pid" 2>/dev/null || true; fi
+  for pid in "$node_pid" "$access_fixture_pid"; do
+    if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; fi
+  done
   if [[ -n "${SCENARIO_ARTIFACTS:-}" ]]; then
     mkdir -p "$SCENARIO_ARTIFACTS"
     cp "$work"/*.log "$work"/node.toml "$SCENARIO_ARTIFACTS/" 2>/dev/null || true
@@ -42,6 +50,8 @@ trap 'fail "the command at line $LINENO failed"' ERR
 
 [ -n "${ENGINE_PREBUILT:-}" ] || (cd "$root" && cargo build -p engine-node --locked --quiet)
 engine="$(cargo metadata --format-version 1 --no-deps --manifest-path "$root/Cargo.toml" | jq -r .target_directory)/debug/engine"
+source "$root/scripts/dev-access-fixture.sh"
+build_access_tools
 python3 - "$api_port" "$metrics_port" <<'PY'
 import socket, sys
 for port in sys.argv[1:]:
@@ -63,9 +73,25 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   "$root/config/dev.toml" > "$work/node.toml"
 printf '\n[snapshots]\ndir = "%s/snapshots"\nretain = 3\ninterval = "0s"\nmax_bytes = 67108864\ntrusted_signers = []\n' \
   "$work" >> "$work/node.toml"
+cat >> "$work/node.toml" <<CONFIG
+
+[access]
+source = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+endpoint = "http://127.0.0.1:$ACCESS_SOURCE_PORT"
+timeout = "2s"
+max_age = "30s"
+max_response_bytes = 4096
+max_in_flight = 8
+max_in_flight_per_account = 2
+max_in_flight_per_client = 4
+reserved_in_flight = 2
+CONFIG
 for edit in ":$api_port\"" ":$metrics_port\"" "$work/log\"" "checkpoint_every = $interval" "per_second = 100000"; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"
 done
+
+step "start the access source, which clears every client"
+start_access_fixture
 
 start_node() {
   "$engine" run --config "$work/node.toml" > "$work/$1.log" 2>&1 &
@@ -134,12 +160,38 @@ for _ in range(n):
     assert response.status == 200, body
 PY
 }
+# Signs `$2`, the unsigned body of request kind `$1`, with the account's key, at the account's next
+# nonce, which the API answers once it serves reads.
+sign() {
+  local nonce="" expires_at
+  for _ in $(seq 1 200); do
+    nonce="$(curl -sk --max-time 5 "https://127.0.0.1:$api_port/v1/accounts/$account/nonce" | jq -r '.next_nonce // empty' 2>/dev/null || true)"
+    [[ -n "$nonce" ]] && break
+    sleep 0.05
+  done
+  [[ -n "$nonce" ]] || fail "no nonce for the account"
+  expires_at="$(python3 -c 'import time; print(int(time.time() * 1000) + 60000)')"
+  SIGNER_KEY="$account_key" "$access_signer" 31337 "$vault" "$nonce" "$expires_at" "$1" "$2"
+}
+# POSTs the JSON body `$2` to route `$1` and prints the events it answers with.
+post() {
+  curl -sk --max-time 10 "https://127.0.0.1:$api_port$1" -H 'content-type: application/json' -d "$2"
+}
+# Records the account's eligibility declaration, which its deposits wait for.
+declare_eligibility() {
+  local body signed events
+  body="{\"account\":\"$account\",\"class\":\"professional\"}"
+  signed="$(sign eligibility "$body")"
+  events="$(post /v1/eligibility "$signed")"
+  jq -e 'any(.[]; .type == "eligibility_attested")' <<< "$events" > /dev/null || fail "no declaration: $events"
+}
 # Requests a withdrawal of `$1` for the account, which mock custody approves and signs after the
 # checkpoint at its seq, and prints that seq once history serves the approval.
 withdraw() {
-  local events seq
-  events="$(curl -sk --max-time 10 -X POST "https://127.0.0.1:$api_port/v1/withdrawals" \
-    -H 'content-type: application/json' -d "{\"account\":\"$account\",\"amount\":\"$1\"}")"
+  local body signed events seq
+  body="{\"account\":\"$account\",\"amount\":\"$1\"}"
+  signed="$(sign withdrawal "$body")"
+  events="$(post /v1/withdrawals "$signed")"
   jq -e 'any(.[]; .type == "withdrawal_approved")' <<< "$events" > /dev/null || fail "no approval: $events"
   for _ in $(seq 1 600); do
     seq="$(curl -sk --max-time 5 "https://127.0.0.1:$api_port/v1/accounts/$account/history?kind=withdrawal_approved" \
@@ -254,6 +306,7 @@ for target in 400 4000; do
   step "sequence dev deposits up to $target, then stop"
   start_node "grow-$target"
   wait_for_log "grow-$target" 'first trusted time sample: sequencing started'
+  (( deposits > 0 )) || declare_eligibility
   deposit $(( target - deposits ))
   deposits="$target"
   if [[ -z "$approved_seq" ]]; then

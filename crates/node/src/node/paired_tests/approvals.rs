@@ -1,6 +1,8 @@
 //! Under mock custody, a cache at a withdrawal approval's checkpoint owes the approval its signature,
 //! which mock custody logs right after the checkpoint, whether a command or a restart that finds it
-//! unsigned writes the checkpoint, and a restart from that cache signs nothing again.
+//! unsigned writes the checkpoint; a later cache owes nothing; and a restart signs nothing again.
+
+use std::path::PathBuf;
 
 use engine_core::event::Event;
 use tokio::sync::watch;
@@ -12,7 +14,7 @@ use crate::snapshot::{self, Owed};
 use crate::test_support::{TRADER, deposit, log_entries, withdraw};
 
 #[tokio::test]
-async fn a_cache_at_an_approval_owes_its_signature_and_a_restart_signs_nothing_again() {
+async fn a_cache_at_an_approval_owes_its_signature_and_a_later_one_owes_nothing() {
     let node = Node::start(configuration("paired-approval-cache")).await.unwrap();
     node.submit(deposit(100, "approval-cache-deposit")).await;
     // No capture is in flight, so the approval's checkpoint is captured as it is written.
@@ -20,22 +22,29 @@ async fn a_cache_at_an_approval_owes_its_signature_and_a_restart_signs_nothing_a
     let events = node.submit(withdraw(40)).await;
     let event_index = events.iter().position(|event| matches!(event, Event::WithdrawalApproved { .. })).unwrap();
     node.history_caught_up().await;
+    // Then a later checkpoint, captured after mock custody signed the approval.
+    for n in 0..3 {
+        node.submit(deposit(1, &format!("approval-cache-later-{n}"))).await;
+        node.history_caught_up().await;
+    }
     let (cfg, reader) = node.stop().await;
     drop(reader);
-    let caches = cfg.snapshots.as_ref().unwrap();
-    let vault = cfg.custody.vault.parse().unwrap();
-    let path = snapshot::candidates_readonly(caches).unwrap().remove(0);
-    let (cached, engine) = snapshot::read(caches, &path, cfg.custody.chain_id, vault).unwrap();
-    let approved_seq = engine.withdrawal_approval(TRADER, 1).expect("the withdrawal is approved").approved_seq;
-    assert_eq!(cached.checkpoint.seq, approved_seq, "the newest cache is the approval's checkpoint");
-    let owed = cached.context.payouts.as_ref().map(|payouts| payouts.owed.clone());
-    assert_eq!(owed, Some(vec![Owed { account: TRADER, nonce: 1, event_index, latest: None }]));
-    let restored = cached.context.restore_payouts(&cached.checkpoint, &engine).unwrap();
-    assert!(!restored.signed.contains(&(TRADER, 1)), "the cache owes the approval its signature");
     assert_eq!(authorizations(&cfg), 1, "mock custody signs the approval after its checkpoint");
+    let caches = caches(&cfg);
+    let approved_seq = caches[0].1.withdrawal_approval(TRADER, 1).expect("the withdrawal is approved").approved_seq;
+    let (at_approval, engine) = caches.iter().find(|(cached, _)| cached.checkpoint.seq == approved_seq).unwrap();
+    let owed = at_approval.context.payouts.as_ref().map(|payouts| payouts.owed.clone());
+    assert_eq!(owed, Some(vec![Owed { account: TRADER, nonce: 1, event_index, latest: None }]));
+    let restored = at_approval.context.restore_payouts(&at_approval.checkpoint, engine).unwrap();
+    assert!(!restored.signed.contains(&(TRADER, 1)), "the cache owes the approval its signature");
+    let (newest, _) = &caches[0];
+    assert!(newest.checkpoint.seq > approved_seq, "a later checkpoint is captured");
+    let owed = newest.context.payouts.as_ref().map(|payouts| payouts.owed.clone());
+    assert_eq!(owed, Some(Vec::new()), "a cache after the signature owes nothing");
 
+    let newest = newest.checkpoint.seq;
     let node = Node::start(cfg).await.unwrap();
-    assert_eq!(node.snapshot_seq, Some(approved_seq), "the restart recovers from the approval's cache");
+    assert_eq!(node.snapshot_seq, Some(newest), "the restart recovers from the later cache");
     node.history_caught_up().await;
     let (cfg, _reader) = node.stop().await;
     assert_eq!(authorizations(&cfg), 1, "the restart signs nothing again");
@@ -67,7 +76,8 @@ async fn a_restart_that_signs_an_unsigned_approval_owes_it_in_the_cache_it_takes
     let (cfg, reader) = node.stop().await;
     drop(reader);
     assert_eq!(authorizations(&cfg), 1, "the restart signs the approval");
-    let (cached, approved_seq) = newest(&cfg);
+    let (cached, engine) = caches(&cfg).remove(0);
+    let approved_seq = engine.withdrawal_approval(TRADER, 1).expect("the withdrawal is approved").approved_seq;
     assert_eq!(cached.checkpoint.seq, approved_seq, "the newest cache is the approval's checkpoint");
     let owed = cached.context.payouts.as_ref().map(|payouts| payouts.owed.clone());
     assert_eq!(owed, Some(vec![Owed { account: TRADER, nonce: 1, event_index, latest: None }]));
@@ -79,14 +89,13 @@ async fn a_restart_that_signs_an_unsigned_approval_owes_it_in_the_cache_it_takes
     assert_eq!(authorizations(&cfg), 1, "and signs nothing again");
 }
 
-/// The newest cache the node with `cfg` wrote, and the seq of the trader's approval its engine holds.
-fn newest(cfg: &NodeConfig) -> (snapshot::Snapshot, u64) {
+/// The caches the node with `cfg` wrote, newest first, each with its engine.
+fn caches(cfg: &NodeConfig) -> Vec<(snapshot::Snapshot, engine_core::Engine)> {
     let caches = cfg.snapshots.as_ref().unwrap();
-    let path = snapshot::candidates_readonly(caches).unwrap().remove(0);
-    let (cached, engine) =
-        snapshot::read(caches, &path, cfg.custody.chain_id, cfg.custody.vault.parse().unwrap()).unwrap();
-    let approved_seq = engine.withdrawal_approval(TRADER, 1).expect("the withdrawal is approved").approved_seq;
-    (cached, approved_seq)
+    let read = |path: &PathBuf| {
+        snapshot::read(caches, path, cfg.custody.chain_id, cfg.custody.vault.parse().unwrap()).unwrap()
+    };
+    snapshot::candidates_readonly(caches).unwrap().iter().map(read).collect()
 }
 
 /// The trader's authorizations the log holds.
