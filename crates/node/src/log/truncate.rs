@@ -39,7 +39,10 @@ pub(crate) fn last_checkpoint(dir: &Path) -> anyhow::Result<Option<Checkpoint>> 
         window = window.saturating_mul(4);
         (listings, whole) = manifest_tail(dir, window)?;
     }
-    let next = listings.first().map_or(0, |listed| listed.last_seq + 1);
+    let next = match listings.first() {
+        Some(listed) => listed.last_seq.checked_add(1).context("the newest listing's last seq overflows")?,
+        None => 0,
+    };
     let open = dir.join(segment_name(next));
     if open.try_exists().with_context(|| format!("probing {}", open.display()))?
         && let Some(checkpoint) = last_in(next, &open, None)?

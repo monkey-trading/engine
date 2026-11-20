@@ -85,6 +85,18 @@ fn the_manifest_is_read_back_from_its_end_only_as_far_as_the_checkpoint() {
     assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected));
 }
 
+/// A newest listing whose last seq has no next is refused, not followed into an overflow.
+#[test]
+fn a_newest_listing_at_the_last_seq_is_refused() {
+    let dir = scratch_dir("last-checkpoint-overflow");
+    write(&dir, 2, &[cmd(0), cmd(1), checkpoint(1), cmd(2)]);
+    let mut listed: SegmentInfo = serde_json::from_slice(fs::read(dir.join(MANIFEST)).unwrap().trim_ascii()).unwrap();
+    listed.last_seq = u64::MAX;
+    fs::write(dir.join(MANIFEST), [serde_json::to_vec(&listed).unwrap(), b"\n".to_vec()].concat()).unwrap();
+    let error = last_checkpoint(&dir).expect_err("no segment follows the last seq");
+    assert!(format!("{error:#}").contains("overflows"), "{error:#}");
+}
+
 /// A manifest's last listing a crash cut short, before the writer linked the next segment, is left
 /// out, as a whole read leaves it out: the segment it was listing is read as the one not listed yet.
 #[test]

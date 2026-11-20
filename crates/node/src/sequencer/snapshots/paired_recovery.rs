@@ -166,6 +166,7 @@ impl AnchorChain {
         Ok(())
     }
 
+    /// Ends the chain where the suffix ends.
     /// Error cases:
     /// - the suffix's chain does not end at the anchor
     fn finish(self) -> Result<()> {
@@ -402,3 +403,6 @@ fn plan(
 fn link(checkpoint: &Checkpoint) -> Result<CheckpointParent> {
     Ok(CheckpointParent { has_checkpoint: true, seq: checkpoint.seq, root: checkpoint.root.parse()? })
 }
+
+#[cfg(test)]
+mod tests;
