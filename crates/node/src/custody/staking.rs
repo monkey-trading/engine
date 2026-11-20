@@ -229,7 +229,7 @@ impl StakingCursor {
 /// name the vault: a schedule, vote or fault event before then stalls the same way. With `turns`, the
 /// bound registry, the progress from `V65` carries the registry's turn state at `to`: the boundary of
 /// the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or none. A
-/// failed event read halves `range`; a completed chunk lets it grow back.
+/// failed event read, by range or by hash, halves `range`; a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is on an unproven block, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -286,7 +286,13 @@ pub(super) async fn mirror<V: VaultReader>(
             )));
         }
     }
-    confirm_blooms(reader, &blocks, &proven.staking_logs, &events).await?;
+    // A failed read by hash, one a block, narrows the next window and its reads, as a failed range read does.
+    if let Err(stalled) = confirm_blooms(reader, &blocks, &proven.staking_logs, &events).await {
+        if matches!(stalled, PollError::Stalled(Stall::Rpc(_))) {
+            range.failed();
+        }
+        return Err(stalled);
+    }
     if !bound && !events.is_empty() {
         return Err(PollError::inconsistent(anyhow!(
             "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"

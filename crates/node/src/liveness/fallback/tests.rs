@@ -122,9 +122,9 @@ impl Sending for Slow {
     }
 }
 
-/// The turn whose draw deadline last passed waits on its fallback while the rotation switch is on, it has
-/// no relayed seed, and the receiver has recorded no block hash for it; the block its first fix landed in
-/// comes with it.
+/// The turn whose draw deadline last passed waits on its fallback while it has no relayed seed and the
+/// receiver has recorded no block hash for it, a fix to send while the rotation switch is on or a block
+/// is fixed; the block its first fix landed in comes with it.
 #[test]
 fn a_turn_with_no_relayed_seed_waits_on_its_fallback_until_its_hash_is_recorded() {
     let read = |state: ChainState| {
@@ -136,14 +136,16 @@ fn a_turn_with_no_relayed_seed_waits_on_its_fallback_until_its_hash_is_recorded(
     let other = ChainState { seed: (turn - 1, B256::ZERO, B256::ZERO, 0), ..Default::default() };
     assert_eq!(read(other), None, "relayed: the receiver keyed by turn answers another's");
     let (unrelayed, _) = pending(ChainState::default());
-    assert_eq!(read(unrelayed.clone()), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 0 }));
+    let pending = |fixed_in, drawable| Some(PendingFallback { receiver: RECEIVER, turn, fixed_in, drawable });
+    assert_eq!(read(unrelayed.clone()), pending(0, true));
     let fixed = ChainState { seed: (turn, B256::ZERO, B256::ZERO, 90), ..unrelayed.clone() };
-    assert_eq!(read(fixed), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 90 }));
+    assert_eq!(read(fixed), pending(90, true));
     let recorded = ChainState { seed: (turn, B256::ZERO, B256::repeat_byte(1), 90), ..unrelayed.clone() };
     assert_eq!(read(recorded), None, "a hash recorded");
-    assert_eq!(read(ChainState { switch: false, ..unrelayed.clone() }), None, "rotation off: none is started");
+    let off = ChainState { switch: false, ..unrelayed.clone() };
+    assert_eq!(read(off), pending(0, false), "rotation off: none is started, though one may be");
     let off = ChainState { switch: false, seed: (turn, B256::ZERO, B256::ZERO, 90), ..unrelayed };
-    assert_eq!(read(off), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 90 }), "one fixed is finished");
+    assert_eq!(read(off), pending(90, true), "one fixed is finished");
 }
 
 /// Every poll sends a fix while the turn waits on its fallback, whether or not a turn names the operator,
@@ -407,4 +409,40 @@ async fn the_caller_reads_four_times_a_heartbeat_interval_however_long_its_read_
     tokio::time::sleep(Duration::from_millis(10_500)).await;
     task.abort();
     assert_eq!(sent.polls(), 11, "reads at 0 s to 10 s");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_fixer_reads_just_past_a_draw_deadline_and_follows_a_block_anyone_fixed() {
+    use crate::seed_relay::schedule::{draw_deadline, last_final_turn};
+    let deadline = draw_deadline(last_final_turn(ChainState::default().time) + 1).unwrap();
+    let chain = Arc::new(FakeChain::new(ChainState { time: deadline - 30, ..Default::default() }));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(3_600), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(sent.polls(), 1, "a seed relayed: idle until the deadline");
+    // Past the deadline no seed is relayed, and a draw's first call fixed a block before any member read.
+    let turn = last_final_turn(deadline);
+    chain.set(|chain| (chain.time, chain.seed) = (deadline + 5, (turn, B256::ZERO, B256::ZERO, chain.number)));
+    tokio::time::sleep(Duration::from_secs(22)).await;
+    let fix = (RECEIVER, fixFallbackCall { turn }.abi_encode());
+    assert_eq!(sent.count(&fix), 1, "the read just past the deadline records the fixed block's hash");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    task.abort();
+    assert_eq!(sent.count(&fix), 2, "and follows it up a poll later");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_caller_retries_a_failed_first_read_within_5_s_however_long_its_read_interval() {
+    let chain = Arc::new(FakeChain::new(ChainState { down: true, ..Default::default() }));
+    let sent = Sent::default();
+    let mut caller = caller(chain.clone(), sent.clone(), Arc::default());
+    caller.poll = Duration::from_secs(60);
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    chain.set(|chain| chain.down = false);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 1, "the read at 5 s, after the one that failed at 0 s");
 }

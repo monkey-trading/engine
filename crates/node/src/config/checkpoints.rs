@@ -62,14 +62,14 @@ pub(crate) fn default_liveness_read_interval() -> Duration {
     Duration::from_secs(15)
 }
 
-/// The fallback fixer's default cadence while no fix is under way: a turn is drawn up to a whole turn
-/// after its draw deadline, so a fallback fixed five minutes after it still leaves the draw its day.
+/// The fallback fixer's default cadence while the turn whose draw deadline last passed has a relayed seed
+/// or a recorded fallback: nothing can lapse then, and the fixer reads again just past each deadline.
 fn default_fallback_interval() -> Duration {
     Duration::from_secs(300)
 }
 
-/// The longest `[liveness] fallback_interval` a production build allows: a day-long draw window still
-/// leaves the turn many hours to be drawn after a fix that comes this late.
+/// The longest `[liveness] fallback_interval` a production build allows: it is also how long the fixer
+/// may take to see a seed it read relayed go missing, as after the receiver's replacement.
 const PRODUCTION_FALLBACK_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// On-chain log-head commitments: the node posts its newest released `(seq, link)` at most every
@@ -105,8 +105,9 @@ pub struct LivenessSection {
     /// every second; each reads at least four times a heartbeat interval whatever this says.
     #[serde(with = "humantime_serde", default = "default_liveness_read_interval")]
     pub read_interval: Duration,
-    /// How often the fallback fixer reads the seed receiver while no fix is under way; once one is, every
-    /// 5 s until its block's hash is recorded.
+    /// How often the fallback fixer reads the seed receiver while the turn whose draw deadline last passed
+    /// has a relayed seed or a recorded fallback, and again just past each deadline; every 20 s while it
+    /// has neither, and every 5 s once a block is fixed for it, until the block's hash is recorded.
     #[serde(with = "humantime_serde", default = "default_fallback_interval")]
     pub fallback_interval: Duration,
 }

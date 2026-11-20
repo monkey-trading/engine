@@ -190,7 +190,9 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             }
             // Between reads the members confirm under the last read the rule applied under.
             let reached = self.trusted.reached_ms().and_then(|now| u64::try_from(now).ok());
-            if !read_due(self.read_every, read_at.map(|at| at.elapsed()), last, reached) {
+            // A read is due on the tick nearest its time, so a read every 15 s lands every 15 s, not 16.
+            let since = read_at.map(|at| at.elapsed() + self.poll / 2);
+            if !read_due(self.read_every, since, last, reached) {
                 self.unread(applied.as_ref(), (&mut stamps, &mut confirmed, &mut holders), &mut episodes).await;
                 continue;
             }

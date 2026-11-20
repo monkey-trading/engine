@@ -33,7 +33,7 @@ async fn a_majority_range_read_that_drops_an_admitted_event_stalls_until_the_rea
 }
 
 #[tokio::test]
-async fn an_admitted_block_whose_reads_by_hash_are_refused_holds_staking_progress() {
+async fn an_admitted_block_whose_reads_by_hash_are_refused_holds_staking_progress_and_narrows_the_window() {
     let dir = scratch("staking-bloom-refused");
     let node = Node::start_confirmed(&dir);
     init_staking(&node).await;
@@ -45,8 +45,10 @@ async fn an_admitted_block_whose_reads_by_hash_are_refused_holds_staking_progres
         // Every log backend lags: the range reads empty and the reads by hash refuse.
         state.hide_logs = true;
     }
-    let error = staking_watcher(&chains, &dir).poll(&node.tx).await.unwrap_err();
+    let mut watcher = staking_watcher(&chains, &dir);
+    let error = watcher.poll(&node.tx).await.unwrap_err();
     assert!(matches!(error, PollError::Stalled(Stall::Rpc(_))), "{error:?}");
+    assert_eq!(watcher.staking_range_for_test(), 50, "the refused reads narrow the next window");
     assert!(node.read(|engine| engine.staked_balances().is_empty()).await);
     assert!(node.read(|engine| engine.staking().unwrap().completed_through.is_none()).await, "progress passed it");
     node.stop().await;

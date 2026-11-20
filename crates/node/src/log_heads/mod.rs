@@ -183,7 +183,8 @@ impl<R: HeadsChain> Poster<R> {
         mut released: watch::Receiver<Head>,
         sequencer: mpsc::Sender<Request>,
     ) -> anyhow::Result<()> {
-        let mut retry = interval(self.retry);
+        // With rotation on, no read has yet shown whether a turn names the operator.
+        let mut retry = interval(self.heartbeat.as_ref().map_or(self.retry, |_| self.retry.min(TURN_READ_EVERY)));
         retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // Gates posts, not reads: a moved head posts once the interval since the last send has
         // passed. The gate advances on every send attempt, before the result: a lost response still paced the

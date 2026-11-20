@@ -1004,7 +1004,10 @@ The caller reads the chain every `liveness.read_interval`, 15 seconds by default
 times a heartbeat interval whatever that says. The operator's trading server reads the chain for the
 liveness rule at the same cadence, and asks the members for their copies every second. The fallback
 fixer reads the seed receiver every `liveness.fallback_interval`, 5 minutes by default and at most an
-hour in a production build. The RPC budget in
+hour in a production build, while the last turn past its draw deadline has a relayed seed or a recorded
+fallback. It also reads just past each draw deadline, every 20 seconds while that turn has neither,
+and every 5 seconds once anyone has fixed its block, so it records the block's hash within the 256
+blocks it can. The RPC budget in
 [feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads cost.
 
 1. Add the section to the configuration:

@@ -199,8 +199,9 @@ min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
 # The caller's chain reads, and the operator's liveness rule's: four a 60-second heartbeat interval. Each
 # reads at least four times a heartbeat interval whatever this says.
 read_interval = "15s"
-# The fallback fixer's reads while no fix is under way; a turn can still be drawn for a whole turn
-# after its draw deadline. A production build allows at most 1h.
+# The fallback fixer's reads while the last turn past its draw deadline has a relayed seed or a recorded
+# fallback. It also reads just past each deadline, every 20 s while that turn has neither, and every 5 s
+# once anyone fixes its block. A production build allows at most 1h.
 fallback_interval = "5m"
 
 [seed_relay]

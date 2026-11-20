@@ -12,3 +12,15 @@ async fn with_rotation_on_and_no_turn_the_poster_reads_every_30_s_whatever_its_r
     drive.stop().await;
     assert_eq!(reads, 11, "reads at 0 s to 300 s");
 }
+
+#[tokio::test(start_paused = true)]
+async fn with_rotation_on_a_failed_first_read_is_retried_within_30_s_whatever_the_read_interval() {
+    let chain = FakeChain::new(None);
+    chain.fail_next_reads(1);
+    let drive = spawn_retrying(chain.clone(), None, Duration::from_secs(3_600));
+    drive.release(1);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    let reads = chain.reads();
+    drive.stop().await;
+    assert_eq!(reads, 2, "the failed read at 0 s, and one at 30 s");
+}

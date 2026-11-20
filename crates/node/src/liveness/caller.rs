@@ -49,6 +49,9 @@ use crate::liveness::read_every;
 use crate::log_heads::{Head, SignedHead};
 use crate::standby_key::chain::StandbyChain;
 
+/// How often the caller reads until a read shows the heartbeat interval: a failed first read must not
+/// wait out a long configured interval.
+const UNREAD_EVERY: Duration = Duration::from_secs(5);
 /// How soon the fallback fixer reads again once it sends a fix, so its second call lands well within the
 /// 256 blocks (64 s on Arbitrum One) for which the first call's block hash can be recorded.
 pub(crate) const FOLLOW_UP: Duration = Duration::from_secs(5);
@@ -178,7 +181,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
     /// Error cases:
     /// - none: failed reads and sends are retried on the next poll
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let mut poll = interval(self.poll);
+        let mut poll = interval(self.poll.min(UNREAD_EVERY));
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let (mut read_failed, mut failing) = (false, false);
         loop {

@@ -130,13 +130,15 @@ pub(crate) struct View {
 pub(crate) type TurnSet = (u32, u64, u64, AccountId);
 
 /// A turn whose draw deadline has passed with no relayed seed, whose fallback the seed receiver has yet
-/// to fix (`SeedReceiver.fixFallback`), that receiver, and the block its first fix landed in, zero for
-/// none yet.
+/// to fix (`SeedReceiver.fixFallback`), that receiver, the block its first fix landed in, zero for none
+/// yet, and whether a fix may be sent: the rotation switch is on, so the turn may be drawn, or a block is
+/// fixed for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PendingFallback {
     pub receiver: Address,
     pub turn: u64,
     pub fixed_in: u64,
+    pub drawable: bool,
 }
 
 /// A rotation-set member as the liveness rule reaches it: where its node answers, and the standby key
@@ -273,10 +275,10 @@ pub(crate) fn set_effective<B: AgreedBlock>(
 }
 
 /// The turn whose draw deadline last passed by `block`'s time, when no seed was relayed for it and the
-/// receiver the schedule reads seeds from has recorded no fallback block hash for it, while the registry's
-/// rotation switch is on so the turn may be drawn, or, whatever the switch, once a block is fixed for it:
-/// a switch turned on again before the turn's boundary lets it be drawn only from that block. `None`
-/// otherwise. It makes two rounds of reads.
+/// receiver the schedule reads seeds from has recorded no fallback block hash for it, `None` otherwise.
+/// A fix may be sent while the registry's rotation switch is on so the turn may be drawn, or, whatever
+/// the switch, once a block is fixed for it: a switch turned on again before the turn's boundary lets it
+/// be drawn only from that block. It makes two rounds of reads.
 /// Error cases:
 /// - a call fails, or its return does not decode
 pub(crate) fn pending_fallback<'a, B: AgreedBlock>(
@@ -297,8 +299,9 @@ pub(crate) fn pending_fallback<'a, B: AgreedBlock>(
         )
         .await?;
         let fixed_in = u64::try_from(fixed_in).unwrap_or(u64::MAX);
-        let pending = relayed.is_zero() && recorded.is_zero() && (rotating || fixed_in != 0);
-        Ok(pending.then_some(PendingFallback { receiver, turn, fixed_in }))
+        let drawable = rotating || fixed_in != 0;
+        let pending = relayed.is_zero() && recorded.is_zero();
+        Ok(pending.then_some(PendingFallback { receiver, turn, fixed_in, drawable }))
     })
 }
 
