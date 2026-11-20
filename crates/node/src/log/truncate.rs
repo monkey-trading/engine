@@ -1,5 +1,6 @@
 //! Takeover truncation of a standby's log copy: dropping everything after the checkpoint a
-//! promotion resumes from, which the outgoing operator published but the vault never accepted.
+//! promotion resumes from, which the outgoing operator published but the vault never accepted, and
+//! the read of the log's last checkpoint a start decides that cut by.
 //!
 //! The surgery is ordered so any crash leaves a state `SegmentedLog::open` accepts and the next
 //! start can resume: the manifest is rewritten first (dropping the listings that would reference
@@ -14,7 +15,41 @@ use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 
-use crate::log::{LogEntry, MANIFEST, SegmentInfo, parse_line, segments::list_segments};
+use crate::log::segments::{Segment, list_segments};
+use crate::log::{Checkpoint, LogEntry, MANIFEST, Manifest, SegmentInfo, parse_line};
+
+/// The last checkpoint the log in `dir` holds, read from its newest segment back to the first that
+/// holds one, so a start's takeover cut reads about one checkpoint interval of the log, however long
+/// it is. Each segment read passes `SegmentedLog::open`'s checks for it: a listed one matches its
+/// listing before any of it is read, only the last may be unlisted, and its torn last line is left
+/// out. `None` when no segment holds a checkpoint.
+/// Error cases:
+/// - the directory, the manifest or a segment read cannot be read, or a segment read fails a check
+pub(crate) fn last_checkpoint(dir: &Path) -> anyhow::Result<Option<Checkpoint>> {
+    let (files, listings) = (list_segments(dir)?, Manifest::load(dir)?.segments);
+    ensure!(
+        listings.len() <= files.len(),
+        "{MANIFEST} lists {} segments but {} are in {}",
+        listings.len(),
+        files.len(),
+        dir.display()
+    );
+    for (index, (first_seq, path)) in files.iter().enumerate().rev() {
+        let listed = listings.get(index);
+        ensure!(
+            listed.is_some() || index + 1 == files.len(),
+            "{} is followed by another segment but is not in {MANIFEST}",
+            path.display()
+        );
+        let segment = Segment::read(*first_seq, path, listed, &mut None, &mut |_| Ok(()))
+            .with_context(|| format!("segment {}", path.display()))?;
+        ensure!(listed.is_none_or(|listed| segment.info() == *listed), "{} does not match {MANIFEST}", path.display());
+        if let Some(last) = segment.checkpoints.last() {
+            return Ok(Some(last.checkpoint.clone()));
+        }
+    }
+    Ok(None)
+}
 
 /// Truncates the log in `dir` so its last entry is the checkpoint at `seq` with `root`, dropping
 /// every later entry. The checkpoint's segment keeps its name and, when the checkpoint ends it,

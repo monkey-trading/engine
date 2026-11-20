@@ -22,14 +22,11 @@ use crate::snapshot::paired::PrefixId;
 use crate::snapshot::{self, RecoveryBase, head};
 
 impl Sequencer {
-    /// Plans paired recovery or a strict log-derived migration without any persisted mutation.
-    /// `capture`, when set, is the on-chain posted head: the replayed suffix records the
-    /// cumulative command-prefix digest at its seq for the posted-head check, and a posted seq at or under the
-    /// snapshot base is bound to the snapshot's history by the commands since it before the
-    /// snapshot is accepted (a refusal is fatal, not a candidate rejection).
+    /// Plans paired recovery or a strict log-derived migration without any persisted mutation:
+    /// `read_paired_cache`, then `replay_paired_log` with `authorities` when no cache verifies.
     /// Error cases:
-    /// - snapshots are absent, no cache/full replay can verify the authoritative log, or the
-    ///   posted head conflicts with the log below the base
+    /// - as `read_paired_cache` or `replay_paired_log`
+    #[cfg(test)]
     pub(crate) fn read_paired_log(
         cfg: &NodeConfig,
         signer: Option<AccountId>,
@@ -39,6 +36,28 @@ impl Sequencer {
         capture: Option<crate::log_heads::Head>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
+        match Self::read_paired_cache(cfg, signer, parent, stats.as_ref(), capture, &mut observe)? {
+            Some(recovered) => Ok(recovered),
+            None => Self::replay_paired_log(cfg, signer, parent, authorities, stats, capture, observe),
+        }
+    }
+
+    /// Plans paired recovery from the newest cache that verifies, without any persisted mutation, or
+    /// `None` when none does, each one rejected with a Warning. `capture`, when set, is the on-chain
+    /// posted head: the replayed suffix records the cumulative command-prefix digest at its seq for
+    /// the posted-head check, and a posted seq at or under the snapshot base is bound to the snapshot's
+    /// history by the commands since it before the snapshot is accepted (a refusal is fatal, not a
+    /// candidate rejection).
+    /// Error cases:
+    /// - snapshots are absent, or the posted head conflicts with the log below a cache's base
+    pub(crate) fn read_paired_cache(
+        cfg: &NodeConfig,
+        signer: Option<AccountId>,
+        parent: Option<CheckpointParent>,
+        stats: Option<&crate::stats::Stats>,
+        capture: Option<crate::log_heads::Head>,
+        observe: &mut impl FnMut(&LogEntry),
+    ) -> Result<Option<(ReplayedLog, Plan)>> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
         let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
         // No cache can pass without a pin, so none is read and none raises a Warning.
@@ -51,18 +70,8 @@ impl Sequencer {
         match candidates {
             Ok(paths) => {
                 for path in paths {
-                    match candidate(
-                        cfg,
-                        snapshots,
-                        &path,
-                        domain,
-                        signer,
-                        parent,
-                        stats.as_ref(),
-                        capture,
-                        &mut observe,
-                    ) {
-                        Ok(recovered) => return Ok(recovered),
+                    match candidate(cfg, snapshots, &path, domain, signer, parent, stats, capture, observe) {
+                        Ok(recovered) => return Ok(Some(recovered)),
                         // A posted head the log does not hold refuses startup; it is not a cache to
                         // reject and fall back from — the fallback would serve the conflicting books.
                         Err(error) if error.is::<crate::log_heads::prefix::Rollback>() => return Err(error),
@@ -72,6 +81,24 @@ impl Sequencer {
             }
             Err(error) => snapshot::rejected(&snapshots.dir, &error),
         }
+        Ok(None)
+    }
+
+    /// The full replay a paired recovery falls back to when no cache verifies, planning a strict
+    /// log-derived migration without any persisted mutation. `capture` is as `read_paired_cache`'s.
+    /// Error cases:
+    /// - snapshots are absent, or the full replay cannot verify the authoritative log
+    pub(crate) fn replay_paired_log(
+        cfg: &NodeConfig,
+        signer: Option<AccountId>,
+        parent: Option<CheckpointParent>,
+        authorities: crate::checkpoints::SignerHistory,
+        stats: Option<crate::stats::Stats>,
+        capture: Option<crate::log_heads::Head>,
+        mut observe: impl FnMut(&LogEntry),
+    ) -> Result<(ReplayedLog, Plan)> {
+        let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
+        let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
         let mut replay = parent.map_or_else(
             || Replay::with_trust(Some(domain), signer),
             |parent| Replay::with_recovery(Some(domain), signer, parent),

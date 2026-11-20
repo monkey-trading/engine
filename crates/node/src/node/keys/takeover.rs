@@ -40,19 +40,13 @@ pub(in crate::node) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc
     }
     let Some((anchor_seq, anchor_root)) = state.checkpoint else { return Ok(()) };
     // Only a tail another key signed is cut: a node's own unposted checkpoints are its poster's
-    // queued work, which an ordinary restart must keep.
-    let mut last: Option<(u64, String, AccountId)> = None;
-    crate::log::SegmentedLog::open(dir, |entry| {
-        if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
-            last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
-        }
-        Ok(())
-    })?;
-    let last = last.as_ref();
-    if last.is_some_and(|(_, _, signer)| *signer == state.signer) {
+    // queued work, which an ordinary restart must keep. The log's last checkpoint decides it, read
+    // from its newest segments, so a start reads no more of a long log here than of a short one.
+    let last = crate::log::last_checkpoint(dir)?;
+    if last.as_ref().map(|checkpoint| checkpoint.signer.parse::<AccountId>()).transpose()? == Some(state.signer) {
         return Ok(());
     }
-    if last.is_some_and(|(seq, root, _)| *seq > anchor_seq || *root != anchor_root) {
+    if last.is_some_and(|checkpoint| checkpoint.seq > anchor_seq || checkpoint.root != anchor_root) {
         // Behind the marker every open of a copy finishes from, published and removed for good.
         let to = crate::checkpoints::Takeover { seq: anchor_seq, root: anchor_root.clone(), signer: state.signer };
         crate::standby::cut_marked(dir, &to)?;

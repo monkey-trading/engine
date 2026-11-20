@@ -20,7 +20,7 @@ pub(crate) use commitment::{PrefixRing, command_digest, extend_command_prefix, s
 mod encoded;
 pub(crate) use encoded::{EncodedCommand, encode_events};
 mod truncate;
-pub(crate) use truncate::truncate_to_checkpoint;
+pub(crate) use truncate::{last_checkpoint, truncate_to_checkpoint};
 mod archive;
 pub(crate) use archive::open_segment_archive;
 pub mod catalog;

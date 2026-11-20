@@ -16,6 +16,7 @@ use crate::alerts::{Severity, capture};
 use crate::test_support::{every_event, file_entries, log_entries, scratch_dir};
 
 mod durability;
+mod last_checkpoint;
 mod reader;
 mod torn;
 

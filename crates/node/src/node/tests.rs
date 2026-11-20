@@ -254,6 +254,27 @@ fn files(dir: &Path) -> BTreeMap<String, Vec<u8>> {
     names.map(|name| (name.clone(), fs::read(dir.join(name)).unwrap())).collect()
 }
 
+/// A start from a cache never reads the vault's signer history, which only a full replay checks the
+/// log's checkpoints against: the read is not awaited while a cache verifies, and is once none does.
+#[tokio::test]
+async fn only_a_full_replay_reads_the_signer_history() {
+    use crate::node::paired_tests::harness::{Node, configuration};
+    let node = Node::start(configuration("signer-history-unread")).await.unwrap();
+    for n in 0..10 {
+        node.submit(deposit(1, &format!("unread-{n}"))).await;
+    }
+    node.history_caught_up().await;
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let log = read_refusing_signer_history(&cfg).await.unwrap();
+    assert!(log.snapshot_sequence().is_some(), "the start recovers from the cache");
+    for path in crate::snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap() {
+        fs::write(path, b"{").unwrap();
+    }
+    let error = read_refusing_signer_history(&cfg).await.err().expect("the full replay reads the signer history");
+    assert!(format!("{error:#}").contains("the signer history was read"), "{error:#}");
+}
+
 mod custody_preflight;
 
 /// Recovers before any append, checking history against that read during full replay or against
@@ -277,8 +298,16 @@ pub(crate) async fn read_log_and_history_recording(
     stats: &crate::stats::Stats,
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
     let scratch = marks_store(cfg)?;
-    let (log, plan, _pending) =
-        super::read_log_and_history_authorities(cfg, key, parent, Default::default(), &scratch, stats, |_| {}).await?;
+    let (log, plan, _pending) = super::read_log_and_history_authorities(
+        cfg,
+        key,
+        parent,
+        async { Ok(Default::default()) },
+        &scratch,
+        stats,
+        |_| {},
+    )
+    .await?;
     Ok((log, plan))
 }
 
@@ -298,13 +327,25 @@ pub(crate) async fn read_log_and_history_observe(
         cfg,
         &key,
         parent,
-        Default::default(),
+        async { Ok(Default::default()) },
         &scratch,
         &crate::test_support::stats(),
         &mut observe,
     )
     .await?;
     Ok((log, plan))
+}
+
+/// Recovers `cfg`'s log as a start does, with a signer history whose read fails.
+/// Error cases:
+/// - the signer history is read, or the log or history index cannot be read or verified
+async fn read_refusing_signer_history(cfg: &NodeConfig) -> anyhow::Result<ReplayedLog> {
+    let (key, marks) = (Arc::new(crate::tee::EnclaveKey::test_key()), marks_store(cfg)?);
+    let refused = async { Err(anyhow::anyhow!("the signer history was read")) };
+    let stats = crate::test_support::stats();
+    let (log, _plan, _pending) =
+        super::read_log_and_history_authorities(cfg, &key, None, refused, &marks, &stats, |_| {}).await?;
+    Ok(log)
 }
 
 /// A scratch marks store outside `cfg.history.dir`, which refused-startup byte-preservation
