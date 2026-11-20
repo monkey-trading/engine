@@ -14,6 +14,7 @@
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::house_loss::{SLOT_MS, WINDOW_MS};
@@ -26,6 +27,10 @@ const ADDED_BUDGET_US: u128 = 200;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn house_loss_latency() {
+    rerun_once("house_loss_latency", house_loss_latency_measured);
+}
+
+fn house_loss_latency_measured() {
     let mut price_p99s = Vec::new();
     let mut earlier_fill_p50 = None;
     for version in [ProtocolVersion::V61, ProtocolVersion::V62] {

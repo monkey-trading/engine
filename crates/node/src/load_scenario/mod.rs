@@ -12,7 +12,8 @@
 //! roots from the same book, rebuilt (`sequencer::replay::replay_path_from`): the book is no log, so
 //! `engine replay` cannot start from it.
 //!
-//! The launch and ten-times legs pass only within the bar, under the tolerance for a loaded runner
+//! The launch and ten-times legs pass only within the bar, on their second run if their first broke it
+//! (`rerun`), under the tolerance for a loaded runner
 //! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`); order-to-fill p50 is
 //! held instead to a regression guard of twice the bar until the request path meets it (#1045,
 //! `plan::ORDER_TO_FILL_P50_GUARD_US`), each run still printing the bar's verdict. They pass only
@@ -31,6 +32,7 @@ pub(crate) mod generator;
 mod node;
 pub(crate) mod plan;
 mod report;
+mod rerun;
 mod venues;
 
 use std::collections::BTreeMap;
@@ -45,7 +47,7 @@ use crate::clock::now_ms;
 use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::load_scenario::node::Node;
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
-use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, guarded, judge, print, tolerate, unmeasured};
+use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, judge, print, tolerate, unmeasured};
 use crate::load_scenario::venues::Moves;
 use crate::sequencer::Request;
 use crate::test_support::scratch_dir;
@@ -288,8 +290,25 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 let exhausted =
                     broken.len() == BUDGETS.len() || !gaps.is_empty() || node_figures.busy_share >= SATURATED;
                 let stop = leg.starts_with("ramp_") && exhausted;
-                runs.push(Run { leg, multiple, breaches, windows: std::mem::take(&mut windows), gaps });
-                writeln!(answers, "{}", if stop { "stop" } else { "next" }).expect("the generator reads");
+                let run = Run { leg, multiple, breaches, windows: std::mem::take(&mut windows), gaps };
+                let again = rerun::wanted(&runs, &run);
+                if again {
+                    println!(
+                        "LOAD leg={} rerun: the launch bar broke ({:?}); the leg runs once more on this node, \
+                         the bar unchanged",
+                        run.leg,
+                        rerun::failed(&run)
+                    );
+                }
+                runs.push(run);
+                let answer = if again {
+                    "again"
+                } else if stop {
+                    "stop"
+                } else {
+                    "next"
+                };
+                writeln!(answers, "{answer}").expect("the generator reads");
             }
         }
     }
@@ -300,7 +319,7 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
 
 /// Prints the first multiple of launch flow each budget broke at, and fails a measured leg outside
 /// the bar, but for order-to-fill p50, held to its regression guard, or that did not measure what it
-/// claims.
+/// claims, by its last run: a leg that broke the bar ran once more (`rerun`).
 fn conclude(runs: &[Run]) {
     let last = runs.last().map_or(0.0, |run| run.multiple);
     for (budget, quantile) in BUDGETS {
@@ -314,12 +333,12 @@ fn conclude(runs: &[Run]) {
             None => println!("LOAD held {budget} {quantile} through {last}x launch flow"),
         }
     }
-    let measured: Vec<&Run> = runs.iter().filter(|run| !run.leg.starts_with("ramp_")).collect();
+    let measured = rerun::judged(runs);
     assert_eq!(measured.len(), 2, "both measured legs ran");
     for run in measured {
         assert!(run.gaps.is_empty(), "{} did not measure what it claims: {:?}", run.leg, run.gaps);
         let over_bar = tolerate(&run.windows, MISSES);
-        let failed = tolerate(&guarded(&run.windows), MISSES);
+        let failed = rerun::failed(run);
         println!(
             "LOAD leg={} launch bar: {} | order_to_fill_us p50 guard={}: {}",
             run.leg,

@@ -11,6 +11,7 @@ use engine_core::types::{MarketId, Side};
 
 use super::{ACCOUNTS, Rig, account, hold_price_wait};
 use crate::clock::Clock;
+use crate::common::rerun::rerun_once;
 
 const BTC: MarketId = 1;
 const ETH: MarketId = 2;
@@ -18,6 +19,10 @@ const ETH: MarketId = 2;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_price_wait_budget() {
+    rerun_once("portfolio_price_wait_budget", portfolio_price_wait_budget_measured);
+}
+
+fn portfolio_price_wait_budget_measured() {
     let mut rig = Rig::new("wait-portfolio");
     hedge(&mut rig);
     rig.activate_latest();

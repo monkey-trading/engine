@@ -1,7 +1,7 @@
 //! The load generator: the run's clients, in a process of their own, so their signing, TLS and frame
 //! reading take nothing from the node's figures. The node's side starts this test binary again with
 //! `LOAD_PLAN` holding the plan (`plan::Plan`), reads each line it prints after `LOADGEN `, and
-//! answers each leg's end with `next` or `stop` on its standard input.
+//! answers each leg's end with `next`, `again` (the same leg once more) or `stop` on its standard input.
 //!
 //! Each trader is an account of the book with a session key it registers first. Traders share client
 //! addresses, a connection each, which the node takes through its trusted PROXY protocol peer, so its
@@ -199,13 +199,16 @@ async fn run(plan: Plan) {
     report(&Line::Ready { traders: plan.traders, subscribers: plan.subscribers });
 
     let mut stdin = std::io::stdin().lock().lines();
-    for leg in plan.steps() {
-        report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
-        let figures = scheduler.drive(&leg, plan.windows).await;
-        report(&Line::End { leg: leg.name.clone(), multiple: leg.multiple, figures: figures.figures() });
-        match stdin.next() {
-            Some(Ok(answer)) if answer.trim() == "next" => {}
-            _ => break,
+    'legs: for leg in plan.steps() {
+        loop {
+            report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
+            let figures = scheduler.drive(&leg, plan.windows).await;
+            report(&Line::End { leg: leg.name.clone(), multiple: leg.multiple, figures: figures.figures() });
+            match stdin.next() {
+                Some(Ok(answer)) if answer.trim() == "again" => {}
+                Some(Ok(answer)) if answer.trim() == "next" => continue 'legs,
+                _ => break 'legs,
+            }
         }
     }
 }

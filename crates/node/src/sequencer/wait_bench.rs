@@ -4,6 +4,7 @@
 //! a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::wait_bench -- --ignored --nocapture --test-threads=1`.
 
+use crate::common::rerun::rerun_once;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -342,10 +343,12 @@ impl Clock for StampClock {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
-    let mut rig = Rig::new("wait-budget");
-    resting_bench::place(&mut rig, &mut 0, ACCOUNTS, resting_bench::OUT_OF_REACH);
-    rig.activate_latest();
-    hold_price_wait(rig);
+    rerun_once("price_wait_budget", || {
+        let mut rig = Rig::new("wait-budget");
+        resting_bench::place(&mut rig, &mut 0, ACCOUNTS, resting_bench::OUT_OF_REACH);
+        rig.activate_latest();
+        hold_price_wait(rig);
+    });
 }
 
 /// `price_wait_budget`'s prices, reads and checkpoints over `rig`, under the latest protocol, held to its

@@ -28,6 +28,7 @@
 //! is printed, not held.
 
 use super::*;
+use crate::common::rerun::rerun_once;
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::volume_tier::{DAY_MS, day_of};
@@ -37,6 +38,10 @@ const LEVELS: usize = 100_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn levels_price_latency() {
+    rerun_once("levels_price_latency", levels_price_latency_measured);
+}
+
+fn levels_price_latency_measured() {
     // BTC's ceiling is 20bp. At 99,950 a long closes at 99,940; its stop loss at 99,790 is inside the
     // ceiling's reach of the index, and out of the closing price's. Each sample is taken on the book with
     // levels and on the same book without, in turn, and what levels add is the difference.

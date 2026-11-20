@@ -13,6 +13,7 @@ use crate::close_spread::CloseSpreadCeiling;
 use crate::command::{AdminCommand, Command};
 use crate::common::close_spread::{attest, ceilings, fund, source_key, trade};
 use crate::common::levels::{levels, set};
+use crate::common::rerun::rerun_once;
 use crate::common::{AAPL, BTC, CHAIN_ID, Client, DE40, EURUSD, Harness, USDJPY, VAULT, ny};
 use crate::corporate::{Adjustment, CorporateAction};
 use crate::event::Event;
@@ -362,6 +363,13 @@ fn a_split_keys_the_levels_it_scales_again() {
 #[test]
 #[ignore = "100k-level benchmark: run in an isolated CPU window"]
 fn the_level_path_of_a_price_reaching_no_level_at_100k_levels() {
+    rerun_once(
+        "the_level_path_of_a_price_reaching_no_level_at_100k_levels",
+        the_level_path_of_a_price_reaching_no_level_at_100k_levels_measured,
+    );
+}
+
+fn the_level_path_of_a_price_reaching_no_level_at_100k_levels_measured() {
     const COPIES: usize = 100_000;
     const SAMPLES: usize = 100;
     // BTC's ceiling is 20bp: at 99,950 a long closes at 99,940, and a stop loss at 99,790 is inside

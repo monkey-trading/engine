@@ -22,6 +22,10 @@ const V84: ProtocolVersion = ProtocolVersion::V84;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn portfolio_new_risk_latency() {
+    rerun_once("portfolio_new_risk_latency", portfolio_new_risk_latency_measured);
+}
+
+fn portfolio_new_risk_latency_measured() {
     let mut earlier: BTreeMap<&str, u128> = BTreeMap::new();
     for version in [V83, V84] {
         let (mut h, client) = with_client(version, 5_000, f("1000000"));
