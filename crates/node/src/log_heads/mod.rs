@@ -35,9 +35,9 @@ use crate::log::CheckpointDomain;
 use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
 
-/// With rotation on, the longest between the poster's reads, each reading whether a turn names the
-/// operator: a turn's start moves it to v2 heads within half a 60-second heartbeat interval, well inside
-/// the take window. While a turn names the operator it also reads the turn before each post.
+/// With the v2 heartbeat's inputs, as wherever the liveness rule runs, the longest between the poster's
+/// reads, each reading whether a turn names the operator: a turn's start moves it to v2 heads within half
+/// a 60 s heartbeat interval, well inside the take window. In a turn it reads the turn before each post.
 const TURN_READ_EVERY: Duration = Duration::from_secs(30);
 /// The shortest read cadence a heartbeat interval sets, against a zero interval.
 const MIN_READ_EVERY: Duration = Duration::from_millis(100);
@@ -144,7 +144,8 @@ pub(crate) struct Poster<R> {
     pub key: Arc<EnclaveKey>,
     pub domain: CheckpointDomain,
     pub interval: Duration,
-    /// How often it reads the posted head back outside a turn: `[log_heads] read_interval`.
+    /// How often it reads the posted head back outside a turn: `[log_heads] read_interval`, at most
+    /// `interval`.
     pub retry: Duration,
     /// Set the moment a rollback is detected, before the `Freeze` request dequeues.
     pub freeze: FreezeLatch,
@@ -171,8 +172,8 @@ pub(crate) struct Poster<R> {
 
 impl<R: HeadsChain> Poster<R> {
     /// Records each released head as it changes, and reads the chain on the retry timer, or, if that is
-    /// sooner, every `TURN_READ_EVERY` with rotation on and every sixth of the heartbeat interval while a
-    /// turn names the operator; posts at most once
+    /// sooner, every `TURN_READ_EVERY` with the heartbeat's inputs and every sixth of the heartbeat interval
+    /// while a turn names the operator; posts at most once
     /// per interval once the head moves. A rollback — an on-chain head past this node's released head, or one
     /// naming another prefix at a seq this node retains — logs Critical `log_rollback` naming it,
     /// freezes the sequencer, and returns, which stops the node.
@@ -183,7 +184,7 @@ impl<R: HeadsChain> Poster<R> {
         mut released: watch::Receiver<Head>,
         sequencer: mpsc::Sender<Request>,
     ) -> anyhow::Result<()> {
-        // With rotation on, no read has yet shown whether a turn names the operator.
+        // With the heartbeat's inputs, no read has yet shown whether a turn names the operator.
         let mut retry = interval(self.heartbeat.as_ref().map_or(self.retry, |_| self.retry.min(TURN_READ_EVERY)));
         retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
         // Gates posts, not reads: a moved head posts once the interval since the last send has

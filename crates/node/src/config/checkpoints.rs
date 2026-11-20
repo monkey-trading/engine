@@ -52,9 +52,10 @@ fn default_log_heads_interval() -> Duration {
 }
 
 /// The poster's default read-back cadence outside a turn: a post lands at most once an hour there, so a
-/// read a minute confirms each well before the next and finds another copy's head within a minute.
+/// read every 30 s confirms each well before the next, finds another copy's head within 30 s, and
+/// matches the cadence the liveness rule's heartbeat holds it to with EVM custody.
 fn default_log_heads_read_interval() -> Duration {
-    Duration::from_secs(60)
+    Duration::from_secs(30)
 }
 
 /// The liveness reads' default cadence: four a 60-second heartbeat interval.
@@ -62,15 +63,15 @@ pub(crate) fn default_liveness_read_interval() -> Duration {
     Duration::from_secs(15)
 }
 
-/// The fallback fixer's default cadence while the turn whose draw deadline last passed has a relayed seed
-/// or a recorded fallback: nothing can lapse then, and the fixer reads again just past each deadline.
+/// The fallback fixer's default cadence, the longest a production build allows.
 fn default_fallback_interval() -> Duration {
-    Duration::from_secs(300)
+    PRODUCTION_FALLBACK_INTERVAL
 }
 
-/// The longest `[liveness] fallback_interval` a production build allows: it is also how long the fixer
-/// may take to see a seed it read relayed go missing, as after the receiver's replacement.
-const PRODUCTION_FALLBACK_INTERVAL: Duration = Duration::from_secs(3600);
+/// The longest `[liveness] fallback_interval` a production build allows. Once anyone fixes a turn's
+/// fallback block, its hash can be recorded for 256 blocks, 64 s on Arbitrum One: a read every 30 s
+/// sees the fix and records the hash with time to spare, even alone.
+const PRODUCTION_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// On-chain log-head commitments: the node posts its newest released `(seq, link)` at most every
 /// `interval` and refuses to start on a log that lacks the posted head (#541).
@@ -85,8 +86,9 @@ pub struct LogHeadsSection {
     /// How often the poster reposts the newest released head; a post lands only when the head moved.
     #[serde(with = "humantime_serde", default = "default_log_heads_interval")]
     pub interval: Duration,
-    /// How often the poster reads the posted head back, and at least every `interval`: with rotation on
-    /// at least every 30 s, and while a turn names the operator every sixth of its heartbeat interval.
+    /// How often the poster reads the posted head back, and at least every `interval`. Wherever the
+    /// liveness rule runs, as with EVM custody, it reads at least every 30 s, and while a turn names the
+    /// operator every sixth of its heartbeat interval.
     #[serde(with = "humantime_serde", default = "default_log_heads_read_interval")]
     pub read_interval: Duration,
 }
@@ -105,9 +107,8 @@ pub struct LivenessSection {
     /// every second; each reads at least four times a heartbeat interval whatever this says.
     #[serde(with = "humantime_serde", default = "default_liveness_read_interval")]
     pub read_interval: Duration,
-    /// How often the fallback fixer reads the seed receiver while the turn whose draw deadline last passed
-    /// has a relayed seed or a recorded fallback, and again just past each deadline; every 20 s while it
-    /// has neither, and every 5 s once a block is fixed for it, until the block's hash is recorded.
+    /// How often the fallback fixer reads the seed receiver, and every 5 s once a fix is under way, until
+    /// the fixed block's hash is recorded.
     #[serde(with = "humantime_serde", default = "default_fallback_interval")]
     pub fallback_interval: Duration,
 }
@@ -251,14 +252,14 @@ mod tests {
             toml::from_str("caller = '0x1111111111111111111111111111111111111111'\nmin_balance = '0.01'").unwrap();
         assert_eq!(
             (liveness.read_interval, liveness.fallback_interval),
-            (Duration::from_secs(15), Duration::from_secs(300))
+            (Duration::from_secs(15), Duration::from_secs(30))
         );
         let heads: LogHeadsSection = toml::from_str(
             "contract = '0x1111111111111111111111111111111111111111'\n\
              relayer = '0x2222222222222222222222222222222222222222'",
         )
         .unwrap();
-        assert_eq!((heads.interval, heads.read_interval), (Duration::from_secs(3600), Duration::from_secs(60)));
+        assert_eq!((heads.interval, heads.read_interval), (Duration::from_secs(3600), Duration::from_secs(30)));
 
         let mut liveness = LivenessSection { fallback_interval: PRODUCTION_FALLBACK_INTERVAL, ..liveness };
         liveness.refuse_slow_fallback_fixer(true).unwrap();

@@ -101,6 +101,19 @@ fn log_heads_need_checkpoints_a_distinct_relayer_and_a_real_contract() {
     let cfg: NodeConfig = toml::from_str(&format!("{anvil}{CHECKPOINTS}{zero}")).unwrap();
     let err = cfg.validate().unwrap_err();
     assert!(err.to_string().contains("interval must be non-zero"), "{err:#}");
+    // A zero read interval would panic its timer, or read without pause.
+    let valid = heads("0x00000000000000000000000000000000000000aa", OTHER_RELAYER);
+    let liveness = "\n[liveness]\ncaller = \"0x90F79bf6EB2c4f870365E785982E1f101E93b906\"\nmin_balance = \"0.01\"";
+    let (heads_zero, liveness_zero) = ("log_heads.read_interval must", "liveness.read_interval and liveness.fallback");
+    for (extra, message) in [
+        (format!("{valid}\nread_interval = \"0s\""), heads_zero),
+        (format!("{valid}{liveness}\nread_interval = \"0s\""), liveness_zero),
+        (format!("{valid}{liveness}\nfallback_interval = \"0s\""), liveness_zero),
+    ] {
+        let cfg: NodeConfig = toml::from_str(&format!("{anvil}{CHECKPOINTS}{extra}")).unwrap();
+        assert!(cfg.validate().unwrap_err().to_string().contains(message), "{extra}");
+    }
+    toml::from_str::<NodeConfig>(&format!("{anvil}{CHECKPOINTS}{valid}{liveness}")).unwrap().validate().unwrap();
     // A distinct relayer beside [checkpoints] validates.
     let cfg: NodeConfig = toml::from_str(&format!(
         "{anvil}{CHECKPOINTS}{}",

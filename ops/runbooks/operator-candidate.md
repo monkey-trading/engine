@@ -1003,11 +1003,9 @@ With `[liveness]`, the trading server also does all of these from the caller acc
 The caller reads the chain every `liveness.read_interval`, 15 seconds by default, and at least four
 times a heartbeat interval whatever that says. The operator's trading server reads the chain for the
 liveness rule at the same cadence, and asks the members for their copies every second. The fallback
-fixer reads the seed receiver every `liveness.fallback_interval`, 5 minutes by default and at most an
-hour in a production build, while the last turn past its draw deadline has a relayed seed or a recorded
-fallback. It also reads just past each draw deadline, every 20 seconds while that turn has neither,
-and every 5 seconds once anyone has fixed its block, so it records the block's hash within the 256
-blocks it can. The RPC budget in
+fixer reads the seed receiver every `liveness.fallback_interval`, 30 seconds by default and at most
+that in a production build, and every 5 seconds once anyone has fixed a turn's block, so it records the
+block's hash within the 256 blocks it can. The RPC budget in
 [feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads cost.
 
 1. Add the section to the configuration:
@@ -1016,8 +1014,8 @@ blocks it can. The RPC budget in
    [liveness]
    caller = "0x..."        # an account the checkpoint endpoint signs for, apart from every relayer
    min_balance = "0.01"
-   read_interval = "15s"     # optional; the default
-   fallback_interval = "5m"  # optional; the default
+   read_interval = "15s"      # optional; the default
+   fallback_interval = "30s"  # optional; the default
    ```
 
    `caller` is an account that the checkpoint endpoint signs for. It must differ from the checkpoint

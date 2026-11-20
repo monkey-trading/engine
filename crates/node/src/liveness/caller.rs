@@ -52,9 +52,6 @@ use crate::standby_key::chain::StandbyChain;
 /// How often the caller reads until a read shows the heartbeat interval: a failed first read must not
 /// wait out a long configured interval.
 const UNREAD_EVERY: Duration = Duration::from_secs(5);
-/// How soon the fallback fixer reads again once it sends a fix, so its second call lands well within the
-/// 256 blocks (64 s on Arbitrum One) for which the first call's block hash can be recorded.
-pub(crate) const FOLLOW_UP: Duration = Duration::from_secs(5);
 /// What a call's gas limit adds to its estimate.
 const GAS_MARGIN_DIVISOR: u64 = 4;
 

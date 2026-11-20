@@ -248,7 +248,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
                         caller: chain.accounts[6 + i],
                         min_balance: U256::from(1),
                         read_interval: crate::config::default_liveness_read_interval(),
-                        fallback_interval: crate::liveness::caller::FOLLOW_UP,
+                        fallback_interval: crate::liveness::fallback::FOLLOW_UP,
                     },
                     cfg.custody.chain_id,
                 )

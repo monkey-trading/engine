@@ -1,9 +1,9 @@
-//! How often the poster reads the chain with rotation on while no turn names the operator.
+//! How often the poster reads the chain with the v2 heartbeat's inputs while no turn names the operator.
 
 use super::*;
 
 #[tokio::test(start_paused = true)]
-async fn with_rotation_on_and_no_turn_the_poster_reads_every_30_s_whatever_its_read_interval() {
+async fn with_a_heartbeat_and_no_turn_the_poster_reads_every_30_s_whatever_its_read_interval() {
     let chain = FakeChain::new(None);
     let drive = spawn_retrying(chain.clone(), None, Duration::from_secs(300));
     drive.release(1);
@@ -14,7 +14,7 @@ async fn with_rotation_on_and_no_turn_the_poster_reads_every_30_s_whatever_its_r
 }
 
 #[tokio::test(start_paused = true)]
-async fn with_rotation_on_a_failed_first_read_is_retried_within_30_s_whatever_the_read_interval() {
+async fn with_a_heartbeat_a_failed_first_read_is_retried_within_30_s_whatever_the_read_interval() {
     let chain = FakeChain::new(None);
     chain.fail_next_reads(1);
     let drive = spawn_retrying(chain.clone(), None, Duration::from_secs(3_600));

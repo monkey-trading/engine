@@ -184,10 +184,10 @@ min_balance = "0.01" # REPLACE
 contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads deployment for this vault
 relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
 interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
-# Reads the posted head back every minute: a post lands at most once an hour outside a turn. With
-# rotation on it reads at least every 30 s, and while a turn names the operator every sixth of the
-# heartbeat interval, whatever this says.
-read_interval = "60s"
+# Reads the posted head back every 30 s: a post lands at most once an hour outside a turn. While a turn
+# names the operator it reads every sixth of the heartbeat interval, and with EVM custody never less
+# often than every 30 s, whatever this says.
+read_interval = "30s"
 
 [liveness]
 # This member's liveness caller: it witnesses missed heartbeat slots, promotes the next member once
@@ -199,10 +199,9 @@ min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
 # The caller's chain reads, and the operator's liveness rule's: four a 60-second heartbeat interval. Each
 # reads at least four times a heartbeat interval whatever this says.
 read_interval = "15s"
-# The fallback fixer's reads while the last turn past its draw deadline has a relayed seed or a recorded
-# fallback. It also reads just past each deadline, every 20 s while that turn has neither, and every 5 s
-# once anyone fixes its block. A production build allows at most 1h.
-fallback_interval = "5m"
+# The fallback fixer's reads, and every 5 s once anyone fixes a turn's fallback block, so its hash is
+# recorded within the 256 blocks (64 s) it can be. A production build allows at most 30s.
+fallback_interval = "30s"
 
 [seed_relay]
 # Proves each daily operator turn's RANDAO seed on Ethereum and relays it to the receiver on

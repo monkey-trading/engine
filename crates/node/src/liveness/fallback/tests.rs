@@ -412,22 +412,21 @@ async fn the_caller_reads_four_times_a_heartbeat_interval_however_long_its_read_
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_fixer_reads_just_past_a_draw_deadline_and_follows_a_block_anyone_fixed() {
-    use crate::seed_relay::schedule::{draw_deadline, last_final_turn};
-    let deadline = draw_deadline(last_final_turn(ChainState::default().time) + 1).unwrap();
-    let chain = Arc::new(FakeChain::new(ChainState { time: deadline - 30, ..Default::default() }));
+async fn the_fixer_reads_at_its_interval_through_a_failed_read_and_follows_a_block_anyone_fixed() {
+    let chain = Arc::new(FakeChain::new(ChainState::default()));
     let sent = Sent::default();
     let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
-    (fixer.idle, fixer.poll) = (Duration::from_secs(3_600), Duration::from_secs(5));
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
     let task = tokio::spawn(fixer.run());
-    tokio::time::sleep(Duration::from_secs(10)).await;
-    assert_eq!(sent.polls(), 1, "a seed relayed: idle until the deadline");
-    // Past the deadline no seed is relayed, and a draw's first call fixed a block before any member read.
-    let turn = last_final_turn(deadline);
-    chain.set(|chain| (chain.time, chain.seed) = (deadline + 5, (turn, B256::ZERO, B256::ZERO, chain.number)));
-    tokio::time::sleep(Duration::from_secs(22)).await;
-    let fix = (RECEIVER, fixFallbackCall { turn }.abi_encode());
-    assert_eq!(sent.count(&fix), 1, "the read just past the deadline records the fixed block's hash");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The quorum is lost through the read at 30 s; meanwhile no seed is relayed, and a draw's first
+    // call fixes a block before any member reads.
+    chain.set(|chain| chain.down = true);
+    tokio::time::sleep(Duration::from_secs(39)).await;
+    let (state, fix) = pending(ChainState::default());
+    chain.set(|chain| *chain = ChainState { seed: (state.seed.0, B256::ZERO, B256::ZERO, state.number), ..state });
+    tokio::time::sleep(Duration::from_secs(21)).await;
+    assert_eq!(sent.count(&fix), 1, "the read at 60 s, an interval after the failed one, records the hash");
     tokio::time::sleep(Duration::from_secs(5)).await;
     task.abort();
     assert_eq!(sent.count(&fix), 2, "and follows it up a poll later");

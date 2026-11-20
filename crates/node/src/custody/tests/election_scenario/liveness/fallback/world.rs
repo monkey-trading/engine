@@ -143,7 +143,7 @@ impl World {
                     caller: chain.accounts[6 + i],
                     min_balance: U256::from(1),
                     read_interval: crate::config::default_liveness_read_interval(),
-                    fallback_interval: crate::liveness::caller::FOLLOW_UP,
+                    fallback_interval: crate::liveness::fallback::FOLLOW_UP,
                 };
                 let endpoint = || Endpoint::new(cfg.checkpoints.as_ref().unwrap(), &liveness, cfg.custody.chain_id);
                 let reader = |name| crate::custody::StandbyReader::connect_named(&cfg.custody, log_heads, name);
@@ -164,8 +164,8 @@ impl World {
                     chain_id: cfg.custody.chain_id,
                     vault: chain.vault,
                     // At the follow-up cadence while idle too, so the scenario runs in minutes.
-                    idle: crate::liveness::caller::FOLLOW_UP,
-                    poll: crate::liveness::caller::FOLLOW_UP,
+                    idle: crate::liveness::fallback::FOLLOW_UP,
+                    poll: crate::liveness::fallback::FOLLOW_UP,
                     min_balance: U256::from(1),
                     sends,
                 };

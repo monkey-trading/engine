@@ -615,15 +615,16 @@ an index: load only the rule whose hint matches the current action.
   penalty (`initial_bps`, `decay`) the node records once `V70` is in force; it needs the schedule.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
   from the checkpoint relayer, the posting interval (an hour by default), and `read_interval`, how often
-  the poster reads the posted head back (a minute by default, at most the posting interval, at least every
-  30 s with rotation on and every sixth of the heartbeat interval in a turn); it requires
+  the poster reads the posted head back (30 s by default, at most the posting interval, at least every
+  30 s with EVM custody and every sixth of the heartbeat interval in a turn); it requires
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
   `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
   posting intervals, not three. The optional `[liveness]` (#595) names a member's liveness caller, an
   account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`; its
   `read_interval` (15 s by default) paces the caller's and the operator's liveness rule's chain reads, at
-  least four a heartbeat interval, and its `fallback_interval` (5 minutes by default, at most an hour in a
-  production build) the fallback fixer's while no turn waits on its fallback.
+  least four a heartbeat interval, and its `fallback_interval` (30 s by default and at most that in a
+  production build, within the 256 blocks a fixed fallback block's hash can be recorded for) the
+  fallback fixer's.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,

@@ -641,9 +641,8 @@ seed relay and the operator list are unchanged and read from the code.
 | Liveness rule's member list (60 s, operator in a turn) | 10 | 14,400 |
 | Log-head read-back (every 10 s while a turn names the operator) | 5 | 43,200 |
 | Log-head turn read (before each post, every 20 s, in a turn) | 13 | 56,160 |
-| Log-head read-back outside a turn (60 s, `log_heads.read_interval`; 30 s with rotation on) | 5 | 7,200 to 14,400 |
 | Checkpoint relayer's balance read (5 minutes) | 6 | 1,728 |
-| Fallback fixer (5 minutes, `liveness.fallback_interval`, every node) | 13 | 3,744 |
+| Fallback fixer (30 s, `liveness.fallback_interval`, every node) | 13 | 37,440 |
 | Liveness caller (15 s, `liveness.read_interval`, member between turns) | 15 | 86,400 |
 | Seed relay (60 s, every member) | 11 to 12 | 17,000 |
 | Operator list (60 s, only with `registry.lens`) | about 12 to 20 | up to 29,000 |
@@ -659,32 +658,36 @@ bloom admits a mirrored event is read again by its hash, which a block with a st
 bloom's false positive, costs. Before these changes a poll cost 101 calls: 70 headers and 20
 `eth_getLogs`.
 
-The fallback fixer also reads just past each turn's draw deadline. While that turn has neither a
-relayed seed nor a recorded fallback it reads every 20 s, and once anyone fixes its block, every 5 s
-until the block's hash is recorded, so it records it well within the 256 blocks (64 s) it can. These
-reads come only when a seed relay fails.
+The fallback fixer reads every 30 s because anyone may fix a turn's fallback block, a draw included,
+and the schedule's governance may replace the seed receiver at any time: the block's hash must then be
+recorded within 256 blocks, 64 s on Arbitrum One. Once a block is fixed it reads every 5 s until the
+hash is recorded.
 
 Per provider account, a day's load is the operator in effect's readers (the watcher, the liveness rule,
 the log-head reads, the relayer balance read, the fixer and the seed relay) plus the other two members'
-readers (the liveness caller, the fixer and the seed relay). With rotation on, the harness counts
-1,071,360 calls a day before the seed relays and the operator list: 590,112 `eth_getBlockByNumber`,
-402,048 `eth_call`, 44,352 `eth_chainId`, 34,560 `eth_getLogs` and 288 `eth_getBalance`. The three seed
-relays add about 51,000, so the account sees about 1,122,000 calls a day, about 13 a second on average,
-against 4.4 to 5.5 million before. With rotation off the liveness rule, the turn reads and the callers
-do not run, and the load is about 745,000. The costs below count the seed relays' calls at the price of
-an `eth_call`.
+readers (the liveness caller, the fixer and the seed relay). While a turn names the operator, the
+harness counts 1,172,448 calls a day before the seed relays and the operator list: 605,664
+`eth_getBlockByNumber`, 479,808 `eth_call`, 52,128 `eth_chainId`, 34,560 `eth_getLogs` and 288
+`eth_getBalance`. The three seed relays add about 51,000, so the account sees about 1,223,000 calls a
+day, about 14 a second on average, against 4.4 to 5.5 million before. The costs below count the seed
+relays' calls at the price of an `eth_call`.
+
+Before the registry names a schedule, as at launch, no turn names the operator and members run no
+caller. The liveness rule still reads every 15 s, 9 calls a read that stop at the registry, and the
+log-head poster reads the posted head and whether a turn names the operator every 30 s, 5 and 6 calls.
+The harness counts 828,288 calls a day for three nodes then, about 879,000 with the seed relays.
 
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |
-| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 25.7 million units a day, 770 million a month, and about 300 a second on average, with bursts above it | The free tier does not fit. Pay as you go fits, at about $400 a month. |
-| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 92 million credits a day | No listed plan fits. Team fits once the watcher polls every 15 s, at about 72 million; otherwise it needs a custom plan. |
-| dRPC | Free: 210,000,000 compute units per 30 days, about 2,100 a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 673 million units per 30 days, 34 million requests | The free tier does not fit. Pay as you go fits, at about $200 a month. |
+| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 28 million units a day, 840 million a month, and about 325 a second on average | The free tier does not fit. Pay as you go fits, at about $440 a month. |
+| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 100 million credits a day | No listed plan fits. Team needs the watcher to poll about every 30 s, which brings it to about 74 million; otherwise it needs a custom plan. |
+| dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 734 million units per 30 days, 37 million requests | The free tier does not fit. Pay as you go fits, at about $220 a month. |
 | PublicNode | None published ([publicnode.com](https://www.publicnode.com/)) | | Cannot be budgeted. A free public endpoint can limit any client without notice, so it counts as a provider that may fail, never as one the quorum can rest on. |
 
 Check each limit on the provider's page before relying on it, because they change.
 
 **What fits.** The cheapest set that carries the load is dRPC and Alchemy on pay as you go, at about
-$600 a month together, with PublicNode as the third provider. The quorum then rests on the two paid
+$660 a month together, with PublicNode as the third provider. The quorum then rests on the two paid
 providers, and loses its majority whenever either of them fails, so a second paid provider in the third
 seat costs more and keeps a provider's failure from pausing crediting.
 

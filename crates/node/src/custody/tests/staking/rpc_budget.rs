@@ -19,6 +19,12 @@ use crate::standby_key::chain::{StandbyChain, StandbyDomain};
 
 const DAY: f64 = 86_400.0;
 
+/// One provider's calls by method.
+type ByMethod = BTreeMap<&'static str, f64>;
+
+/// Readers, each with its calls a read and its reads a day.
+type Readers<'a> = Vec<(&'static str, &'a ByMethod, f64)>;
+
 /// JSON-RPC calls by method, counted as one provider's endpoint receives them.
 #[derive(Clone, Default)]
 struct Calls(Arc<Mutex<BTreeMap<&'static str, u64>>>);
@@ -238,15 +244,12 @@ fn liveness_quorum(calls: &Calls) -> (Vec<(String, Counted<Liveness>)>, Liveness
     (providers, chain)
 }
 
-/// One provider's calls by method.
-type ByMethod = BTreeMap<&'static str, f64>;
-
 /// The calls, by method, of one read of each fixed-interval reader, through the quorum, while a turn of a
 /// set of three names the operator.
 async fn reads() -> BTreeMap<&'static str, ByMethod> {
     let calls = Calls::default();
     let take = || calls.take().into_iter().map(|(method, count)| (method, count as f64)).collect::<ByMethod>();
-    let (providers, _) = liveness_quorum(&calls);
+    let (providers, chain) = liveness_quorum(&calls);
     let reader = crate::custody::StandbyReader::over(providers.clone(), LOG_HEADS, DOMAIN.standby.chain_id);
     let quorum = Quorum::new(providers).unwrap();
     let mut out = BTreeMap::new();
@@ -282,6 +285,27 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
     out.insert("log-head turn read", take());
     quorum.finalized_balance(Address::repeat_byte(0x55)).await.unwrap();
     out.insert("relayer balance read", take());
+    // Before the registry names a schedule, as at launch, the rule, the fixer and the turn read stop at
+    // the domain, and the rule reads the vault's signer.
+    chain.0.lock().unwrap().scheduled = false;
+    {
+        let block = reader.latest().await.unwrap();
+        let standby = StandbyDomain::at_if_scheduled(&block, DOMAIN.standby.chain_id, LIVENESS_VAULT).await;
+        assert!(standby.unwrap().is_none());
+        crate::liveness::chain::vault_signer(&block, LIVENESS_VAULT).await.unwrap();
+    }
+    out.insert("rule read, no schedule", take());
+    {
+        let block = reader.latest().await.unwrap();
+        StandbyDomain::at_if_scheduled(&block, DOMAIN.standby.chain_id, LIVENESS_VAULT).await.unwrap();
+    }
+    out.insert("fallback read, no schedule", take());
+    crate::log_heads::posted(&quorum, LOG_HEADS, DOMAIN.standby.chain_id).await.unwrap();
+    take();
+    let (_, at) = quorum.posted_head(LOG_HEADS).await.unwrap();
+    let block = QuorumBlock::at(&quorum, at).await.unwrap();
+    StandbyDomain::at_if_scheduled(&block, DOMAIN.standby.chain_id, LIVENESS_VAULT).await.unwrap();
+    out.insert("log-head turn read, no schedule", take());
     out
 }
 
@@ -309,34 +333,43 @@ async fn rpc_budget() {
     for (reader, calls) in &reads {
         println!("   {reader}: {}", calls.values().sum::<f64>());
     }
-    // A day of each node's readers with rotation on: the operator's watcher at 5 s on Arbitrum One
-    // (20 blocks a poll), its rule's reads at 15 s and members at 60 s, its poster's reads in a turn
-    // every 10 s with a turn read before each post every 20 s, and its relayer's balance at 5 minutes;
-    // each member's caller at 15 s; and every node's fixer at 5 minutes.
-    let operator: [(&str, &ByMethod, f64); 6] = [
-        ("deposit watcher", &watcher, DAY / 5.0),
-        ("liveness rule", &reads["rule read"], DAY / 15.0),
-        ("liveness rule's members", &reads["rule members read"], DAY / 60.0),
-        ("log-head reads in a turn", &reads["log-head read"], DAY / 10.0),
-        ("log-head turn reads", &reads["log-head turn read"], DAY / 20.0),
-        ("relayer balance", &reads["relayer balance read"], DAY / 300.0),
+    // A day of each node's readers while a turn of a set of three names the operator: the operator's
+    // watcher at 5 s on Arbitrum One (20 blocks a poll), its rule's reads at 15 s and members at 60 s, its
+    // poster's reads every 10 s with a turn read before each post every 20 s, and its relayer's balance
+    // at 5 minutes; each member's caller at 15 s; and every node's fixer at 30 s.
+    let in_turn: Readers = vec![
+        ("operator's deposit watcher", &watcher, DAY / 5.0),
+        ("operator's liveness rule", &reads["rule read"], DAY / 15.0),
+        ("operator's liveness rule's members", &reads["rule members read"], DAY / 60.0),
+        ("operator's log-head reads", &reads["log-head read"], DAY / 10.0),
+        ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 20.0),
+        ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
+        ("liveness callers, two members", &reads["caller read"], 2.0 * DAY / 15.0),
+        ("fallback fixers, three nodes", &reads["fallback read"], 3.0 * DAY / 30.0),
     ];
-    let member: [(&str, &ByMethod, f64); 2] = [
-        ("liveness caller, each member", &reads["caller read"], DAY / 15.0),
-        ("fallback fixer, every node", &reads["fallback read"], DAY / 300.0),
+    day("one operator and two members while a turn names the operator", &in_turn);
+    // Before the registry names a schedule, as at launch: the rule reads at 15 s, and the poster reads the
+    // posted head and the turn every 30 s; three nodes' fixers read at 30 s.
+    let unscheduled: Readers = vec![
+        ("operator's deposit watcher", &watcher, DAY / 5.0),
+        ("operator's liveness rule", &reads["rule read, no schedule"], DAY / 15.0),
+        ("operator's log-head reads", &reads["log-head read"], DAY / 30.0),
+        ("operator's log-head turn reads", &reads["log-head turn read, no schedule"], DAY / 30.0),
+        ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
+        ("fallback fixers, three nodes", &reads["fallback read, no schedule"], 3.0 * DAY / 30.0),
     ];
-    println!("== per provider per day, with rotation on");
+    day("three nodes before the registry names a schedule", &unscheduled);
+}
+
+/// Prints a day of `readers` per provider, by reader and by method, before the seed relays and the
+/// operator list.
+fn day(name: &str, readers: &Readers) {
+    println!("== {name}, per provider per day, before the seed relays and the operator list");
     let mut account = ByMethod::new();
-    for (reader, calls, times) in operator {
-        add(&mut account, calls, times);
-        println!("   operator's {reader}: {:.0}", calls.values().sum::<f64>() * times);
-    }
-    add(&mut account, member[1].1, member[1].2);
-    for (reader, calls, times) in member {
-        add(&mut account, calls, 2.0 * times);
+    for (reader, calls, times) in readers {
+        add(&mut account, calls, *times);
         println!("   {reader}: {:.0}", calls.values().sum::<f64>() * times);
     }
-    println!("== one operator and two members, before the seed relays and the operator list, per provider per day");
     for (method, calls) in &account {
         println!("   {method}: {calls:.0}");
     }
