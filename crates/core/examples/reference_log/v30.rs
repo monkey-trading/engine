@@ -69,7 +69,7 @@ fn screened(h: &Harness, request_hash: B256, account: Option<AccountId>, payer: 
     let source = SigningKey::from_slice(&[0x77; 32]).unwrap();
     let mut screening = Screening {
         source: eip712::address(source.verifying_key()),
-        request_hash,
+        request_hash: Some(request_hash),
         observed_at: h.ts,
         account,
         payer,

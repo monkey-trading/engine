@@ -75,7 +75,8 @@ pub fn source_key() -> engine_core::types::AccountId {
     eip712::address(source().verifying_key())
 }
 
-/// Fresh, allowed and clear evidence for `hash`, as the API's screening source answers.
+/// Fresh, allowed and clear evidence for `hash`, as the API's screening source answers: a deposit's,
+/// which names a payer, names its request, and a client request's does before `V85`.
 pub fn evidence(
     h: &Harness,
     hash: eip712::B256,
@@ -95,7 +96,7 @@ pub fn evidence_at(
 ) -> AccessEvidence {
     let mut screening = Screening {
         source: source_key(),
-        request_hash: hash,
+        request_hash: (payer.is_some() || engine.protocol_version().binds_screening_to_request()).then_some(hash),
         observed_at,
         account,
         payer,

@@ -504,4 +504,8 @@ pub enum ProtocolVersion {
     /// group's credit kept, a shut member's included; a close-all entry, a triggered order or level and a close-out
     /// never are. A close-out scores a group's later members at the volume tier its earlier fills leave.
     V84,
+    /// A client request's screening evidence is a decision for its account and the client address the source screened,
+    /// naming no request, so one decision backs each request from that account while its `observed_at` is within the
+    /// recorded bound at the sequenced time; one naming that request is still accepted. A deposit's names its own.
+    V85,
 }

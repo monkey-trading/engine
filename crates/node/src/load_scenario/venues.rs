@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use engine_core::Fixed;
@@ -121,7 +122,7 @@ fn book(market: MarketId, per_second: f64, ts: Millis) -> (Fixed, Fixed) {
 /// its stand-in, at the template's feed timings. The RWA stand-ins read nothing once they stream, so
 /// they answer no ping: their connections send none, as the RWA scenarios' do, and only the crypto
 /// connections hold their streams to the template's delay bound.
-pub(super) async fn start(moves: Moves) -> Venues {
+pub(super) async fn start(moves: Moves, source_delay: Duration) -> Venues {
     let venues = template_venues();
     let timing = Timing::for_venues(&venues);
     let tls = TlsFront::new();
@@ -185,7 +186,7 @@ pub(super) async fn start(moves: Moves) -> Venues {
             (conn, credentials, config, timing)
         })
         .collect();
-    let (access, source) = start_access().await;
+    let (access, source) = start_access(source_delay).await;
     tasks.push(source);
     Venues { connections, access, tasks, cme, _alpaca: alpaca }
 }
@@ -229,9 +230,9 @@ async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<Str
     }
 }
 
-/// Starts the signed screening source, and the template's `[access]` pointed at it under the book's
-/// source key.
-async fn start_access() -> (AccessSection, AbortHandle) {
+/// Starts the signed screening source, answering each call after `delay`, as a remote source's round
+/// trip would, and the template's `[access]` pointed at it under the book's source key.
+async fn start_access(delay: Duration) -> (AccessSection, AbortHandle) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
     let endpoint = format!("http://{}", listener.local_addr().expect("local addr"));
     let mut section = template()["access"].clone();
@@ -240,16 +241,17 @@ async fn start_access() -> (AccessSection, AbortHandle) {
     table.insert("endpoint".into(), toml::Value::String(endpoint));
     let access: AccessSection = section.try_into().expect("the template's [access], pointed at the stand-in");
     access.validate().expect("a valid [access]");
-    let app = Router::new().route("/", post(screen));
+    let app = Router::new().route("/", post(screen)).with_state(delay);
     let task = tokio::spawn(async move { axum::serve(listener, app).await.expect("the screening source") });
     (access, task.abort_handle())
 }
 
-/// Answers a screening request clear, with evidence the book's source key signs now.
-async fn screen(Json(request): Json<Value>) -> Json<Screening> {
+/// Answers a screening request clear after `delay`, with evidence the book's source key signs then.
+async fn screen(State(delay): State<Duration>, Json(request): Json<Value>) -> Json<Screening> {
+    tokio::time::sleep(delay).await;
     let mut proof = Screening {
         source: source_key(),
-        request_hash: serde_json::from_value(request["request_hash"].clone()).expect("a request hash"),
+        request_hash: serde_json::from_value(request["request_hash"].clone()).expect("a request hash or none"),
         observed_at: now_ms(),
         account: serde_json::from_value(request["account"].clone()).expect("an account"),
         payer: serde_json::from_value(request["payer"].clone()).expect("a payer"),

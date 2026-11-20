@@ -381,12 +381,14 @@ pub fn deposit_screening_hash(deposit: &AccessDeposit) -> B256 {
     B256::from_slice(&Keccak256::digest(bytes))
 }
 
-/// The source's signed decision, bound to the same recorded deployment domain as client requests.
+/// The source's signed decision, bound to the same recorded deployment domain as client requests. A
+/// decision with no `request_hash` leaves the field out of its canonical JSON.
 pub fn screening_hash(domain: &Eip712Domain, screening: &Screening) -> B256 {
     #[derive(Serialize)]
     struct Decision<'a> {
         source: AccountId,
-        request_hash: B256,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        request_hash: Option<B256>,
         observed_at: Millis,
         account: Option<AccountId>,
         payer: Option<AccountId>,

@@ -98,7 +98,9 @@ async fn close_all(node: &Node, client: &SigningKey, nonce: u64, quotes: &[(Mark
 #[tokio::test(flavor = "multi_thread")]
 async fn dev_scenario_close_outs_read_the_portfolio_requirement() {
     let genesis = genesis();
-    let mut node = Node::start_from("portfolio-closeouts-dev-scenario", true, true, false, &genesis).await;
+    let mut node =
+        Node::start_from("portfolio-closeouts-dev-scenario", true, true, false, &genesis, ProtocolVersion::LATEST)
+            .await;
     let operator = Operator::serving(&node).await;
     let (a, b, c, d, e) = (key(0xa1), key(0xa2), key(0xa3), key(0xa4), key(0xa5));
     let [a_id, b_id, c_id, d_id, e_id] = [&a, &b, &c, &d, &e].map(|client| eip712::address(client.verifying_key()));

@@ -67,7 +67,7 @@ pub(crate) fn screening_evidence(
     let deposit = engine_core::access::receipt_access_deposit(receipt, Some(payer));
     let mut screening = Screening {
         source: eip712::address(source.verifying_key()),
-        request_hash: eip712::deposit_screening_hash(&deposit),
+        request_hash: Some(eip712::deposit_screening_hash(&deposit)),
         observed_at: h.ts,
         account: None,
         payer: Some(payer),

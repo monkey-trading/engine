@@ -77,11 +77,16 @@ pub enum SanctionsStatus {
 }
 
 /// Public screening inputs contain no IP address, endpoint, credential, or personal details.
+///
+/// `request_hash` binds the decision to one request: a deposit's, and a client request's before `V85`.
+/// From `V85` a client request's decision may name none, so it covers its account and the client address
+/// the source screened for as long as it is fresh.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Screening {
     pub source: AccountId,
-    pub request_hash: B256,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<B256>,
     pub observed_at: Millis,
     pub account: Option<AccountId>,
     pub payer: Option<AccountId>,

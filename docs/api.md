@@ -480,15 +480,19 @@ waiting for it takes no token from these budgets, but is held to a rate of its o
 ### Screening
 
 The server screens orders, close-all requests, take profit and stop loss requests, withdrawals,
-payout reissues and declarations before they reach the log. Screening asks the configured access
-source to classify the account and the client's address. The engine records the evidence with the
-request, and rejects the request in the log if the evidence does not allow it. Cancels, cancel-all
-requests and session-key requests are not screened.
+payout reissues and declarations before they reach the log. Screening uses the configured access
+source's decision about the account and the client's address. The server keeps one decision for each
+account and address and uses it for each of their requests while it is fresh, and asks the source
+again before it runs out while the account sends requests from that address, so a request with a
+fresh decision does not wait for the source. A request with none waits for the source's answer. A
+refusal is kept and used in the same way until it runs out. The engine records the decision with
+the request, and rejects the request in the log if the decision does not allow it. Cancels,
+cancel-all requests and session-key requests are not screened.
 
-Each request holds one of a limited number of screening slots while the source answers. One
-account's requests, including its session keys', and one client's requests may hold only a share of
-the slots. A request past its share is refused with 429 and `Retry-After`. Declarations may hold at
-most half of the slots.
+A request that waits for the source holds one of a limited number of screening slots while the
+source answers. One account's requests, including its session keys', and one client's requests may
+hold only a share of the slots. A request past its share is refused with 429 and `Retry-After`.
+Declarations may hold at most half of the slots.
 
 Some slots are kept for requests that the account's state shows can reduce risk when the request
 arrives: a reduce-only order or a take profit and stop loss request in a market where the account

@@ -125,8 +125,9 @@ async fn a_refused_declaration_leaves_the_key_routes_closed_until_one_is_recorde
     assert_eq!(settled_entries(&node).await, entries);
     assert_eq!(next_nonce(&node, account).await, 1);
 
-    // An allowed declaration opens them.
+    // An allowed declaration opens them, once the refusal kept for the wallet has run out.
     node.source.lock().unwrap().jurisdiction = Jurisdiction::Allowed;
+    node.forget_decisions();
     let (status, events) = node.post("/v1/eligibility", declaration(&wallet, 1)).await;
     assert_eq!((status, &events[0]["type"]), (StatusCode::OK, &json!("eligibility_attested")), "{events}");
     assert_eq!(

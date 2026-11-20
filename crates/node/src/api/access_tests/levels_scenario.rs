@@ -283,7 +283,7 @@ async fn levels_node() -> (Node, Genesis) {
     for (tier, orders) in genesis.params.volume_tiers.iter_mut().zip(ACTIVATION_MAX_RESTING_ORDERS) {
         tier.max_resting_orders = orders;
     }
-    let mut node = Node::start_from("levels-dev-scenario", true, true, false, &genesis).await;
+    let mut node = Node::start_from("levels-dev-scenario", true, true, false, &genesis, ProtocolVersion::LATEST).await;
     let burst = NonZeroU32::new(10_000).unwrap();
     node.state.limits = Arc::new(ApiLimits::with_quota(
         &dev_config().api,

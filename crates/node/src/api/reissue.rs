@@ -15,7 +15,7 @@ use tokio::sync::oneshot;
 use tracing::{Span, debug, field::display};
 
 use crate::access::SlotKind;
-use crate::api::actions::{api_screen, signature_domain};
+use crate::api::actions::{SlotFor, api_screen, signature_domain};
 use crate::api::{ApiError, ApiResult, ApiState};
 use crate::sequencer::{Reissue, ReissueScreening, Request};
 
@@ -93,7 +93,7 @@ pub(super) async fn reissue(
         }
         Some(ReissueScreening {
             request_hash: hash,
-            evidence: api_screen(&s, peer, account, hash, SlotKind::Reducing).await?,
+            evidence: api_screen(&s, peer, account, hash, SlotFor::Kind(SlotKind::Reducing)).await?,
         })
     } else {
         None

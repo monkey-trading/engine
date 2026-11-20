@@ -50,13 +50,18 @@ async fn reduce_only_orders_from_wallets_with_no_position_leave_the_reserve_to_c
     assert!(until_in_flight(&node, &mut held, asked + 6).await.is_none());
     assert_eq!(screened(&node) - asked, 6, "orders that reduce nothing take only the slots outside the reserve");
 
+    // Each of the trader's requests finds no fresh decision kept, so calls the source and takes a slot.
+    let before = screened(&node);
     let nonce = next_nonce(&node, address(&trader)).await;
     let stop = levels_body(&trader, &trader, nonce, NOW + 60_000, 1, levels(None, Some("99000")));
     let stop = send(&node, 3, Method::POST, "/v1/positions/levels", stop).await;
+    node.forget_decisions();
     let nonce = next_nonce(&node, address(&trader)).await;
     let close = send(&node, 3, Method::POST, "/v1/orders", signed_order(&trader, &trader, nonce, 2, true)).await;
+    node.forget_decisions();
     let nonce = next_nonce(&node, address(&trader)).await;
     let withdraw = send(&node, 3, Method::POST, "/v1/withdrawals", withdrawal(&trader, nonce)).await;
+    assert_eq!(screened(&node) - before, 3, "the stop loss, close and withdrawal each took a slot");
     gate.add_permits(8);
     let statuses: Vec<_> = held.await.into_iter().map(|(status, ..)| status).collect();
     let retried = statuses.iter().filter(|status| **status == StatusCode::SERVICE_UNAVAILABLE).count();
@@ -110,10 +115,13 @@ async fn a_request_takes_the_reserve_only_where_its_account_has_something_to_red
             (StatusCode::SERVICE_UNAVAILABLE, Some("screening is at capacity")),
             "{path} from the wallet with nothing to reduce"
         );
-        let nonce = next_nonce(&node, address(&trader)).await;
+        // With no fresh decision kept, the trader's request calls the source and takes a slot.
+        node.forget_decisions();
+        let (nonce, before) = (next_nonce(&node, address(&trader)).await, screened(&node));
         let (status, events, _) = send(&node, 4, Method::POST, path, body(&trader, nonce)).await;
         let done = events.as_array().is_some_and(|events| events.iter().any(|event| event["type"] == effect));
         assert!(status == StatusCode::OK && done, "{path} from the trader takes the reserve: {status} {events}");
+        assert_eq!(screened(&node), before + 1, "{path} from the trader called the source");
     }
     gate.add_permits(6);
     assert_eq!(held.await.into_iter().map(|(status, ..)| status).collect::<Vec<_>>(), [StatusCode::OK; 6]);

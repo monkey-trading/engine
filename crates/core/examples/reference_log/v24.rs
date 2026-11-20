@@ -255,7 +255,7 @@ impl Session {
     ) -> Screening {
         Screening {
             source: eip712::address(self.source.verifying_key()),
-            request_hash,
+            request_hash: Some(request_hash),
             observed_at: h.ts,
             account,
             payer,

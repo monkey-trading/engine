@@ -81,10 +81,12 @@ impl Engine {
         self.screen_access(deposit.account, deposit.payer, hash, Some(evidence), true, self.now).err()
     }
 
-    /// The refusal the screening checks of an access-screened withdrawal (source, request, signer,
+    /// The refusal the screening checks of an access-screened withdrawal (source, binding, signer,
     /// freshness, account sanctions and peer jurisdiction) give `evidence` for `account`'s signed
-    /// request with digest `request_hash`, judged at `now`. A read-only check that sequences nothing,
-    /// for a node action no command carries, such as signing a payout again.
+    /// request with digest `request_hash`, judged at `now`: before `V85` the evidence must name that
+    /// request, and from `V85` it names none and covers the account, or names that request. A
+    /// read-only check that sequences nothing, for a node action no command carries, such as signing a
+    /// payout again.
     pub fn client_screening_refusal(
         &self,
         account: AccountId,
@@ -233,7 +235,8 @@ impl Engine {
     }
 
     /// Applies the source's recorded classifications at `now` without consulting external policy on
-    /// replay.
+    /// replay. A deposit's evidence, and a client request's before `V85`, must name `request_hash`; a
+    /// client request's from `V85` names no request, or that one.
     /// Error cases:
     /// - any missing, stale, mismatched or excluding classification
     fn screen_access(
@@ -261,11 +264,9 @@ impl Engine {
             }
         };
         let policy = self.access_policy.as_ref().ok_or(AccessReject::PolicyMissing)?;
-        if screening.source != policy.source
-            || screening.request_hash != request_hash
-            || screening.account != account
-            || screening.payer != payer
-        {
+        let names_request = deposit || self.protocol_version.binds_screening_to_request();
+        let bound = screening.request_hash.map_or(!names_request, |named| named == request_hash);
+        if screening.source != policy.source || !bound || screening.account != account || screening.payer != payer {
             return Err(AccessReject::EvidenceMismatch);
         }
         let domain = self.access_domain().ok_or(AccessReject::EvidenceMismatch)?;

@@ -230,7 +230,7 @@ fn a_reissue_needs_the_screening_a_withdrawal_gets_and_a_refused_account_stays_h
         (screened(&|s| s.account_status = SanctionsStatus::Sanctioned), AccessReject::AccountSanctioned),
         (screened(&|s| s.jurisdiction = Jurisdiction::UnitedStates), AccessReject::UnitedStates),
         (screened(&|s| s.observed_at = now - access::policy().max_age_ms - 1), AccessReject::EvidenceStale),
-        (screened(&|s| s.request_hash = eip712::B256::ZERO), AccessReject::EvidenceMismatch),
+        (screened(&|s| s.request_hash = Some(eip712::B256::ZERO)), AccessReject::EvidenceMismatch),
         (None, AccessReject::EvidenceMissing),
     ];
     for (screening, reason) in refusals {

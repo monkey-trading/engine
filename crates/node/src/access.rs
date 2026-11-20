@@ -1,16 +1,22 @@
 //! Access-source IO. HTTPS trusts compiled roots; policy classifications are explicit provider inputs.
+//! The API reuses a decision for an account and client address while it is fresh (`decisions`), and
+//! calls the source only on a miss or to refresh an active pair's decision before it expires.
 //!
 //! TODO: bind source configuration into enclave attestation. A provider's classifications are trusted;
 //! replay proves the decisions from logged inputs, not the correctness of the provider's database.
 
+mod decisions;
+mod refresh;
 mod slots;
+pub(crate) use decisions::Decisions;
 pub(crate) use slots::{Claim, ScreeningSlot, SlotKind, SlotRefusal};
 
 use std::net::IpAddr;
 
 use anyhow::Context;
 use engine_core::access::{AccessEvidence, Screening, SourceFailure};
-use engine_core::eip712::B256;
+use engine_core::auth::{ClientAuth, Operator};
+use engine_core::eip712::{self, B256, Eip712Domain};
 use engine_core::types::AccountId;
 use reqwest::{Certificate, Client, Url, redirect};
 use serde::Serialize;
@@ -19,21 +25,33 @@ use tracing::warn;
 use crate::access::slots::ScreeningSlots;
 use crate::config::AccessSection;
 
-/// The source receives the real transport peer only for API actions; it is never logged.
+/// The source receives the real transport peer only for API actions; it is never logged. A deposit's
+/// request names the deposit's digest, which its decision names back; an API action's names none, and
+/// its decision covers the account and the peer.
 #[derive(Serialize)]
 pub(crate) struct ScreeningRequest {
-    pub request_hash: B256,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_hash: Option<B256>,
     pub account: Option<AccountId>,
     pub payer: Option<AccountId>,
     pub peer: Option<IpAddr>,
+}
+
+impl ScreeningRequest {
+    /// The request for a decision about `account`'s requests from the client at `peer`.
+    pub(crate) fn client(account: AccountId, peer: IpAddr) -> Self {
+        Self { request_hash: None, account: Some(account), payer: None, peer: Some(peer) }
+    }
 }
 
 pub(crate) struct AccessClient {
     http: Client,
     endpoint: Url,
     max_response_bytes: usize,
-    /// The API's requests waiting on the source; custody's screenings take none.
+    /// The API's calls waiting on the source, misses and refreshes; custody's screenings take none.
     pub(crate) api_slots: ScreeningSlots,
+    /// The API's decisions, one per account and client address.
+    pub(crate) api_decisions: Decisions,
 }
 
 impl AccessClient {
@@ -62,6 +80,7 @@ impl AccessClient {
             endpoint: config.endpoint.expose()?,
             max_response_bytes: config.max_response_bytes,
             api_slots: ScreeningSlots::new(config),
+            api_decisions: Decisions::new(config),
         })
     }
 
@@ -118,6 +137,12 @@ impl AccessClient {
         }
         Ok(screening)
     }
+}
+
+/// The domain the log records, under which client requests and screening decisions are signed: the
+/// client auth's, or in a log that records none, the operator's chain and vault.
+pub(crate) fn screening_domain(auth: &ClientAuth, operator: &Operator) -> Eip712Domain {
+    auth.domain().unwrap_or_else(|| eip712::domain(operator.chain_id, operator.vault))
 }
 
 /// Missing configuration is a refusal, never an allow-all source.

@@ -16,7 +16,12 @@
 # had not taken the leg's last commands, or no fill or stamped price.
 #
 # Needs only Cargo: the venues and the screening source are loopback stand-ins, on free ports, with
-# private temporary data. The environment sizes the run: LOAD_ACCOUNTS (100000), LOAD_TRADERS (2000),
+# private temporary data. The screening source answers each call after a remote source's round trip,
+# LOAD_SOURCE_DELAY_MS (200); the bar holds the market orders of traders that sent a screened request
+# within the screening bound, whose decisions the node keeps fresh, and those of traders that wait for
+# the source, or may, or that queue behind another trader's wait on their client's one connection,
+# print apart. The environment sizes the run:
+# LOAD_ACCOUNTS (100000), LOAD_TRADERS (2000),
 # LOAD_SUBSCRIBERS (256), LOAD_LEG_SECS (120), LOAD_CRYPTO_RATE (every crypto market's price commands
 # a second; by default each market's median second in `dev-venue-load.sh --soak`, whose busiest
 # second, 116 for BTC-USD, a run at LOAD_CRYPTO_RATE=116 holds throughout) and LOAD_RWA_MOVES (each

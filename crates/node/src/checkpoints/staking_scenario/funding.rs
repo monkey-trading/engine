@@ -64,7 +64,12 @@ impl Scenario {
         let evidence = self
             .access
             .client
-            .screen(&ScreeningRequest { request_hash: deposit_screening_hash(&deposit), account, payer, peer: None })
+            .screen(&ScreeningRequest {
+                request_hash: Some(deposit_screening_hash(&deposit)),
+                account,
+                payer,
+                peer: None,
+            })
             .await;
         let events = self.submit(Command::AccessCustodyDeposit { receipt: receipt.clone(), payer, evidence }).await;
         if account.is_some() {

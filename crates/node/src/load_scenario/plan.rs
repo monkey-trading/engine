@@ -57,6 +57,9 @@ pub(super) struct Plan {
     pub ramp: Option<Ramp>,
     /// Windows each leg reports separately, for the tolerance of a loaded runner.
     pub windows: u32,
+    /// The node's screening bound (`access.max_age`): a trader that sent a screened request within it
+    /// has a fresh decision, which the node keeps fresh while the trader is active.
+    pub screening_bound_ms: u64,
 }
 
 /// One leg: a multiple of launch flow for a time.
@@ -100,8 +103,14 @@ pub(super) struct Figures {
     pub replies: BTreeMap<String, u64>,
     pub fills: u64,
     /// A market order from when it was due to its filled reply, at the client, less the client's
-    /// signing, in microseconds.
+    /// signing, in microseconds, from a trader that sent a screened request within the screening bound,
+    /// whose decision the node's refreshes keep fresh, so a wait for the source counts here; apart, from
+    /// a trader it keeps none for, which waits for the source, from one between them, and from a fresh
+    /// trader queued on its client's connection behind another's wait (`generator::traders::Client::send`).
     pub order_to_fill_us: Quantiles,
+    pub cold_order_to_fill_us: Quantiles,
+    pub lapsing_order_to_fill_us: Quantiles,
+    pub queued_order_to_fill_us: Quantiles,
     /// Every request from when it was due to its reply, less the client's signing, in microseconds.
     pub request_us: Quantiles,
     /// A command frame's arrival at a subscriber after its stamp, in milliseconds, over every frame;

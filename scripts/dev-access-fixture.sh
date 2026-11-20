@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Sourced by local Anvil scenarios. The source signs synthetic classifications with Anvil key 0.
+# ACCESS_MAX_AGE sets the freshness bound (30s by default), and ACCESS_SOURCE_DELAY_MS, read when the
+# fixture is set, how long the source takes to answer (none by default).
 
 build_access_tools() {
   # CI builds both once and hands them to the scenarios that set ENGINE_PREBUILT.
@@ -35,7 +37,7 @@ write_access_config() {
 source = "$(cast wallet address --private-key "$deployer_key")"
 endpoint = "http://127.0.0.1:${ACCESS_SOURCE_PORT:-18846}"
 timeout = "2s"
-max_age = "30s"
+max_age = "${ACCESS_MAX_AGE:-30s}"
 max_response_bytes = 4096
 max_in_flight = 8
 max_in_flight_per_account = 2
@@ -107,10 +109,10 @@ access_expect_forbidden() {
 }
 
 access_set_fixture() {
-  python3 - "$work/access-fixture.json" "$1" "${2:-}" "${3:-}" <<'PY'
+  python3 - "$work/access-fixture.json" "$1" "${2:-}" "${3:-}" "${ACCESS_SOURCE_DELAY_MS:-0}" <<'PY'
 import json, os, sys
-path, mode, account, jurisdiction = sys.argv[1:]
-fixture = {"mode": mode, "jurisdictions": {}, "sanctioned": []}
+path, mode, account, jurisdiction, delay_ms = sys.argv[1:]
+fixture = {"mode": mode, "jurisdictions": {}, "sanctioned": [], "delay_ms": int(delay_ms)}
 if jurisdiction:
     fixture["jurisdictions"][account.lower()] = jurisdiction
 elif account:
@@ -119,4 +121,18 @@ with open(path + ".new", "w") as out:
     json.dump(fixture, out)
 os.replace(path + ".new", path)
 PY
+}
+
+# The calls the source has answered for `account`.
+access_calls() {
+  local account
+  account="$(tr '[:upper:]' '[:lower:]' <<< "$1")"
+  curl --max-time 2 -sf "http://127.0.0.1:${ACCESS_SOURCE_PORT:-18846}/calls" | jq -r --arg account "$account" '.[$account] // 0'
+}
+
+# Waits until every decision the source made before now has run out on the node, refreshes in flight
+# included, so each account's next request carries a decision made after now, or asks for one.
+access_decisions_run_out() {
+  local bound="${ACCESS_MAX_AGE:-30s}"
+  sleep $((2 * ${bound%s} + 2))
 }

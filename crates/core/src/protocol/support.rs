@@ -4,11 +4,17 @@ use crate::protocol::ProtocolVersion;
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V84;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V85;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {
         self == Self::V24 || self >= Self::V26
+    }
+
+    /// Whether a client request's screening evidence must name the request it answers, as before `V85`;
+    /// from `V85` it may name none and cover the account. A deposit's evidence always names its own.
+    pub fn binds_screening_to_request(self) -> bool {
+        self < Self::V85
     }
 
     /// Whether this rule set credits exact receipts with withdrawal principal locks.

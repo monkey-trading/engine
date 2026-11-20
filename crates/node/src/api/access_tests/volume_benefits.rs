@@ -36,7 +36,8 @@ async fn dev_scenario_a_higher_tier_pays_less_fee_and_financing_and_earns_more_e
         tier.financing_discount_bps = ACTIVATION_FINANCING_DISCOUNTS_BPS[at];
         tier.emissions_boost_bps = ACTIVATION_EMISSIONS_BOOSTS_BPS[at];
     }
-    let mut node = Node::start_from("volume-benefits-dev-scenario", true, true, false, &genesis).await;
+    let mut node =
+        Node::start_from("volume-benefits-dev-scenario", true, true, false, &genesis, ProtocolVersion::LATEST).await;
     let operator = Operator::serving(&node).await;
     let (a, b) = (key(0x87), key(0x88));
     let (wallet_a, wallet_b) = (eip712::address(a.verifying_key()), eip712::address(b.verifying_key()));

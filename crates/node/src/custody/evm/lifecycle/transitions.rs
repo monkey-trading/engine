@@ -140,7 +140,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         let payer = scan.payers.get(&replacement.reference()).copied().flatten();
         let deposit = receipt_access_deposit(replacement, payer);
         let request = ScreeningRequest {
-            request_hash: deposit_screening_hash(&deposit),
+            request_hash: Some(deposit_screening_hash(&deposit)),
             account: deposit.account,
             payer,
             peer: None,
