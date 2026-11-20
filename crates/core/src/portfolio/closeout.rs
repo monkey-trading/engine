@@ -67,6 +67,16 @@ pub(crate) struct PortfolioStep {
     pub(crate) requirement: Fixed,
 }
 
+/// What closing one position at a stress level, best-price share and profit fee rate does: the change in the
+/// account's equity, the change in the house's NAV, the USD notional it closes and the fill as its volume counts.
+#[derive(Clone, Copy)]
+struct Closing {
+    change: Fixed,
+    nav_change: Fixed,
+    notional: Fixed,
+    counted: ClosedOut,
+}
+
 /// A candidate's score: the change in slack its fills make, the USD notional they close, and the
 /// market it is known by, its lowest.
 struct Scored {
@@ -168,9 +178,8 @@ impl Engine {
         };
         // From `V86` the house's NAV after a fill is the one `Engine::house_nav` reads (#1084).
         let marked = self.protocol_version >= ProtocolVersion::V86;
-        // A position's change in equity from closing it at its fill price at a stress level and at a
-        // best-price share and profit fee rate, the change in the house's NAV, its notional and the fill as
-        // its volume counts; `None` when its close does not price.
+        // What closing a position at its fill price at a stress level and at a best-price share and profit
+        // fee rate does; `None` when its close does not price.
         let close = |id: MarketId, level: usize, (share, fee_bps): (Option<i64>, i64)| {
             let (market, pos, (mid, fx)) = (&self.markets[&id], acct.positions[&id], closable[&id]);
             let exec = Exec {
@@ -205,12 +214,12 @@ impl Engine {
             } else {
                 -change
             };
-            Some((change, nav_change, notional, counted))
+            Some(Closing { change, nav_change, notional, counted })
         };
         // Each position that may close, at the level its fill pays at the house's NAV now; one whose close
         // does not price waits, as one whose market cannot trade does.
         let nav = self.house_nav();
-        let closes: BTreeMap<MarketId, (usize, (Fixed, Fixed, Fixed, ClosedOut))> = (closable.keys())
+        let closes: BTreeMap<MarketId, (usize, Closing)> = (closable.keys())
             .filter_map(|id| {
                 let level = level_at(*id, nav);
                 close(*id, level, terms_now(*id)).map(|closed| (*id, (level, closed)))
@@ -234,10 +243,11 @@ impl Engine {
                         (tier.map(|tier| tier.best_price_share_bps), self.close_fee_terms_at(account, *id, tier).1)
                     }
                 };
-                let (change, nav_change, closed, fill) =
-                    if at == level && terms == terms_now(*id) { scored_now } else { close(*id, at, terms)? };
-                (gain, notional, after_nav) = (gain + change, notional + closed, after_nav + nav_change);
-                counted.push(fill);
+                let closing = if at == level && terms == terms_now(*id) { scored_now } else { close(*id, at, terms)? };
+                gain += closing.change;
+                notional += closing.notional;
+                after_nav += closing.nav_change;
+                counted.push(closing.counted);
             }
             let after = self.requirement_without(grid, ctx.basis(), &parts, &members);
             gain += threshold - ctx.threshold(after, charge);
