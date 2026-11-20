@@ -24,6 +24,9 @@ anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 # Without `simd-unsafe`, its only source of `unsafe` code.
 base64 = { version = "0.23", default-features = false, features = ["std"] }
+# Upstream JMT nodes from the authenticated store's validated wire form: an internal node has no public
+# constructor, only its borsh form. Already in the tree through jmt.
+borsh = { version = "1.8.1", default-features = false }
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 chrono-tz = { version = "0.10", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -69,7 +72,8 @@ ring = { version = "0.17", default-features = false, features = ["std"] }
 # Pure Rust and without `std`, like p384, for the browser verifier; `sha2` re-exports the digest it
 # verifies with.
 rsa = { version = "0.9.10", default-features = false, features = ["sha2", "u64_digit"] }
-rusqlite = { version = "0.41", default-features = false, features = ["bundled", "limits"] }
+# `cache` keeps a connection's prepared statements, which the authenticated store runs per node.
+rusqlite = { version = "0.41", default-features = false, features = ["bundled", "cache", "limits"] }
 # TLS for the API, venue feeds, and alert webhooks with ring as the only crypto provider, so no
 # OpenSSL or aws-lc build.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

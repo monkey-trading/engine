@@ -11,12 +11,30 @@ use crate::authenticated::reader::Checked;
 use crate::authenticated::staging::Staging;
 use crate::authenticated::{Root, Store, caller_key, db, geometry};
 
+/// Whether a write syncs the database file and its directory before it returns its root.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Durability {
+    /// Synced: the root survives a crash once the write returns.
+    Synced,
+    /// Committed atomically, and synced by the store's next synced write.
+    Deferred,
+}
+
 impl Store {
     /// Applies every exact caller change atomically, chunking physical values and JMT batches internally.
     /// Error cases:
     /// - duplicate/reserved keys, representational overflow, invalid proofs/storage or durability failure
     pub fn update(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {
         self.update_checked(root, changes, |_| Ok(()), || Ok(()))
+    }
+
+    /// As `update`, but leaves the sync of the database file and its directory to the store's next synced
+    /// write: the root commits atomically and reads at once, and survives a crash once a later synced
+    /// write returns. For a root nothing acknowledges, such as a private stage a synced update completes.
+    /// Error cases:
+    /// - as `update`
+    pub fn update_unsynced(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {
+        self.update_with(root, changes, |_| Ok(()), || Ok(()), Durability::Deferred)
     }
 
     /// Writes one arbitrary-length value from a finite caller source without collecting it in memory.
@@ -40,6 +58,7 @@ impl Store {
             },
             |_| Ok(()),
             || Ok(()),
+            Durability::Synced,
         )
     }
 
@@ -52,6 +71,20 @@ impl Store {
         changes: Vec<(Vec<u8>, Option<Vec<u8>>)>,
         before_commit: impl FnOnce(&Connection) -> Result<()>,
         after_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Root> {
+        self.update_with(root, changes, before_commit, after_commit, Durability::Synced)
+    }
+
+    /// The update path, its commit seams and whether it syncs.
+    /// Error cases:
+    /// - any exact change, proof, SQL, hook, commit or sync check fails
+    fn update_with(
+        &self,
+        root: &Root,
+        changes: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+        before_commit: impl FnOnce(&Connection) -> Result<()>,
+        after_commit: impl FnOnce() -> Result<()>,
+        durability: Durability,
     ) -> Result<Root> {
         let mut sorted = BTreeMap::new();
         for (key, value) in changes {
@@ -89,10 +122,12 @@ impl Store {
             },
             before_commit,
             after_commit,
+            durability,
         )
     }
 
-    /// Serializes mutation and acknowledges the final logical root only after commit and directory sync.
+    /// Serializes mutation and acknowledges the final logical root only after commit and, for a synced
+    /// write, the database's and its directory's sync.
     /// Error cases:
     /// - writes unauthorized, stale/retired root, poisoned store, malformed geometry or failed work/durability
     pub(super) fn write_transaction(
@@ -101,6 +136,7 @@ impl Store {
         work: impl FnOnce(&Connection) -> Result<Root>,
         before_commit: impl FnOnce(&Connection) -> Result<()>,
         after_commit: impl FnOnce() -> Result<()>,
+        durability: Durability,
     ) -> Result<Root> {
         root.validate()?;
         let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
@@ -134,8 +170,9 @@ impl Store {
                 return Err(error);
             }
         };
+        let synced = || if durability == Durability::Synced { self.sync() } else { Ok(()) };
         if let Err(error) =
-            tx.commit().map_err(anyhow::Error::from).and_then(|()| after_commit()).and_then(|()| self.sync())
+            tx.commit().map_err(anyhow::Error::from).and_then(|()| after_commit()).and_then(|()| synced())
         {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);

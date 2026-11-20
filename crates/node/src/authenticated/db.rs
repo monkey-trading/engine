@@ -132,6 +132,8 @@ impl Store {
                 files: Mutex::new(files),
                 writer: Mutex::new(()),
                 runtime: Mutex::new(Runtime::default()),
+                #[cfg(test)]
+                syncs: Default::default(),
             }),
         }
     }
@@ -148,7 +150,16 @@ impl Store {
             .sync_all()
             .context("syncing authenticated database")?;
         let parent = self.inner.path.parent().ok_or_else(|| anyhow::anyhow!("store lacks parent"))?;
-        File::open(parent)?.sync_all().context("syncing authenticated database directory")
+        File::open(parent)?.sync_all().context("syncing authenticated database directory")?;
+        #[cfg(test)]
+        self.inner.syncs.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// The syncs this store has made.
+    #[cfg(test)]
+    pub(crate) fn syncs(&self) -> usize {
+        self.inner.syncs.load(Ordering::Relaxed)
     }
 }
 

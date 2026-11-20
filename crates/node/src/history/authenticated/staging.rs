@@ -74,7 +74,13 @@ impl Staged {
         let info = ();
         let fresh = Overlay::new(&self.store, &self.root);
         let updates = std::mem::replace(&mut self.overlay, fresh).finish();
-        let root = self.store.update(&self.root, updates)?;
+        // A private stage is never a head: the complete stage's synced update makes it durable with
+        // itself, and a crash before then resumes from the head the stages started at.
+        let root = if self.state.complete {
+            self.store.update(&self.root, updates)?
+        } else {
+            self.store.update_unsynced(&self.root, updates)?
+        };
         let pin = self.store.lease(&root)?;
         self.root = root;
         self.overlay = Overlay::session(&self.store, &pin);

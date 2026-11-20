@@ -5,6 +5,7 @@ use rusqlite::{Connection, params};
 
 use crate::authenticated::reader::Checked;
 use crate::authenticated::receipts::{self, RetiredRow};
+use crate::authenticated::write::Durability;
 use crate::authenticated::{MAX_RECEIPT_ROWS, MAX_UPDATES, Root, Store, batch, codec};
 
 /// A caller can always offer this finite row budget to cover at least two maximum-size receipts.
@@ -62,6 +63,7 @@ impl Store {
             },
             before_commit,
             after_commit,
+            Durability::Synced,
         )?;
         Ok((new_root, report.ok_or_else(|| anyhow::anyhow!("missing completed GC report"))?))
     }
@@ -135,14 +137,12 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
     batch::persist(conn, &prepared, &Checked::default())?;
     for row in &retired {
         report.deleted += match row {
-            RetiredRow::Node(key) => conn.execute(
-                "DELETE FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3",
-                params![&root.namespace[..], key.version() as i64, codec::path(key)?],
-            )?,
-            RetiredRow::Value { key, version } => conn.execute(
-                "DELETE FROM value_rows WHERE namespace=?1 AND key=?2 AND version=?3",
-                params![&root.namespace[..], &key.0[..], *version as i64],
-            )?,
+            RetiredRow::Node(key) => conn
+                .prepare_cached("DELETE FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3")?
+                .execute(params![&root.namespace[..], key.version() as i64, codec::path(key)?])?,
+            RetiredRow::Value { key, version } => conn
+                .prepare_cached("DELETE FROM value_rows WHERE namespace=?1 AND key=?2 AND version=?3")?
+                .execute(params![&root.namespace[..], &key.0[..], *version as i64])?,
         };
     }
     // Physical deletion cannot invalidate either the new head or the explicitly pinned input head.
