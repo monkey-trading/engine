@@ -326,7 +326,8 @@ fn rates(engine: &Engine) -> BTreeMap<MarketId, f64> {
     engine.markets().keys().map(|id| (*id, crypto.get(id).copied().unwrap_or(RWA_MOVES * RWA_CONNECTIONS))).collect()
 }
 
-/// The CPU time the process has used on all its threads, in seconds, from `ps`'s `[[dd-]hh:]mm:ss[.ss]`.
+/// The CPU time the process has used on all its threads, in seconds, from `ps`'s `[[dd-]hh:]mm:ss[.ss]`:
+/// to the hundredth on macOS, to the second where `ps` prints whole seconds, as procps does.
 fn cpu_secs() -> f64 {
     let pid = std::process::id().to_string();
     let out = std::process::Command::new("ps").args(["-o", "time=", "-p", &pid]).output().expect("ps runs");

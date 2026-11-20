@@ -1129,7 +1129,7 @@ Run from the repo root:
   --release <release.toml> --processor <name>` additionally verifies an attestation against
   the release manifest and requires every checkpoint signer to be the enclave address it names;
   `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
-  the last of each run
+  the first and last of each run
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
   certificate chain must reach a vendor root pinned in the binary, the release must launch with

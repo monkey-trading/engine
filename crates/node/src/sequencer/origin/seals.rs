@@ -33,11 +33,13 @@ pub(super) struct Runs {
     checked: u64,
 }
 
-/// A run: its first and last command's seq, and the last command's seal and link, whose first seal has been
-/// checked in full.
+/// A run: its first and last command's seq, how many seals it holds, and the last command's seal and link,
+/// whose first seal has been checked in full.
 struct Run {
     first: u64,
     last: u64,
+    /// How many seals the run holds, counted apart from the seqs, which the engine has yet to check.
+    seals: u64,
     domain: CheckpointDomain,
     signer: AccountId,
     signature: Signature,
@@ -53,10 +55,11 @@ impl Default for Seals {
 
 impl Seals {
     /// Checks `seal`, the seal of the command at `seq` whose link is `link`: in full, or, at run ends,
-    /// its form, the open run ending first when `seal` names another signer or domain.
+    /// its form, the open run ending first when `seal` names another signer or domain, and in full when it
+    /// opens a run.
     /// Error cases:
     /// - the seal is invalid (`CommandSeal::verify`) or, at run ends, malformed (`CommandSeal::well_formed`)
-    /// - the run it ends does not verify (`end_run`)
+    /// - the run it ends does not verify (`end_run`), or it opens a run and does not verify
     pub(super) fn check(&mut self, seq: u64, seal: &CommandSeal, link: B256) -> anyhow::Result<()> {
         match self {
             Seals::Every(Some(ahead)) => ahead.verify(seq, seal, link),
@@ -109,15 +112,16 @@ impl Runs {
         if self.open.as_ref().is_some_and(|run| (run.signer, run.domain) != (seal.signer, seal.domain)) {
             self.end()?;
         }
-        let first = match &self.open {
-            Some(run) => run.first,
+        let (first, seals) = match &self.open {
+            Some(run) => (run.first, run.seals + 1),
             None => {
                 self.verify(seal.domain, seal.signer, &signature, link)
                     .with_context(|| format!("the seal at seq {seq} by {}, the first of its run", seal.signer))?;
-                seq
+                (seq, 1)
             }
         };
-        self.open = Some(Run { first, last: seq, domain: seal.domain, signer: seal.signer, signature, link });
+        let (domain, signer) = (seal.domain, seal.signer);
+        self.open = Some(Run { first, last: seq, seals, domain, signer, signature, link });
         Ok(())
     }
 
@@ -127,8 +131,10 @@ impl Runs {
     /// - the seal does not verify: a command of the run, its stamp or events differ from what the seal's
     ///   signer chained, or the seal does
     fn end(&mut self) -> anyhow::Result<()> {
-        let Some(Run { first, last, domain, signer, signature, link }) = self.open.take() else { return Ok(()) };
-        if last == first {
+        let Some(Run { first, last, seals, domain, signer, signature, link }) = self.open.take() else {
+            return Ok(());
+        };
+        if seals == 1 {
             return Ok(());
         }
         self.verify(domain, signer, &signature, link).with_context(|| {

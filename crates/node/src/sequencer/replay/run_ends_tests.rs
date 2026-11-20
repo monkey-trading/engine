@@ -23,7 +23,8 @@ const OTHER_DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31338, vault
 
 /// A replay of ten ticks with checkpoints after seqs 3 and 7 checks six seals in full, the first and last
 /// of each run: 0 and 3, 4 and 7, and the tail's, 8 and 9, which its read's end settles; a run of one seal
-/// checks it once. One checking every seal checks each one, and takes no run.
+/// checks it once. One checking every seal takes no run (`an_intermediate_seals_bytes_are_left_to_every_seal_and_to_a_copy`
+/// shows it checks the seals between).
 #[test]
 fn engine_replay_checks_the_first_and_last_seal_of_each_run_in_full() {
     let key = EnclaveKey::test_key();
@@ -150,8 +151,8 @@ fn a_run_ends_at_another_signer_or_domain_and_at_a_command_with_no_seal() {
 }
 
 /// A run's last seal that does not verify is the earlier fault, reported ahead of its checkpoint's own,
-/// a root that differs, ahead of a later command's, events that differ, and ahead of nothing at the
-/// log's end, where the replay's read settles it.
+/// a root that differs, ahead of a later command's, events that differ or a seq out of order, and ahead of
+/// nothing at the log's end, where the replay's read settles it.
 #[test]
 fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     let key = EnclaveKey::test_key();
@@ -177,7 +178,22 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     assert!(
         refused.contains("the seal at seq 5 by") && refused.contains("the run from seq 3"),
         "at the end: {refused}"
-    );
+    ); // A later command that repeats the run's first seq, which the engine refuses only after its seal joins
+    // the run: the run holds three seals, so its last is checked, whatever seq it names.
+    let mut entries = ticks(3, &[], |_| Some((&key, DOMAIN)));
+    command(&mut entries, 1).sequenced.ts = 0;
+    entries
+        .iter_mut()
+        .rev()
+        .find_map(|entry| match entry {
+            LogEntry::Command(command) => Some(command),
+            _ => None,
+        })
+        .unwrap()
+        .sequenced
+        .seq = 0;
+    let refused = format!("{:#}", replay(&entries).err().expect("refused"));
+    assert!(refused.contains("the seal at seq 0 by") && refused.contains("ends the run"), "a repeated seq: {refused}");
 }
 
 // ── Helpers ──

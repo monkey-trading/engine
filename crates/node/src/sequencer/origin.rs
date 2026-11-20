@@ -34,7 +34,7 @@ pub(crate) struct Origin {
     /// signer, as its writer wrote it (see `copy`).
     copy: bool,
     /// How seals are checked: every one in full, in place or ahead of the replay (`check_ahead`), or each
-    /// run's last in full (`check_run_ends`).
+    /// run's first and last in full (`check_run_ends`).
     seals: Seals,
 }
 
@@ -120,7 +120,8 @@ impl Origin {
     /// Checks a present seal before applying a command (`seals`) and retains every uncovered span.
     /// Error cases:
     /// - encoding, domain, events, or the present cryptographic seal is invalid, or at run ends malformed
-    /// - at run ends, the run this command's seal, or its lack of one, ends does not verify
+    /// - at run ends, the run this command's seal, or its lack of one, ends does not verify, or the seal
+    ///   opens a run and does not verify
     pub(crate) fn command(&mut self, command: &CommandEntry, version: ProtocolVersion) -> anyhow::Result<()> {
         let link = command_link(self.link, command)?;
         let mut trusted = false;
