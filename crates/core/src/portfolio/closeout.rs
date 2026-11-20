@@ -67,6 +67,7 @@ pub(crate) struct PortfolioStep {
     pub(crate) members: Vec<(MarketId, Position)>,
     pub(crate) equity: Fixed,
     pub(crate) requirement: Fixed,
+    #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
     pub(crate) navs: ScoredNavs,
 }
 
