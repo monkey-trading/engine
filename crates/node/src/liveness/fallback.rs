@@ -10,8 +10,9 @@
 //! still sequences, either. Arbitrum's sequencer, which orders every call, still can (`docs/security-model.md`).
 //!
 //! It reads every `[liveness] fallback_interval`, 30 s by default and at most that in a production build,
-//! whatever it last read and whether that read failed, and every `FOLLOW_UP` once a fix is sent or a
-//! block is fixed, by anyone, until its hash is recorded. Anyone may make a turn's first fix, a draw
+//! and every `FOLLOW_UP` once a fix is sent or a block is fixed, by anyone, until a read shows its hash
+//! recorded or its block past the reach, each interval counted from the last read's start, failed reads
+//! included. Anyone may make a turn's first fix, a draw
 //! included, and the schedule's governance may replace the seed receiver at any time, so a read must
 //! always come well within the 256 blocks (64 s on Arbitrum One) after any first fix.
 //!
@@ -59,10 +60,9 @@ pub(crate) type Sends = tokio::sync::Mutex<Account>;
 
 /// What a poll found for the turn whose draw deadline last passed: its fallback.
 enum Fallback {
-    /// A relayed seed or a recorded fallback, or no schedule: nothing to fix.
+    /// Nothing to fix: a relayed seed or a recorded fallback, no schedule, or the rotation switch off with
+    /// no block fixed.
     Settled,
-    /// Neither, with the rotation switch off and no block fixed: nothing to send yet.
-    Waiting,
     /// The fix sent: its transaction hash, `None` when the chain would refuse it, or the send's failure.
     Sent(PendingFallback, anyhow::Result<Option<B256>>),
     /// Its fixed block has passed the reach unrecorded.
@@ -119,7 +119,10 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         // The lapsed turn, if any, as of the last read; `None` before the first.
         let (mut failed, mut lapsed) = (false, None);
+        // Whether a fix is under way, as the last read that answered showed: a failed read keeps it.
+        let mut under_way = false;
         loop {
+            let started = tokio::time::Instant::now();
             let found: BoxFuture<'_, anyhow::Result<Fallback>> = Box::pin(self.fix());
             let found = found.await;
             let funded: BoxFuture<'_, anyhow::Result<()>> =
@@ -140,14 +143,13 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
                 ),
                 _ => {}
             }
-            // A fix sent, or a block fixed whose hash is yet to be recorded, wants the next call soon; a
-            // failed read, like any other, is followed at the fixer's interval.
-            let under_way = matches!(&found, Ok(Fallback::Sent(pending, sent))
-                if pending.fixed_in != 0 || matches!(sent, Ok(Some(_))));
-            tokio::time::sleep(if under_way { self.poll } else { self.idle }).await;
+            // A fix sent, or a block fixed whose hash is yet to be recorded, wants the next call soon.
             if let Ok(fallback) = found {
+                under_way = matches!(&fallback, Fallback::Sent(pending, sent)
+                    if pending.fixed_in != 0 || !matches!(sent, Ok(None)));
                 report(fallback, &mut lapsed);
             }
+            tokio::time::sleep_until(started + if under_way { self.poll } else { self.idle }).await;
         }
     }
 
@@ -164,9 +166,6 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
         let Some(pending) = pending_fallback(&block, &domain).await? else {
             return Ok(Fallback::Settled);
         };
-        if !pending.drawable {
-            return Ok(Fallback::Waiting);
-        }
         if pending.fixed_in != 0 && block.number().saturating_sub(pending.fixed_in) > BLOCK_HASH_REACH {
             return Ok(Fallback::Lapsed(pending));
         }

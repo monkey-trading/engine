@@ -33,9 +33,10 @@ struct Calls(Arc<Mutex<BTreeMap<&'static str, u64>>>);
 #[derive(Clone)]
 struct Counted<R>(R, Calls);
 
-/// The liveness rule's chain, answered as `liveness::fake` answers it, as a custody provider.
+/// The liveness rule's chain, answered as `liveness::fake` answers it, as a custody provider whose tip is
+/// the given number of blocks ahead of the chain's.
 #[derive(Clone)]
-struct Liveness(Arc<Mutex<ChainState>>);
+struct Liveness(Arc<Mutex<ChainState>>, u64);
 
 impl Calls {
     fn add(&self, method: &'static str, calls: u64) {
@@ -163,7 +164,7 @@ impl VaultReader for Liveness {
         Ok(PostedHead { epoch: state.epoch, head: Some((state.head.0, Self::hash(state.head.0))) })
     }
     async fn latest_block(&self) -> anyhow::Result<(u64, B256)> {
-        let number = self.tip().0;
+        let number = self.tip().0 + self.1;
         Ok((number, Self::hash(number)))
     }
 }
@@ -229,16 +230,18 @@ async fn watcher_per_poll(per_poll: u64) -> ByMethod {
     calls.take().into_iter().map(|(method, calls)| (method, calls as f64 / f64::from(ticks))).collect()
 }
 
-/// Three providers answering the liveness rule's chain, the first counted, and that chain.
-fn liveness_quorum(calls: &Calls) -> (Vec<(String, Counted<Liveness>)>, Liveness) {
+/// Three providers answering the liveness rule's chain, and that chain. The first is counted, and its tip
+/// runs a block ahead of the others', as one provider's often does: each read at a block the quorum
+/// agrees on then reads its header there too.
+fn liveness_quorum(calls: &Calls) -> (Vec<(String, Counted<Liveness>)>, Arc<Mutex<ChainState>>) {
     let members = (0xa1..=0xa3)
         .map(|byte| (Address::repeat_byte(byte), format!("member-{byte}:9000"), Address::repeat_byte(byte + 0x10)))
         .collect();
-    let chain = Liveness(Arc::new(Mutex::new(ChainState { members, ..ChainState::default() })));
+    let chain = Arc::new(Mutex::new(ChainState { members, ..ChainState::default() }));
     let providers = (0..3)
         .map(|i| {
-            let counted = if i == 0 { calls.clone() } else { Calls::default() };
-            (format!("p{i}"), Counted(chain.clone(), counted))
+            let (counted, ahead) = if i == 0 { (calls.clone(), 1) } else { (Calls::default(), 0) };
+            (format!("p{i}"), Counted(Liveness(chain.clone(), ahead), counted))
         })
         .collect();
     (providers, chain)
@@ -287,7 +290,7 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
     out.insert("relayer balance read", take());
     // Before the registry names a schedule, as at launch, the rule, the fixer and the turn read stop at
     // the domain, and the rule reads the vault's signer.
-    chain.0.lock().unwrap().scheduled = false;
+    chain.lock().unwrap().scheduled = false;
     {
         let block = reader.latest().await.unwrap();
         let standby = StandbyDomain::at_if_scheduled(&block, DOMAIN.standby.chain_id, LIVENESS_VAULT).await;

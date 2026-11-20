@@ -239,13 +239,14 @@ impl<R: HeadsChain> Poster<R> {
             // A release only extends the evidence; reads run on the retry cadence, whatever the
             // release rate, so the poster never adds more than one quorum read per tick to the
             // custody providers' load.
-            let read = tokio::select! {
-                _ = retry.tick() => true,
+            // Paces count from each read's tick, so a slow read does not push the next post a tick later.
+            let tick = tokio::select! {
+                tick = retry.tick() => Some(tick),
                 changed = released.changed() => {
                     if changed.is_err() {
                         return Ok(());
                     }
-                    false
+                    None
                 }
             };
             let head = *released.borrow();
@@ -253,9 +254,7 @@ impl<R: HeadsChain> Poster<R> {
                 continue;
             }
             released_ring.record(head.seq, head.link);
-            if !read {
-                continue;
-            }
+            let Some(tick) = tick else { continue };
             let (epoch, on_chain) = match self.chain.posted().await {
                 Ok(posted) => posted,
                 Err(cause) => {
@@ -336,10 +335,11 @@ impl<R: HeadsChain> Poster<R> {
             // While a turn names the operator, the head is the heartbeat: it goes out at least twice per
             // heartbeat interval, as v2.
             let pace = turn.map_or(self.interval, |turn| turn.interval / 3);
-            let due = posted_at.is_none_or(|at| at.elapsed() >= pace);
-            if self.heartbeat.is_some() && (due || turn_read.is_none_or(|at| at.elapsed() >= TURN_READ_EVERY)) {
+            let due = posted_at.is_none_or(|at| tick.saturating_duration_since(at) >= pace);
+            let turn_due = turn_read.is_none_or(|at| tick.saturating_duration_since(at) >= TURN_READ_EVERY);
+            if self.heartbeat.is_some() && (due || turn_due) {
                 match self.chain.turn().await {
-                    Ok(read) => (turn, turn_read) = (read, Some(tokio::time::Instant::now())),
+                    Ok(read) => (turn, turn_read) = (read, Some(tick)),
                     Err(cause) => {
                         warn!(alert = "log_head_read_failed", "reading the turn naming the operator failed: {cause:#}");
                         read_failed = true;
@@ -379,7 +379,7 @@ impl<R: HeadsChain> Poster<R> {
             }
             // The contract holds no head at or past ours: post ours if the interval since the last
             // send allows. A failed send still paced the gate; the read-back confirms inclusion.
-            if posted_at.is_some_and(|at| at.elapsed() < pace) {
+            if posted_at.is_some_and(|at| tick.saturating_duration_since(at) < pace) {
                 continue;
             }
             if let (Some(turn), Some(heartbeat)) = (turn, &self.heartbeat) {
@@ -406,7 +406,7 @@ impl<R: HeadsChain> Poster<R> {
                 let digest = next.digest(self.domain.chain_id, Address::from(self.domain.vault.0), epoch);
                 let signature = self.key.sign_digest(digest);
                 last_signed = last_signed.max(next.signed_at);
-                posted_at = Some(tokio::time::Instant::now());
+                posted_at = Some(tick);
                 first_post = first_post.or(posted_at);
                 heartbeat.signed.send_replace(Some(SignedHead { epoch, head: next, signature: signature.clone() }));
                 match self.chain.post_v2(epoch, &next, &signature).await {
@@ -440,7 +440,7 @@ impl<R: HeadsChain> Poster<R> {
                 &head.link.0,
                 confirmed.map(|parent| (parent.seq, parent.link)),
             );
-            posted_at = Some(tokio::time::Instant::now());
+            posted_at = Some(tick);
             first_post = first_post.or(posted_at);
             match self.chain.post(epoch, head, confirmed, &signature).await {
                 // Acceptance proves no inclusion: only a quorum-observed advance is anchoring

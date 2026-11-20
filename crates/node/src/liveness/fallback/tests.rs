@@ -122,9 +122,9 @@ impl Sending for Slow {
     }
 }
 
-/// The turn whose draw deadline last passed waits on its fallback while it has no relayed seed and the
-/// receiver has recorded no block hash for it, a fix to send while the rotation switch is on or a block
-/// is fixed; the block its first fix landed in comes with it.
+/// The turn whose draw deadline last passed waits on its fallback while the rotation switch is on, it has
+/// no relayed seed, and the receiver has recorded no block hash for it; the block its first fix landed in
+/// comes with it.
 #[test]
 fn a_turn_with_no_relayed_seed_waits_on_its_fallback_until_its_hash_is_recorded() {
     let read = |state: ChainState| {
@@ -136,16 +136,14 @@ fn a_turn_with_no_relayed_seed_waits_on_its_fallback_until_its_hash_is_recorded(
     let other = ChainState { seed: (turn - 1, B256::ZERO, B256::ZERO, 0), ..Default::default() };
     assert_eq!(read(other), None, "relayed: the receiver keyed by turn answers another's");
     let (unrelayed, _) = pending(ChainState::default());
-    let pending = |fixed_in, drawable| Some(PendingFallback { receiver: RECEIVER, turn, fixed_in, drawable });
-    assert_eq!(read(unrelayed.clone()), pending(0, true));
+    assert_eq!(read(unrelayed.clone()), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 0 }));
     let fixed = ChainState { seed: (turn, B256::ZERO, B256::ZERO, 90), ..unrelayed.clone() };
-    assert_eq!(read(fixed), pending(90, true));
+    assert_eq!(read(fixed), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 90 }));
     let recorded = ChainState { seed: (turn, B256::ZERO, B256::repeat_byte(1), 90), ..unrelayed.clone() };
     assert_eq!(read(recorded), None, "a hash recorded");
-    let off = ChainState { switch: false, ..unrelayed.clone() };
-    assert_eq!(read(off), pending(0, false), "rotation off: none is started, though one may be");
+    assert_eq!(read(ChainState { switch: false, ..unrelayed.clone() }), None, "rotation off: none is started");
     let off = ChainState { switch: false, seed: (turn, B256::ZERO, B256::ZERO, 90), ..unrelayed };
-    assert_eq!(read(off), pending(90, true), "one fixed is finished");
+    assert_eq!(read(off), Some(PendingFallback { receiver: RECEIVER, turn, fixed_in: 90 }), "one fixed is finished");
 }
 
 /// Every poll sends a fix while the turn waits on its fallback, whether or not a turn names the operator,
@@ -444,4 +442,37 @@ async fn the_caller_retries_a_failed_first_read_within_5_s_however_long_its_read
     tokio::time::sleep(Duration::from_secs(5)).await;
     task.abort();
     assert_eq!(sent.polls(), 1, "the read at 5 s, after the one that failed at 0 s");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fix_under_way_is_followed_up_through_failed_reads() {
+    let (state, fix) = pending(ChainState::default());
+    let chain = Arc::new(FakeChain::new(state));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(sent.count(&fix), 1, "the first fix at once");
+    // The quorum is lost through the reads at 5 s and 10 s, and back before the one at 15 s.
+    chain.set(|chain| (chain.down, chain.seed.3) = (true, chain.number));
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    chain.set(|chain| chain.down = false);
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    task.abort();
+    assert_eq!(sent.count(&fix), 2, "the read at 15 s records the hash");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_fixer_reads_every_interval_from_each_read_start_however_slow_its_reads() {
+    let chain = Arc::new(FakeChain::new(ChainState { latency: Duration::from_secs(1), ..Default::default() }));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain, sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(29)).await;
+    assert_eq!(sent.polls(), 1, "the first read took seconds");
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 2, "the second read starts at 30 s, not 30 s after the first ended");
 }
