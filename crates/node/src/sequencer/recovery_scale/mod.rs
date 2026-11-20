@@ -193,7 +193,7 @@ async fn run() {
     let mut flow = Flow::new(traders, rates);
     let bar_commands = flow.scheduled(&node.seq.engine, node.clock.now_ms(), BAR_DAYS * DAY_SECS, 1.0);
     let days = write_log(node, &mut flow, &log);
-    let closed = node.closed;
+    let closed = node.closed();
     println!("RECOVERY closes periods={} epochs={}", closed.periods, closed.epochs);
     assert!(closed.periods > 0 && closed.epochs > 0, "the flow closed no emission period or staking epoch");
 
@@ -350,6 +350,7 @@ mod closes_tests {
         flow.run(&mut node, Duration::from_secs(1_200), 1.0, |_, _, _| {});
         flow.run(&mut node, Duration::from_secs(60), 10.0, |_, _, _| {});
         // Ten-minute periods and 400-second epochs, from ten minutes in.
-        assert!(node.closed.periods > 0 && node.closed.epochs > 0, "{:?}", node.closed);
+        let closed = node.closed();
+        assert!(closed.periods > 0 && closed.epochs > 0, "{closed:?}");
     }
 }

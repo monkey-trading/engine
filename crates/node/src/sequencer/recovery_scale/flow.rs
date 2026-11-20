@@ -63,11 +63,9 @@ pub(super) struct Node {
     /// The newest checkpoint written.
     pub(super) checkpoint: Option<Checkpoint>,
     pending: u64,
-    /// The emission periods and staking epochs its commands have closed.
-    pub(super) closed: Closed,
 }
 
-/// The emission periods and staking epochs a node's commands closed.
+/// The emission periods and staking epochs a node's engine has closed.
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Closed {
     pub periods: u64,
@@ -136,7 +134,7 @@ impl Node {
         anyhow::ensure!(seq.sequence(Command::Tick)?.is_some(), "trusted time refused the first stamp");
         seq.checkpoint()?;
         seq.flush()?;
-        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() };
+        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 };
         node.settle();
         Ok(node)
     }
@@ -151,7 +149,7 @@ impl Node {
             Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("an empty log");
         seq.trust(sample_around(clock.as_ref())).expect("a trusted time sample");
         seq.take_over_checkpointed(book).expect("the book's first checkpoint");
-        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() };
+        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 };
         node.settle();
         node
     }
@@ -180,7 +178,7 @@ impl Node {
         if paired {
             seq.track_stats(stats());
         }
-        Ok(Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() })
+        Ok(Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 })
     }
 
     /// Samples trusted time and sequences a tick, the first command a restarted node stamps.
@@ -202,16 +200,21 @@ impl Node {
         }
     }
 
+    /// The emission periods and staking epochs the engine has closed since emissions and staking started:
+    /// the period and the epoch it is in, each numbered from 0 at the start. Read from the engine, since a
+    /// client command whose stamp passes a close takes a `Tick` first (`Sequencer::stamp`), whose events
+    /// its reply does not carry.
+    pub(super) fn closed(&self) -> Closed {
+        let engine = &self.seq.engine;
+        Closed {
+            periods: engine.emissions().map_or(0, |emissions| emissions.period),
+            epochs: engine.staking().map_or(0, |staking| staking.epoch),
+        }
+    }
+
     /// Sequences `cmd` now, returning its events, and flushes every `FLUSH_EVERY` commands.
     fn sequence(&mut self, cmd: Command) -> Vec<Event> {
         let stamped = self.seq.sequence(cmd).expect("the log takes the command").expect("trusted time admits it");
-        for event in stamped.iter() {
-            match event {
-                Event::EmissionPeriodClosed { .. } => self.closed.periods += 1,
-                Event::DistributionEpochClosed { .. } => self.closed.epochs += 1,
-                _ => {}
-            }
-        }
         self.pending += 1;
         if self.pending >= FLUSH_EVERY {
             self.seq.flush().expect("the batch syncs");
