@@ -209,7 +209,8 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
         let refused = priced.is_none() && !same_side && qty > holding && qty >= held.floor;
         if priced.as_ref().is_some_and(|priced| priced.declined.is_none()) {
             known = known.max(qty);
-        } else if (priced.is_some() || refused) && !ended {
+        } else if (priced.is_some() || refused) && !ended && known < qty {
+            // A declined size below one that fills is a step of its own, with no search past it.
             ended = true;
             let step = largest(&fits, held.floor, known, qty)
                 .filter(|step| steps.last().is_none_or(|last| step.qty > last.qty));
@@ -258,13 +259,17 @@ fn steps(quoter: &Quoter, account: AccountId, market: MarketId, side: Side, held
 /// not, with its price: found by halving from `declined` down to `floor`, the least size worth looking
 /// for, while none is known, and then bisecting. Each size tried is quoted on its own, so the size found
 /// fills and the one past it does not; where admission does not fall with size, other sizes between may
-/// fill too. `None` if no size the halving tries fills.
+/// fill too. `None` if no size the halving tries fills, or if `known` is not below `declined`.
 pub(super) fn largest(
     fits: &impl Fn(Fixed) -> Option<Fixed>,
     floor: Fixed,
     known: Fixed,
     declined: Fixed,
 ) -> Option<Step> {
+    // Only a size that fills below the declined one can be searched toward it.
+    if known >= declined {
+        return None;
+    }
     let (mut low, mut high) = (known, declined);
     if low.is_zero() {
         let mut probe = high;
