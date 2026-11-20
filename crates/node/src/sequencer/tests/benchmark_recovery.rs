@@ -441,7 +441,7 @@ impl Fixture {
     }
 }
 
-fn recover_clock(dir: &Path, clock: Arc<TestClock>) -> Sequencer {
+pub(super) fn recover_clock(dir: &Path, clock: Arc<TestClock>) -> Sequencer {
     let genesis = finished_genesis(&log_entries(dir));
     let cfg = SequencerConfig { clock, genesis, ..sequencer_config(dir, watch::channel(Manifest::default()).0) };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
@@ -456,7 +456,7 @@ fn fixed(value: &str) -> Fixed {
     value.parse().unwrap()
 }
 
-fn charge(rate: &str) -> Fixed {
+pub(super) fn charge(rate: &str) -> Fixed {
     fixed("10000").mul_rounded(fixed(rate) + Fixed::from_bps(500), Rounding::Up).div_int_rounded(365, Rounding::Up)
 }
 

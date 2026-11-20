@@ -99,10 +99,11 @@ trading server sequences again.
 
 6. Restart the companion processes that depend on the trading server, which is the benchmark
    worker, as [Companion processes](deploy-and-rollback.md#companion-processes) describes. A
-   trading server with `[benchmarks]` sequences only required instructions until the worker has
-   delivered a snapshot, and `benchmark_sync_pending` fires meanwhile. The exception is when the
-   registry has installed an operator in place of the log's key, which `benchmark_sync_skipped`
-   reports, as [Running as a standby](standby.md) describes.
+   trading server with `[benchmarks]` that finds a daily rollover unpaid when it starts, or reaches
+   its next rollover before the worker's first snapshot, sequences only required instructions until
+   the worker has delivered a snapshot, and `benchmark_sync_pending` fires meanwhile. The exception
+   is when the registry has installed an operator in place of the log's key, which
+   `benchmark_sync_skipped` reports, as [Running as a standby](standby.md) describes.
 
 7. Tell clients that any signed request to reissue a withdrawal that was queued before the restart
    was lost. The account sends the same signed body again, which stays valid until a new

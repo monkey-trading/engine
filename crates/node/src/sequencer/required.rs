@@ -49,7 +49,13 @@ impl Sequencer {
         self.flush()
     }
 
-    /// Requires a signed publisher snapshot before catch-up or ordinary sequencing.
+    /// Requires a signed publisher snapshot applied since this start before any rollover is charged,
+    /// holding ordinary sequencing only once one is due. A start resumes sequenced time as a
+    /// trusted-time halt does: its first admitted stamp holds over an unpaid rollover (see
+    /// `note_benchmark_time_admission`), and a log that has paid every rollover due by then, as after
+    /// a turn's handover, sequences at once. A rollover that comes due before a snapshot applies holds
+    /// then, as a changed schedule's does (see `admit_benchmark_schedule`): the log's last snapshot
+    /// may predate a schedule change this start cannot see.
     /// Error cases:
     /// - a scheduled legacy log needs activation prerequisites that would charge rollovers first
     pub fn wait_for_benchmarks(&mut self) -> anyhow::Result<()> {
@@ -70,24 +76,31 @@ impl Sequencer {
             );
         }
         self.benchmark_sync_enabled = true;
-        self.benchmark_sync = true;
-        warn!(alert = "benchmark_sync_pending", "waiting for signed publisher history before catch-up");
+        self.benchmark_time_refused = true;
+        self.benchmark_schedule_pending = true;
         Ok(())
     }
 
-    /// Requires another publisher attempt if refused time resumes over an unpaid rollover.
+    /// Requires another publisher attempt if refused time, or a start's, resumes over an unpaid
+    /// rollover. Time that resumes with none unpaid holds nothing, and ends a `benchmark_sync_pending`
+    /// episode an earlier start left open, which the alert outbox keeps: with no hold, this process
+    /// has none open.
     pub(super) fn note_benchmark_time_admission(&mut self, admitted: bool, ts: Millis) {
         if !self.benchmark_sync_enabled {
             return;
         }
         if !admitted {
             self.benchmark_time_refused = true;
-        } else if std::mem::take(&mut self.benchmark_time_refused)
-            && self.engine.next_rollover().is_some_and(|next| next <= ts)
-            && !self.benchmark_sync
-        {
-            self.benchmark_sync = true;
-            warn!(alert = "benchmark_sync_pending", "waiting for signed publisher history after trusted time recovers");
+        } else if std::mem::take(&mut self.benchmark_time_refused) && !self.benchmark_sync {
+            if self.engine.next_rollover().is_some_and(|next| next <= ts) {
+                self.benchmark_sync = true;
+                warn!(alert = "benchmark_sync_pending", "waiting for signed publisher history before catching up");
+            } else {
+                info!(
+                    alert_resolved = "benchmark_sync_pending",
+                    "no rollover is unpaid; sequencing without a snapshot"
+                );
+            }
         }
     }
 

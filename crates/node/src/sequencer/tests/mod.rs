@@ -411,6 +411,7 @@ fn commands(entries: &[LogEntry]) -> Vec<Command> {
 mod access_tests;
 mod benchmark_recovery;
 mod benchmark_schedule;
+mod benchmark_start;
 mod benchmarks;
 mod catch_up;
 mod genesis;

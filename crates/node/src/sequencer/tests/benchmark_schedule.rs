@@ -140,7 +140,7 @@ fn schedule_watch_publishes_after_flush_and_keeps_a_to_b_to_a_revision_across_re
     assert_eq!(*recovered.benchmark_schedule.borrow(), durable);
     assert_eq!(recovered.engine.state_root(), expected_root);
     recovered.wait_for_benchmarks().unwrap();
-    assert!(recovered.benchmark_sync, "restart always establishes its existing startup synchronization");
+    assert!(recovered.benchmark_schedule_pending, "a restart keeps the next rollover waiting for a fresh attempt");
 }
 
 #[tokio::test]

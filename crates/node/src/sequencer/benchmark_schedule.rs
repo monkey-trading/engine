@@ -1,5 +1,5 @@
-//! Durable schedule notifications, publisher synchronization at a changed rollover, and the end of
-//! a hold no snapshot can end.
+//! Durable schedule notifications, publisher synchronization at a rollover after a schedule change or
+//! a start, and the end of a hold no snapshot can end.
 
 use engine_core::params::Rollover;
 use engine_core::types::Millis;
@@ -17,14 +17,18 @@ impl Sequencer {
         self.benchmark_schedule_pending |= self.benchmark_sync_enabled;
     }
 
-    /// Holds a newly due rollover until a fresh complete signed publisher attempt is accepted.
+    /// Holds a newly due rollover until a fresh complete signed publisher attempt is accepted, while
+    /// none has been since the schedule changed or the node started.
     pub(super) fn admit_benchmark_schedule(&mut self, ts: Millis) {
         if self.benchmark_schedule_pending
             && !self.benchmark_sync
             && self.engine.next_rollover().is_some_and(|next| next <= ts)
         {
             self.benchmark_sync = true;
-            warn!(alert = "benchmark_sync_pending", "waiting for signed publisher history after rollover changes");
+            warn!(
+                alert = "benchmark_sync_pending",
+                "waiting for signed publisher history: none since the rollover schedule changed or the node started"
+            );
         }
     }
 

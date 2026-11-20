@@ -29,8 +29,9 @@ pub struct BenchmarkSource {
 }
 
 /// `[benchmarks]`: the publishers the separate worker (`engine admin sync-benchmarks`) fetches dated
-/// rates from. With it, every start holds ordinary sequencing until a signed snapshot has attempted
-/// every listed benchmark (`benchmark_sync_pending`).
+/// rates from. With it, no rollover after a start is charged until a signed snapshot has attempted
+/// every listed benchmark: the start holds ordinary sequencing for it when it finds a rollover unpaid,
+/// or when its next rollover comes due first (`benchmark_sync_pending`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BenchmarkSection {
