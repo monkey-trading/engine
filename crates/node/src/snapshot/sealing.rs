@@ -25,7 +25,7 @@ use crate::tee::EnclaveKey;
 
 /// The longest the history owner waits for the stats worker's encoding of a capture's engine: far
 /// more than an encode takes behind a full worker queue, so only a job never delivered reaches it.
-const ENCODE_WAIT: Duration = Duration::from_secs(300);
+pub(crate) const ENCODE_WAIT: Duration = Duration::from_secs(300);
 
 /// One optional in-flight snapshot bounds engine captures independently of writer lag.
 #[derive(Clone)]
@@ -196,7 +196,7 @@ impl Encoding {
     /// Error cases:
     /// - the worker stopped, its copy is not at the checkpoint or did not encode, or no encoding came
     ///   within `within`
-    fn wait(self, within: Duration) -> Result<String> {
+    pub(crate) fn wait(self, within: Duration) -> Result<String> {
         match self {
             Self::Encoded(engine) => Ok(engine),
             Self::Pending(reply) => match reply.recv_timeout(within) {

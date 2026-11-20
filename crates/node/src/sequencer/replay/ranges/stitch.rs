@@ -45,11 +45,12 @@ impl From<Replayed> for Audited {
 }
 
 /// The `ranges` ranges' `results`, in log order, added up under `trust`, the results of the ranges after the
-/// first that failed left out: the first that failed fails the whole, as
-/// does an entry of a range that named a checkpoint or a deferred approval no earlier range holds, at that
-/// range, before any later range's fault.
+/// first that failed left out: the first that failed fails the whole, as does a range that starts from
+/// another checkpoint or state than the one before it ends in, or whose entry named a checkpoint or a
+/// deferred approval no earlier range holds, at that range, before any later range's fault.
 /// Error cases:
-/// - a range failed, or a range's entry named what no earlier range holds
+/// - a range failed, or starts from another checkpoint or state than the range before it ends in
+/// - a range's entry named what no earlier range holds
 /// - under custody trust, no range held the vault's finalized anchor
 pub(super) fn stitch(
     results: Vec<anyhow::Result<RangeReplayed>>,
@@ -60,10 +61,17 @@ pub(super) fn stitch(
     let mut deferred: Vec<(u64, AccountId, Fixed, u64)> = Vec::new();
     let (mut commands, mut checkpoints, mut anchored) = (0, 0, false);
     let (mut activations, mut checkpoint_signers) = (Vec::new(), BTreeSet::new());
-    let mut last = None;
+    let (mut last, mut ended) = (None, None);
     for (at, result) in results.into_iter().enumerate() {
-        let RangeReplayed { replayed, refs, anchored: held } =
+        let RangeReplayed { replayed, refs, anchored: held, start, end } =
             result.with_context(|| format!("replaying range {} of {ranges}", at + 1))?;
+        // So the ranges are one history: each starts from the checkpoint and the state the one before ends in.
+        ensure!(
+            at == 0 || (start.is_some() && start == ended),
+            "range {} of {ranges} starts from another checkpoint or state than range {at} ends in",
+            at + 1
+        );
+        ended = end;
         if let Some(refs) = refs {
             resolve(&refs, &roots, &mut deferred).with_context(|| format!("range {} of {ranges}", at + 1))?;
         }

@@ -43,3 +43,36 @@ fn ranges_report_in_log_order_and_end_at_the_earliest_failure() {
         assert_eq!(failing[2].as_ref().unwrap_err().to_string(), "range 2", "{jobs} jobs");
     }
 }
+
+/// The pass takes the ranges as one history only where each starts from the checkpoint and the state the
+/// one before ends in: a range from no snapshot, at another checkpoint, or from another state is refused.
+#[test]
+fn each_range_starts_from_the_checkpoint_and_state_the_one_before_ends_in() {
+    let at = |seq, state| {
+        let checkpoint = Checkpoint {
+            parent: None,
+            seq,
+            root: format!("0x{}", hex::encode([7; 32])),
+            signature: "0x01".into(),
+            signer: "0x02".into(),
+            domain: None,
+            deferred_withdrawals: false,
+        };
+        Boundary { checkpoint, state: [state; 32] }
+    };
+    let range = |start, end| {
+        let mut replayed = Replay::default().finish();
+        replayed.checkpoints = 1;
+        Ok(RangeReplayed { replayed, refs: None, anchored: false, start, end })
+    };
+    let trust = Trust::Pinned { domain: None, signer: None };
+    stitch::stitch(vec![range(None, Some(at(4, 1))), range(Some(at(4, 1)), None)], 2, &trust).unwrap();
+    for (case, start) in
+        [("no snapshot", None), ("another checkpoint", Some(at(5, 1))), ("another state", Some(at(4, 2)))]
+    {
+        let error = stitch::stitch(vec![range(None, Some(at(4, 1))), range(start, None)], 2, &trust)
+            .err()
+            .unwrap_or_else(|| panic!("{case} was stitched"));
+        assert!(error.to_string().contains("range 2 of 2 starts from another checkpoint or state"), "{case}: {error}");
+    }
+}

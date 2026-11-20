@@ -1484,7 +1484,8 @@ holds it, and `engine`, the engine's state. A file the manifest does not list an
 does every request to a server without `[daily_snapshots]`. The server checks each snapshot's length
 and hash against the manifest before serving it, but nothing signs a snapshot:
 `engine replay --snapshots` takes one only at a checkpoint the log holds, equal to the snapshot's,
-and only once the root of the snapshot's state is that checkpoint's.
+once the root of the snapshot's state is that checkpoint's, and only where the replay of the log
+before it ends in that state.
 
 ## The stream
 

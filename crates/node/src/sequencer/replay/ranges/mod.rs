@@ -4,8 +4,11 @@
 //! the checkpoint the log holds at the snapshot's offset, which must be the snapshot's own. Each range
 //! applies that checkpoint first, which computes the snapshot's root over every key and compares it with
 //! the checkpoint's, checks its signature as any checkpoint's, and restarts the seal chain there; then it
-//! replays strictly, as a whole-log replay does, through the checkpoint where the next range starts. So
-//! each range ends at the root the next one starts from, and the ranges tile the log.
+//! replays strictly, as a whole-log replay does, through the checkpoint where the next range starts. The
+//! pass over the ranges then requires each to start from the checkpoint the one before ended at and from
+//! the state it ended in, compared by the SHA-256 of the whole state's encoding, which binds what the root
+//! leaves out too. So the ranges tile the log as one history, as a whole-log replay applies it, and a
+//! snapshot's root check only fails a bad snapshot before its range runs.
 //!
 //! What a sequential replay carries across that checkpoint besides the engine is either reset there (the
 //! seal chain, the last command's unmatched approvals and, under a trusted signer, the unauthenticated
@@ -34,7 +37,7 @@ use engine_core::{Engine, Fixed};
 
 use crate::checkpoints::SignerHistory;
 use crate::daily_snapshots;
-use crate::log::{self, CheckpointDomain, CheckpointParent, LogEntry, Offset, SegmentedLog, Stop};
+use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, Offset, SegmentedLog, Stop};
 pub use crate::sequencer::replay::ranges::stitch::Audited;
 use crate::sequencer::replay::{Replay, Replayed};
 
@@ -70,10 +73,25 @@ struct Range {
 
 /// What one range's replay gives the pass.
 pub(super) struct RangeReplayed {
+    /// The range's replay, with the engine it ends in only for the range that ends the log: the pass reads
+    /// no other, so each other's is dropped as its range ends.
     pub(super) replayed: Replayed,
     pub(super) refs: Option<Refs>,
     /// Whether the range held the vault's finalized anchor (custody trust only).
     pub(super) anchored: bool,
+    /// Where a range from a snapshot starts: its checkpoint and the state the range applies the log to.
+    pub(super) start: Option<Boundary>,
+    /// Where a range the log goes on past ends: the checkpoint the next range starts at, and the state the
+    /// range ends in there.
+    pub(super) end: Option<Boundary>,
+}
+
+/// A checkpoint where one range ends and the next starts, and the SHA-256 of the whole state's encoding
+/// there (`daily_snapshots::state_digest`): the pass requires the two ranges to agree on both.
+#[derive(Debug, PartialEq)]
+pub(super) struct Boundary {
+    pub(super) checkpoint: Checkpoint,
+    pub(super) state: [u8; 32],
 }
 
 impl Trust {
@@ -261,25 +279,27 @@ fn replay_range(
 ) -> anyhow::Result<RangeReplayed> {
     let mut replay = trust.replay()?;
     replay.range = Some(Refs::default());
-    let (from, mut first) = match &range.start {
+    let (from, mut first, start) = match &range.start {
         None => {
             replay.engine = base();
-            (0, None)
+            (0, None, None)
         }
         Some((offset, file)) => {
             let snapshot = daily_snapshots::load(file)?;
+            let state = daily_snapshots::state_digest(&snapshot.engine)?;
             replay.engine = snapshot.engine;
             // A snapshot's commands all carry their events (`daily_snapshots::load` requires V27).
             replay.logs_events = true;
             replay.range = Some(Refs { start: Some(offset.seq), ..Refs::default() });
-            (offset.seq, Some((*offset, snapshot.checkpoint, file.clone())))
+            let start = Boundary { checkpoint: snapshot.checkpoint.clone(), state };
+            (offset.seq, Some((*offset, snapshot.checkpoint, file.clone())), Some(start))
         }
     };
     let custody_anchor = match trust {
         Trust::Custody { parent, .. } if parent.has_checkpoint => Some(*parent),
         _ => None,
     };
-    let (mut at, mut ended, mut anchored) = (None, range.end.is_none(), false);
+    let (mut at, mut ended, mut anchored) = (None, None, false);
     let read = SegmentedLog::read_span_ahead(path, from, |entry| {
         let offset = log::offset_of(at, &entry)?;
         at = Some(offset);
@@ -299,7 +319,7 @@ fn replay_range(
         }
         replay.apply(&entry)?;
         if range.end == Some(offset) {
-            ended = true;
+            ended = Some(entry);
             return Err(Stop.into());
         }
         Ok(())
@@ -308,12 +328,22 @@ fn replay_range(
     if let Some((start, _, file)) = &first {
         anyhow::bail!("the log holds no checkpoint at {start}, which daily snapshot {} names", file.display());
     }
-    ensure!(ended, "the log ends before the checkpoint at {:?} where the next range starts", range.end);
+    let end = match (range.end, ended) {
+        (None, _) => None,
+        (Some(_), Some(LogEntry::Checkpoint(checkpoint))) => {
+            Some(Boundary { checkpoint, state: daily_snapshots::state_digest(&replay.engine)? })
+        }
+        (Some(end), Some(_)) => anyhow::bail!("the log holds no checkpoint at {end}, where the next range starts"),
+        (Some(end), None) => anyhow::bail!("the log ends before the checkpoint at {end} where the next range starts"),
+    };
     if last && matches!(trust, Trust::Custody { .. }) {
         replay.ensure_superseded_continued()?;
     }
     let refs = replay.range.take();
-    let replayed = replay.finish();
+    let mut replayed = replay.finish();
     trust.check(&replayed)?;
-    Ok(RangeReplayed { replayed, refs, anchored })
+    if end.is_some() {
+        drop(std::mem::take(&mut replayed.engine));
+    }
+    Ok(RangeReplayed { replayed, refs, anchored, start, end })
 }

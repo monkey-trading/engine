@@ -18,6 +18,7 @@ use crate::test_support::{every_event, file_entries, log_entries, scratch_dir};
 mod durability;
 mod last_checkpoint;
 mod reader;
+mod span;
 mod torn;
 
 const SEG_0: &str = "00000000000000000000.jsonl";

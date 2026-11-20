@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 use engine_core::types::Millis;
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
@@ -19,7 +19,7 @@ use tracing::{info, warn};
 
 use crate::daily_snapshots::{Listed, MANIFEST, SCHEMA, Written, day, offset_named, read_manifest};
 use crate::log::{Checkpoint, Offset};
-use crate::snapshot::sealing::Encoding;
+use crate::snapshot::sealing::{ENCODE_WAIT, Encoding};
 
 /// A daily snapshot for the thread to publish.
 pub(crate) struct Job {
@@ -39,10 +39,10 @@ pub(crate) struct Writer {
     thread: Option<JoinHandle<()>>,
 }
 
-/// Feeds bytes to a file and to their SHA-256 hash, counting them.
-struct Hashed<W> {
-    inner: W,
-    hash: Sha256,
+/// Feeds bytes to `inner`, a file or nowhere, and to their SHA-256 hash, counting them.
+pub(super) struct Hashed<W> {
+    pub(super) inner: W,
+    pub(super) hash: Sha256,
     bytes: u64,
 }
 
@@ -67,6 +67,13 @@ impl<W: Write> Write for Hashed<W> {
 
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
+    }
+}
+
+impl<W> Hashed<W> {
+    /// Nothing fed yet to `inner`.
+    pub(super) fn new(inner: W) -> Self {
+        Self { inner, hash: Sha256::new(), bytes: 0 }
     }
 }
 
@@ -115,13 +122,16 @@ impl Writer {
     /// takes nothing, which pages Warning `daily_snapshot_failed`, and the day's next checkpoint tries again.
     pub(crate) fn take(&mut self, job: Job) {
         let (seq, ts) = (job.offset.seq, job.ts);
-        let refused = match self.jobs.as_ref().map(|jobs| jobs.try_send(job)) {
-            Some(Ok(())) => {
-                self.last_ts = Some(ts);
-                return;
-            }
-            Some(Err(TrySendError::Full(_))) => "the writer is still writing the last one",
-            Some(Err(TrySendError::Disconnected(_))) | None => "the writer has stopped",
+        let refused = match self.jobs.as_ref() {
+            Some(jobs) => match jobs.try_send(job) {
+                Ok(()) => {
+                    self.last_ts = Some(ts);
+                    return;
+                }
+                Err(TrySendError::Full(_)) => "the writer is still writing the last one",
+                Err(TrySendError::Disconnected(_)) => "the writer has stopped",
+            },
+            None => "the writer has stopped",
         };
         warn!(alert = "daily_snapshot_failed", seq, "no daily snapshot at this checkpoint: {refused}");
     }
@@ -161,16 +171,11 @@ pub(crate) fn publish_now(dir: &Path, job: Job) -> anyhow::Result<Listed> {
 
 /// Writes `job`'s snapshot in `dir` under its name, synced, then lists it in the manifest.
 /// Error cases:
-/// - the engine's encoding failed or never came, or the file or the manifest cannot be written or synced
+/// - the engine's encoding failed or did not come within `ENCODE_WAIT`, or the file or the manifest cannot be
+///   written or synced
 fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Listed> {
-    let engine = match job.engine {
-        Encoding::Encoded(engine) => engine,
-        Encoding::Pending(pending) => pending
-            .recv()
-            .context("the stats worker gave no encoding")?
-            .map_err(|e| anyhow!("encoding the engine: {e}"))?,
-    };
-    let engine = RawValue::from_string(engine).context("the engine's encoding is not JSON")?;
+    // Bounded, so a job a failing sequencer never delivered cannot hold the writer's drop.
+    let engine = RawValue::from_string(job.engine.wait(ENCODE_WAIT)?).context("the engine's encoding is not JSON")?;
     let file = crate::snapshot::name(job.offset);
     let staged = dir.join(format!("{file}.tmp"));
     let written = Written { schema: SCHEMA, offset: job.offset, checkpoint: &job.checkpoint, engine: &engine };
@@ -216,7 +221,7 @@ fn write_synced(
 ) -> anyhow::Result<([u8; 32], u64)> {
     let written = (|| {
         let file = File::create_new(path).with_context(|| format!("creating {}", path.display()))?;
-        let mut out = Hashed { inner: BufWriter::new(file), hash: Sha256::new(), bytes: 0 };
+        let mut out = Hashed::new(BufWriter::new(file));
         write(&mut out)?;
         out.flush()?;
         out.inner.get_ref().sync_all().with_context(|| format!("syncing {}", path.display()))?;

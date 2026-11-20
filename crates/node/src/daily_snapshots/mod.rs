@@ -1,10 +1,11 @@
 //! Daily snapshots: the engine's state at the first checkpoint of each UTC day by sequenced time,
 //! published beside the log's archive, so that a replay can start a range of the log there rather than
-//! from genesis. Nothing but its root authenticates a snapshot: a replay takes one only at a checkpoint
-//! the log holds, equal to the snapshot's and signed by a signer the replay trusts, and only once the root
-//! of the decoded state, its resting-order index rebuilt from the accounts' orders, is that checkpoint's
-//! (`sequencer::replay::ranges`). Each is `<seq>-<index>.json` after its checkpoint's offset in the log,
-//! as recovery caches are named, and `manifest.jsonl` lists one line per snapshot.
+//! from genesis. Nothing signs a snapshot: a replay takes one only at a checkpoint the log holds, equal to
+//! the snapshot's and signed by a signer the replay trusts, once the root of the decoded state, its
+//! resting-order index rebuilt from the accounts' orders, is that checkpoint's, and accepts the range only
+//! once the range before it ends in that state, by the digest of its whole encoding (`state_digest`,
+//! `sequencer::replay::ranges`). Each is `<seq>-<index>.json` after its checkpoint's offset in the log, as
+//! recovery caches are named, and `manifest.jsonl` lists one line per snapshot.
 
 mod writer;
 #[cfg(test)]
@@ -12,7 +13,7 @@ pub(crate) use writer::publish_now;
 pub(crate) use writer::{Job, Writer};
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
@@ -21,6 +22,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use sha2::Digest;
 
 use crate::log::{Checkpoint, Offset};
 
@@ -116,8 +118,9 @@ pub(crate) fn read_manifest(dir: &Path) -> anyhow::Result<Vec<Listed>> {
 
 /// The daily snapshot at `path`, as a range's start state: the checkpoint it names, and the engine at it
 /// with its resting-order index rebuilt from its accounts' orders (`Engine::rebuild_resting`) and its
-/// transient indexes restored. Its root is not checked here: a replay checks it against the checkpoint the
-/// log holds at its offset, which it requires to be this one.
+/// transient indexes restored. Nothing else is checked here: a replay checks its root against the checkpoint
+/// the log holds at its offset, which it requires to be this one, and its state against the state the range
+/// before it ends in.
 /// Error cases:
 /// - the file cannot be read or decoded, or is of another format
 /// - its name, offset, checkpoint and engine name different seqs
@@ -146,6 +149,17 @@ pub(crate) fn load(path: &Path) -> anyhow::Result<DailySnapshot> {
     engine.rebuild_resting();
     engine.restore_indexes();
     Ok(snapshot)
+}
+
+/// The SHA-256 of `engine`'s encoding, which binds every part of its state, those its root leaves out
+/// included: a replay in ranges compares it where one range ends and the next starts.
+/// Error cases:
+/// - the engine cannot be encoded
+pub(crate) fn state_digest(engine: &Engine) -> anyhow::Result<[u8; 32]> {
+    let mut hashed = BufWriter::with_capacity(1 << 16, writer::Hashed::new(std::io::sink()));
+    serde_json::to_writer(&mut hashed, engine).context("encoding the engine")?;
+    let hashed = hashed.into_inner().map_err(|e| e.into_error()).context("hashing the engine's encoding")?;
+    Ok(hashed.hash.finalize().into())
 }
 
 #[cfg(test)]
