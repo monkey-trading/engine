@@ -114,10 +114,10 @@ pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Re
         let listed = daily_snapshots::read_manifest(&dir)?.into_iter().find(|listed| listed.file == file);
         let Some(listed) = listed else { return Ok(None) };
         let path = dir.join(&listed.file);
-        let (mut file, mut chunk, mut hash, mut bytes) =
+        let (mut opened, mut chunk, mut hash, mut bytes) =
             (std::fs::File::open(&path)?, vec![0; ARCHIVE_CHUNK_BYTES], Sha256::new(), 0u64);
         loop {
-            let read = file.read(&mut chunk)?;
+            let read = opened.read(&mut chunk)?;
             if read == 0 {
                 break;
             }
