@@ -245,7 +245,9 @@ processes. The bounds are:
   positions on one side match on the other. That requirement is never above the per-position one,
   and never below each group's floor share of its matched part's. A close-out closes, one step at a
   time, the position or group whose closing restores the account with the least value closed, a
-  group's positions together while all of them can trade. Every account that a trade, a triggered
+  group's positions together while all of them can trade. Each step is judged at the stress level and
+  volume tier its own trades pay: a group's later positions at the house's net asset value, valued at
+  the marks, and the volume tier that its earlier trades leave. Every account that a trade, a triggered
   order or a level fills is checked for close-out once the instruction's trades are done. The groups,
   their members, loadings and bounds are fixed at launch. Each residual shock and floor share moves
   only up, within its bound, after seven days' notice or by a vote, and a fast-path vote may raise a

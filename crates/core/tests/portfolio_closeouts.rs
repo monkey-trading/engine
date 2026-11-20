@@ -5,8 +5,9 @@
 //! and closing the members that can alone while one cannot, even when every candidate worsens the
 //! slack; a failed fill ends the account's close-out mid-group; and every close-out ends within the
 //! account's position count. A log at `V81` whose parameters name no grid keeps the rule before it.
-//! The check after a command's fills is in `after_fills`, the weekend gap's start in `weekend`, and the
-//! close-out index's exactness under the portfolio requirement in `index`.
+//! The check after a command's fills is in `after_fills`, the weekend gap's start in `weekend`, the
+//! close-out index's exactness under the portfolio requirement in `index`, and from `V86` a group's later
+//! members scored at the NAV their fills read, whatever a mark's gap to its index, in `marks`.
 
 mod common;
 
@@ -278,7 +279,12 @@ fn pair_after_basis_move(grid: PortfolioGrid) -> (Harness, Client, Vec<Event>) {
 
 /// A holder of the pair and $200k of AAPL long, on $241k, under a 50% floor share.
 fn pair_and_shares() -> (Harness, Client) {
-    let mut h = genesis_with_grid(V81, pairs(5_000), 750, 0);
+    pair_and_shares_at(V81)
+}
+
+/// `pair_and_shares` on a log at `version`.
+fn pair_and_shares_at(version: ProtocolVersion) -> (Harness, Client) {
+    let mut h = genesis_with_grid(version, pairs(5_000), 750, 0);
     let a = client(&mut h, 1, "241000");
     open_pair(&mut h, &a);
     h.price(AAPL, "200");
@@ -290,5 +296,7 @@ fn pair_and_shares() -> (Harness, Client) {
 mod after_fills;
 #[path = "portfolio_closeouts/index.rs"]
 mod index;
+#[path = "portfolio_closeouts/marks.rs"]
+mod marks;
 #[path = "portfolio_closeouts/weekend.rs"]
 mod weekend;

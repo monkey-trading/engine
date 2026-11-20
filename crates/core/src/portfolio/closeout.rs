@@ -17,7 +17,11 @@
 //! realised gain. Each close is scored at the stress level its fill would pay: on a price move the one the fill's own
 //! stress refresh would set (`Engine::projected_stress_level`), at a weekend gap's start the one its close-out pays,
 //! each at the house's NAV when it fills: the NAV now for a candidate's first close, and for a group's later members
-//! the NAV its earlier fills leave, up by what the account gives up on each. From `V84` a group's later members are
+//! the NAV its earlier fills leave. From `V86` that is the NAV `Engine::house_nav` reads once they are booked: the
+//! house's cash less what it pays out on each, net of the profit fee, with each closed position taken out of its
+//! market's clients' PnL at the mark, so a member is scored at the level its fill pays. Before it, the NAV is taken up
+//! by what the account gives up on each at the prices it is valued at, which on a price move is off by the gap
+//! between a closed market's index and its mark (#1084). From `V84` a group's later members are
 //! also scored at the volume tier its earlier fills leave, which count their volume at once: its best-price share and
 //! its fee discount (#1008). If any candidate leaves slack at or above zero, the one closing the least USD notional
 //! closes; otherwise the one gaining the most per dollar closed, compared exactly, even when every gain is negative;
@@ -162,9 +166,11 @@ impl Engine {
             CloseoutContext::Price { .. } => self.projected_stress_level(id, nav),
             CloseoutContext::Weekend { .. } => self.close_out_stress_level_at(id, nav),
         };
+        // From `V86` the house's NAV after a fill is the one `Engine::house_nav` reads (#1084).
+        let marked = self.protocol_version >= ProtocolVersion::V86;
         // A position's change in equity from closing it at its fill price at a stress level and at a
-        // best-price share and profit fee rate, its notional and the fill as its volume counts; `None` when
-        // its close does not price.
+        // best-price share and profit fee rate, the change in the house's NAV, its notional and the fill as
+        // its volume counts; `None` when its close does not price.
         let close = |id: MarketId, level: usize, (share, fee_bps): (Option<i64>, i64)| {
             let (market, pos, (mid, fx)) = (&self.markets[&id], acct.positions[&id], closable[&id]);
             let exec = Exec {
@@ -188,12 +194,23 @@ impl Engine {
             let unrealised = usd(pos.unrealised(price, self.protocol_version), valued_fx, Rounding::Down);
             let notional = usd(pos.qty.abs().mul_rounded(price, charge), valued_fx, Rounding::Up);
             let counted = ClosedOut { market: id, qty: priced.qty, price: priced.price, fx: priced.fx };
-            Some((realised - fee - unrealised, notional, counted))
+            let change = realised - fee - unrealised;
+            // The house pays out the realised PnL less the fee, and the market's clients' PnL at the mark loses
+            // the position; before `V86`, the NAV moves by what the account gives up at its valuation.
+            let nav_change = if marked {
+                let at_mark = |qty, cost| market.clients_upnl_at_mark(qty, cost).unwrap_or(Fixed::ZERO);
+                let (qty, cost) =
+                    (market.client_qty - pos.qty + closed.qty, market.client_cost - pos.cost() + closed.cost());
+                at_mark(market.client_qty, market.client_cost) - at_mark(qty, cost) - (realised - fee)
+            } else {
+                -change
+            };
+            Some((change, nav_change, notional, counted))
         };
         // Each position that may close, at the level its fill pays at the house's NAV now; one whose close
         // does not price waits, as one whose market cannot trade does.
         let nav = self.house_nav();
-        let closes: BTreeMap<MarketId, (usize, (Fixed, Fixed, ClosedOut))> = (closable.keys())
+        let closes: BTreeMap<MarketId, (usize, (Fixed, Fixed, Fixed, ClosedOut))> = (closable.keys())
             .filter_map(|id| {
                 let level = level_at(*id, nav);
                 close(*id, level, terms_now(*id)).map(|closed| (*id, (level, closed)))
@@ -201,8 +218,8 @@ impl Engine {
             .collect();
         // From `V84` a group's later members fill at the tier its earlier fills leave (#1008).
         let tiered = self.protocol_version >= ProtocolVersion::V84;
-        // A group's later members fill at the NAV its earlier fills leave, which takes what the account
-        // gives up on each; a candidate one of whose closes does not price there is none.
+        // A group's later members fill at the NAV its earlier fills leave; a candidate one of whose closes does
+        // not price there is none.
         let scored = candidates(acct, grid, &closes).into_iter().filter_map(|members| {
             let (mut gain, mut notional, mut after_nav) = (Fixed::ZERO, Fixed::ZERO, nav);
             let mut counted = Vec::new();
@@ -217,9 +234,9 @@ impl Engine {
                         (tier.map(|tier| tier.best_price_share_bps), self.close_fee_terms_at(account, *id, tier).1)
                     }
                 };
-                let (change, closed, fill) =
+                let (change, nav_change, closed, fill) =
                     if at == level && terms == terms_now(*id) { scored_now } else { close(*id, at, terms)? };
-                (gain, notional, after_nav) = (gain + change, notional + closed, after_nav - change);
+                (gain, notional, after_nav) = (gain + change, notional + closed, after_nav + nav_change);
                 counted.push(fill);
             }
             let after = self.requirement_without(grid, ctx.basis(), &parts, &members);

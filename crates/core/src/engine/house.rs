@@ -19,10 +19,7 @@ impl Engine {
         let client_upnl: Fixed = self
             .markets
             .values()
-            .filter_map(|market| {
-                let upnl = |mark: Fixed| mark.mul(market.client_qty) - market.client_cost;
-                market.mark.map(|mark| market.usd_at_mark(upnl(mark), Rounding::Up))
-            })
+            .filter_map(|market| market.clients_upnl_at_mark(market.client_qty, market.client_cost))
             .sum();
         self.house_cash - client_upnl
     }

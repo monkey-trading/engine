@@ -85,6 +85,12 @@ impl MarketState {
     pub fn usd_at_mark(&self, amount: Fixed, rounding: Rounding) -> Fixed {
         self.spec.quote_currency.to_usd(amount, self.fx_mark, rounding)
     }
+
+    /// Clients' unrealised PnL at the mark on `client_qty` held at `client_cost`, in USD rounded up, as
+    /// `Engine::house_nav` counts this market's: `None` before its first mark.
+    pub(crate) fn clients_upnl_at_mark(&self, client_qty: Fixed, client_cost: Fixed) -> Option<Fixed> {
+        self.mark.map(|mark| self.usd_at_mark(mark.mul(client_qty) - client_cost, Rounding::Up))
+    }
 }
 
 impl Engine {
