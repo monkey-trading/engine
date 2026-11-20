@@ -356,7 +356,7 @@ impl NodeConfig {
     ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
     ///   wide, `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`),
     ///   `api.request_bursts` is above them (see `ApiSection::refuse_dev_request_bursts`),
-    ///   `liveness.fallback_interval` is above its (see `NodeConfig::refuse_slow_fallback_fixer`), the
+    ///   `liveness.fallback_interval` is above its (see `LivenessSection::refuse_slow_fallback_fixer`), the
     ///   access screening slots are below the production value, their shares above theirs or the
     ///   reserve below it (see `AccessSection::refuse_dev_screening_slots`),
     ///   a genesis market is quoted by fewer venues than its `min_sources` (see
@@ -377,7 +377,11 @@ impl NodeConfig {
         cfg.api
             .refuse_dev_request_bursts(PRODUCTION_BUILD)
             .with_context(|| format!("validating {}", path.display()))?;
-        cfg.refuse_slow_fallback_fixer(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        if let Some(liveness) = &cfg.liveness {
+            liveness
+                .refuse_slow_fallback_fixer(PRODUCTION_BUILD)
+                .with_context(|| format!("validating {}", path.display()))?;
+        }
         if let Some(access) = &cfg.access {
             access
                 .refuse_dev_screening_slots(PRODUCTION_BUILD)

@@ -112,6 +112,21 @@ pub struct LivenessSection {
     pub fallback_interval: Duration,
 }
 
+impl LivenessSection {
+    /// Refuses a fallback fixer slower than the production value when `production` is set.
+    /// Error cases:
+    /// - `production` is set and `fallback_interval` is above `PRODUCTION_FALLBACK_INTERVAL`
+    pub(super) fn refuse_slow_fallback_fixer(&self, production: bool) -> anyhow::Result<()> {
+        ensure!(
+            !production || self.fallback_interval <= PRODUCTION_FALLBACK_INTERVAL,
+            "a production build allows liveness.fallback_interval at most {PRODUCTION_FALLBACK_INTERVAL:?}, and the \
+             config sets {:?}",
+            self.fallback_interval
+        );
+        Ok(())
+    }
+}
+
 impl NodeConfig {
     /// Validates checkpoint transport and refuses hardware custody without rollback protection.
     /// Error cases:
@@ -175,20 +190,6 @@ impl NodeConfig {
         ensure!(
             !liveness.read_interval.is_zero() && !liveness.fallback_interval.is_zero(),
             "liveness.read_interval and liveness.fallback_interval must be non-zero"
-        );
-        Ok(())
-    }
-
-    /// Refuses a fallback fixer slower than the production value when `production` is set.
-    /// Error cases:
-    /// - `production` is set and `liveness.fallback_interval` is above `PRODUCTION_FALLBACK_INTERVAL`
-    pub(super) fn refuse_slow_fallback_fixer(&self, production: bool) -> anyhow::Result<()> {
-        let Some(liveness) = self.liveness.as_ref().filter(|_| production) else { return Ok(()) };
-        ensure!(
-            liveness.fallback_interval <= PRODUCTION_FALLBACK_INTERVAL,
-            "a production build allows liveness.fallback_interval at most {PRODUCTION_FALLBACK_INTERVAL:?}, and the \
-             config sets {:?}",
-            liveness.fallback_interval
         );
         Ok(())
     }
@@ -259,12 +260,11 @@ mod tests {
         .unwrap();
         assert_eq!((heads.interval, heads.read_interval), (Duration::from_secs(3600), Duration::from_secs(60)));
 
-        let mut cfg = NodeConfig::load(Path::new(ANVIL_CONFIG)).unwrap();
-        cfg.liveness = Some(LivenessSection { fallback_interval: PRODUCTION_FALLBACK_INTERVAL, ..liveness });
-        cfg.refuse_slow_fallback_fixer(true).unwrap();
-        cfg.liveness.as_mut().unwrap().fallback_interval += Duration::from_secs(1);
-        let err = cfg.refuse_slow_fallback_fixer(true).unwrap_err();
+        let mut liveness = LivenessSection { fallback_interval: PRODUCTION_FALLBACK_INTERVAL, ..liveness };
+        liveness.refuse_slow_fallback_fixer(true).unwrap();
+        liveness.fallback_interval += Duration::from_secs(1);
+        let err = liveness.refuse_slow_fallback_fixer(true).unwrap_err();
         assert!(err.to_string().contains("liveness.fallback_interval"), "{err:#}");
-        cfg.refuse_slow_fallback_fixer(false).unwrap();
+        liveness.refuse_slow_fallback_fixer(false).unwrap();
     }
 }
