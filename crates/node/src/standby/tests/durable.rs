@@ -1,4 +1,5 @@
-//! A member's copy records as durable only what it appended, with the key that sealed it.
+//! A member's copy records as durable only what it appended, with the key that sealed it, and its
+//! replica keeps the stats worker in step with what it applies.
 
 use std::time::Duration;
 

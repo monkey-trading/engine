@@ -16,9 +16,10 @@ use crate::handover::assigned::{Assignments, LatestAssignments};
 /// The round trips to the providers one latest assignment read makes, one after another, each
 /// provider's requests as `VaultRpc` makes them: the identity (the chain id, then the vault's token),
 /// the tips, the posted head (the signer epoch, then the head) and the agreed header, then the vault's
-/// registry, the registry's schedule, the rotation, the turn, the signer epoch, the assignment and the
-/// head's release; one more, a header, while a provider's tip is past the agreed block.
-const ROUND_TRIPS: u32 = 13;
+/// registry, the registry's schedule, the rotation, turn and signer epoch together, and the assignment
+/// and the head's release together; one more, a header, while a provider's tip is past the agreed
+/// block.
+const ROUND_TRIPS: u32 = 10;
 
 #[tokio::test(start_paused = true)]
 async fn a_latest_assignment_read_takes_a_fixed_number_of_round_trips() {

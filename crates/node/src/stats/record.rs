@@ -202,10 +202,7 @@ impl Inner {
 
     /// Installs `snapshot` if `sampled`, or only serves it, as a recovery's scan, made due by no command.
     pub(super) fn take(&mut self, snapshot: Snapshot, sampled: bool) {
-        match sampled {
-            true => self.install(snapshot),
-            false => self.serve(snapshot),
-        }
+        if sampled { self.install(snapshot) } else { self.serve(snapshot) }
     }
 
     /// Serves `snapshot` and samples its long and short at the time it was due.
