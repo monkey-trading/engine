@@ -233,15 +233,17 @@ impl AgreedBlock for SessionBlock<'_> {
     }
 }
 
-/// The fixer reads through a reader of its own: with every call answering in a second and each reader
-/// holding a read session for each pinned block, its fix goes out after its own reads, long before the
-/// member's liveness read on its reader is through, and the two send through one lock.
+/// The fixer reads through a reader of its own: with its calls answering in a second, the member's
+/// liveness calls in ten, and each reader holding a read session for each pinned block, its fix goes out
+/// after its own reads, long before the member's liveness read on its reader is through, and the two
+/// send through one lock.
 #[tokio::test(start_paused = true)]
 async fn a_fix_waits_on_no_liveness_read() {
     let (state, fix) = pending(ChainState { latency: Duration::from_secs(1), ..Default::default() });
+    let liveness = Arc::new(FakeChain::new(ChainState { latency: Duration::from_secs(10), ..state.clone() }));
     let chain = Arc::new(FakeChain::new(state));
     let (sent, sends) = (Sent::default(), Arc::new(Sends::default()));
-    let caller = caller(Sessions::over(&chain), sent.clone(), sends.clone());
+    let caller = caller(Sessions::over(&liveness), sent.clone(), sends.clone());
     let tasks = [tokio::spawn(caller.run()), tokio::spawn(fixer(Sessions::over(&chain), sent.clone(), sends).run())];
     tokio::time::sleep(Duration::from_millis(4_500)).await;
     assert_eq!(sent.calls(), vec![fix], "the fix alone, the liveness read still under way");
