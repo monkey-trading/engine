@@ -16,7 +16,7 @@ fn the_chain_holds_only_from_the_base_to_the_anchor() {
     let c30 = checkpoint(30, 3, Some(&c20));
     let c40 = checkpoint(40, 4, Some(&c30));
     let at = |checkpoint: &Checkpoint| Some(link(checkpoint).unwrap());
-    let cases: [(&str, &Checkpoint, Option<CheckpointParent>, Vec<&Checkpoint>, Option<bool>); 10] = [
+    let cases = [
         ("whole", &base, at(&c30), vec![&c20, &c30, &c40], Some(true)),
         ("anchor at the base", &base, at(&base), vec![&c20, &c30], Some(true)),
         ("repeated", &base, at(&c30), vec![&c20, &c20, &c30], Some(false)),
