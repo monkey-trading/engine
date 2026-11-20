@@ -9,11 +9,15 @@ use crate::test_support::scratch_dir;
 
 #[test]
 fn snapshot_configuration_refuses_zero_limits_and_unknown_keys() {
-    let text = "dir = 'cache'\nretain = 3\nmax_bytes = 1024\ntrusted_signers = []\n";
+    let text = "dir = 'cache'\nretain = 3\ninterval = '5m'\nmax_bytes = 1024\ntrusted_signers = []\n";
     let cfg: SnapshotSection = toml::from_str(text).unwrap();
     assert_eq!((cfg.retain.get(), cfg.max_bytes.get()), (3, 1024));
+    assert_eq!(cfg.interval, std::time::Duration::from_secs(300));
     for bad in [
         text.replace("retain = 3", "retain = 0"),
+        // The cadence is required: a section without it does not silently capture every checkpoint.
+        text.replace("interval = '5m'\n", ""),
+        text.replace("interval = '5m'", "interval = 'often'"),
         text.replace("max_bytes = 1024", "max_bytes = 0"),
         text.replace("retain = 3", "retian = 3"),
         format!("{text}retian = 3\n"),
@@ -287,6 +291,7 @@ pub(super) fn fixture(label: &str) -> (SnapshotSection, EnclaveKey, Snapshot) {
     let cfg = SnapshotSection {
         dir: scratch_dir(label),
         retain: NonZeroUsize::new(2).unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: NonZeroUsize::new(16 * 1024 * 1024).unwrap(),
         trusted_signers: vec![AccountId(key.address())],
     };

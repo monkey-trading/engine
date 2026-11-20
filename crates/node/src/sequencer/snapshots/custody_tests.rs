@@ -34,6 +34,7 @@ fn a_gated_cache_restores_canonical_coverage_and_refuses_inherited_provenance() 
     let cache = crate::config::SnapshotSection {
         dir: scratch_dir("snapshot-custody-coverage-cache"),
         retain: NonZeroUsize::new(3).unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: NonZeroUsize::new(32 * 1024 * 1024).unwrap(),
         trusted_signers: vec![signer],
     };
@@ -125,6 +126,7 @@ fn a_cache_holding_a_v22_approval_refuses_snapshot_recovery() {
     let cache = crate::config::SnapshotSection {
         dir: scratch_dir("snapshot-v22-approval-cache"),
         retain: NonZeroUsize::new(3).unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: NonZeroUsize::new(32 * 1024 * 1024).unwrap(),
         trusted_signers: vec![signer],
     };

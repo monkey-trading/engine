@@ -109,3 +109,68 @@ fn the_workers_copy_does_not_accumulate_changed_keys() {
     assert!(worker.reader().read(read).is_ok());
     assert_eq!(received.recv().unwrap(), 0);
 }
+
+/// A recovery cache's engine, encoded by the worker's copy at the command a checkpoint covers, is the
+/// encoding of the sequencer's engine there, byte for byte, though the sequencer moved on before the
+/// worker took the job.
+#[test]
+fn the_workers_copy_encodes_the_engine_the_sequencer_held_at_the_checkpoint() {
+    let mut rig = Rig::new();
+    rig.stats.scan_in_background(&rig.engine);
+    script(&mut rig);
+    let (seq, ts) = (rig.engine.last_seq().unwrap(), rig.engine.now());
+    let expected = serde_json::to_string(&rig.engine).unwrap();
+    let (job, encoded) = rig.stats.encode_job(seq, ts).expect("a worker runs");
+    rig.stats.stage_job(job);
+    // Commands after the checkpoint reach the worker behind its job.
+    rig.trade(T0 + 63_000, OTHER, Side::Buy, 1);
+    rig.stats.deliver(rig.stats.stage());
+    assert_eq!(encoded.recv().unwrap(), Ok(expected));
+}
+
+/// An encode job the worker's copy is not at, by seq or by time, refuses to encode another state, and
+/// the worker stops as it does for a scan out of step; with no worker, no job is staged.
+#[test]
+fn a_worker_asked_to_encode_a_state_it_is_not_in_stops_without_encoding() {
+    for (seq_after, ts_after) in [(1, 0), (0, 1)] {
+        let rig = Rig::new();
+        let mut worker = Background::start(&rig.engine).unwrap();
+        let (seq, ts) = (rig.engine.last_seq().unwrap() + seq_after, rig.engine.now() + ts_after);
+        let (reply, encoded) = std::sync::mpsc::sync_channel(1);
+        assert!(worker.reader().send(Job::Encode { seq, ts, reply }));
+        let refused = encoded.recv().unwrap().expect_err("no encoding of another state");
+        assert!(refused.contains("the copy is at"), "{refused}");
+        assert!(worker.wait().expect_err("the worker stops").contains("the copy is at"));
+    }
+    let rig = Rig::new();
+    assert!(rig.stats.encode_job(rig.engine.last_seq().unwrap(), rig.engine.now()).is_none(), "no worker runs");
+}
+
+/// While an encode is queued or runs on the worker, a read is handed back for the sequencer to run, so
+/// no read, and no request admitted on one, waits behind it; once the encode is done, reads go to the
+/// worker again.
+#[test]
+fn a_read_never_waits_behind_an_encode() {
+    let rig = Rig::new();
+    let worker = Background::start(&rig.engine).unwrap();
+    let reader = worker.reader();
+    // The worker is held in a read, so the encode stays queued behind it.
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let (entered, started) = std::sync::mpsc::channel();
+    let holding: crate::stats::background::ReadJob = Box::new(move |_| {
+        entered.send(()).unwrap();
+        held.recv().unwrap();
+    });
+    assert!(reader.read(holding).is_ok());
+    started.recv().unwrap();
+    let (reply, encoded) = std::sync::mpsc::sync_channel(1);
+    let (seq, ts) = (rig.engine.last_seq().unwrap(), rig.engine.now());
+    assert!(reader.send(Job::Encode { seq, ts, reply }));
+    assert!(reader.read(Box::new(|_| {})).is_err(), "a read is handed back while the encode is queued");
+    release.send(()).unwrap();
+    assert_eq!(encoded.recv().unwrap(), Ok(serde_json::to_string(&rig.engine).unwrap()));
+    let (sent, received) = std::sync::mpsc::channel();
+    let read: crate::stats::background::ReadJob = Box::new(move |engine| sent.send(engine.last_seq()).unwrap());
+    assert!(reader.read(read).is_ok(), "reads go to the worker once the encode is done");
+    assert_eq!(received.recv().unwrap(), Some(seq));
+}

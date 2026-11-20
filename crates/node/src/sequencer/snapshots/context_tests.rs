@@ -25,6 +25,7 @@ fn cache_restores_each_outstanding_checkpoint_with_its_original_accounting() {
     let cache = crate::config::SnapshotSection {
         dir: scratch_dir("snapshot-concrete-work-cache"),
         retain: NonZeroUsize::new(3).unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: NonZeroUsize::new(32 * 1024 * 1024).unwrap(),
         trusted_signers: vec![AccountId(key.address())],
     };

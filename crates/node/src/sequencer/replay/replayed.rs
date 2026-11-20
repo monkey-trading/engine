@@ -73,10 +73,11 @@ pub struct Replayed {
     /// startup check. Checkpoints do not reset it, so a posted head binds every command's sealed
     /// bytes, not only the state since the last checkpoint.
     pub link_at: Option<engine_core::eip712::B256>,
-    /// The sequenced time of the command at the posted head's seq: where the stall alarm starts.
+    /// The sequenced time of the command at the posted head's seq: where the stall alarm starts. For
+    /// a head under a snapshot's base, the time of the command after it, which the check binds.
     pub ts_at: Option<Millis>,
     /// The sequenced time of the command the vault-finalized checkpoint covers, where the replay or
-    /// its snapshot reached it, or, with `[log_heads]`, the snapshot's prefix pass did for one under
+    /// its snapshot reached it, or, with `[log_heads]`, the snapshot's anchor pass did for one under
     /// its base with no head posted: the stall alarm's anchor while no head of this key is posted.
     pub anchor_ts: Option<Millis>,
 }

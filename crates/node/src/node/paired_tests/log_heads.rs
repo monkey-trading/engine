@@ -1,5 +1,5 @@
 //! The posted-head check through paired recovery and the start: a posted head at or under the
-//! snapshot base is bound to the on-disk prefix before the snapshot is accepted, a conflict refuses
+//! snapshot base is bound to its history by the commands since it before the snapshot is accepted, a conflict refuses
 //! recovery rather than falling back, and the start then accepts the head on its seq; with no head
 //! posted, recovery stamps the vault-finalized checkpoint for the stall alarm.
 
@@ -50,13 +50,16 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
         (replayed.link_at.expect("the log holds a command at the seq"), replayed.ts_at)
     };
     for seq in [base, base - 1] {
-        let (link, ts) = replayed_at(seq);
+        let (link, _) = replayed_at(seq);
+        // The stall alarm starts from the first command after the head, which the check binds, or
+        // the base's own when the head is at it.
+        let (_, ts) = replayed_at((seq + 1).min(base));
         let held = Head { seq, link };
         let (log, _) = recover(Some(held)).expect("the prefix this log holds is accepted");
         assert_eq!(log.snapshot_seq, Some(base), "the snapshot still serves recovery");
-        assert_eq!(log.replayed.ts_at, ts, "the prefix pass carries the posted command's time to the stall alarm");
+        assert_eq!(log.replayed.ts_at, ts, "the check carries the bound time to the stall alarm");
         // The start then accepts the head on its seq: the suffix replay never reaches it, and
-        // recovery bound it to the on-disk prefix.
+        // recovery bound it to the snapshot's history.
         let pending = crate::log_heads::setup::Pending::for_test(Some(held), &rpc_dir);
         assert!(crate::log_heads::setup::startup(Some(pending), &log).is_ok(), "the start accepts seq {seq}");
         let foreign = Head { seq, link: B256::from([0x5a; 32]) };
@@ -68,7 +71,7 @@ async fn paired_recovery_binds_a_posted_head_under_the_base_to_the_on_disk_prefi
 #[tokio::test]
 async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
     // With `[log_heads]` and no head of this key posted, the stall alarm's anchor is the
-    // vault-finalized checkpoint's stamp. Paired recovery takes it from the prefix pass for one under
+    // vault-finalized checkpoint's stamp. Paired recovery takes it from the anchor pass for one under
     // the cache's base, from the cache itself at its base, and from the suffix replay past it — the
     // value the full replay gives each time. Without `[log_heads]`, or with a head posted, the pass
     // never runs for it.

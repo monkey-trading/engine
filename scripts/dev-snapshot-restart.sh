@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Dev scenario for restarting from checkpoint snapshots, on a node with config/dev.toml's mocks,
-# checkpoints every 100 commands, and `[snapshots]` added:
+# checkpoints every 100 commands, and `[snapshots]` added, capturing every checkpoint:
 #   1. run the node, take its enclave address from the attestation line, and pin it;
 #   2. sequence 400 dev deposits, let history catch up and the snapshot writer store the newest
 #      checkpoint, stop the node, and restart it from its newest paired cache;
@@ -59,7 +59,7 @@ sed -e "s|127.0.0.1:8080|127.0.0.1:$api_port|" \
   -e "s|^checkpoint_every = .*|checkpoint_every = $interval|" \
   -e 's|^per_ip = .*|per_ip = { per_second = 100000, burst = 100000 }|' \
   "$root/config/dev.toml" > "$work/node.toml"
-printf '\n[snapshots]\ndir = "%s/snapshots"\nretain = 3\nmax_bytes = 67108864\ntrusted_signers = []\n' \
+printf '\n[snapshots]\ndir = "%s/snapshots"\nretain = 3\ninterval = "0s"\nmax_bytes = 67108864\ntrusted_signers = []\n' \
   "$work" >> "$work/node.toml"
 for edit in ":$api_port\"" ":$metrics_port\"" "$work/log\"" "checkpoint_every = $interval" "per_second = 100000"; do
   grep -qF "$edit" "$work/node.toml" || fail "config edit missing: $edit"

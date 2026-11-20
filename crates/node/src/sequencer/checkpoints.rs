@@ -188,7 +188,7 @@ impl Sequencer {
                     |e: anyhow::Error| anyhow::anyhow!(crate::sequencer::HandoverRefused::new(format!("{e:#}")));
                 self.log_check_hand_over().map_err(refused)
             });
-        let ok = sealed.is_ok();
+        let ok = sealed.as_ref().inspect(|_| self.handed_over()).is_ok();
         let _ = reply.send(sealed);
         ok
     }

@@ -419,7 +419,10 @@ to its last checkpoint. The operator's stream then refills the copy.
 
 Before a restarted trading server writes anything, it reads the posted head through the custody RPC
 quorum. It refuses to start on a log that lacks that head, and raises the Critical alert
-`log_rollback`, naming the missing range or the sequence number whose digest differs. A posted head
+`log_rollback`, naming the missing range or the sequence number whose digest differs. A start from a
+snapshot at or past the posted head hashes the instructions after the head, through the snapshot's
+checkpoint, onto the head's digest, and requires the digest the snapshot certifies: a match proves
+the snapshot's history holds the head, and none of the log before the head is read. A posted head
 that overtakes the running trading server, at a higher sequence number or with another digest at a
 sequence number it retains, freezes sequencing.
 

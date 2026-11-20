@@ -1,16 +1,24 @@
-//! The run's figures against #904's recovery bar: the full replay of 30 days of launch flow, projected
-//! from the commands the markets' calendars give 30 days and the replay's rate; the restart from the
-//! newest cache to its first command; and each tail handover's switch against `SWITCH_BUDGET`, with
-//! the largest tail a switch fits by a straight line through the measured ones.
+//! The run's figures against #904's bars: each capture's hold on the sequencer against one command's;
+//! the full replay of 30 days of launch flow, projected from the commands the markets' calendars give
+//! 30 days and the replay's rate; the restart from the newest cache to its first command, with the
+//! start's reads of the whole log projected to 30 days apart; and each tail handover's switch against
+//! `SWITCH_BUDGET`, with the largest tail a switch fits by a straight line through the measured ones.
 
 use std::time::Duration;
 
 use crate::handover::tail::MAX_TAIL_BYTES;
 use crate::handover::tail_room;
 use crate::log::PrefixRing;
+use crate::sequencer::recovery_scale::cache::{Cached, Restarted};
 use crate::sequencer::recovery_scale::handover::Switch;
-use crate::sequencer::recovery_scale::restart::{Replayed, Restarted};
-use crate::sequencer::recovery_scale::{BAR_DAYS, DAY_SECS, Day, FULL_REPLAY_BAR, RESTART_BAR, SWITCH_BUDGET};
+use crate::sequencer::recovery_scale::restart::Replayed;
+use crate::sequencer::recovery_scale::{
+    BAR_DAYS, COMMAND_BAR, DAY_SECS, Day, FULL_REPLAY_BAR, RESTART_BAR, SWITCH_BUDGET,
+};
+
+/// The whole-log reads a production start makes beside a cache: one for its signer history
+/// (`node::signer_history`) and two for the takeover cut (`node::keys::cut_to_finalized_anchor`).
+const START_LOG_READS: f64 = 3.0;
 
 /// Prints a replay's commands, checkpoints, rate and wall time.
 pub(super) fn print_replay(name: &str, replayed: &Replayed) {
@@ -20,6 +28,62 @@ pub(super) fn print_replay(name: &str, replayed: &Replayed) {
         replayed.checkpoints,
         replayed.rate(),
         replayed.took.as_secs_f64()
+    );
+}
+
+/// Prints each capture's hold on the sequencer, `holds`, against one command's bar, and the cache
+/// taken before the hard stop.
+pub(super) fn print_captures(holds: &[Duration], cached: &Cached) {
+    let mut sorted = holds.to_vec();
+    sorted.sort_unstable();
+    let max = sorted.last().copied().unwrap_or_default();
+    let p50 = sorted.get(sorted.len() / 2).copied().unwrap_or_default();
+    println!(
+        "RECOVERY captures count={} held_p50_s={:.4} held_max_s={:.4} bar_s={} {}",
+        sorted.len(),
+        p50.as_secs_f64(),
+        max.as_secs_f64(),
+        COMMAND_BAR.as_secs_f64(),
+        verdict(max, COMMAND_BAR)
+    );
+    // The authenticated history index a node with paired caches keeps, which each capture waits for.
+    let caught_up = cached.history_caught_up.as_secs_f64();
+    println!(
+        "RECOVERY paired_history behind_commands={} caught_up_s={caught_up:.1} commands_per_s={:.0}",
+        cached.history_behind,
+        cached.history_behind as f64 / caught_up.max(f64::EPSILON)
+    );
+    println!(
+        "RECOVERY cache seq={} bytes={} capture_held_s={:.4} encode_on_sequencer_s={:.2} published_s={:.1}",
+        cached.seq,
+        cached.bytes,
+        cached.held.as_secs_f64(),
+        cached.encode_on_sequencer.as_secs_f64(),
+        cached.published.as_secs_f64()
+    );
+}
+
+/// Prints the restart from the cache and its parts timed apart.
+pub(super) fn print_restart(restarted: &Restarted, cached: &Cached) {
+    println!(
+        "RECOVERY restart_from_cache cache_seq={} suffix_commands={} read_s={:.1} start_s={:.2} s={:.1}",
+        restarted.cache_seq,
+        restarted.suffix_commands,
+        restarted.read.as_secs_f64(),
+        restarted.start.as_secs_f64(),
+        restarted.took().as_secs_f64()
+    );
+    assert_eq!(restarted.cache_seq, cached.seq, "the restart reads the cache taken before the stop");
+    println!(
+        "RECOVERY restart_parts cache_read_s={:.1} posted_seq={} since_head_commands={} posted_check_s={:.1} \
+         full_prefix_pass_s={:.1} log_commands={} whole_log_read_s={:.1}",
+        restarted.cache_read.as_secs_f64(),
+        restarted.posted.seq,
+        restarted.cache_seq.saturating_sub(restarted.posted.seq),
+        restarted.posted_check.as_secs_f64(),
+        restarted.full_prefix_pass.as_secs_f64(),
+        restarted.log_commands,
+        restarted.whole_log_read.as_secs_f64()
     );
 }
 
@@ -68,7 +132,6 @@ pub(super) fn conclude(
         secs as f64 / DAY_SECS as f64,
         bar_commands * per_command
     );
-    let per_day = bar_commands / BAR_DAYS as f64;
     // A projection, whatever the log's length: the calendars' commands at the measured rate.
     for (name, rate) in [("engine_replay", replayed.rate()), ("node_recovery", recovered.rate())] {
         let full = Duration::from_secs_f64(bar_commands / rate);
@@ -79,20 +142,20 @@ pub(super) fn conclude(
             verdict(full, FULL_REPLAY_BAR)
         );
     }
-    let restart = restarted.read + restarted.suffix.took + restarted.start;
-    // The launch flow a restart can replay past its cache within the bar, after reading it and starting.
-    let room = RESTART_BAR.saturating_sub(restarted.read + restarted.start).as_secs_f64() * restarted.suffix.rate();
+    let restart = restarted.took();
     println!(
-        "RECOVERY bar restart_from_cache read_s={:.1} suffix_commands={} suffix_s={:.1} start_s={:.2} s={:.1} bar_s={} {} \
-         suffix_within_bar_hours={:.1}",
-        restarted.read.as_secs_f64(),
-        restarted.suffix.commands,
-        restarted.suffix.took.as_secs_f64(),
-        restarted.start.as_secs_f64(),
+        "RECOVERY bar restart_from_cache suffix_commands={} s={:.1} bar_s={} {}",
+        restarted.suffix_commands,
         restart.as_secs_f64(),
         RESTART_BAR.as_secs(),
-        verdict(restart, RESTART_BAR),
-        room / per_day * 24.0
+        verdict(restart, RESTART_BAR)
+    );
+    // Outside the cache's bound: the whole-log reads of a production start grow with the log.
+    let reads =
+        START_LOG_READS * bar_commands / (restarted.log_commands as f64 / restarted.whole_log_read.as_secs_f64());
+    println!(
+        "RECOVERY start_log_reads_{BAR_DAYS}d reads={START_LOG_READS} projected_s={reads:.0} restart_bar_s={}",
+        RESTART_BAR.as_secs()
     );
     for switch in switches {
         println!(

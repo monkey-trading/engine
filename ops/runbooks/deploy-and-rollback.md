@@ -114,6 +114,13 @@ Use this procedure before any deployment or upgrade. None of its steps touches a
 
    The command prints nothing when every value is set.
 
+   `[snapshots] trusted_signers` names the enclave address, which does not exist until a first
+   release starts. A first release therefore leaves the whole `[snapshots]` section out: unpinned,
+   every start would replay the whole log and also rebuild the history index from it. In each later
+   release, set it to `$SIGNER`, the enclave address the running release attests and the upgrade
+   carries over, so that the new release restarts from its caches. A key that changes, by a
+   promotion or new keys, needs a release that pins the new address.
+
 7. Confirm that the configuration loads. `engine admin` reads the configuration before it asks for
    a key, so the following command fails with the configuration's error, or reaches the key check
    when the configuration is valid:

@@ -147,7 +147,7 @@ impl Runtime {
         let (input, received) = mpsc::channel(super::QUEUE);
         let (repair_tx, repair) = mpsc::channel(1);
         let reader = Reader::authenticated(ready_rx, published_rx, repair_tx);
-        let endpoint = Endpoint::new(input.clone(), catalog_store);
+        let endpoint = Endpoint::new(input.clone(), catalog_store, cfg.interval);
         let stopped = Arc::new(AtomicBool::new(false));
         Ok(Self {
             actor: Actor {

@@ -241,8 +241,9 @@ async fn read_posted_with_retry(
 /// The startup gate and poster setup in one call: checks the posted head against the link the
 /// replay captured — accepting it seq-only at or under an attested snapshot base, which determines
 /// the content there — and builds the poster with the watch at the recovered head and its stall
-/// alarm started from the checked head's stamp, or the vault-finalized checkpoint's with no head
-/// posted. A detected rollback logs Critical `log_rollback` naming the range.
+/// alarm started from the checked head's stamp (for a head under a snapshot's base, the stamp of
+/// the command after it, which the snapshot's check binds), or the vault-finalized checkpoint's
+/// with no head posted. A detected rollback logs Critical `log_rollback` naming the range.
 /// Error cases:
 /// - the rollback check fails (its Critical names the range)
 pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::ReplayedLog) -> anyhow::Result<Option<Setup>> {
@@ -255,8 +256,8 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
         super::check_rollback(posted, last_seq, |seq| {
             if base.is_some_and(|base| seq <= base) {
                 // The suffix replay never reaches a seq at or under the snapshot base; the
-                // candidate verified the posted cumulative prefix against the on-disk prefix under
-                // the trusted authority before accepting the snapshot. The seq check binds here.
+                // candidate bound the posted cumulative prefix to the snapshot's certified one
+                // before accepting the snapshot. The seq check binds here.
                 return Ok(None);
             }
             log.replayed
@@ -266,16 +267,17 @@ pub(crate) fn startup(pending: Option<Pending>, log: &crate::sequencer::Replayed
         })
         .inspect_err(|e| error!("refusing to serve: {e:#}"))?;
     }
-    // The stall alarm starts from the checked head's stamp, or, with no head of this key posted,
-    // the vault-finalized checkpoint's, not from this process: the checked head is no advance, and
-    // trusted time since that stamp counts. A newer checkpoint does not move a head's anchor.
+    // The stall alarm starts from the checked head's stamp (under a snapshot's base, the next
+    // command's, `ts_at`), or, with no head of this key posted, the vault-finalized checkpoint's,
+    // not from this process: the checked head is no advance, and trusted time since that stamp
+    // counts. A newer checkpoint does not move a head's anchor.
     let stamp = posted.map_or(log.replayed.anchor_ts, |_| log.replayed.ts_at);
     poster.anchored = Some((posted.map_or(0, |head| head.seq), stamp));
     // The evidence that this log holds an on-chain head: each command's cumulative prefix as the
     // replay authenticated it, seeded before the poster's first read.
     poster.prefix_ring = log.prefix_ring();
     // The watch starts at the recovered head: for a snapshot with an empty suffix that is the
-    // certified cumulative prefix at the base (the value `prefix::verify` binds the on-disk log
+    // certified cumulative prefix at the base (the value `prefix::since` binds the posted head
     // to, and what a sync-only release republishes) — never the checkpoint link, which restarts
     // only the internal seal chain.
     let head = Head { seq: log.last_seq().unwrap_or(0), link: log.head_link() };

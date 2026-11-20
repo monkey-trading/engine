@@ -286,6 +286,11 @@ pub struct SnapshotSection {
     pub dir: PathBuf,
     /// How many caches are kept; older ones are pruned as each new one is published.
     pub retain: NonZeroUsize,
+    /// The sequenced time between captures: a capture is due at the first checkpoint this long
+    /// after the last one, at a start's first checkpoint and at shutdown. Zero captures at every
+    /// checkpoint. A restart replays at most about this much flow past the newest cache.
+    #[serde(with = "humantime_serde")]
+    pub interval: Duration,
     /// The largest signed cache file written or read.
     pub max_bytes: NonZeroUsize,
     /// Enclave addresses verified through their attestation; recovery uses only a cache one of them

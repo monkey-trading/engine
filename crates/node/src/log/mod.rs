@@ -222,6 +222,22 @@ pub fn read_file(path: &Path, mut visit: impl FnMut(LogEntry) -> anyhow::Result<
     .with_context(|| format!("log {}", path.display()))
 }
 
+/// Reads the segment files in `dir` from the one holding `from` on, in order, each as `read_file`
+/// does: a reader of a log's recent entries, which reads none of the segments before. Neither the
+/// manifest nor the catalog is consulted, so the caller binds what it reads, as a digest does.
+/// Error cases:
+/// - the directory or a segment cannot be read, or a non-blank line is not a valid entry
+/// - `visit` fails, propagating [`Stop`] for an early end
+pub(crate) fn read_from(
+    dir: &Path,
+    from: u64,
+    mut visit: impl FnMut(LogEntry) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let files = segments::list_segments(dir)?;
+    let first = files.iter().rposition(|(first_seq, _)| *first_seq <= from).unwrap_or(0);
+    files[first..].iter().try_for_each(|(_, path)| read_file(path, &mut visit))
+}
+
 /// Hands each line of `input` to `visit` with its line number, line break included where it has
 /// one, holding one line in memory at a time.
 /// Error cases:

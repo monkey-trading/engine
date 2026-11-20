@@ -1,7 +1,7 @@
-//! Restarting on the generated log: `engine replay`'s replay of it, a node's recovery by replaying the
-//! whole of it to its first command, and a restart from the newest cache, each from the book the log
-//! starts from (`Base`). A whole log's replay starts from an empty engine, and this one from the book,
-//! so each is the node's own read with its replay started from the book (`Replay::seeded`).
+//! Restarting on the generated log by replaying the whole of it: `engine replay`'s replay, and a node's
+//! recovery to its first command, each from the book the log starts from (`Base`). A whole log's replay
+//! starts from an empty engine, and this one from the book, so each is the node's own read with its
+//! replay started from the book (`Replay::seeded`). The restart from a cache is `cache`'s.
 
 use std::cell::RefCell;
 use std::path::Path;
@@ -9,23 +9,22 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use engine_core::types::AccountId;
-use tokio::sync::{Semaphore, broadcast, watch};
+use tokio::sync::{Semaphore, broadcast};
 
 use crate::api::{Feed, MAX_BACKFILLS};
 use crate::common::{CHAIN_ID, VAULT};
-use crate::config::{HistorySection, SnapshotSection};
+use crate::config::HistorySection;
 use crate::history::derived::{Deriver, RowsStore};
 use crate::history::marks::{Retentions, Store};
 use crate::history::{History, HistoryCheck, PageQuery};
-use crate::log::{CheckpointDomain, LogEntry, LogReader, Manifest, Offset, ReplayWorkers, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, ReplayWorkers};
 use crate::node::marks::recovery_sink;
+use crate::sequencer::Sequencer;
 use crate::sequencer::recovery_scale::Base;
 use crate::sequencer::recovery_scale::flow::Node;
-use crate::sequencer::replay::{Replay, replay_path_from};
-use crate::sequencer::{ReplayedLog, Sequencer};
-use crate::snapshot;
+use crate::sequencer::replay::replay_path_from;
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, stats};
 
@@ -55,20 +54,6 @@ pub(super) struct Recovered {
     pub first_command: Duration,
     /// The history index, checked against the log as the replay read it, to catch up after the start.
     pub history: History,
-}
-
-/// A restart from a cache to its first command: the cache's read (signature, decoding, the state root,
-/// the transient indexes, the replay's restore from it and the log's reader opened past it), the
-/// replay of the commands past it, recorded into a dashboard record as recovery records them, and the
-/// sequencer's start on that replay to its first command. The cache is the engine-only one a capture
-/// builds: the paired cache a node with `[snapshots]` reads also has its history and catalog stores
-/// checked and resumed, which this leaves out.
-pub(super) struct Restarted {
-    pub read: Duration,
-    pub suffix: Replayed,
-    pub start: Duration,
-    /// The last command the restart replayed.
-    pub last_seq: Option<u64>,
 }
 
 /// `engine replay`'s replay of the log in `dir` from the book: every command's events, every
@@ -108,67 +93,9 @@ pub(super) fn recover(
         Replayed { commands: log.replayed.commands, checkpoints: log.replayed.checkpoints, took: started.elapsed() };
     let history = check.finish()?;
     let starting = Instant::now();
-    let mut node = Node::recovered(log, dir, key)?;
+    let mut node = Node::recovered(log, dir, key, None)?;
     node.first_command()?;
     Ok(Recovered { node, replayed, start: starting.elapsed(), first_command: started.elapsed(), history })
-}
-
-/// Writes a checkpoint on `node` and the cache a capture at it publishes into `section`, signed with
-/// `key`, and returns how long building the cache held the sequencer's thread (the engine's encoding)
-/// and how many bytes it holds.
-pub(super) fn capture(node: &mut Node, section: &SnapshotSection, key: &EnclaveKey) -> (Duration, u64) {
-    let (_, (held, cache)) = node.checkpoint_with(|node, checkpoint| {
-        let started = Instant::now();
-        let cache = node.seq.snapshot_at(checkpoint.clone()).expect("the cache builds");
-        (started.elapsed(), cache)
-    });
-    snapshot::write(section, &cache, key).expect("the cache is written");
-    let bytes = snapshot::candidates(section).expect("the caches").iter().map(|path| file_bytes(path)).max();
-    (held, bytes.unwrap_or(0))
-}
-
-/// A restart of the log in `dir` from the newest cache in `section`, to its first command: the cache
-/// read as recovery reads one (`snapshot::read`), every command after it replayed onto it, read from
-/// the log through `manifest`, the writer's published view, under `key`'s address, its seals checked
-/// ahead by `workers` as recovery's suffix replay checks them, then a sequencer started on that replay,
-/// signing with `key`, and its first command. The sequencer writes to a log of its own under `run`, so
-/// the node's log stays as it was for the recovery by full replay.
-/// Error cases:
-/// - no cache is there, it does not read, the commands after it do not replay onto it, or the
-///   sequencer refuses the replay or its first command
-pub(super) fn restart(
-    section: &SnapshotSection,
-    dir: &Path,
-    manifest: watch::Receiver<Manifest>,
-    run: &Path,
-    key: Arc<EnclaveKey>,
-    workers: ReplayWorkers,
-) -> anyhow::Result<Restarted> {
-    let started = Instant::now();
-    let path = snapshot::candidates(section)?.into_iter().next().context("a cache")?;
-    let (cache, engine) = snapshot::read(section, &path, CHAIN_ID, VAULT)?;
-    let (at, before) = (cache.checkpoint.seq, cache.progress.checkpoints);
-    let mut replay = Replay::from_snapshot(engine, cache, DOMAIN, Some(AccountId(key.address())), None)?;
-    replay.record_stats_with(stats());
-    replay.check_seals_ahead(dir, workers);
-    let mut reader = LogReader::open(dir, Offset::start_of(at + 1), manifest)?;
-    let read = started.elapsed();
-    let suffix_started = Instant::now();
-    while let Some((_, entry)) = reader.next_entry()? {
-        replay.apply(&entry)?;
-    }
-    let replayed = replay.finish();
-    let last_seq = replayed.engine.last_seq();
-    let commands = last_seq.map_or(0, |last| last - at);
-    let suffix = Replayed { commands, checkpoints: replayed.checkpoints - before, took: suffix_started.elapsed() };
-    let starting = Instant::now();
-    let own = run.join("cache-start");
-    std::fs::create_dir_all(&own)?;
-    let log = SegmentedLog::open(&own, |_| Ok(()))?.into();
-    let log = ReplayedLog { log, replayed, snapshot_seq: Some(at), legacy_authorizations: Default::default() };
-    let mut node = Node::recovered(log, &own, key)?;
-    node.first_command()?;
-    Ok(Restarted { read, suffix, start: starting.elapsed(), last_seq })
 }
 
 /// The history index's catch-up over the log in `dir` from where `history` resumes to `node`'s last

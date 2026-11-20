@@ -66,6 +66,18 @@ fn the_template_holds_what_a_production_build_requires() {
     cfg.refuse_unmet_min_sources(true).expect("every launch market has its min_sources over TLS");
 }
 
+/// The template takes a recovery cache every five minutes of sequenced time: a restart replays at most
+/// about that much flow past the newest one (`sequencer::recovery_scale`). Its enclave address is
+/// pinned in a release after the first, which created the key and leaves `[snapshots]` out.
+#[test]
+fn the_template_takes_a_recovery_cache_every_five_minutes() {
+    let cfg = assembled("snapshots");
+    let snapshots = cfg.snapshots.as_ref().expect("[snapshots]");
+    assert_eq!(snapshots.interval, std::time::Duration::from_secs(300));
+    assert!(snapshots.dir.starts_with("/data"), "the image's one writable disk");
+    assert!(snapshots.trusted_signers.is_empty(), "a placeholder: a release pins the key a first one created");
+}
+
 #[test]
 fn the_share_markets_are_quoted_by_massive_and_alpacas_consolidated_feed() {
     let mut cfg = assembled("shares");

@@ -29,6 +29,7 @@ pub(crate) use distributions::DistributionsPage;
 pub(crate) use monkey::MonkeyView;
 pub(crate) use view::{ActivityPage, HouseFigures, PositionsView, SeriesPage, SeriesQuery};
 
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::Context;
@@ -192,6 +193,26 @@ impl Stats {
         let mut inner = self.lock();
         if inner.background.is_some() {
             inner.staged.push(background::Job::Apply(Box::new(sequenced.clone())));
+        }
+    }
+
+    /// A job that encodes the worker's copy at the command at `seq`, stamped `ts`, the last one
+    /// `follow` staged, for a recovery cache at the checkpoint after it, and the end its encoding
+    /// arrives on. `stage_job` stages it; `None` when no worker runs, and the caller encodes the
+    /// engine itself.
+    pub(crate) fn encode_job(&self, seq: u64, ts: Millis) -> Option<(background::Job, Receiver<background::Encoded>)> {
+        self.lock().background.as_ref()?;
+        // One slot: the worker never waits on the reader, which may already have given up.
+        let (reply, encoded) = sync_channel(1);
+        Some((background::Job::Encode { seq, ts, reply }, encoded))
+    }
+
+    /// Stages `job` behind what `follow` staged, for the worker with the batch once durable. With no
+    /// worker it is dropped, and so is any reply it carries.
+    pub(crate) fn stage_job(&self, job: background::Job) {
+        let mut inner = self.lock();
+        if inner.background.is_some() {
+            inner.staged.push(job);
         }
     }
 

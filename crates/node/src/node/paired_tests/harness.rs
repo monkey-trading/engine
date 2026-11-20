@@ -77,6 +77,7 @@ pub(crate) fn configuration(label: &str) -> NodeConfig {
     cfg.snapshots = Some(SnapshotSection {
         dir: root.join("snapshots"),
         retain: 4.try_into().unwrap(),
+        interval: std::time::Duration::ZERO,
         max_bytes: (16 * 1024 * 1024).try_into().unwrap(),
         trusted_signers: vec![AccountId(EnclaveKey::test_key().address())],
     });
@@ -92,6 +93,12 @@ impl Node {
     /// Controls only the existing clock input; all storage and cryptographic paths remain real.
     pub(crate) async fn start_at(cfg: NodeConfig, clock: Arc<dyn Clock>) -> Result<Self> {
         Self::start_with(cfg, clock, None, None).await
+    }
+
+    /// Starts as `start` does, but with no stats worker, as a node whose worker stopped runs: the
+    /// sequencer encodes each cache's engine itself.
+    pub(crate) async fn start_without_stats_worker(cfg: NodeConfig) -> Result<Self> {
+        Self::start_inner(cfg, Arc::new(SystemClock), None, None, false).await
     }
 
     /// Resumes a log whose genesis is `genesis`, the commands a fixture log ran, rather than the dev
@@ -115,6 +122,17 @@ impl Node {
         clock: Arc<dyn Clock>,
         gate: Option<(CheckpointParent, mpsc::Sender<Work>)>,
         genesis: Option<Vec<Command>>,
+    ) -> Result<Self> {
+        Self::start_inner(cfg, clock, gate, genesis, true).await
+    }
+
+    /// Starts the node, with the stats worker the node runs when `stats_worker` is set.
+    async fn start_inner(
+        cfg: NodeConfig,
+        clock: Arc<dyn Clock>,
+        gate: Option<(CheckpointParent, mpsc::Sender<Work>)>,
+        genesis: Option<Vec<Command>>,
+        stats_worker: bool,
     ) -> Result<Self> {
         let key = Arc::new(EnclaveKey::test_key());
         let parent = gate.as_ref().map(|(parent, _)| *parent);
@@ -140,6 +158,10 @@ impl Node {
         let sealing = history.sealing().expect("authenticated history has a seal endpoint");
         seq_cfg.history_sealing = Some(sealing.clone());
         let mut seq = Sequencer::recover_from(log, seq_cfg, key, stream.clone(), withdrawals)?;
+        // The node's stats worker, whose copy of the engine encodes each cache's engine.
+        if stats_worker {
+            seq.track_stats(crate::test_support::stats());
+        }
         seq.carry_toxicity_notional(cfg.genesis.params.toxicity.notional.unwrap())?;
         // The `V20` rules, before access screening: these fixtures credit receipts unscreened.
         seq.activate_legacy_protocol()?;

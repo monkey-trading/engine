@@ -30,10 +30,12 @@ auth = "none"
 
 # Recovery caches are optional. Pin an enclave address only after verifying its attestation.
 # Only caches the current attested key signed are used; a start under a new key fails closed until
-# the key persists across restarts. Empty pins use full replay.
+# the key persists across restarts. Empty pins use full replay. A cache is captured every interval
+# of sequenced time ("0s" takes every checkpoint), and at shutdown.
 # [snapshots]
 # dir = "data/dev/snapshots"
 # retain = 3
+# interval = "5m"
 # max_bytes = 67108864
 # trusted_signers = []
 

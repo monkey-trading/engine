@@ -25,7 +25,7 @@ impl Sequencer {
     /// Plans paired recovery or a strict log-derived migration without any persisted mutation.
     /// `capture`, when set, is the on-chain posted head: the replayed suffix records the
     /// cumulative command-prefix digest at its seq for the posted-head check, and a posted seq at or under the
-    /// snapshot base is verified against the on-disk prefix under the trusted authority before the
+    /// snapshot base is bound to the snapshot's history by the commands since it before the
     /// snapshot is accepted (a refusal is fatal, not a candidate rejection).
     /// Error cases:
     /// - snapshots are absent, no cache/full replay can verify the authoritative log, or the
@@ -103,10 +103,10 @@ impl Sequencer {
 }
 
 /// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
-/// A posted head at or under C is verified against the on-disk prefix before the snapshot is
-/// accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather than falling
-/// back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and no head
-/// posted, the same pass stamps a vault-finalized checkpoint under C.
+/// A posted head at or under C is bound to C's history by the commands since it before the
+/// snapshot is accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather
+/// than falling back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and
+/// no head posted, a pass over the on-disk prefix stamps a vault-finalized checkpoint under C.
 /// Error cases:
 /// - certificate, fixed metadata, prefix extension, boundary bytes, replay, the posted-head prefix
 ///   check or the anchor-stamping pass, or availability fails
@@ -125,23 +125,24 @@ fn candidate(
     let (snapshot, engine) = snapshot::read(snapshots, path, domain.chain_id, domain.vault)?;
     let at = snapshot.offset;
     // The snapshot authenticates the state at its base; the on-chain posted head is independent
-    // evidence. A posted seq at or under the base is bound to this log by hashing and seal-checking
-    // the on-disk prefix through it — no engine apply, so snapshot recovery keeps its savings. The
-    // verified base prefix is the snapshot's own certified `command_prefix`, which
-    // `from_snapshot` seeds; the posted command's sequenced time is carried to the stall alarm.
-    // With `[log_heads]` and no head posted, the same pass stamps a vault-finalized checkpoint under
-    // the base, the alarm's anchor then; the suffix replay stamps one past the base.
+    // evidence. A posted seq at or under the base is bound to the snapshot's history by hashing the
+    // commands after it, through the base, onto its link, which must give the snapshot's certified
+    // `command_prefix`, the one `from_snapshot` seeds — no engine apply and no read before the head,
+    // so snapshot recovery keeps its savings. The time it gives is carried to the stall alarm.
+    // With `[log_heads]` and no head posted, a pass over the on-disk prefix stamps a vault-finalized
+    // checkpoint under the base, the alarm's anchor then; the suffix replay stamps one past the base.
     let posted = capture.filter(|posted| posted.seq <= at.seq);
     let anchor = parent
         .filter(|parent| cfg.log_heads.is_some() && parent.has_checkpoint && parent.seq < at.seq && capture.is_none());
     let (mut posted_ts, mut anchor_ts) = (None, None);
-    if posted.is_some() || anchor.is_some() {
+    let (dir, certified) = (&cfg.node.log_dir, snapshot.context.command_prefix);
+    if let Some(posted) = posted {
+        posted_ts = Some(crate::log_heads::prefix::since(dir, posted, at.seq, engine.now(), certified)?);
+    } else if let Some(anchor) = anchor {
         let trusted = signer.context("snapshot recovery needs the trusted signer to verify the log's prefix")?;
-        let (dir, certified, anchor) = (&cfg.node.log_dir, snapshot.context.command_prefix, anchor.map(|a| a.seq));
         let workers = cfg.node.replay_workers;
-        let verified =
-            crate::log_heads::prefix::verify(dir, domain, trusted, posted, anchor, at.seq, certified, workers)?;
-        (posted_ts, anchor_ts) = (verified.posted_ts, verified.anchor_ts);
+        let verified = crate::log_heads::prefix::verify(dir, domain, trusted, anchor.seq, at.seq, certified, workers)?;
+        anchor_ts = Some(verified.anchor_ts);
     }
     let pair = snapshot.pair.as_ref().context("engine-only cache requires full history migration")?;
     let expected = PrefixId {
