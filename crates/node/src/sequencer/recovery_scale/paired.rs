@@ -1,8 +1,8 @@
 //! The log's node with paired recovery caches, as a node with `[snapshots]` runs: its history owner
 //! indexes the log and publishes each cache a capture hands it, the stats worker's copy encoding the
-//! engine, every `interval` of sequenced time. A restart reads the newest cache through the node's own
-//! recovery (`Sequencer::read_paired_log`), the posted log head's check included, then makes the start
-//! checks a node makes before it sequences and stamps its first command.
+//! engine, every `interval` of sequenced time. A restart reads the newest cache through the recovery
+//! the node runs (`Sequencer::read_paired_log` composing it), the posted log head's check included,
+//! then makes the start checks a node makes before it sequences and stamps its first command.
 
 use std::path::Path;
 use std::sync::Arc;

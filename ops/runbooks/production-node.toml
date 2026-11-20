@@ -451,12 +451,12 @@ public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 # Recovery caches, one every five minutes of sequenced time. The stats worker encodes each cache's
 # engine, so a capture holds the sequencer only to sync the log and seal the catalog. A restart reads
 # the newest cache, checks the posted log head over the commands since the head, and replays at most
-# five minutes of flow; it still reads the whole log three times outside the cache, which grows with
-# the log (restart-and-recovery.md has the figures). A cache carries the withdrawal approvals still
-# unpaid, with their latest authorizations, so a start from it signs again only what full replay
-# would. With [snapshots], account history is the authenticated index in this directory. Remove
-# [snapshots] before rotation is turned on, as operator-candidate.md says for every rotation-set
-# member.
+# five minutes of flow; outside them it reads only the log's newest segments, so a restart does not
+# grow with the log (restart-and-recovery.md has the figures). A cache carries the withdrawal
+# approvals still unpaid, with their latest authorizations, so a start from it signs again only what
+# full replay would. With [snapshots], account history is the authenticated index in this directory.
+# Remove [snapshots] before rotation is turned on, as operator-candidate.md says for every
+# rotation-set member.
 [snapshots]
 dir = "/data/snapshots"
 retain = 2

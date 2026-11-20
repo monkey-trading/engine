@@ -1,11 +1,14 @@
 //! A takeover's first start under the new signer: the log cut back to the vault's finalized checkpoint.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::bail;
 use engine_core::types::AccountId;
 
+use crate::checkpoints::Takeover;
 use crate::config::NodeConfig;
+use crate::log::{Checkpoint, LogEntry, SegmentedLog};
 use crate::tee::EnclaveKey;
 
 /// On a takeover's first start under the new signer, cuts the log to the vault's finalized
@@ -38,35 +41,56 @@ pub(in crate::node) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc
     if state.signer != AccountId(key.address()) {
         return Ok(());
     }
-    let Some((anchor_seq, anchor_root)) = state.checkpoint else { return Ok(()) };
-    // Only a tail another key signed is cut: a node's own unposted checkpoints are its poster's
-    // queued work, which an ordinary restart must keep.
-    let mut last: Option<(u64, String, AccountId)> = None;
-    crate::log::SegmentedLog::open(dir, |entry| {
-        if let crate::log::LogEntry::Checkpoint(checkpoint) = &entry {
-            last = Some((checkpoint.seq, checkpoint.root.clone(), checkpoint.signer.parse()?));
-        }
-        Ok(())
-    })?;
-    let last = last.as_ref();
-    if last.is_some_and(|(_, _, signer)| *signer == state.signer) {
-        return Ok(());
-    }
-    if last.is_some_and(|(seq, root, _)| *seq > anchor_seq || *root != anchor_root) {
+    let Some(anchor) = state.checkpoint else { return Ok(()) };
+    if let Some(to) = cut_due(dir, state.signer, anchor)? {
         // Behind the marker every open of a copy finishes from, published and removed for good.
-        let to = crate::checkpoints::Takeover { seq: anchor_seq, root: anchor_root.clone(), signer: state.signer };
         crate::standby::cut_marked(dir, &to)?;
     }
     Ok(())
 }
 
+/// The cut back to the vault's finalized checkpoint `(seq, root)` that the log in `dir` is due under
+/// `signer`, the vault's: one unless the log's last checkpoint is `signer`'s, or is the vault's
+/// checkpoint itself. Only a tail another key signed is cut: a node's own unposted checkpoints are its
+/// poster's queued work, which an ordinary restart keeps. An ordinary restart finds its own key's in
+/// the log's newest segments, and so reads no more of a long log than of a short one. The signer it
+/// finds there is not checked against the signature, but one forged to name this key cuts nothing,
+/// and recovery's replay refuses a checkpoint this key did not sign. A cut writes the log, so it is
+/// decided on a whole read, which refuses a log that does not open, or a checkpoint whose signer is
+/// not an address, before anything is cut.
+/// Error cases:
+/// - the log cannot be read, or a checkpoint's signer is not an address
+fn cut_due(dir: &Path, signer: AccountId, (seq, root): (u64, String)) -> anyhow::Result<Option<Takeover>> {
+    let signer_of = |checkpoint: &Checkpoint| checkpoint.signer.parse::<AccountId>();
+    if crate::log::last_checkpoint(dir)?.as_ref().map(signer_of).transpose()? == Some(signer) {
+        return Ok(None);
+    }
+    let mut last: Option<Checkpoint> = None;
+    SegmentedLog::open(dir, |entry| {
+        if let LogEntry::Checkpoint(checkpoint) = entry {
+            signer_of(&checkpoint)?;
+            last = Some(checkpoint);
+        }
+        Ok(())
+    })?;
+    let Some(last) = last else { return Ok(None) };
+    if signer_of(&last)? == signer || (last.seq <= seq && last.root == root) {
+        return Ok(None);
+    }
+    Ok(Some(Takeover { seq, root, signer }))
+}
+
 #[cfg(test)]
 mod tests {
-    use engine_core::command::Command;
+    use engine_core::command::{Command, Sequenced};
 
     use super::*;
-    use crate::log::LogEntry;
+    use crate::log::{CommandEntry, Manifest};
     use crate::test_support::{TestSequencer, dev_config, log_entries, scratch_dir};
+
+    const OURS: AccountId = AccountId([0x11; 20]);
+    const OUTGOING: AccountId = AccountId([0x22; 20]);
+    const UNREADABLE: AccountId = AccountId([0x33; 20]);
 
     /// A takeover start finishes a cut its marker names before it reads the log, even when what the crash
     /// left opens, and removes the marker: none is left to cut the log again once it grows.
@@ -98,5 +122,88 @@ mod tests {
             matches!(log_entries(&dir).last(), Some(LogEntry::Checkpoint(checkpoint)) if checkpoint.seq == first.seq),
             "the cut was not finished"
         );
+    }
+
+    /// An ordinary restart, whose last checkpoint is its own key's, reads the log's newest segments
+    /// alone: a segment before them that no longer reads, which a whole read refuses, cuts nothing.
+    #[test]
+    fn an_ordinary_restart_is_decided_from_the_newest_segments() {
+        let dir = log("takeover-ours", &[(1, OUTGOING, 1), (3, OURS, 3)]);
+        damage_first_segment(&dir);
+        assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "a whole read refuses the first segment");
+        assert_eq!(cut_due(&dir, OURS, (1, root(1))).unwrap(), None);
+    }
+
+    /// A tail another key signed past the vault's checkpoint is cut back to it, a log that holds the
+    /// vault's checkpoint last is not, and a cut is decided on a whole read, which refuses a log a
+    /// segment of which no longer reads before anything is cut.
+    #[test]
+    fn a_cut_is_due_only_for_another_keys_tail_and_decided_on_a_whole_read() {
+        let dir = log("takeover-due", &[(1, OUTGOING, 1), (3, OUTGOING, 3)]);
+        let due = cut_due(&dir, OURS, (1, root(1))).unwrap();
+        assert_eq!(due.map(|to| (to.seq, to.root, to.signer)), Some((1, root(1), OURS)));
+        assert_eq!(cut_due(&dir, OURS, (3, root(3))).unwrap(), None, "the log ends at the vault's checkpoint");
+        damage_first_segment(&dir);
+        cut_due(&dir, OURS, (1, root(1))).expect_err("a log that does not open is refused, so nothing is cut");
+    }
+
+    /// A cut is refused when any checkpoint the whole read finds names a signer that is not an address,
+    /// not only the last, as the read the cut is decided on always refused it.
+    #[test]
+    fn a_cut_is_refused_over_any_checkpoint_whose_signer_is_not_an_address() {
+        let dir = log("takeover-signer", &[(1, OUTGOING, 1), (2, UNREADABLE, 2), (3, OUTGOING, 3)]);
+        let newest = dir.join("00000000000000000002.jsonl");
+        let text = std::fs::read_to_string(&newest).unwrap();
+        assert!(!Manifest::load(&dir).unwrap().segments.iter().any(|listed| dir.join(&listed.file) == newest));
+        std::fs::write(&newest, text.replace(&UNREADABLE.to_string(), "0xnot-an-address")).unwrap();
+        cut_due(&dir, OURS, (1, root(1))).expect_err("an unreadable signer is refused, so nothing is cut");
+    }
+
+    // ── Helpers ──
+
+    /// A log in a directory named for `label` of a command at each seq to the last checkpoint's, in
+    /// segments of two commands, with a checkpoint `(seq, signer, root)` after the command at each seq.
+    fn log(label: &str, checkpoints: &[(u64, AccountId, u8)]) -> std::path::PathBuf {
+        let dir = scratch_dir(label);
+        let manifest = tokio::sync::watch::channel(Manifest::default()).0;
+        let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest).unwrap();
+        let last = checkpoints.last().map_or(0, |(seq, _, _)| *seq);
+        for seq in 0..=last {
+            let sequenced = Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick };
+            writer
+                .append(&LogEntry::Command(CommandEntry { sequenced, events: Some(Vec::new()), seal: None }))
+                .unwrap();
+            for (_, signer, byte) in checkpoints.iter().filter(|(at, _, _)| *at == seq) {
+                writer.append(&LogEntry::Checkpoint(checkpoint(seq, *signer, *byte))).unwrap();
+            }
+        }
+        writer.flush().unwrap();
+        dir
+    }
+
+    /// A checkpoint at `seq` that `signer` names, with `root(byte)`.
+    fn checkpoint(seq: u64, signer: AccountId, byte: u8) -> Checkpoint {
+        Checkpoint {
+            parent: None,
+            seq,
+            root: root(byte),
+            signature: format!("0x{}", "00".repeat(65)),
+            signer: signer.to_string(),
+            domain: None,
+            deferred_withdrawals: false,
+        }
+    }
+
+    /// The root every byte of which is `byte`.
+    fn root(byte: u8) -> String {
+        format!("0x{}", hex::encode([byte; 32]))
+    }
+
+    /// Rewrites the log's first segment, which its listing then no longer matches.
+    fn damage_first_segment(dir: &Path) {
+        let first = dir.join("00000000000000000000.jsonl");
+        let mut bytes = std::fs::read(&first).unwrap();
+        bytes.extend_from_slice(b"\n");
+        std::fs::write(first, bytes).unwrap();
     }
 }

@@ -382,7 +382,7 @@ impl Segment {
     /// - a non-blank line is not a valid entry, or the first entry is not the command for
     ///   `first_seq`
     /// - `visit` fails
-    fn read(
+    pub(super) fn read(
         first_seq: u64,
         path: &Path,
         listed: Option<&SegmentInfo>,

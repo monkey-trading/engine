@@ -34,10 +34,9 @@ pub(super) struct Recovered {
 
 /// The log this start runs from: a member's replica, which the tail handover left at the predecessor's
 /// final checkpoint, finished with what the member read before it connected (`ready`), or the log on
-/// disk, replayed in full against the signer history `setup` reads.
+/// disk, from a cache or replayed in full against the signer history `setup` reads.
 /// Error cases:
-/// - see `from_replica` and `read_log_and_history_authorities`, or the signer history or the
-///   dashboard record cannot be read
+/// - see `from_replica` and `read_log_and_history_authorities`, or the dashboard record cannot be read
 pub(super) async fn recover(
     cfg: &NodeConfig,
     key: &Arc<EnclaveKey>,
@@ -55,9 +54,13 @@ pub(super) async fn recover(
         return Ok(Recovered { log, history: replica.history, pending, anchor, stats: replica.stats });
     }
     let marks = marks.shared.as_ref().expect("the marks store opens at startup");
-    let authorities = super::signer_history::load(setup, &cfg.node.log_dir)
-        .await
-        .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    // Read only for a full replay, a pass over the whole log: a cache's suffix replays under this
+    // node's key alone.
+    let authorities = async {
+        super::signer_history::load(setup, &cfg.node.log_dir)
+            .await
+            .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))
+    };
     // The dashboard record recovery rebuilds from the log's replay and the sequencer then continues.
     let stats = Stats::new(cfg).context("stats")?;
     let mut anchor = None;
@@ -111,15 +114,16 @@ fn from_replica(
 
 /// Replays with independently finalized historical signer evidence before any persisted mutation,
 /// from a verified snapshot when snapshots are configured, seeding the marks cache through `marks`.
-/// The on-chain posted log head is read before the log replays: the rollback check binds to the
-/// link the replay captures at the posted seq, never a second pass over the host's files.
+/// `authorities` gives that evidence, awaited only for a full replay. The on-chain posted log head
+/// is read before the log replays: the rollback check binds to the link the replay captures at the
+/// posted seq, never a second pass over the host's files.
 /// Error cases:
 /// - history, log, authenticated signer history, the posted-head read, or the marks cache fails
 pub(super) async fn read_log_and_history_authorities(
     cfg: &NodeConfig,
     key: &Arc<EnclaveKey>,
     parent: Option<crate::log::CheckpointParent>,
-    authorities: crate::checkpoints::SignerHistory,
+    authorities: impl Future<Output = anyhow::Result<crate::checkpoints::SignerHistory>>,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
     stats: &Stats,
     mut observe: impl FnMut(&crate::log::LogEntry),
@@ -134,11 +138,25 @@ pub(super) async fn read_log_and_history_authorities(
     if cfg.snapshots.is_some() {
         // Snapshot recovery replays the authenticated suffix only and attaches no marks sink, so the
         // cache keeps the rows it imported and the provider backfill gives the depth they lack.
-        let (log, plan) =
-            Sequencer::read_paired_log(cfg, signer, parent, authorities, Some(stats.clone()), capture, observe)
-                .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+        let recovery_failed = |e: &anyhow::Error| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}");
+        let cached = Sequencer::read_paired_cache(cfg, signer, parent, Some(stats), capture, &mut observe)
+            .inspect_err(recovery_failed)?;
+        let (log, plan) = match cached {
+            Some(recovered) => recovered,
+            None => Sequencer::replay_paired_log(
+                cfg,
+                signer,
+                parent,
+                authorities.await?,
+                Some(stats.clone()),
+                capture,
+                observe,
+            )
+            .inspect_err(recovery_failed)?,
+        };
         return Ok((log, HistoryPlan::authenticated(plan)?, pending));
     }
+    let authorities = authorities.await?;
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
     let (sink, seeding, reset_done) = marks::recovery_sink(marks);
