@@ -61,6 +61,13 @@
 #     Its last trade is 3 business days before the 25th of the month before
 #     delivery, or 4 when the 25th is not a business day.
 #   Business days are the exchange's: CME's exclude US holidays.
+# - Sources (owner's decision of 2026-11-20): the seven CME-traded markets (ids
+#   20-22, 25 and 30-32) price from Massive's futures feed alone, with
+#   min_sources = 1. CME Group's WebSocket API needs a licence agreement and
+#   business-level fees, and Massive's futures data derives from CME's. These
+#   markets have no price while Massive is down, and no second source checks a
+#   Massive print. US shares keep Massive and Alpaca, FX keeps Massive and
+#   TraderMade, and crypto keeps Coinbase and Kraken, each at min_sources = 2.
 # - Benchmark rates are supplied by the separate signed publisher worker (#33).
 #   Complete the node config with config/benchmark-publishers.toml and run the worker
 #   before serving. With no rate, a market accrues no financing and raises a Critical alert.
@@ -537,7 +544,7 @@ house_cap_bps = 5000
 house_cap_floor = "17800000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.70" # the year's markout spread (#699)
 min_level_distance_bps = 18 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
@@ -587,7 +594,7 @@ house_cap_bps = 5000
 house_cap_floor = "17800000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "5000000", tenth_bps = 9 }, { up_to = "25000000", tenth_bps = 18 }, { tenth_bps = 36 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.91" # the year's markout spread (#699)
 min_level_distance_bps = 19 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
@@ -637,7 +644,7 @@ house_cap_bps = 5000
 house_cap_floor = "10000000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.65" # the year's markout spread (#699)
 min_level_distance_bps = 18 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
@@ -688,7 +695,7 @@ house_cap_bps = 5000
 house_cap_floor = "10000000"
 margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "5000000", tenth_bps = 10 }, { up_to = "25000000", tenth_bps = 20 }, { tenth_bps = 40 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "1.05" # the year's markout spread (#699)
 min_level_distance_bps = 19 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "TONA", markup_bps = 250, day_basis = 365 }
@@ -735,7 +742,7 @@ house_cap_bps = 3000
 house_cap_floor = "10000000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "1.22" # the year's markout spread (#699)
 min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
@@ -788,7 +795,7 @@ house_cap_bps = 3000
 house_cap_floor = "10000000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "2.24" # the year's markout spread (#699)
 min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
@@ -840,7 +847,7 @@ house_cap_bps = 3000
 house_cap_floor = "10000000"
 margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
-price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
+price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "2.04" # the year's markout spread (#699)
 min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }

@@ -1,6 +1,7 @@
 //! The production node template. Assembled as the deploy runbook says, with the benchmark
 //! publishers and the production genesis, it loads and validates as a node config, and it holds what
-//! a production build requires of one, two TLS sources for every launch market included. Every
+//! a production build requires of one, two TLS sources for every launch market but the futures markets
+//! (Massive alone, by the owner's decision of 2026-11-20) included. Every
 //! placeholder carries a marker, so none is mistaken for a value. The share markets are quoted by
 //! Massive and Alpaca's consolidated feed, and without Alpaca would fall short of `min_sources`.
 
@@ -60,9 +61,9 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");
     let text = template();
     assert!(!text.contains("api_key_env =") && !text.contains("url_env ="), "the environment is refused");
-    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, the CME Group exchanges' index
-    // and commodity futures, every contract, from Massive and CME, and the US shares from Massive and
-    // Alpaca meet min_sources 2.
+    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, and the US shares from Massive
+    // and Alpaca meet min_sources 2. The index and commodity futures, every contract, meet their
+    // min_sources 1 from Massive alone (owner's decision of 2026-11-20).
     cfg.refuse_unmet_min_sources(true).expect("every launch market has its min_sources over TLS");
 }
 
@@ -115,18 +116,29 @@ fn the_share_markets_are_quoted_by_massive_and_alpacas_consolidated_feed() {
     }
 }
 
+/// The owner's decision of 2026-11-20: the CME-traded futures markets price from Massive's futures
+/// feed alone at `min_sources = 1`, so the template has no CME Group connection or OAuth secret.
 #[test]
-fn the_cme_connection_names_cme_endpoints_and_its_oauth_secrets() {
-    let cfg = assembled("cme");
+fn the_futures_markets_price_from_massive_alone_by_the_decision_of_2026_11_20() {
+    const FUTURES: [u32; 7] = [20, 21, 22, 25, 30, 31, 32];
+    let mut cfg = assembled("futures");
     let venues = cfg.feeds.venues.as_ref().expect("[feeds.venues]");
-    let cme = venues.connections.iter().find(|conn| conn.venue == Venue::Cme).expect("a CME connection");
-    let oauth = cme.oauth.as_ref().expect("CME's OAuth login");
-    assert_eq!(oauth.token_url, "https://auth.cmegroup.com/as/token.oauth2");
-    assert_eq!(cme.url, "wss://markets.api.cmegroup.com/marketdatastream/v1");
-    assert_eq!(
-        (oauth.client_id_secret.to_string(), oauth.client_secret_secret.to_string()),
-        ("cme_api_id".into(), "cme_api_password".into())
-    );
+    assert!(venues.connections.iter().all(|conn| conn.venue != Venue::Cme), "no CME Group connection");
+    assert!(venues.connections.iter().all(|conn| conn.oauth.is_none()), "no connection logs in with OAuth credentials");
+    let futures =
+        venues.connections.iter().find(|conn| conn.url == "wss://socket.massive.com/futures").expect("futures");
+    for id in FUTURES {
+        let market = cfg.genesis.markets.iter().find(|m| m.id == id).expect("a futures market");
+        assert_eq!(market.price_rules.min_sources, 1, "market {id}");
+        let quoted = futures.symbols.iter().filter(|s| s.market == id).count();
+        assert_eq!(quoted, market.contracts.len(), "market {id} quotes every contract it lists on Massive");
+    }
+    // Dropping Massive's futures connection leaves every one of them with no source, short of the 1 they need.
+    cfg.feeds.venues.as_mut().unwrap().connections.retain(|conn| conn.url != "wss://socket.massive.com/futures");
+    let err = cfg.refuse_unmet_min_sources(true).unwrap_err().to_string();
+    for id in FUTURES {
+        assert!(err.contains(&format!("market {id} (")), "market {id}: {err}");
+    }
 }
 
 #[test]

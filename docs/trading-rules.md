@@ -11,21 +11,23 @@ basis point is one hundredth of one percent.
 
 Each market has a reference price, which the engine calculates from the quotes of independent
 venues. The reference price is the median of the mid prices that the market's venues have quoted
-within the last second. A market can be traded only while at least two of its venues have quoted
-within that second and their quotes agree to within the market's divergence limit. When either
-condition fails, the market has no price and no order in it can be executed.
+within the last second. A market can be traded only while at least as many of its venues as its minimum
+have quoted within that second and their quotes agree to within the market's divergence limit.
+Every market requires two venues except the futures markets below, which are priced from Massive
+alone. When either condition fails, the market has no price and no order in it can be executed.
 
 | Markets | Venues | Trading hours | Divergence limit |
 | --- | --- | --- | --- |
 | BTC-USD, ETH-USD, SOL-USD | Coinbase, Kraken | Always open | 25 bps |
 | EUR-USD, GBP-USD, USD-JPY, AUD-USD | Massive, TraderMade | Sunday 17:00 to Friday 17:00, New York time | 5 bps |
-| US500, US100, US30, XAU-USD, XAG-USD, WTI | Massive, CME Group | CME Globex sessions | 10 bps |
-| JP225 | Massive, CME Group | Osaka Exchange day and night sessions | 10 bps |
+| US500, US100, US30, XAU-USD, XAG-USD, WTI | Massive | CME Globex sessions | 10 bps |
+| JP225 | Massive | Osaka Exchange day and night sessions | 10 bps |
 | 20 US shares, from AAPL to ORCL | Massive, Alpaca | 09:30 to 16:00 New York time, excluding NYSE holidays | 10 bps |
 
 A market can be traded only during its exchange's trading hours, and a quote received outside those
 hours never sets its price. Index and commodity markets are priced from their front-month futures
-contract. When the contract rolls to the next month, the engine adds the price gap between the two
+contract. Massive is the only source for these markets, so they have no price while Massive is
+unavailable, and no second source checks a Massive quote. When the contract rolls to the next month, the engine adds the price gap between the two
 contracts, so that the roll does not move the market's price.
 
 Accounts are held in US dollars. JP225 is quoted in yen, and its profits and losses are converted at

@@ -11,7 +11,7 @@
 # ops/runbooks/deploy-and-rollback.md has the procedure.
 #
 # Secrets never appear in this file, so it can be published whole. It names them: `{name}` in an RPC
-# provider's or the screening source's URL, `api_key_secret`, a CME connection's `oauth` and an Alpaca
+# provider's or the screening source's URL, `api_key_secret`, an Alpaca
 # connection's `key_pair` secrets, and `url_secret`. The operator delivers
 # their values into the attested enclave (key-recovery.md, "Secrets"); a production build refuses
 # `api_key_env` and `url_env`. A URL's origin stays here, so a delivered value never changes who answers.
@@ -273,8 +273,10 @@ symbols = [
 # contract a listing names is listed here, rolled off or not: the check reads the genesis listing for
 # the life of the log, so keep every venue and contract it needs even after a relisting lowers
 # min_sources or the market rolls past a contract. Only a source reached over TLS may set a price.
-# Markets 20 to 22, 25 and 30 to 32 trade on CME Group's exchanges and price from two sources:
-# Massive's futures feed, and CME Group's own WebSocket API below. The Eurex and ICE markets (DE40,
+# Markets 20 to 22, 25 and 30 to 32 trade on CME Group's exchanges and price from Massive's futures
+# feed alone, with min_sources = 1 (owner's decision of 2026-11-20): Massive's futures data derives
+# from CME's, so these markets pause while Massive is down and a bad Massive print has no second
+# source to check it. The Eurex and ICE markets (DE40,
 # UK100 and BRENT) are not in the launch genesis.
 [[feeds.venues.connections]]
 venue = "massive"
@@ -338,73 +340,6 @@ symbols = [
   { market = 32, symbol = "CLF8", contract = "CLF8" },
   { market = 32, symbol = "CLG8", contract = "CLG8" },
   { market = 32, symbol = "CLH8", contract = "CLH8" },
-]
-
-# CME Group's API names a contract by its product code and period (YYYYMM). Its handshake carries a
-# bearer token from CME's token endpoint, which the node fetches with the API ID and its password,
-# two delivered secrets; until both are delivered the connection stays off, under secret_missing.
-[[feeds.venues.connections]]
-venue = "cme"
-url = "wss://markets.api.cmegroup.com/marketdatastream/v1"
-oauth = { token_url = "https://auth.cmegroup.com/as/token.oauth2", client_id_secret = "cme_api_id", client_secret_secret = "cme_api_password" } # OWNER: the secret names; promote after #683's owner action
-symbols = [
-  { market = 20, symbol = "ES:202612", contract = "ESZ6" },
-  { market = 20, symbol = "ES:202703", contract = "ESH7" },
-  { market = 20, symbol = "ES:202706", contract = "ESM7" },
-  { market = 20, symbol = "ES:202709", contract = "ESU7" },
-  { market = 20, symbol = "ES:202712", contract = "ESZ7" },
-  { market = 20, symbol = "ES:202803", contract = "ESH8" },
-  { market = 21, symbol = "NQ:202612", contract = "NQZ6" },
-  { market = 21, symbol = "NQ:202703", contract = "NQH7" },
-  { market = 21, symbol = "NQ:202706", contract = "NQM7" },
-  { market = 21, symbol = "NQ:202709", contract = "NQU7" },
-  { market = 21, symbol = "NQ:202712", contract = "NQZ7" },
-  { market = 21, symbol = "NQ:202803", contract = "NQH8" },
-  { market = 22, symbol = "YM:202612", contract = "YMZ6" },
-  { market = 22, symbol = "YM:202703", contract = "YMH7" },
-  { market = 22, symbol = "YM:202706", contract = "YMM7" },
-  { market = 22, symbol = "YM:202709", contract = "YMU7" },
-  { market = 22, symbol = "YM:202712", contract = "YMZ7" },
-  { market = 22, symbol = "YM:202803", contract = "YMH8" },
-  { market = 25, symbol = "NIY:202612", contract = "NIYZ6" },
-  { market = 25, symbol = "NIY:202703", contract = "NIYH7" },
-  { market = 25, symbol = "NIY:202706", contract = "NIYM7" },
-  { market = 25, symbol = "NIY:202709", contract = "NIYU7" },
-  { market = 25, symbol = "NIY:202712", contract = "NIYZ7" },
-  { market = 25, symbol = "NIY:202803", contract = "NIYH8" },
-  { market = 30, symbol = "GC:202612", contract = "GCZ6" },
-  { market = 30, symbol = "GC:202702", contract = "GCG7" },
-  { market = 30, symbol = "GC:202704", contract = "GCJ7" },
-  { market = 30, symbol = "GC:202706", contract = "GCM7" },
-  { market = 30, symbol = "GC:202708", contract = "GCQ7" },
-  { market = 30, symbol = "GC:202710", contract = "GCV7" },
-  { market = 30, symbol = "GC:202712", contract = "GCZ7" },
-  { market = 30, symbol = "GC:202802", contract = "GCG8" },
-  { market = 30, symbol = "GC:202804", contract = "GCJ8" },
-  { market = 31, symbol = "SI:202612", contract = "SIZ6" },
-  { market = 31, symbol = "SI:202703", contract = "SIH7" },
-  { market = 31, symbol = "SI:202705", contract = "SIK7" },
-  { market = 31, symbol = "SI:202707", contract = "SIN7" },
-  { market = 31, symbol = "SI:202709", contract = "SIU7" },
-  { market = 31, symbol = "SI:202712", contract = "SIZ7" },
-  { market = 31, symbol = "SI:202803", contract = "SIH8" },
-  { market = 31, symbol = "SI:202805", contract = "SIK8" },
-  { market = 32, symbol = "CL:202612", contract = "CLZ6" },
-  { market = 32, symbol = "CL:202701", contract = "CLF7" },
-  { market = 32, symbol = "CL:202702", contract = "CLG7" },
-  { market = 32, symbol = "CL:202703", contract = "CLH7" },
-  { market = 32, symbol = "CL:202704", contract = "CLJ7" },
-  { market = 32, symbol = "CL:202705", contract = "CLK7" },
-  { market = 32, symbol = "CL:202706", contract = "CLM7" },
-  { market = 32, symbol = "CL:202707", contract = "CLN7" },
-  { market = 32, symbol = "CL:202708", contract = "CLQ7" },
-  { market = 32, symbol = "CL:202709", contract = "CLU7" },
-  { market = 32, symbol = "CL:202710", contract = "CLV7" },
-  { market = 32, symbol = "CL:202711", contract = "CLX7" },
-  { market = 32, symbol = "CL:202712", contract = "CLZ7" },
-  { market = 32, symbol = "CL:202801", contract = "CLF8" },
-  { market = 32, symbol = "CL:202802", contract = "CLG8" },
-  { market = 32, symbol = "CL:202803", contract = "CLH8" },
 ]
 
 # US shares: Massive's stocks feed and Alpaca's consolidated (SIP) feed, two vendors a market. Alpaca's
