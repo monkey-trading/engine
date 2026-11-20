@@ -59,12 +59,14 @@ pub(crate) enum CloseoutContext<'a> {
 }
 
 /// One step of a portfolio close-out: the positions it closes, in market order, with the account's
-/// equity and requirement before it.
+/// equity and requirement before it, and the house NAV it scored each one's fill at.
 #[derive(Debug)]
 pub(crate) struct PortfolioStep {
     pub(crate) members: Vec<(MarketId, Position)>,
     pub(crate) equity: Fixed,
     pub(crate) requirement: Fixed,
+    #[cfg_attr(not(feature = "closeout-oracle"), allow(dead_code))]
+    pub(crate) navs: Vec<Fixed>,
 }
 
 /// What closing one position at a stress level, best-price share and profit fee rate does: the change in the
@@ -118,7 +120,11 @@ impl Engine {
                 events.push(Event::CloseOut { account, equity: step.equity, margin: step.requirement });
                 announced = true;
             }
+            #[cfg(feature = "closeout-oracle")]
+            let mut navs = step.navs.into_iter();
             for (market, pos) in step.members {
+                #[cfg(feature = "closeout-oracle")]
+                self.oracle_scored_nav(navs.next().expect("a NAV for each member"));
                 let order_id = self.alloc_order_id();
                 let exec = Exec {
                     account,
@@ -207,10 +213,10 @@ impl Engine {
             // The house pays out the realised PnL less the fee, and the market's clients' PnL at the mark loses
             // the position; before `V86`, the NAV moves by what the account gives up at its valuation.
             let nav_change = if marked {
-                let at_mark = |qty, cost| market.clients_upnl_at_mark(qty, cost).unwrap_or(Fixed::ZERO);
+                let clients_upnl = |qty, cost| market.clients_upnl_at_mark(qty, cost).unwrap_or(Fixed::ZERO);
                 let (qty, cost) =
                     (market.client_qty - pos.qty + closed.qty, market.client_cost - pos.cost() + closed.cost());
-                at_mark(market.client_qty, market.client_cost) - at_mark(qty, cost) - (realised - fee)
+                clients_upnl(market.client_qty, market.client_cost) - clients_upnl(qty, cost) - (realised - fee)
             } else {
                 -change
             };
@@ -231,8 +237,9 @@ impl Engine {
         // not price there is none.
         let scored = candidates(acct, grid, &closes).into_iter().filter_map(|members| {
             let (mut gain, mut notional, mut after_nav) = (Fixed::ZERO, Fixed::ZERO, nav);
-            let mut counted = Vec::new();
+            let (mut counted, mut navs) = (Vec::new(), Vec::new());
             for (index, id) in members.iter().enumerate() {
+                navs.push(after_nav);
                 let (level, scored_now) = closes[id];
                 let at = if index == 0 { level } else { level_at(*id, after_nav) };
                 let terms = match index {
@@ -251,13 +258,13 @@ impl Engine {
             }
             let after = self.requirement_without(grid, ctx.basis(), &parts, &members);
             gain += threshold - ctx.threshold(after, charge);
-            Some((Scored { gain, notional, first: members[0] }, members))
+            Some((Scored { gain, notional, first: members[0] }, members, navs))
         });
         let restores = |scored: &Scored| !(slack + scored.gain).is_negative();
-        let (_, members) =
+        let (_, members, navs) =
             scored.reduce(|best, next| if preferred(&next.0, &best.0, restores) { next } else { best })?;
         let members = members.into_iter().map(|id| (id, acct.positions[&id])).collect();
-        Some(PortfolioStep { members, equity, requirement })
+        Some(PortfolioStep { members, equity, requirement, navs })
     }
 
     /// The price and FX index each position of `acct` that may close in `ctx` fills at: the live index

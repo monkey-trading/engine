@@ -160,6 +160,14 @@ impl Engine {
         }
     }
 
+    /// Under `verify`, from `V86`, checks that a portfolio close-out's fill reads the house NAV its step scored it
+    /// at, `scored` (#1084).
+    pub(crate) fn oracle_scored_nav(&self, scored: Fixed) {
+        if self.closeout_index.oracle.verify && self.protocol_version >= ProtocolVersion::V86 {
+            assert_eq!(self.house_nav(), scored, "a close-out's fill reads the house NAV its step scored it at");
+        }
+    }
+
     /// Under `verify`, checks the index after a refresh against a full assessment of every account.
     pub(crate) fn oracle_refreshed(&self) {
         if !self.closeout_index.oracle.verify {

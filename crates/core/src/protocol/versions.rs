@@ -509,7 +509,8 @@ pub enum ProtocolVersion {
     /// recorded bound at the sequenced time; one naming that request is still accepted. A deposit's names its own.
     V85,
     /// A portfolio close-out step scores a group's later members at the house NAV `Engine::house_nav` reads once the
-    /// earlier fills are booked: the house's cash after paying out each, less its fee, and the clients' unrealised PnL
-    /// at the marks without the closed positions, so each member is scored at the stress level its fill pays.
+    /// earlier fills are booked: the house's cash less what it pays out on each net of the profit fee, and the clients'
+    /// unrealised PnL at the marks without the closed positions, so each member is scored at the stress level its fill
+    /// pays.
     V86,
 }

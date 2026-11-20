@@ -1,7 +1,10 @@
 //! The session's `V86` part: a portfolio close-out step scores a group's later members at the house NAV
 //! `Engine::house_nav` reads once the earlier fills are booked. A vote activates the version. A client
 //! holds BTC long against ETH short in `V81`'s group, and ETH tripling closes the pair whole, BTC before
-//! ETH, ETH scored at the NAV BTC's fill leaves.
+//! ETH, ETH scored at the NAV BTC's fill leaves. A log marks every market a close-out fills at its index
+//! before the close-out runs, so these fills are the ones `V85`'s scoring gives too; the replay's oracle
+//! checks ETH's fill reads the NAV it was scored at, and `tests/portfolio_closeouts/marks.rs` separates the
+//! two rules where a mark stands apart from its index.
 
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
