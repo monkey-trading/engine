@@ -72,18 +72,18 @@ impl<W: Write> Write for Hashed<W> {
 
 impl Writer {
     /// Starts the writer for `dir`, putting it in order after the last start first: staging files go, so
-    /// do snapshot files the manifest does not list, and listings past `last_seq`, the log's last command,
-    /// which a log cut back no longer holds.
+    /// do snapshot files the manifest does not list, and listings past `last_checkpoint`, the seq of the log's
+    /// last checkpoint, which a log cut back no longer holds.
     /// Error cases:
     /// - `dir` cannot be created, listed or cleaned, its manifest cannot be read or rewritten, or the
     ///   thread cannot start
-    pub(crate) fn start(dir: &Path, last_seq: Option<u64>) -> anyhow::Result<Self> {
+    pub(crate) fn start(dir: &Path, last_checkpoint: Option<u64>) -> anyhow::Result<Self> {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         let mut listed = read_manifest(dir)?;
         let held = listed.len();
-        listed.retain(|listing| last_seq.is_some_and(|last| listing.seq <= last));
+        listed.retain(|listing| last_checkpoint.is_some_and(|last| listing.seq <= last));
         if listed.len() < held {
-            warn!(dropped = held - listed.len(), "daily snapshots past the log's last command are dropped");
+            warn!(dropped = held - listed.len(), "daily snapshots past the log's last checkpoint are dropped");
             write_manifest(dir, &listed)?;
         }
         for entry in fs::read_dir(dir).with_context(|| format!("listing {}", dir.display()))? {
