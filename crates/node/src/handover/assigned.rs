@@ -290,22 +290,30 @@ pub(crate) async fn read(
     log_heads: Address,
 ) -> anyhow::Result<Option<Assigned>> {
     let Some(domain) = StandbyDomain::at_if_scheduled(block, chain_id, vault).await? else { return Ok(None) };
-    // All at one block: the calls that need none of another's answers go together, so a read waits five
-    // round trips, not seven, and a handover makes one on each side between the two nodes' commands.
-    let (rotation, found) = tokio::try_join!(
-        call(block, "assigned_rotation", domain.registry, rotationStateCall {}),
-        call(block, "assigned_turn", domain.schedule, turnAtCall { timestamp: block.time() }),
-    )?;
+    // All at one block: the calls that need none of another's answers go together, so a read waits four
+    // round trips, not seven, and a handover makes one on each side between the two nodes' commands. The
+    // epoch counts only once a turn names the operator, so its failure alone fails no read that ends
+    // before.
+    let (named, epoch) = tokio::join!(
+        async {
+            tokio::try_join!(
+                call(block, "assigned_rotation", domain.registry, rotationStateCall {}),
+                call(block, "assigned_turn", domain.schedule, turnAtCall { timestamp: block.time() }),
+            )
+        },
+        call(block, "assigned_epoch", vault, signerEpochCall {}),
+    );
+    let (rotation, found) = named?;
     if rotation.generation == 0 || found.turn == 0 {
         return Ok(None);
     }
+    let epoch = epoch?;
     let (turn, named) = (found.turn, found._1);
     let position = named.position;
-    let (epoch, made) = tokio::try_join!(
-        call(block, "assigned_epoch", vault, signerEpochCall {}),
+    let (made, head_release) = tokio::try_join!(
         call(block, "assigned_assignment", domain.schedule, assignmentOfCall { turn, position }),
+        call(block, "assigned_head_release", log_heads, headReleaseCall { epoch }),
     )?;
-    let head_release = call(block, "assigned_head_release", log_heads, headReleaseCall { epoch }).await?;
     let release = made._1.last().map(|revision| revision.release.0).unwrap_or_default();
     Ok(Some(Assigned {
         binding: Binding { epoch, turn, position, generation: named.generation },

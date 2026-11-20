@@ -186,15 +186,15 @@ async fn a_skip_reads_as_its_assignment_with_its_latest_release_and_generation()
 }
 
 /// The read's calls that need none of another's answers go together: each call taking 100 ms, a read
-/// waits five round trips, not the seven its calls one after another took.
+/// waits four round trips, not the seven its calls one after another took.
 #[tokio::test(start_paused = true)]
-async fn an_assignment_reads_in_five_round_trips() {
+async fn an_assignment_reads_in_four_round_trips() {
     let latency = std::time::Duration::from_millis(100);
     let mut block = Scripted { latency, ..Scripted::scheduled() };
     script_turn(&mut block, (4, 1), &[(B256::repeat_byte(2), 8)]);
     let started = tokio::time::Instant::now();
     let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().expect("a turn names the operator");
-    assert_eq!(started.elapsed(), 5 * latency);
+    assert_eq!(started.elapsed(), 4 * latency);
     assert_eq!((assigned.binding.epoch, assigned.head_release), (3, Some([0xee; 32])), "the chain's assignment");
 }
 
