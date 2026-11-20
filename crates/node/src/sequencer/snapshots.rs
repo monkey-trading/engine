@@ -226,15 +226,16 @@ impl Sequencer {
     }
 
     /// Notes the approvals recovery found unsigned, `unreleased`, with their indices in `order`, as
-    /// `note_unsigned` does for a command's.
+    /// `note_unsigned` does for a command's, and gives them back for mock custody to sign.
     pub(super) fn owe_unsigned(
         &mut self,
-        unreleased: &[engine_core::withdrawal::WithdrawalApproval],
+        unreleased: Vec<engine_core::withdrawal::WithdrawalApproval>,
         order: &[((AccountId, u64), usize)],
-    ) {
+    ) -> Vec<engine_core::withdrawal::WithdrawalApproval> {
         let unsigned =
             |key: &(AccountId, u64)| unreleased.iter().any(|approval| (approval.account, approval.nonce) == *key);
         self.captures.unsigned.extend(order.iter().filter(|(key, _)| unsigned(key)));
+        unreleased
     }
 
     /// Forgets an approval mock custody has signed: a later checkpoint owes it nothing.
