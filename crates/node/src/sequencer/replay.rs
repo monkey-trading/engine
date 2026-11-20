@@ -204,9 +204,7 @@ impl Replay {
                     self.derived.keep(seq, derived);
                 }
                 marks::sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
-                if let Some(stats) = &self.stats {
-                    stats.observe(engine, c.sequenced.ts, &events);
-                }
+                stats::record(self.stats.as_ref(), engine, &c.sequenced, &events);
                 self.accounting.apply(&c.sequenced.cmd, &events)?;
                 if !version.supports_deposit_finality()
                     && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)

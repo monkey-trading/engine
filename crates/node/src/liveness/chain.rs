@@ -194,14 +194,18 @@ pub(crate) fn view<'a, B: AgreedBlock>(
 /// - as `view`
 async fn read_view(block: &impl AgreedBlock, domain: &LivenessDomain) -> anyhow::Result<View> {
     let (vault, registry, schedule) = (domain.standby.vault, domain.standby.registry, domain.standby.schedule);
-    let epoch = call(block, "liveness_signer_epoch", vault, signerEpochCall {}).await?;
-    let signer = call(block, "liveness_signer", vault, checkpointSignerCall {}).await?;
-    let rotation = call(block, "liveness_rotation", registry, rotationStateCall {}).await?;
-    let rule = call(block, "liveness_rule", schedule, livenessCall {}).await?;
-    let due_at = call(block, "liveness_due_at", schedule, promotionDueAtCall {}).await?;
-    let skip_due_at = call(block, "liveness_skip_due_at", schedule, skipDueAtCall {}).await?;
-    let mark = call(block, "liveness_mark", schedule, latestMarkCall {}).await?;
-    let found = call(block, "liveness_turn", schedule, turnAtCall { timestamp: block.time() }).await?;
+    // All at one block, and none needs another's answer but the head, read under the signer epoch: a read
+    // waits two round trips to the providers, not nine, which a new operator's first commands wait behind.
+    let (epoch, signer, rotation, rule, due_at, skip_due_at, mark, found) = tokio::try_join!(
+        call(block, "liveness_signer_epoch", vault, signerEpochCall {}),
+        call(block, "liveness_signer", vault, checkpointSignerCall {}),
+        call(block, "liveness_rotation", registry, rotationStateCall {}),
+        call(block, "liveness_rule", schedule, livenessCall {}),
+        call(block, "liveness_due_at", schedule, promotionDueAtCall {}),
+        call(block, "liveness_skip_due_at", schedule, skipDueAtCall {}),
+        call(block, "liveness_mark", schedule, latestMarkCall {}),
+        call(block, "liveness_turn", schedule, turnAtCall { timestamp: block.time() }),
+    )?;
     let stored = call(block, "liveness_head", domain.log_heads, headsCall { epoch }).await?;
     let named = (found.turn != 0).then_some(Named {
         turn: found.turn,

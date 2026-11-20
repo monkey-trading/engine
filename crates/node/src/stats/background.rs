@@ -1,9 +1,11 @@
 //! The scan of every account off the sequencer's thread. A worker thread holds a copy of the engine
 //! and applies every command the sequencer applies, in order, so when the command that makes a
 //! scan due has been applied there, the worker's engine is the sequencer's at that seq and the scan
-//! reads exactly it. The sequencer pays one command clone per command, and a scan request; nothing
-//! walks the accounts on its thread. The result is installed by the next command or read that finds
-//! it, with the seq and time of the command it was due at.
+//! reads exactly it. A member's replica keeps the worker in step the same way while it follows, so
+//! the sequencer it starts takes the worker on and copies nothing. The sequencer pays one command
+//! clone per command, and a scan request; nothing walks the accounts on its thread. The result is
+//! installed by the next command or read that finds it, with the seq and time of the command it was
+//! due at.
 //!
 //! The copy is also what the API's views read (`Reader`): it applies a batch's commands only once
 //! the batch is durable in the log, and a read queues behind them, so a read sees every command
@@ -35,11 +37,14 @@ const QUEUE: usize = 100_000;
 /// One step of the worker's queue, in the order the sequencer produced it.
 pub(crate) enum Job {
     Apply(Box<Sequenced>),
+    /// A scan of the state after the command at `seq`; `sampled` puts its books in the series, which a
+    /// recovery's scan, made due by no command, leaves out.
     Scan {
         seq: u64,
         ts: Millis,
         layout: Layout,
         full: bool,
+        sampled: bool,
     },
     Read(ReadJob),
     /// Encodes the copy for the recovery cache of the checkpoint after the command at `seq`, which
@@ -106,7 +111,8 @@ impl Reader {
 }
 
 pub(super) enum Done {
-    Scan(Box<Snapshot>),
+    /// A scan, and whether its books go in the series.
+    Scan(Box<Snapshot>, bool),
     Failed(String),
 }
 
@@ -175,19 +181,20 @@ impl Background {
     }
 
     /// The job that asks for a scan, full or light, of the state after the command at `seq`, to queue
-    /// behind that command. Every due scan is asked for, however many are still running, so what is
-    /// sampled does not depend on how fast the worker is.
-    pub(super) fn scan_job(&mut self, seq: u64, ts: Millis, layout: Layout, full: bool) -> Job {
+    /// behind that command, its books sampled into the series if `sampled`. Every due scan is asked for,
+    /// however many are still running, so what is sampled does not depend on how fast the worker is.
+    pub(super) fn scan_job(&mut self, seq: u64, ts: Millis, layout: Layout, (full, sampled): (bool, bool)) -> Job {
         self.in_flight += 1;
-        Job::Scan { seq, ts, layout, full }
+        Job::Scan { seq, ts, layout, full, sampled }
     }
 
-    /// The finished scan, if there is one. An `Err` says the worker is gone.
-    pub(super) fn poll(&mut self) -> Result<Option<Box<Snapshot>>, String> {
+    /// The finished scan, if there is one, and whether its books go in the series. An `Err` says the
+    /// worker is gone.
+    pub(super) fn poll(&mut self) -> Result<Option<(Box<Snapshot>, bool)>, String> {
         match self.done.try_recv() {
-            Ok(Done::Scan(snapshot)) => {
+            Ok(Done::Scan(snapshot, sampled)) => {
                 self.in_flight -= 1;
-                Ok(Some(snapshot))
+                Ok(Some((snapshot, sampled)))
             }
             Ok(Done::Failed(reason)) => Err(reason),
             Err(TryRecvError::Empty) => Ok(None),
@@ -197,11 +204,11 @@ impl Background {
 
     /// Waits for the worker's next answer. For tests, which must not sleep to synchronise.
     #[cfg(test)]
-    pub(super) fn wait(&mut self) -> Result<Box<Snapshot>, String> {
+    pub(super) fn wait(&mut self) -> Result<(Box<Snapshot>, bool), String> {
         match self.done.recv() {
-            Ok(Done::Scan(snapshot)) => {
+            Ok(Done::Scan(snapshot, sampled)) => {
                 self.in_flight -= 1;
-                Ok(snapshot)
+                Ok((snapshot, sampled))
             }
             Ok(Done::Failed(reason)) => Err(reason),
             Err(_) => Err("the worker thread ended".into()),
@@ -240,14 +247,14 @@ fn run(
                 applied.fetch_add(1, Ordering::Relaxed);
             }
             Job::Read(read) => read(&engine),
-            Job::Scan { seq, ts, layout, full } => {
+            Job::Scan { seq, ts, layout, full, sampled } => {
                 if engine.last_seq() != Some(seq) {
                     let reason = format!("the copy is at {:?}, not seq {seq}", engine.last_seq());
                     let _ = reply.send(Done::Failed(reason));
                     return;
                 }
                 let snapshot = snapshot::scan(&engine, seq, ts, layout, full);
-                if reply.send(Done::Scan(Box::new(snapshot))).is_err() {
+                if reply.send(Done::Scan(Box::new(snapshot), sampled)).is_err() {
                     return;
                 }
             }

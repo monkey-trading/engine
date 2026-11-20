@@ -1120,8 +1120,8 @@ then.
 The deployment's minimum take window exceeds the handover's switch budget plus one interval plus a
 head's inclusion, which the head tolerance bounds, at every interval the bounds allow. The
 deployment sets the switch budget to cover the measured switch, plus the holder's and the
-successor's reads of the turn's latest assignment after the stop. Each read takes thirteen round
-trips to the custody providers in turn, or fourteen while a provider's tip is past the agreed block.
+successor's reads of the turn's latest assignment after the stop. Each read takes ten round trips
+to the custody providers in turn, or eleven while a provider's tip is past the agreed block.
 The take window and the heartbeat rule in force always leave the first skip's member time to take
 the turn before the promotion for an untaken turn could pass. The member can sign its first head
 before its trading server stops, which happens 15 seconds ahead of any promotion.

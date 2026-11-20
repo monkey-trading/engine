@@ -136,6 +136,14 @@ impl Rig {
     }
 }
 
+/// The last command `stats`' worker has applied: a read queues behind every command delivered to it.
+pub(crate) fn worker_seq(stats: &Stats) -> Option<u64> {
+    let (sent, received) = std::sync::mpsc::channel();
+    let read: crate::stats::background::ReadJob = Box::new(move |engine| sent.send(engine.last_seq()).unwrap());
+    assert!(stats.reader().expect("a worker runs").read(read).is_ok(), "the worker refused the read");
+    received.recv().unwrap()
+}
+
 #[test]
 fn a_fill_adds_its_notional_to_the_market_and_total_volume() {
     let mut rig = Rig::new();

@@ -174,3 +174,38 @@ fn a_read_never_waits_behind_an_encode() {
     assert!(reader.read(read).is_ok(), "reads go to the worker once the encode is done");
     assert_eq!(received.recv().unwrap(), Some(seq));
 }
+
+/// A start whose record already runs a worker, as a member's replica keeps one in step as it follows,
+/// keeps it, making no copy of the state, and takes the recovery's full scan from it, delivered with the
+/// first durable batch, rather than scanning every account on the starting thread; the scan is served
+/// and left out of the series, as an inline recovery's is.
+#[test]
+fn a_start_keeps_a_running_worker_and_takes_its_full_scan_from_it() {
+    let replayed = stats();
+    replayed.restart();
+    let mut rig = Rig::recording_into(replayed.clone());
+    rig.trade(T0 + 1_000, TRADER, Side::Buy, 2);
+    // The replica's worker starts after its build, and takes each command it follows.
+    replayed.scan_in_background(&rig.engine);
+    rig.trade(T0 + 2_000, OTHER, Side::Sell, 1);
+    replayed.deliver(replayed.stage());
+
+    replayed.finish_recovery(&rig.engine);
+    assert!(replayed.positions(&rig.engine, BTC).unwrap().is_none(), "the start scanned on its own thread");
+    // A copy made at the start would be of this other state.
+    replayed.scan_in_background(&Engine::default());
+    assert_eq!(super::worker_seq(&replayed), rig.engine.last_seq(), "the start replaced the running worker");
+    replayed.settle();
+    let house = json(replayed.house(&rig.engine));
+    assert_eq!(house["seq"], rig.engine.last_seq().unwrap(), "{house}");
+    assert!(house["open_margin"].as_str().unwrap().parse::<Fixed>().unwrap().is_positive(), "{house}");
+    assert!(replayed.positions(&rig.engine, BTC).unwrap().is_some(), "the worker's scan is full");
+    // Served, not sampled: the series are those an inline recovery of the same commands leaves.
+    let inline = stats();
+    inline.restart();
+    let mut same = Rig::recording_into(inline.clone());
+    same.trade(T0 + 1_000, TRADER, Side::Buy, 2);
+    same.trade(T0 + 2_000, OTHER, Side::Sell, 1);
+    inline.finish_recovery(&same.engine);
+    assert_eq!(replayed.dump(), inline.dump(), "the start's scan went into the series");
+}

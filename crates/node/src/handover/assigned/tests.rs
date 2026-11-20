@@ -23,10 +23,11 @@ pub(crate) const CHAIN_ID: u64 = 42161;
 pub(crate) const TIME: u64 = 20_800 * 86_400 + 81_000 + 600;
 const TURN: u64 = 20_800;
 
-/// A block answering exactly the calls a test scripts, each by its calldata.
+/// A block answering exactly the calls a test scripts, each by its calldata, each after `latency`.
 #[derive(Default)]
 pub(crate) struct Scripted {
     answers: BTreeMap<(Address, Vec<u8>), Vec<u8>>,
+    latency: std::time::Duration,
 }
 
 impl Scripted {
@@ -72,6 +73,9 @@ impl AgreedBlock for &Scripted {
     }
 
     async fn call(&self, operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
+        if !self.latency.is_zero() {
+            tokio::time::sleep(self.latency).await;
+        }
         let answer = self.answers.get(&(to, data.to_vec()));
         answer.cloned().map(Bytes::from).with_context(|| format!("no answer scripted for {operation}"))
     }
@@ -179,6 +183,19 @@ async fn a_skip_reads_as_its_assignment_with_its_latest_release_and_generation()
     assert_eq!(assigned.head_release, Some([0xee; 32]));
     assert_eq!(assigned.boundary, engine_core::turns::boundary(TURN).unwrap());
     assert!(assigned.names([2; 32], 8) && !assigned.names([1; 32], 8) && !assigned.names([2; 32], 7));
+}
+
+/// The read's calls that need none of another's answers go together: each call taking 100 ms, a read
+/// waits four round trips, not the seven its calls one after another took.
+#[tokio::test(start_paused = true)]
+async fn an_assignment_reads_in_four_round_trips() {
+    let latency = std::time::Duration::from_millis(100);
+    let mut block = Scripted { latency, ..Scripted::scheduled() };
+    script_turn(&mut block, (4, 1), &[(B256::repeat_byte(2), 8)]);
+    let started = tokio::time::Instant::now();
+    let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().expect("a turn names the operator");
+    assert_eq!(started.elapsed(), 4 * latency);
+    assert_eq!((assigned.binding.epoch, assigned.head_release), (3, Some([0xee; 32])), "the chain's assignment");
 }
 
 #[tokio::test]

@@ -6,12 +6,13 @@
 //! every answer says where its data begins.
 //!
 //! The scan of every account (`snapshot`) is due at most once per `api.stats_interval` of sequenced
-//! time, with a light one (totals only) every `api.stats_light_interval` between, so the same log gives the same snapshots whenever it is replayed. A running node takes it
-//! on a worker thread that applies the same commands to a copy of the engine (`background`), so no
-//! scan holds the sequencer; a replay, and a node whose worker stopped, scan on the replaying or
-//! sequencing thread. Reads run on the sequencer's thread, between batches, and may see a batch the
-//! log has not yet synced; each answer waits until the log holds what it read
-//! (`ApiState::query_durable`).
+//! time, with a light one (totals only) every `api.stats_light_interval` between, so the same log
+//! gives the same snapshots whenever it is replayed. A running node takes it on a worker thread
+//! that applies the same commands to a copy of the engine (`background`), so no scan holds the
+//! sequencer, as does a member's replica once built, so its start copies nothing; a replay, and a
+//! node whose worker stopped, scan on the replaying or sequencing thread. Reads run on the
+//! sequencer's thread, between batches, and may see a batch the log has not yet synced; each answer
+//! waits until the log holds what it read (`ApiState::query_durable`).
 
 mod activity;
 pub(crate) mod background;
@@ -178,9 +179,14 @@ impl Stats {
     }
 
     /// Moves the scans to a worker over a copy of `engine`, which `follow` then keeps in step. Call
-    /// it once, after recovery, before the sequencer applies its first command. A copy that cannot
-    /// be made leaves the scans on the sequencer's thread, with an alert.
+    /// it once, after recovery, before the sequencer applies its first command, or once a member's
+    /// replica is built, before it applies another. A copy that cannot be made leaves the scans on the
+    /// caller's thread, with an alert. A worker already running, one a member's replica kept in step
+    /// with `engine` as it followed, is kept: no copy is made.
     pub(crate) fn scan_in_background(&self, engine: &Engine) {
+        if self.lock().background.is_some() {
+            return;
+        }
         match background::Background::start(engine) {
             Ok(worker) => self.lock().background = Some(worker),
             Err(error) => background::stopped(&format!("{error:#}")),
@@ -255,7 +261,7 @@ impl Stats {
         let mut inner = self.lock();
         while let Some(worker) = inner.background.as_mut().filter(|worker| worker.in_flight() > 0) {
             match worker.wait() {
-                Ok(snapshot) => inner.install(*snapshot),
+                Ok((snapshot, sampled)) => inner.take(*snapshot, sampled),
                 Err(reason) => panic!("the background scan failed: {reason}"),
             }
         }
@@ -271,7 +277,9 @@ impl Stats {
 
     /// Ends a recovery: takes the totals the first command would have, when no command was replayed,
     /// and a full scan for the answers that read one, without recording it in a series, so a
-    /// restart's series stay those the log gives.
+    /// restart's series stay those the log gives. With a worker running, as a member's replica keeps
+    /// one, the scan is the worker's, delivered with the first durable batch, so the start does not
+    /// wait for it.
     pub(crate) fn finish_recovery(&self, engine: &Engine) {
         let mut inner = self.lock();
         inner.recovering = false;
@@ -279,11 +287,16 @@ impl Stats {
             inner.refresh_queue(engine);
             inner.refresh_stakers(engine);
         }
-        if inner.full.is_none()
-            && let Some(seq) = engine.last_seq()
-        {
-            let snapshot = snapshot::scan(engine, seq, engine.now(), self.settings.layout, true);
-            inner.serve(snapshot);
+        let Some(seq) = engine.last_seq().filter(|_| inner.full.is_none()) else { return };
+        match inner.background.as_mut() {
+            Some(worker) => {
+                let job = worker.scan_job(seq, engine.now(), self.settings.layout, (true, false));
+                inner.staged.push(job);
+            }
+            None => {
+                let snapshot = snapshot::scan(engine, seq, engine.now(), self.settings.layout, true);
+                inner.serve(snapshot);
+            }
         }
     }
 }

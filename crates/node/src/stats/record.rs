@@ -175,10 +175,12 @@ impl Inner {
     }
 
     /// Takes the scan due at `seq`: staged for the worker behind that command, or run here when
-    /// there is none. A replay takes the light scan for every one, since nothing serves them.
+    /// there is none. A replay with no worker takes the light scan for every one, since nothing serves
+    /// them; a member's replica, whose worker scans off its thread, takes them full, so the start it
+    /// makes usually finds a full scan to serve.
     fn scan(&mut self, settings: &Settings, engine: &Engine, seq: u64, ts: Millis, full: bool) {
         if let Some(worker) = &mut self.background {
-            self.staged.push(worker.scan_job(seq, ts, settings.layout, full));
+            self.staged.push(worker.scan_job(seq, ts, settings.layout, (full, true)));
             return;
         }
         self.install(snapshot::scan(engine, seq, ts, settings.layout, full && !self.recovering));
@@ -188,7 +190,7 @@ impl Inner {
     pub(super) fn collect(&mut self) {
         while let Some(polled) = self.background.as_mut().map(Background::poll) {
             match polled {
-                Ok(Some(snapshot)) => self.install(*snapshot),
+                Ok(Some((snapshot, sampled))) => self.take(*snapshot, sampled),
                 Ok(None) => break,
                 Err(reason) => {
                     self.background = None;
@@ -196,6 +198,11 @@ impl Inner {
                 }
             }
         }
+    }
+
+    /// Installs `snapshot` if `sampled`, or only serves it, as a recovery's scan, made due by no command.
+    pub(super) fn take(&mut self, snapshot: Snapshot, sampled: bool) {
+        if sampled { self.install(snapshot) } else { self.serve(snapshot) }
     }
 
     /// Serves `snapshot` and samples its long and short at the time it was due.

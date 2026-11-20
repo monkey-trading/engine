@@ -1205,9 +1205,9 @@ names the operator. These bounds hold:
   inclusion time (`headTolerance`), at the shortest interval that the bounds allow.
 - The switch budget covers the daily rotation scenario's measured switch, plus two reads of the
   turn's latest assignment after the stop, one by the holder and one by the successor. Each read is
-  thirteen round trips to the custody providers, one after another, or fourteen while a provider's
-  tip is past the agreed block. At 100 milliseconds a round trip, the reads add up to 2.8 seconds to
-  the measured switch.
+  ten round trips to the custody providers, one after another, or eleven while a provider's tip is
+  past the agreed block. At 100 milliseconds a round trip, the reads add up to 2.2 seconds to the
+  measured switch.
 - The schedule refuses a take window, through `setTakeWindow`, or a heartbeat rule, through
   `setLiveness`, that would leave the first skip's member no such take before the untaken-turn
   promotion. `(heartbeatMisses - takeWindow) * heartbeatInterval` must exceed the switch budget plus
