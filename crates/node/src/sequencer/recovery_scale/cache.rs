@@ -1,17 +1,19 @@
 //! The cache the log's node captures at a checkpoint, and a restart from it after a hard stop, to the
 //! first command, on a copy of the log and its caches: as a node with `[snapshots]` and `[log_heads]`
 //! restarts, from its newest cache, with the head posted one posting interval before the log's end,
-//! through the node's own recovery (`Sequencer::read_paired_log`) and start checks. Beside it, timed
-//! apart on the same copy: the cache's read and the posted head's check alone, the pass over the log's
-//! whole prefix that check replaces, and the takeover cut's read of the log's last checkpoint from its
-//! newest segments, which a production start makes twice. A start from a cache reads no signer
-//! history, which only a full replay checks the log's checkpoints against.
+//! through the recovery the node runs (`read_paired_cache`, then `replay_paired_log` were no cache to
+//! verify, which `Sequencer::read_paired_log` composes for tests) and its start checks. Beside it,
+//! timed apart on the same copy: the cache's read and the posted head's check alone, the pass over the
+//! log's whole prefix that check replaces, and the takeover cut's read of the log's last checkpoint
+//! from its newest segments, which a production start makes twice, finding this key's and so reading
+//! no further. A start from a cache reads no signer history, which only a full replay checks the
+//! log's checkpoints against.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use engine_core::types::{AccountId, Millis};
 
 use crate::config::NodeConfig;
@@ -41,7 +43,7 @@ pub(super) struct Cached {
     pub history_caught_up: Duration,
 }
 
-/// A restart from the newest cache to its first command: `read_paired_log`, which reads the cache,
+/// A restart from the newest cache to its first command: the node's paired recovery, which reads the cache,
 /// checks the posted head and replays the commands past the cache, and the start after it; with the
 /// parts timed apart and the takeover cut's read, which is all a start reads outside the cache's bound.
 pub(super) struct Restarted {
@@ -155,8 +157,11 @@ pub(super) async fn restart(
     prefix::verify(dir, DOMAIN, signer, cache_seq, cache_seq, certified, copy.node.replay_workers)?;
     let full_prefix_pass = started.elapsed();
     let started = Instant::now();
-    let last_checkpoint = log::last_checkpoint(dir)?.context("the log holds a checkpoint")?.seq;
+    let last = log::last_checkpoint(dir)?.context("the log holds a checkpoint")?;
     let takeover_cut_read = started.elapsed();
+    // The cut reads no further only for the vault signer's own last checkpoint, as on this restart.
+    ensure!(last.signer.parse::<AccountId>()? == signer, "the log's last checkpoint is the restarting key's");
+    let last_checkpoint = last.seq;
     let (paired, recovered_seq, (read, start)) = Paired::restart(&copy, key, posted)?;
     let suffix_commands = recovered_seq.map_or(0, |seq| seq - cache_seq);
     paired.stop().await?;

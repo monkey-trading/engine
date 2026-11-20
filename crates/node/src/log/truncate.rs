@@ -15,7 +15,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 
-use crate::log::segments::{Segment, list_segments, segment_name};
+use crate::log::segments::{Segment, list_segments, segment_name, segment_seq};
 use crate::log::{Checkpoint, LogEntry, MANIFEST, SegmentInfo, parse_line};
 
 /// The manifest's last bytes read first to find its newest listings, a few hundred of them; each later
@@ -24,14 +24,16 @@ const MANIFEST_TAIL_BYTES: u64 = 64 * 1024;
 
 /// The last checkpoint the log in `dir` holds, read from its newest segment back to the first that
 /// holds one, so a start's takeover cut reads about one checkpoint interval of the log, however long
-/// it is. The segments are found from the manifest's end, never by listing the directory: the newest
-/// listings, and before them the segment after the newest, which the writer has not listed yet, when it
-/// is there. A listed segment matches its listing before any of it is read, as a whole read checks it,
+/// it is. The segments are found from the manifest's end: the newest listings, and before them the
+/// segment after the newest, which the writer has not listed yet, when it is there. No segment may
+/// follow the one the writer appends to, as a whole read requires; the directory's names alone show
+/// that. A listed segment matches its listing before any of it is read, as a whole read checks it,
 /// and the unlisted one's torn last line is left out, as a whole read leaves it out. `None` when no
 /// segment holds a checkpoint.
 /// Error cases:
-/// - the manifest or a segment cannot be read, a manifest line is not a listing, or a segment read
-///   differs from its listing, holds an invalid entry or does not start with its command
+/// - the manifest or a segment cannot be read, a manifest line is not a listing, a segment follows the
+///   one the writer appends to, or a segment read differs from its listing, holds an invalid entry or
+///   does not start with its command
 pub(crate) fn last_checkpoint(dir: &Path) -> anyhow::Result<Option<Checkpoint>> {
     let mut window = MANIFEST_TAIL_BYTES;
     let (mut listings, mut whole) = manifest_tail(dir, window)?;
@@ -44,9 +46,15 @@ pub(crate) fn last_checkpoint(dir: &Path) -> anyhow::Result<Option<Checkpoint>> 
         None => 0,
     };
     let open = dir.join(segment_name(next));
-    if open.try_exists().with_context(|| format!("probing {}", open.display()))?
-        && let Some(checkpoint) = last_in(next, &open, None)?
-    {
+    let open_exists = open.try_exists().with_context(|| format!("probing {}", open.display()))?;
+    let appended = if open_exists { Some(next) } else { listings.first().map(|listed| listed.first_seq) };
+    let newest = newest_segment(dir)?;
+    ensure!(
+        newest == appended,
+        "segment {newest:?} in {} follows the one the writer appends to, {appended:?}",
+        dir.display()
+    );
+    if open_exists && let Some(checkpoint) = last_in(next, &open, None)? {
         return Ok(Some(checkpoint));
     }
     let mut below = next;
@@ -66,6 +74,24 @@ pub(crate) fn last_checkpoint(dir: &Path) -> anyhow::Result<Option<Checkpoint>> 
         window = window.saturating_mul(4);
         (listings, whole) = manifest_tail(dir, window)?;
     }
+}
+
+/// The seq the newest segment file in `dir` is named for, from the directory's names alone; `None` for
+/// a directory with none, or none at all.
+/// Error cases:
+/// - the directory exists but cannot be listed
+fn newest_segment(dir: &Path) -> anyhow::Result<Option<u64>> {
+    let listing = match fs::read_dir(dir) {
+        Ok(listing) => listing,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("listing {}", dir.display())),
+    };
+    let mut newest = None;
+    for item in listing {
+        let name = item.with_context(|| format!("listing {}", dir.display()))?.file_name();
+        newest = newest.max(name.to_str().and_then(segment_seq));
+    }
+    Ok(newest)
 }
 
 /// The last checkpoint in the segment named for `first_seq` at `path`, read as `SegmentedLog::open`

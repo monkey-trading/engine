@@ -152,7 +152,7 @@ pub(super) fn conclude(
     );
     // Outside the cache's bound a start reads one checkpoint interval of the log, however long it is.
     println!(
-        "RECOVERY start_log_reads reads={TAKEOVER_CUT_READS} s={:.4} whole_log_reads=0 restart_bar_s={}",
+        "RECOVERY start_log_reads newest_segment_reads={TAKEOVER_CUT_READS} s={:.4} restart_bar_s={}",
         restarted.takeover_cut_read.as_secs_f64() * f64::from(TAKEOVER_CUT_READS),
         RESTART_BAR.as_secs()
     );

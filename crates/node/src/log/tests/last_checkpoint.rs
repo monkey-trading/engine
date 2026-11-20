@@ -85,6 +85,20 @@ fn the_manifest_is_read_back_from_its_end_only_as_far_as_the_checkpoint() {
     assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected));
 }
 
+/// A segment after the one the writer appends to, which a whole read refuses, is refused: the log is
+/// not taken as ending where the manifest's end says, with later commands left on disk.
+#[test]
+fn a_segment_after_the_one_the_writer_appends_to_is_refused() {
+    let dir = scratch_dir("last-checkpoint-later-segment");
+    write(&dir, 2, &[cmd(0), cmd(1), cmd(2), checkpoint(2), cmd(3), cmd(4)]);
+    let manifest = fs::read(dir.join(MANIFEST)).unwrap();
+    let first = manifest.iter().position(|b| *b == b'\n').unwrap() + 1;
+    fs::write(dir.join(MANIFEST), &manifest[..first]).unwrap();
+    assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "a whole read refuses the unlisted segment");
+    let error = last_checkpoint(&dir).expect_err("a later segment is left on disk");
+    assert!(format!("{error:#}").contains("follows the one the writer appends to"), "{error:#}");
+}
+
 /// A newest listing whose last seq has no next is refused, not followed into an overflow.
 #[test]
 fn a_newest_listing_at_the_last_seq_is_refused() {
