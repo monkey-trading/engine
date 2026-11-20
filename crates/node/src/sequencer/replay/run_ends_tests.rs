@@ -69,7 +69,7 @@ fn a_command_changed_after_sealing_fails_at_the_end_of_its_run() {
     let key = EnclaveKey::test_key();
     let mut entries = ticks(6, &[3], |_| Some((&key, DOMAIN)));
     command(&mut entries, 2).sequenced.ts = 1;
-    let refused = format!("{:#}", replay(&entries).unwrap_err());
+    let refused = format!("{:#}", replay(&entries).err().expect("refused"));
     assert!(refused.contains("the seal at seq 3 by"), "{refused}");
     assert!(refused.contains("over the commands from seq 0"), "{refused}");
     assert!(refused.contains("invalid command origin signature"), "{refused}");
@@ -97,13 +97,13 @@ fn a_malformed_seal_fails_at_its_own_command() {
     for (lacking, alter, said) in cases {
         let mut altered = entries.clone();
         alter(command(&mut altered, 2).seal.as_mut().unwrap());
-        let refused = format!("{:#}", replay(&altered).unwrap_err());
+        let refused = format!("{:#}", replay(&altered).err().expect("refused"));
         assert!(refused.contains("the seal at seq 2") && refused.contains(said), "without {lacking}: {refused}");
     }
     let mut altered = entries;
     let seal = command(&mut altered, 2).seal.as_mut().unwrap();
     seal.signature = high_s(&seal.signature);
-    let refused = format!("{:#}", replay(&altered).unwrap_err());
+    let refused = format!("{:#}", replay(&altered).err().expect("refused"));
     assert!(refused.contains("the seal at seq 2") && refused.contains("malformed"), "a high s: {refused}");
 }
 
@@ -122,7 +122,7 @@ fn a_run_ends_at_another_signer_or_domain_and_at_a_command_with_no_seal() {
         let mut entries = ticks(7, &[], sealer);
         replay(&entries).unwrap_or_else(|e| panic!("{after}: the log as written: {e:#}"));
         command(&mut entries, 3).seal = Some(key.seal_command(DOMAIN, B256::repeat_byte(9)));
-        let refused = format!("{:#}", replay(&entries).unwrap_err());
+        let refused = format!("{:#}", replay(&entries).err().expect("refused"));
         assert!(refused.contains("the seal at seq 3 by"), "{after}: {refused}");
         assert!(refused.contains("over the commands from seq 0"), "{after}: {refused}");
     }
@@ -141,18 +141,18 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     let mut entries = ticks(6, &[3], |_| Some((&key, DOMAIN)));
     wrong_seal(&mut entries, 3);
     checkpoint(&mut entries, 3).root = format!("0x{}", hex::encode([1; 32]));
-    let refused = format!("{:#}", replay(&entries).unwrap_err());
+    let refused = format!("{:#}", replay(&entries).err().expect("refused"));
     assert!(refused.contains("the seal at seq 3 by"), "at a checkpoint: {refused}");
     // A later command of the same run, its events changed, which also changes its link.
     let mut entries = ticks(6, &[], |_| Some((&key, DOMAIN)));
     command(&mut entries, 1).sequenced.ts = 0;
     command(&mut entries, 4).events = Some(vec![Event::AdminApplied]);
-    let refused = format!("{:#}", replay(&entries).unwrap_err());
+    let refused = format!("{:#}", replay(&entries).err().expect("refused"));
     assert!(refused.contains("the seal at seq 4 by"), "at a later command: {refused}");
     // The tail after the last checkpoint, which nothing after it ends.
     let mut entries = ticks(6, &[2], |_| Some((&key, DOMAIN)));
     wrong_seal(&mut entries, 5);
-    let refused = format!("{:#}", replay(&entries).unwrap_err());
+    let refused = format!("{:#}", replay(&entries).err().expect("refused"));
     assert!(refused.contains("the seal at seq 5 by") && refused.contains("from seq 3"), "at the end: {refused}");
 }
 

@@ -373,6 +373,7 @@ fn a_signature_is_well_formed_exactly_when_recovery_reads_its_form() {
     use engine_core::eip712::B256;
     use k256::ecdsa::Signature as EcdsaSignature;
     use k256::elliptic_curve::PrimeField;
+    use k256::elliptic_curve::scalar::IsHigh;
     use sha3::{Digest, Keccak256};
 
     // The form recovery reads: an Ethereum recovery id, both scalars in range, and a low `s`.
