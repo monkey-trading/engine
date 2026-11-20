@@ -64,7 +64,7 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let error = format!("{:#}", load(&path).err().expect("an engine at V0 is refused"));
     assert!(error.contains("predates V27"), "{error}");
-    let cases: [(&str, fn(&mut serde_json::Value)); 3] = [
+    let cases: [(&str, Alter); 3] = [
         ("of format 2", |snapshot| snapshot["schema"] = 2.into()),
         ("names offset", |snapshot| snapshot["offset"]["index"] = 2.into()),
         ("stand at seqs", |snapshot| snapshot["checkpoint"]["seq"] = 6.into()),
@@ -79,6 +79,9 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
 }
 
 // ── Helpers ──
+
+/// A change to a daily snapshot's JSON.
+type Alter = fn(&mut serde_json::Value);
 
 /// A snapshot of an engine that applied ticks up to `offset`'s seq, the last stamped `ts`, at a checkpoint.
 fn job(offset: Offset, ts: Millis) -> Job {

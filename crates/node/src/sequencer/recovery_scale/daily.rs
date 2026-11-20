@@ -79,7 +79,7 @@ fn dev_scenario_daily_snapshots() {
     agree(&whole, &ranges(&base, &log, &snapshots, signer).expect("a lost resting order is rebuilt"));
 
     // A balance the root does not vouch for, and a checkpoint the log does not hold there, are refused.
-    let refusals: [(&str, fn(&mut serde_json::Value)); 2] = [
+    let refusals: [(&str, Alter); 2] = [
         ("state root mismatch at seq", |snapshot| {
             let accounts = snapshot["engine"]["accounts"].as_object_mut().unwrap();
             let account = accounts.values_mut().next().unwrap();
@@ -97,6 +97,9 @@ fn dev_scenario_daily_snapshots() {
 }
 
 // ── Helpers ──
+
+/// A change to a daily snapshot's JSON.
+type Alter = fn(&mut serde_json::Value);
 
 /// The log in `log`, written from `base`, replayed in ranges from the daily snapshots in `snapshots`, two
 /// at once, under `signer`.
