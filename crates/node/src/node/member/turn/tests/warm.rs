@@ -82,7 +82,7 @@ async fn a_keyed_feed_opens_at_the_turn_and_a_keyless_one_in_the_warm_window() {
     fixture.time.set(boundary - lead + 1_000);
     member.warm_for(false, Some(boundary), None).await;
     assert!(member.warm.is_some(), "the feeds did not open within the lead");
-    accept(&keyless).await;
+    let _keyless_connection = accept(&keyless).await;
     assert!(
         timeout(Duration::from_millis(500), keyed.accept()).await.is_err(),
         "the keyed feed connected in the warm window"
@@ -92,7 +92,7 @@ async fn a_keyed_feed_opens_at_the_turn_and_a_keyless_one_in_the_warm_window() {
     let ((tx, _rx), live) = price_feeds::channel(member.warm.take(), &mut status);
     let mut tasks = tokio::task::JoinSet::new();
     price_feeds::start(&mut tasks, live, (fixture.cfg.feeds.clone(), &delivered), &tx, &status).unwrap();
-    accept(&keyed).await;
+    let _keyed_connection = accept(&keyed).await;
     assert!(
         timeout(Duration::from_millis(500), keyless.accept()).await.is_err(),
         "the keyless feed was opened a second time at the turn"
