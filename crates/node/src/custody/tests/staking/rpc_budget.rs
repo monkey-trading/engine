@@ -25,6 +25,9 @@ type ByMethod = BTreeMap<&'static str, f64>;
 /// Readers, each with its calls a read and its reads a day.
 type Readers<'a> = Vec<(&'static str, &'a ByMethod, f64)>;
 
+/// The liveness rule's chain's providers, each named.
+type Providers = Vec<(String, Counted<Liveness>)>;
+
 /// JSON-RPC calls by method, counted as one provider's endpoint receives them.
 #[derive(Clone, Default)]
 struct Calls(Arc<Mutex<BTreeMap<&'static str, u64>>>);
@@ -233,7 +236,7 @@ async fn watcher_per_poll(per_poll: u64) -> ByMethod {
 /// Three providers answering the liveness rule's chain, and that chain. The first is counted, and its tip
 /// runs a block ahead of the others', as one provider's often does: each read at a block the quorum
 /// agrees on then reads its header there too.
-fn liveness_quorum(calls: &Calls) -> (Vec<(String, Counted<Liveness>)>, Arc<Mutex<ChainState>>) {
+fn liveness_quorum(calls: &Calls) -> (Providers, Arc<Mutex<ChainState>>) {
     let members = (0xa1..=0xa3)
         .map(|byte| (Address::repeat_byte(byte), format!("member-{byte}:9000"), Address::repeat_byte(byte + 0x10)))
         .collect();
