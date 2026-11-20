@@ -3,7 +3,8 @@
 //! day of flow takes as long as its commands take to sequence. Each second carries the template's
 //! four ticks, each market's price commands at `load_scenario`'s live rates while its venue is open,
 //! and the load generator's request mix at a multiple of launch flow, from the book's named traders,
-//! each signed and screened as the API forwards it. The operator publishes each day's benchmark
+//! each signed and screened as the API forwards it, and the staking mirror's finalised frontier each
+//! minute, which a staking epoch closes behind. The operator publishes each day's benchmark
 //! rates before its rollover. A checkpoint is written every `CHECKPOINT_EVERY` commands, as the
 //! template sets, and reported final at once, as a chain that keeps up would.
 
@@ -13,6 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use alloy::primitives::B256;
 use engine_core::auth::ClientAuth;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
@@ -43,6 +45,8 @@ const SAMPLE_US: u64 = 10_000_000;
 /// Commands between the generator's flushes, each a batch's sync, after which a checkpoint written is
 /// reported final.
 const FLUSH_EVERY: u64 = 1_000;
+/// How often the staking mirror's finalised frontier is reported, which an epoch closes behind.
+const FRONTIER_US: u64 = 60_000_000;
 /// Each market's mid: the book's mark, and half a basis point off it in turn, up in odd markets and
 /// down in even ones, so no price reaches the book's in-band orders (`load_scenario::venues`).
 const MIDS: [[&str; 2]; 2] = [["100", "99.995"], ["100", "100.005"]];
@@ -58,6 +62,15 @@ pub(super) struct Node {
     /// The newest checkpoint written.
     pub(super) checkpoint: Option<Checkpoint>,
     pending: u64,
+    /// The emission periods and staking epochs its commands have closed.
+    pub(super) closed: Closed,
+}
+
+/// The emission periods and staking epochs a node's commands closed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Closed {
+    pub periods: u64,
+    pub epochs: u64,
 }
 
 /// What a node's sequencer is configured with: the book's deployment, operator and screening source,
@@ -98,7 +111,7 @@ impl Node {
             Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("an empty log");
         seq.trust(sample_around(clock.as_ref())).expect("a trusted time sample");
         seq.take_over_checkpointed(book).expect("the book's first checkpoint");
-        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 };
+        let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() };
         node.settle();
         node
     }
@@ -111,7 +124,7 @@ impl Node {
         let (published, manifest) = watch::channel(Manifest::default());
         let cfg = config(dir, clock.clone(), sink, published);
         let seq = Sequencer::recover_from(log, cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0)?;
-        Ok(Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 })
+        Ok(Node { seq, clock, queued, manifest, checkpoint: None, pending: 0, closed: Closed::default() })
     }
 
     /// Samples trusted time and sequences a tick, the first command a restarted node stamps.
@@ -136,6 +149,13 @@ impl Node {
     /// Sequences `cmd` now, returning its events, and flushes every `FLUSH_EVERY` commands.
     fn sequence(&mut self, cmd: Command) -> Vec<Event> {
         let stamped = self.seq.sequence(cmd).expect("the log takes the command").expect("trusted time admits it");
+        for event in stamped.iter() {
+            match event {
+                Event::EmissionPeriodClosed { .. } => self.closed.periods += 1,
+                Event::DistributionEpochClosed { .. } => self.closed.epochs += 1,
+                _ => {}
+            }
+        }
         self.pending += 1;
         if self.pending >= FLUSH_EVERY {
             self.seq.flush().expect("the batch syncs");
@@ -184,6 +204,7 @@ enum Due {
     Tick,
     Price(MarketId),
     Request,
+    Frontier,
 }
 
 /// What a stretch of flow sequenced: the price commands the engine applied and the requests among its
@@ -223,15 +244,17 @@ pub(super) struct Flow {
     due: BinaryHeap<Reverse<(u64, Due)>>,
     origin_ms: Option<Millis>,
     ran_us: u64,
+    /// The finalised frontier's last block.
+    blocks: u64,
 }
 
 impl Flow {
     /// The flow of `traders`, each market priced at its rate in `rates`.
     pub(super) fn new(traders: Traders, rates: BTreeMap<MarketId, f64>) -> Self {
         let mut due = BinaryHeap::new();
-        due.extend([Due::Sample, Due::Tick, Due::Request].map(|kind| Reverse((0, kind))));
+        due.extend([Due::Sample, Due::Tick, Due::Request, Due::Frontier].map(|kind| Reverse((0, kind))));
         due.extend(rates.keys().map(|market| Reverse((0, Due::Price(*market)))));
-        Flow { traders, rates, moves: BTreeMap::new(), published: None, due, origin_ms: None, ran_us: 0 }
+        Flow { traders, rates, moves: BTreeMap::new(), published: None, due, origin_ms: None, ran_us: 0, blocks: 0 }
     }
 
     /// Sequences the next `span` of flow at `multiple` times launch flow into `node`, calling `day` with
@@ -284,6 +307,18 @@ impl Flow {
                     }
                     at_us + (1_000_000.0 / rate) as u64
                 }
+                Due::Frontier => {
+                    self.blocks += 1;
+                    let progress = Command::StakingProgress {
+                        block: self.blocks,
+                        block_hash: B256::repeat_byte(0x11),
+                        block_time: Some(ts),
+                        named_turn: None,
+                    };
+                    let events = node.sequence(progress);
+                    assert!(events.is_empty(), "the staking mirror's finalised frontier: {events:?}");
+                    at_us + FRONTIER_US
+                }
                 Due::Request => {
                     let sent = self.traders.send(node, ts, |node, cmd| node.sequence(cmd));
                     today.requests += 1;
@@ -307,7 +342,7 @@ impl Flow {
 
     /// The commands `secs` of flow at `multiple` times launch flow from `start_ms` sequences on
     /// average: its ticks, its requests, a benchmark publication a day, and each market's prices over
-    /// the minutes its venue is open, as `engine` lists the market.
+    /// the minutes its venue is open, as `engine` lists the market, and a frontier a minute.
     pub(super) fn scheduled(&self, engine: &engine_core::Engine, start_ms: Millis, secs: u64, multiple: f64) -> f64 {
         let open_secs = |market: MarketId| {
             let schedule = &engine.markets()[&market].spec.schedule;
@@ -317,7 +352,7 @@ impl Flow {
         let prices: f64 = self.rates.iter().map(|(market, rate)| rate * open_secs(*market)).sum();
         let ticks = secs as f64 * 1_000_000.0 / TICK_US as f64;
         let requests = secs as f64 * crate::load_scenario::plan::requests_per_second(multiple);
-        prices + ticks + requests + (secs / (DAY_US / 1_000_000)) as f64
+        prices + ticks + requests + (secs / (DAY_US / 1_000_000)) as f64 + (secs / (FRONTIER_US / 1_000_000)) as f64
     }
 
     /// The commands a second of launch flow sequences with every market open: the most it writes.
