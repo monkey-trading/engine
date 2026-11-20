@@ -740,9 +740,10 @@ The steps that `member_follow_blocked` names, and the source to check for each, 
   schedule and the Roughtime servers.
 - `resolve_operator` resolves the operator in effect. Check the registry's hostname for the
   operator.
-- `open_copy` opens the copy and replays it into the replica. Check the copy's disk, with
-  `engine replay --log`. When the error says that an instruction a checkpoint covers carries no seal
-  by an accepted signer, an archive mirror or your host altered the copy, which `engine replay`
+- `open_copy` opens the copy and replays it into the replica, checking every seal. Check the copy's
+  disk, with `engine replay --every-seal --log`: plain `engine replay` checks in full only the first
+  and last seal of each run. When the error says that an instruction a checkpoint covers carries no
+  seal by an accepted signer, an archive mirror or your host altered the copy, which `engine replay`
   accepts. Move the copy aside so that the trading server rebuilds it from the archive, or leave it
   for your turn's whole-log take.
 - `read_posted_head` reads the latest posted log head. Check the `LogHeads` reads.

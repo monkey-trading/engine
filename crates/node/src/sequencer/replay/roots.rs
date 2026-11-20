@@ -212,9 +212,9 @@ impl Replay {
         self.check_roots_ahead();
     }
 
-    /// Has this replay check every later seal's form, and in full only the last seal of each run of one
-    /// signer's seals (`Origin::check_run_ends`), as `engine replay` does. The caller settles its read
-    /// (`settled`) before it finishes it, which checks the last run.
+    /// Has this replay check every later seal's form, and in full only the first and last seal of each run
+    /// of one signer's seals (`Origin::check_run_ends`), as `engine replay` does. The caller settles its
+    /// read (`settled`) before it finishes it, which checks the last run.
     pub(in crate::sequencer) fn check_run_ends(&mut self) {
         self.origin.check_run_ends();
     }
@@ -225,7 +225,10 @@ impl Replay {
     /// Error cases:
     /// - as `before` and `apply_entry`
     pub(in crate::sequencer) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
-        self.before(entry).map_err(|failed| self.roots.check_due().err().unwrap_or(failed))?;
+        if let Err(failed) = self.before(entry) {
+            self.origin.drop_run();
+            return Err(self.roots.check_due().err().unwrap_or(failed));
+        }
         self.apply_entry(entry).map_err(|failed| self.earlier_fault().unwrap_or(failed))
     }
 
@@ -251,8 +254,16 @@ impl Replay {
     /// A fault before the entry the replay is at, which it reports ahead of that entry's: a root still due
     /// that differs from the log's, at the last checkpoint; else the open run's seal that does not verify,
     /// over the commands since that checkpoint, the entry's own command among them once its seal is taken.
+    /// Each is found once: a root that differs discards the open run, which comes after it, so a second call
+    /// finds nothing and the fault already found stands.
     fn earlier_fault(&mut self) -> Option<anyhow::Error> {
-        self.roots.check_due().err().or_else(|| self.origin.end_run().err())
+        match self.roots.check_due() {
+            Err(root) => {
+                self.origin.drop_run();
+                Some(root)
+            }
+            Ok(()) => self.origin.end_run().err(),
+        }
     }
 }
 

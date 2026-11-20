@@ -24,9 +24,9 @@
 # RECOVERY_TRADERS (2000), RECOVERY_START_SECS (0: the flow starts at the book's clock, Monday 15:00
 # UTC), RECOVERY_LAUNCH_SECS (2592000), RECOVERY_TEN_TIMES_SECS (259200), RECOVERY_CAPTURE_SECS (300),
 # RECOVERY_SUFFIX_SECS (300), RECOVERY_TAILS (bytes, comma-separated) and RECOVERY_REPLAY_WORKERS (the
-# threads that check command seals ahead of each replay, the node's included: one per core). CI runs it
-# at 10,000 accounts and twenty-one minutes of flow across the US shares' close, which the first
-# emission period and staking epoch end in.
+# threads that check command seals ahead of each replay that checks every seal, the node's included: one
+# per core). CI runs it at 10,000 accounts and twenty-one minutes of flow across the US shares' close,
+# which the first emission period and staking epoch end in.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 test=sequencer::recovery_scale::dev_scenario_recovery_scale

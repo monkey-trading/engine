@@ -49,8 +49,8 @@ enum Cmd {
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
     /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
     /// missing log, or one with no command or no checkpoint, fails. Every instruction's chained digest is
-    /// checked, every seal's form, and in full the seal that ends each run of one signer's seals, which
-    /// authenticates every instruction in the run; `--every-seal` checks every seal in full.
+    /// checked, every seal's form, and in full the first and last seal of each run of one signer's seals,
+    /// the last authenticating every instruction in the run; `--every-seal` checks every seal in full.
     Replay {
         #[arg(short, long)]
         log: PathBuf,
@@ -84,7 +84,7 @@ enum Cmd {
         /// vendor roots. Test and private chains verify against this; release chains do not need it.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Check every instruction's seal in full, as a copy of the log does, not only each run's last.
+        /// Check every instruction's seal in full, as a copy of the log does, not only each run's first and last.
         #[arg(long)]
         every_seal: bool,
         /// Threads that check command seals ahead of the replay with `--every-seal`; one per core when unset.

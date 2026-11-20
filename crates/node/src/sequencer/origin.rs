@@ -69,8 +69,8 @@ impl Origin {
         self.seals = Seals::Every(SealsAhead::start(path, from, self.link, workers));
     }
 
-    /// Checks every later seal's form, and in full only the last seal of each run of one signer's seals,
-    /// as `engine replay` does (see `seals`), in place of every seal in full.
+    /// Checks every later seal's form, and in full only the first and last seal of each run of one signer's
+    /// seals, as `engine replay` does (see `seals`), in place of every seal in full.
     pub(crate) fn check_run_ends(&mut self) {
         self.seals = Seals::RunEnds(Runs::default());
     }
@@ -83,12 +83,18 @@ impl Origin {
     }
 
     /// Ends the open run, if any, checking its last seal in full (`check_run_ends`). A replay checking run
-    /// ends calls it before it reports any fault, so a run's failed seal comes first, and before it
-    /// finishes.
+    /// ends calls it before it reports any later fault, after the root still due, so a run's failed seal
+    /// comes in log order, and before it finishes.
     /// Error cases:
     /// - the run's last seal does not verify over its link
     pub(crate) fn end_run(&mut self) -> anyhow::Result<()> {
         self.seals.end_run()
+    }
+
+    /// Discards the open run unchecked (`check_run_ends`): a fault the replay found before it, which it
+    /// reports, makes the run moot.
+    pub(crate) fn drop_run(&mut self) {
+        self.seals.drop_run();
     }
 
     /// Whether a run is open, its last seal unchecked (`check_run_ends`).
@@ -105,10 +111,10 @@ impl Origin {
         }
     }
 
-    /// How many runs' last seals this replay checked in full (`check_run_ends`).
+    /// How many seals this replay checked in full at run ends (`check_run_ends`).
     #[cfg(test)]
-    pub(crate) fn runs_checked(&self) -> u64 {
-        self.seals.runs_checked()
+    pub(crate) fn seals_checked(&self) -> u64 {
+        self.seals.seals_checked()
     }
 
     /// Checks a present seal before applying a command (`seals`) and retains every uncovered span.

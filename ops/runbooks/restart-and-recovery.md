@@ -241,8 +241,10 @@ heads are kept for each signer epoch, and the new epoch starts with none.
    disk problem.** The key sequenced on another copy. Stop, and call the owner. A start from a
    recovery cache refuses in the same way when the instructions after the head, through the cache,
    do not give the cache's digest: a fork, or those instructions are damaged on the disk. To tell
-   them apart, run `engine replay` on a copy of the log: a damaged instruction fails its seal check
-   there. Damaged instructions are a disk problem: follow step 4 for a copy that holds them.
+   them apart, run `engine replay --every-seal` on a copy of the log: a damaged instruction fails its
+   seal check there. Plain `engine replay` checks in full only the first and last seal of each run,
+   so it passes damage confined to the seals between. Damaged instructions are a disk problem:
+   follow step 4 for a copy that holds them.
 
 4. Otherwise, find a copy that holds the missing range. Look first at a standby's copy, as
    [Running as a standby](standby.md) describes, and then at the archive mirrors. A mirror holds

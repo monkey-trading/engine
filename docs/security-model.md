@@ -405,19 +405,22 @@ with one key cannot both extend the vault's chain.
 The enclave seals each instruction: it signs a chained digest of the instruction, its stamp and its
 events, chained to the digest before it back to the last checkpoint, whose sequence number and root
 start the chain. `engine replay` computes every instruction's chained digest, and checks that every
-seal is well formed: a 65-byte signature with an Ethereum recovery id, both scalars in range and a low
-`s`, a signer that is not zero, the log's deployment, and logged events. It checks a seal's signature
-in full only at the end of each run. A run is the longest stretch of consecutive instructions in one
-checkpoint interval whose seals name the same signer and deployment. A run ends at a checkpoint, at a
-seal that names another signer or deployment, at an instruction with no seal, and at the end of the
-log, so a run never spans a change of signer. The run's last seal signs a digest that chains every
-instruction, stamp and event set of the run, so when it verifies, its signer chained exactly those
-instructions in that order, barring a keccak-256 collision. An instruction altered, inserted, dropped
-or reordered after it was sealed therefore fails the replay at the end of its run, which the error
-names by its first and last sequence numbers. The replay checks the open run before it reports any
-later fault, so the run's failure comes first. It applies a run's instructions before the seal that
-authenticates them is checked, which changes only where a fault is reported, since an audit acts on
-nothing. `engine replay --every-seal` checks every seal in full, as below.
+seal is well formed: a 65-byte signature with an Ethereum recovery id, both scalars in range and a
+low `s`, a signer that is not zero, the log's deployment, and logged events. It checks a seal's
+signature in full only at the first and last instruction of each run. A run is the longest stretch
+of consecutive instructions in one checkpoint interval whose seals name the same signer and
+deployment. A run ends at a checkpoint, at a seal that names another signer or deployment, at an
+instruction with no seal, and at the end of the log, so a run never spans a change of the signer its
+seals name. The run's last seal signs a digest that chains every instruction, stamp and event set
+since the checkpoint, so when it verifies, its signer chained exactly those instructions in that
+order, barring a keccak-256 collision. An instruction altered, inserted, dropped or reordered after
+it was sealed therefore fails the replay at the end of its run, which the error names by its first
+and last sequence numbers. A run whose seals were relabelled to name the signer of the run after it,
+so the two merge, fails at its first seal, and one relabelled to name the signer of the run before
+it fails at its last. The replay checks the open run before it reports any later fault, so the run's
+failure comes in log order. It applies a run's instructions before the seal that authenticates them
+is checked, which changes only where a fault is reported, since an audit acts on nothing.
+`engine replay --every-seal` checks every seal in full, as below.
 
 A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
 replica build and a taken copy's replay check every seal in full, since each goes on to sign over,
@@ -477,11 +480,13 @@ sequence number it retains, freezes sequencing.
 
 Known limits:
 
-- `engine replay` does not check the signature bytes of a run's seals before its last, which the
-  chained digest leaves out. A log whose earlier signatures in a run were altered, their signer and
+- `engine replay` checks the seals between a run's first and last only for their form, since the
+  chained digest leaves seals out. A log whose signatures there were altered, their signer and
   deployment kept, replays to the same state, events and roots, but its running digest, which reads
-  each seal's bytes, differs from its writer's and from any posted log head that covers it.
-  `engine replay --every-seal` refuses it, as every replay that checks every seal does.
+  each seal's bytes, differs from its writer's and from any posted log head that covers it. So does
+  a log in which the seals of a block of instructions between two runs of one signer were relabelled
+  to name that signer, although that signer's last seal chains them. `engine replay --every-seal`
+  refuses both, as every replay that checks every seal does.
 - These checks reach only as far as the vault's checkpoints and the posted heads. Within that reach,
   whoever runs the trading server can choose after the fact whether its own recent instructions
   happened, by holding a sync or by cutting the log back, as the items below describe.

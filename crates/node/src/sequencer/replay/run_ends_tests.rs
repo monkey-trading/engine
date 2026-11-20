@@ -1,6 +1,6 @@
-//! `engine replay`'s seal check: every seal's form, and in full the last seal of each run of one signer's
-//! seals, which authenticates every command of the run; and the every-seal check that `--every-seal` and a
-//! copy of the log keep.
+//! `engine replay`'s seal check: every seal's form, and in full the first and last seal of each run of one
+//! signer's seals, the last authenticating every command of the run; and the every-seal check that
+//! `--every-seal` and a copy of the log keep.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -21,20 +21,41 @@ use crate::tee::EnclaveKey;
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
 const OTHER_DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31338, vault: AccountId([7; 20]) };
 
-/// A replay of ten ticks with checkpoints after seqs 3 and 7 checks three seals in full, one for each run:
-/// 0 to 3, 4 to 7, and the tail, 8 and 9, which its read's end settles; one checking every seal checks
-/// each one, and takes no run.
+/// A replay of ten ticks with checkpoints after seqs 3 and 7 checks six seals in full, the first and last
+/// of each run: 0 and 3, 4 and 7, and the tail's, 8 and 9, which its read's end settles; a run of one seal
+/// checks it once. One checking every seal checks each one, and takes no run.
 #[test]
-fn engine_replay_checks_one_seal_in_full_for_each_run() {
+fn engine_replay_checks_the_first_and_last_seal_of_each_run_in_full() {
     let key = EnclaveKey::test_key();
     let entries = ticks(10, &[3, 7], |_| Some((&key, DOMAIN)));
-    assert_eq!(replay(&entries).unwrap().origin.runs_checked(), 3);
+    assert_eq!(replay(&entries).unwrap().origin.seals_checked(), 6);
     let dir = written("run-ends-count", &entries);
     let signer = Some(AccountId(key.address()));
     let ends = replay_path_with_trust(&dir, Some(DOMAIN), signer, SealChecks::RunEnds).unwrap();
-    assert_eq!(ends.origin.runs_checked(), 3);
+    assert_eq!(ends.origin.seals_checked(), 6);
     let every = replay_path_with_trust(&dir, Some(DOMAIN), signer, every_seal()).unwrap();
-    assert_eq!(every.origin.runs_checked(), 0);
+    assert_eq!(every.origin.seals_checked(), 0);
+    let single = ticks(5, &[0, 3], |_| Some((&key, DOMAIN)));
+    assert_eq!(replay(&single).unwrap().origin.seals_checked(), 4, "runs of 0, of 1 to 3, and of 4");
+}
+
+/// Seals relabelled to name the signer of the run next to them, so the two runs merge, fail: a run
+/// relabelled to the next run's signer at its first seal, and one relabelled to the previous run's signer at
+/// its last.
+#[test]
+fn a_run_relabelled_to_its_neighbours_signer_fails_at_its_first_or_last_seal() {
+    let (key, other) = (EnclaveKey::test_key(), EnclaveKey::generate());
+    let entries = ticks(7, &[], |seq| Some(if seq < 4 { (&key, DOMAIN) } else { (&other, DOMAIN) }));
+    replay(&entries).unwrap();
+    for (relabelled, signer, refused) in [(0..4, &other, "the seal at seq 0 by"), (4..7, &key, "the seal at seq 6 by")]
+    {
+        let mut altered = entries.clone();
+        for seq in relabelled {
+            command(&mut altered, seq).seal.as_mut().unwrap().signer = AccountId(signer.address());
+        }
+        let error = format!("{:#}", replay(&altered).err().expect("refused"));
+        assert!(error.contains(refused) && error.contains("invalid command origin signature"), "{error}");
+    }
 }
 
 /// A seal mid-run whose signature bytes are another valid signature by its signer, over another link,
@@ -71,7 +92,7 @@ fn a_command_changed_after_sealing_fails_at_the_end_of_its_run() {
     command(&mut entries, 2).sequenced.ts = 1;
     let refused = format!("{:#}", replay(&entries).err().expect("refused"));
     assert!(refused.contains("the seal at seq 3 by"), "{refused}");
-    assert!(refused.contains("over the commands from seq 0"), "{refused}");
+    assert!(refused.contains("the run from seq 0"), "{refused}");
     assert!(refused.contains("invalid command origin signature"), "{refused}");
 }
 
@@ -124,7 +145,7 @@ fn a_run_ends_at_another_signer_or_domain_and_at_a_command_with_no_seal() {
         command(&mut entries, 3).seal = Some(key.seal_command(DOMAIN, B256::repeat_byte(9)));
         let refused = format!("{:#}", replay(&entries).err().expect("refused"));
         assert!(refused.contains("the seal at seq 3 by"), "{after}: {refused}");
-        assert!(refused.contains("over the commands from seq 0"), "{after}: {refused}");
+        assert!(refused.contains("the run from seq 0"), "{after}: {refused}");
     }
 }
 
@@ -153,7 +174,10 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     let mut entries = ticks(6, &[2], |_| Some((&key, DOMAIN)));
     wrong_seal(&mut entries, 5);
     let refused = format!("{:#}", replay(&entries).err().expect("refused"));
-    assert!(refused.contains("the seal at seq 5 by") && refused.contains("from seq 3"), "at the end: {refused}");
+    assert!(
+        refused.contains("the seal at seq 5 by") && refused.contains("the run from seq 3"),
+        "at the end: {refused}"
+    );
 }
 
 // ── Helpers ──

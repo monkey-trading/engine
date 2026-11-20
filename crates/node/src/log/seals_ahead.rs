@@ -36,8 +36,8 @@ pub struct ReplayWorkers(NonZeroUsize);
 /// How a replay checks its command seals.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SealChecks {
-    /// Every seal's form, and in full the last seal of each run of one signer's seals, which signs a
-    /// link chaining every command of the run (`Origin::check_run_ends`): `engine replay`'s check.
+    /// Every seal's form, and in full the first and last seal of each run of one signer's seals, the last
+    /// signing a link that chains every command of the run (`Origin::check_run_ends`): `engine replay`'s check.
     #[default]
     RunEnds,
     /// Every seal in full before its command applies, ahead of the replay on this many workers.
