@@ -336,19 +336,20 @@ fn rss_mib() -> u64 {
 mod closes_tests {
     use super::*;
 
-    /// The flow of a run sized as CI's is, on a small book priced in BTC-USD alone, closes emission
-    /// periods and staking epochs.
+    /// The flow of a run sized as CI's is, 1,200 s of launch flow and then a minute of ten times it, on
+    /// a small book priced in BTC-USD alone, closes emission periods and staking epochs.
     #[test]
     fn a_flow_closes_emission_periods_and_staking_epochs() {
         let counts = NamedCounts { adders: 1, openers: 4, closeouts: 0 };
-        let mut book = build(&mix(200, 0, 1_800), counts);
+        let mut book = build(&mix(200, 0, 1_200), counts);
         let engine = std::mem::take(&mut book.h.engine);
         let traders = Traders::new(std::mem::take(&mut book.named.openers), &engine);
         let run = scratch_dir("recovery-closes");
         let mut node = Node::unpaired(engine, &run.join("log"), Arc::new(EnclaveKey::generate()));
         let mut flow = Flow::new(traders, BTreeMap::from([(1, 11.0)]));
-        flow.run(&mut node, Duration::from_secs(1_800), 1.0, |_, _, _| {});
-        // Ten-minute periods and ten-minute epochs, from ten minutes in.
+        flow.run(&mut node, Duration::from_secs(1_200), 1.0, |_, _, _| {});
+        flow.run(&mut node, Duration::from_secs(60), 10.0, |_, _, _| {});
+        // Ten-minute periods and 400-second epochs, from ten minutes in.
         assert!(node.closed.periods > 0 && node.closed.epochs > 0, "{:?}", node.closed);
     }
 }

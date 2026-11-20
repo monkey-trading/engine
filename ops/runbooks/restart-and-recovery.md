@@ -33,11 +33,11 @@ their output call a running trading server a node.
   cores. The same machine, with six threads checking seals, recovered about 6,300 instructions a
   second, seeding the marks cache and the dashboard record as it went, so each weekday of launch flow
   adds about 26 minutes, and 30 days of launch flow, about 246 million instructions, add about 11
-  hours. With `[snapshots]`, a start that finds no usable cache
-  (`snapshot_rejected`) replays the whole log and also rebuilds the history index from it, which
-  takes longer still. Once the trading server holds a withdrawal approval it takes no new cache,
-  since a cache does not carry approvals, so each start replays from the last cache before the first
-  approval, and the replay grows with the log after it. Plan a restart's downtime from these.
+  hours. With `[snapshots]`, a start that finds no usable cache (`snapshot_rejected`) replays the
+  whole log and also rebuilds the history index from it, which takes longer still. Once the trading
+  server holds a withdrawal approval it takes no new cache, since a cache does not carry approvals,
+  so each start replays from the last cache before the first approval, and the replay grows with the
+  log after it. Plan a restart's downtime from these.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
   chip open the same sealed keys. The enclave address, the signer epoch, the TLS key and therefore
   `$PIN`, the certificate, and the outstanding withdrawal authorisations are unchanged. A restart

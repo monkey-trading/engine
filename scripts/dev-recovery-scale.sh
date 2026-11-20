@@ -16,8 +16,8 @@
 # the daily rotation's 1 s, with whether a predecessor would admit its tail; and the largest tail whose
 # switch fits. It fails if a day of flow priced or filled nothing or rejected over 1% of its requests,
 # the flow closes no MONKEY emission period or staking epoch, a replay does not reach the log's roots,
-# the restart does not resume from the cache, the history
-# index does not take the log's last command, or a handover does not take its tail.
+# the restart does not resume from the cache, the history index does not take the log's last command,
+# or a handover does not take its tail.
 #
 # Needs only Cargo; private temporary data under TMPDIR. The log needs disk: about the bytes a day it
 # prints, times the days run. The environment sizes the run: RECOVERY_ACCOUNTS (100000),
