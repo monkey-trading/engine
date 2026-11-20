@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use alloy::primitives::{Address, Bytes, U256};
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, bail};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
 
@@ -20,6 +20,7 @@ use crate::custody::evm::{BlockRef, Finality, HeadSupport, StakingEvent, VaultDe
 use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 
 mod posted_head;
+mod staking;
 
 /// Independent providers and their alert identities; the watcher owns the reader.
 pub(crate) struct Quorum<R> {
@@ -219,22 +220,14 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         self.vote("deposits", answers).map(|v| v.0.1)
     }
 
-    /// Identical staking event sets anchored to the range endpoint the watcher already proved.
-    /// Error cases:
-    /// - no quorum, or the winning endpoint differs from that proof, even for an empty response
+    /// Identical staking event sets over the window, anchored to the endpoint it proved (`staking`).
     async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let to = blocks.last().context("staking range is empty")?;
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            let header = last_header(r.headers(to.number, to.number).await?, to.number)?;
-            let mut events = r.staking_events(blocks).await?;
-            events.sort_by_key(|event| (event.block, event.log_index));
-            Ok((header.hash, events))
-        }))
-        .await;
-        let ((hash, events), _) = self.vote("staking_events", answers)?;
-        ensure!(hash == to.hash, "staking event range endpoint differs from its proven canonical hash");
-        Ok(events)
+        self.ranged_staking_events(blocks).await
+    }
+
+    /// Identical staking event sets, each provider's read pinned to every block's hash (`staking`).
+    async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        self.hash_pinned_staking_events(blocks).await
     }
 
     /// Identical counts at the same canonical block hash.

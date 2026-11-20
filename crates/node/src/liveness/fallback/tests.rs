@@ -20,9 +20,9 @@ const TEST_POLL: Duration = Duration::from_millis(50);
 /// A call sent: where to, and its data.
 type SentCall = (Address, Vec<u8>);
 
-/// The calls sent; every estimate passes.
+/// The calls sent, every estimate passing, and how often the balance was read.
 #[derive(Clone, Default)]
-struct Sent(Arc<Mutex<Vec<SentCall>>>);
+struct Sent(Arc<Mutex<Vec<SentCall>>>, Arc<AtomicUsize>);
 
 impl Sending for Sent {
     async fn send(&self, to: Address, data: Vec<u8>) -> anyhow::Result<Option<B256>> {
@@ -31,11 +31,17 @@ impl Sending for Sent {
     }
 
     async fn balance(&self) -> anyhow::Result<U256> {
+        self.1.fetch_add(1, Ordering::Relaxed);
         Ok(U256::from(10u64.pow(18)))
     }
 }
 
 impl Sent {
+    /// How often the balance was read: once a poll, for the caller and the fixer alike.
+    fn polls(&self) -> usize {
+        self.1.load(Ordering::Relaxed)
+    }
+
     fn calls(&self) -> Vec<SentCall> {
         self.0.lock().unwrap().clone()
     }
@@ -52,7 +58,16 @@ fn pending(state: ChainState) -> (ChainState, SentCall) {
 }
 
 fn fixer<C, S>(chain: C, sending: S, sends: Arc<Sends>) -> Fixer<C, S> {
-    Fixer { chain, sending, chain_id: 42161, vault: VAULT, poll: TEST_POLL, min_balance: U256::ZERO, sends }
+    Fixer {
+        chain,
+        sending,
+        chain_id: 42161,
+        vault: VAULT,
+        idle: TEST_POLL,
+        poll: TEST_POLL,
+        min_balance: U256::ZERO,
+        sends,
+    }
 }
 
 /// The member's liveness caller over `chain`, sending through `sending` under `sends`.
@@ -362,4 +377,104 @@ async fn an_unreadable_balance_pages_the_fixer_once() {
     task.abort();
     assert_eq!(named(&mut resolved, "alert_resolved", "liveness_caller_fallback_failed").len(), 1);
     assert!(named(&mut alerts, "alert", "liveness_caller_fallback_failed").is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_fixer_reads_at_its_idle_interval_until_a_fix_is_under_way() {
+    let idle = TEST_POLL * 10;
+    let chain = Arc::new(FakeChain::new(ChainState::default()));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
+    fixer.idle = idle;
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(idle * 3 + TEST_POLL).await;
+    assert_eq!(sent.polls(), 4, "a read at once, then one each idle interval");
+    let (state, fix) = pending(ChainState::default());
+    chain.set(|chain| *chain = state);
+    tokio::time::sleep(idle - TEST_POLL / 2).await;
+    assert_eq!(sent.count(&fix), 1, "the next idle read sends the fix");
+    tokio::time::sleep(TEST_POLL).await;
+    task.abort();
+    assert_eq!(sent.count(&fix), 2, "the follow-up comes a poll later, not an idle interval");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_caller_reads_four_times_a_heartbeat_interval_however_long_its_read_interval() {
+    // A 4 s heartbeat interval: a read every second, though the read interval is a minute.
+    let chain = Arc::new(FakeChain::new(ChainState { interval: 4, ..Default::default() }));
+    let sent = Sent::default();
+    let mut caller = caller(chain, sent.clone(), Arc::default());
+    caller.poll = Duration::from_secs(60);
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(Duration::from_millis(10_500)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 11, "reads at 0 s to 10 s");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_fixer_reads_at_its_interval_through_a_failed_read_and_follows_a_block_anyone_fixed() {
+    let chain = Arc::new(FakeChain::new(ChainState::default()));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // The quorum is lost through the read at 30 s; meanwhile no seed is relayed, and a draw's first
+    // call fixes a block before any member reads.
+    chain.set(|chain| chain.down = true);
+    tokio::time::sleep(Duration::from_secs(39)).await;
+    let (state, fix) = pending(ChainState::default());
+    chain.set(|chain| *chain = ChainState { seed: (state.seed.0, B256::ZERO, B256::ZERO, state.number), ..state });
+    tokio::time::sleep(Duration::from_secs(21)).await;
+    assert_eq!(sent.count(&fix), 1, "the read at 60 s, an interval after the failed one, records the hash");
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    task.abort();
+    assert_eq!(sent.count(&fix), 2, "and follows it up a poll later");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_caller_retries_a_failed_first_read_within_5_s_however_long_its_read_interval() {
+    let chain = Arc::new(FakeChain::new(ChainState { down: true, ..Default::default() }));
+    let sent = Sent::default();
+    let mut caller = caller(chain.clone(), sent.clone(), Arc::default());
+    caller.poll = Duration::from_secs(60);
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    chain.set(|chain| chain.down = false);
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 1, "the read at 5 s, after the one that failed at 0 s");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_fix_under_way_is_followed_up_through_failed_reads() {
+    let (state, fix) = pending(ChainState::default());
+    let chain = Arc::new(FakeChain::new(state));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain.clone(), sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(sent.count(&fix), 1, "the first fix at once");
+    // The quorum is lost through the reads at 5 s and 10 s, and back before the one at 15 s.
+    chain.set(|chain| (chain.down, chain.seed.3) = (true, chain.number));
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    chain.set(|chain| chain.down = false);
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    task.abort();
+    assert_eq!(sent.count(&fix), 2, "the read at 15 s records the hash");
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_fixer_reads_every_interval_from_each_read_start_however_slow_its_reads() {
+    let chain = Arc::new(FakeChain::new(ChainState { latency: Duration::from_secs(1), ..Default::default() }));
+    let sent = Sent::default();
+    let mut fixer = fixer(chain, sent.clone(), Arc::default());
+    (fixer.idle, fixer.poll) = (Duration::from_secs(30), Duration::from_secs(5));
+    let task = tokio::spawn(fixer.run());
+    tokio::time::sleep(Duration::from_secs(29)).await;
+    assert_eq!(sent.polls(), 1, "the first read took seconds");
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 2, "the second read starts at 30 s, not 30 s after the first ended");
 }

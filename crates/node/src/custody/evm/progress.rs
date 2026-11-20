@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use engine_core::deposits::{CustodyCheckpoint, DepositReceipt};
 use engine_core::types::AccountId;
 
-use crate::custody::chain::{LinkedRun, ProvenChain};
+use crate::custody::chain::{LinkedRun, ProvenChain, ProvenWindow};
 use crate::custody::evm::lifecycle::receipt;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultDeposit, VaultReader, check_complete};
 use crate::custody::stall::PollError;
@@ -110,7 +110,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         let below = self.chain.top();
         let first = below.map_or(from, |(number, _)| number + 1);
         if !self.confirmed.proof.as_ref().is_some_and(|proof| proof.below == below && proof.first == first) {
-            self.confirmed.proof = Some(HeaderProof { below, first, run: LinkedRun::new(below, first) });
+            self.confirmed.proof = Some(HeaderProof { below, first, run: LinkedRun::recording(below, first) });
         }
         let next = self.confirmed.proof.as_ref().expect("proof initialized").run.next();
         if next <= tagged.number {
@@ -165,7 +165,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         from: u64,
         to: u64,
     ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
-        self.prove_window(from, to, false).await
+        Ok(self.prove_window(from, to, false).await?.map(|window| window.hashes))
     }
 
     /// The end of the staking window whose header proof, begun at `from`, is still in progress.
@@ -174,26 +174,29 @@ impl<V: VaultReader> DepositWatcher<V> {
     }
 
     /// Proves a window for the staking mirror on its own retained slot, so deposit proofs cannot
-    /// discard a catch-up in progress. See `confirmed_window`.
+    /// discard a catch-up in progress, with the blocks whose header's bloom admits a mirrored event. See
+    /// `confirmed_window`.
     /// Error cases:
     /// - headers lack quorum, fail to link, or do not reach the previously proven anchor
-    pub(super) async fn staking_window(
-        &mut self,
-        from: u64,
-        to: u64,
-    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
+    pub(super) async fn staking_window(&mut self, from: u64, to: u64) -> Result<Option<ProvenWindow>, PollError> {
         self.prove_window(from, to, true).await
     }
 
-    async fn prove_window(
-        &mut self,
-        from: u64,
-        to: u64,
-        staking: bool,
-    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
+    /// A window's proven hashes: the deposit proofs' window, else the recent hashes the confirmation proof
+    /// kept, which read nothing, else headers read from `from` up to the lowest anchor at or above `to`.
+    async fn prove_window(&mut self, from: u64, to: u64, staking: bool) -> Result<Option<ProvenWindow>, PollError> {
         if let Some(hashes) = self.chain.window(from, to).filter(|_| !staking) {
             self.chain.insert(to, hashes[&to]);
-            return Ok(Some(hashes));
+            let staking_logs = self.chain.window_logs(from, to);
+            return Ok(Some(ProvenWindow { hashes, staking_logs }));
+        }
+        // A staking read binds its range's end to each provider's header there, so a recent window needs
+        // no anchor read either.
+        if let Some(window) = self.chain.recent(from, to) {
+            if !staking {
+                self.chain.insert(to, window.hashes[&to]);
+            }
+            return Ok(Some(window));
         }
         let retained = staking
             .then_some(self.confirmed.staking_window.as_ref())
@@ -219,7 +222,8 @@ impl<V: VaultReader> DepositWatcher<V> {
             }
         }
         if staking && let Some(hashes) = self.confirmed.staking_chain.window(from, to) {
-            return Ok(Some(hashes));
+            let staking_logs = self.confirmed.staking_chain.window_logs(from, to);
+            return Ok(Some(ProvenWindow { hashes, staking_logs }));
         }
         let midpoint = from + (upper.0 - from) / 2;
         let (next, end) = {
@@ -253,6 +257,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         }
         let proof = slot.take().expect("complete window retained");
         let hashes = proof.run.window(from, to);
+        let staking_logs = proof.run.window_logs(from, to);
         // Midpoints form a depth-first binary hierarchy: O(N log(N/chunk)) header work,
         // at most 66 anchors and one configured chunk of full hashes, independent of deposits.
         let chain = if staking { &mut self.confirmed.staking_chain } else { &mut self.chain };
@@ -262,7 +267,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         if staking {
             chain.cap_anchors(66);
         }
-        Ok(Some(hashes))
+        Ok(Some(ProvenWindow { hashes, staking_logs }))
     }
 
     /// Reuses complete windows only while their endpoint is on the freshly proved chain.

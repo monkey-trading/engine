@@ -40,9 +40,19 @@ pub trait VaultReader {
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
 
-    /// Every staking and operator registry event in the contiguous proven hash window, in chain
-    /// order. Each log query must name its proven block hash, including empty responses.
+    /// Every staking and operator registry event in the contiguous proven window, in chain order, from
+    /// one log read over its block range. Every event must be on its block's proven hash.
     fn staking_events(&self, blocks: &[BlockRef]) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+
+    /// The same events at each of `blocks`, in chain order, each read by its proven block hash, so an
+    /// empty answer is bound to that block. A reader that cannot read them refuses.
+    fn pinned_staking_events(
+        &self,
+        blocks: &[BlockRef],
+    ) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send {
+        let _ = blocks;
+        async { anyhow::bail!("this reader does not read staking events by block hash") }
+    }
 
     /// The registry the configured staking contract records as its deployer, in the canonical
     /// block `at`, or `None` where the staking contract has no code yet, before its deployment.

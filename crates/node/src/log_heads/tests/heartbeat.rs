@@ -124,10 +124,10 @@ async fn heads_go_out_at_least_twice_per_interval_each_newer_in_seq_and_signing_
     drive.stop().await;
 }
 
-/// A checkpoint retry as long as the heartbeat interval still lets heads out at least twice per
+/// A read interval as long as the heartbeat interval still lets heads out at least twice per
 /// interval: the heartbeat paces the reads a post waits for.
 #[tokio::test(start_paused = true)]
-async fn heads_go_out_twice_per_interval_whatever_the_checkpoint_retry() {
+async fn heads_go_out_twice_per_interval_whatever_the_read_interval() {
     let chain = FakeChain::new(None);
     chain.name_turn(turn(GENERATION));
     let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
@@ -139,7 +139,7 @@ async fn heads_go_out_twice_per_interval_whatever_the_checkpoint_retry() {
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
     let posted = chain.posts_v2();
-    // Two minutes of a 60 s interval with a 60 s retry: the retry alone would allow two heads.
+    // Two minutes of a 60 s interval with a 60 s read interval, which alone would allow two heads.
     assert!(posted.len() >= 4, "{posted:?}");
     drive.stop().await;
 }
@@ -415,7 +415,7 @@ fn spawn_reading(chain: FakeChain, keys: Option<HeldKeys>) -> Drive {
     spawn_retrying(chain, keys, Duration::from_secs(1))
 }
 
-/// `spawn_reading`, with the checkpoint retry at `retry`.
+/// `spawn_reading`, reading every `retry` outside a turn.
 fn spawn_retrying(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration) -> Drive {
     let (tip, rx) = watch::channel(Head::default());
     let (released, released_rx) = watch::channel(Released::default());
@@ -484,3 +484,5 @@ fn at(seq: u64) -> Head {
 fn stamp(seq: u64) -> u64 {
     1_799_999_000_000 + seq * 100
 }
+
+mod cadence;

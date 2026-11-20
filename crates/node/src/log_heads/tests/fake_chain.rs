@@ -32,6 +32,8 @@ struct FakeState {
     /// block following the v2 heads posted.
     turn: Option<TurnHeads>,
     posts_v2: Vec<(u64, HeadV2)>,
+    /// How long each turn read takes.
+    turn_latency: std::time::Duration,
 }
 
 /// A chain whose posted head, epoch, and read failures the test drives. `post` enforces the
@@ -106,6 +108,11 @@ impl FakeChain {
         state.posted = Some(posted);
     }
 
+    /// Each turn read takes `latency` from now on.
+    pub(super) fn slow_turn_reads(&self, latency: std::time::Duration) {
+        self.0.lock().unwrap().turn_latency = latency;
+    }
+
     /// A turn names the operator from now on, as `turn` reads it.
     pub(super) fn name_turn(&self, turn: TurnHeads) {
         self.0.lock().unwrap().turn = Some(turn);
@@ -177,6 +184,8 @@ impl HeadsChain for FakeChain {
     }
 
     async fn turn(&self) -> anyhow::Result<Option<TurnHeads>> {
+        let latency = self.0.lock().unwrap().turn_latency;
+        tokio::time::sleep(latency).await;
         Ok(self.0.lock().unwrap().turn)
     }
 

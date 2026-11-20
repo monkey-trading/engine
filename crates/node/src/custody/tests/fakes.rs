@@ -81,6 +81,9 @@ pub(super) struct ChainState {
     pub(super) deposits: Vec<VaultDeposit>,
     /// Staking events served by `staking_events`.
     pub(super) staking: Vec<StakingEvent>,
+    /// Answer range staking reads with no events, as a log backend on another fork would, while
+    /// hash-pinned reads still hold them.
+    pub(super) omit_ranged_staking: bool,
     /// Answer `deposits` with nothing, like a node that lags the one counting.
     pub(super) hide_logs: bool,
     /// Block hashes that differ from `canonical_hash`, as after a reorg.
@@ -189,6 +192,8 @@ impl VaultReader for FakeChain {
                 hash: chain.hash_at(number),
                 parent_hash: parent(number),
                 timestamp: number * 12,
+                // As a bloom does, for the blocks that hold a staking event.
+                staking_logs: chain.staking.iter().any(|event| event.block == number),
             })
             .collect();
         match chain.bad_headers {
@@ -243,8 +248,19 @@ impl VaultReader for FakeChain {
         if chain.hash_at(to.number) != to.hash {
             bail!("staking endpoint is not canonical");
         }
-        let visible = chain.staking.iter().filter(|e| !chain.hide_logs && (from..=to.number).contains(&e.block));
+        let hidden = chain.hide_logs || chain.omit_ranged_staking;
+        let visible = chain.staking.iter().filter(|e| !hidden && (from..=to.number).contains(&e.block));
         Ok(visible.cloned().collect())
+    }
+
+    async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        let chain = self.0.lock().unwrap();
+        // A log backend pinned to a hash it does not hold refuses, as one that lags does.
+        if chain.hide_logs || blocks.iter().any(|block| chain.hash_at(block.number) != block.hash) {
+            bail!("unknown block");
+        }
+        let pinned = |event: &&StakingEvent| blocks.iter().any(|block| block.number == event.block);
+        Ok(chain.staking.iter().filter(pinned).cloned().collect())
     }
 
     async fn account_balance(&self, at: BlockRef, _account: Address) -> anyhow::Result<U256> {
@@ -300,31 +316,6 @@ impl VaultReader for FakeChain {
         data: alloy::primitives::Bytes,
     ) -> anyhow::Result<alloy::primitives::Bytes> {
         self.0.lock().unwrap().answer_call(at, to, &data)
-    }
-}
-
-impl ChainState {
-    /// The canonical hash at `number`, forks included.
-    fn hash_at(&self, number: u64) -> B256 {
-        self.forks.get(&number).copied().unwrap_or_else(|| canonical_hash(number))
-    }
-}
-
-impl FakeChain {
-    pub(super) fn add(&self, deposit: VaultDeposit) {
-        self.0.lock().unwrap().deposits.push(deposit);
-    }
-
-    pub(super) fn remove(&self, deposit: &VaultDeposit) {
-        self.0.lock().unwrap().deposits.retain(|d| d != deposit);
-    }
-
-    pub(super) fn set_final(&self, block: Option<u64>) {
-        self.0.lock().unwrap().final_block = block;
-    }
-
-    pub(super) fn reads(&self) -> Vec<(u64, u64)> {
-        self.0.lock().unwrap().reads.clone()
     }
 }
 
@@ -498,3 +489,4 @@ pub(super) use files::{evm_toml, scratch, stored_cursor};
 mod logs;
 pub(super) use logs::Logs;
 pub(super) mod schedule;
+mod state;

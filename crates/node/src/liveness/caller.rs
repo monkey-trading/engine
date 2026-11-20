@@ -1,5 +1,6 @@
 //! A member's liveness caller (#595): from a funded account of its own, apart from the log-head and
-//! seed relayers, each `POLL` while a turn names the operator it
+//! seed relayers, it reads the chain every `[liveness] read_interval`, at least four times a heartbeat
+//! interval (`liveness::read_every`), and while a turn names the operator it
 //! - witnesses the current slot once no witness has marked it (`OperatorSchedule.witness`);
 //! - promotes once the block time reaches `promotionDueAt` (`OperatorSchedule.promote`), naming the
 //!   next member in the turn's order;
@@ -37,18 +38,20 @@ use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::Context as _;
 use futures_util::future::BoxFuture;
-use tokio::time::{MissedTickBehavior, interval, timeout};
+use tokio::time::{MissedTickBehavior, interval, interval_at, timeout};
 use tracing::{debug, info, warn};
 
 use crate::config::{CheckpointSection, LivenessSection, redact};
 use crate::liveness::chain::{LivenessDomain, View, promoteCall, skipCall, view, witnessCall};
 use crate::liveness::fallback::{Account, Sends};
 use crate::liveness::link::Copy;
+use crate::liveness::read_every;
 use crate::log_heads::{Head, SignedHead};
 use crate::standby_key::chain::StandbyChain;
 
-/// How often the caller reads the chain.
-pub(crate) const POLL: Duration = Duration::from_secs(5);
+/// How often the caller reads until a read shows the heartbeat interval: a failed first read must not
+/// wait out a long configured interval.
+const UNREAD_EVERY: Duration = Duration::from_secs(5);
 /// What a call's gas limit adds to its estimate.
 const GAS_MARGIN_DIVISOR: u64 = 4;
 
@@ -94,7 +97,7 @@ pub(crate) struct Caller<C, S> {
     pub copy: Copy,
     /// Below this many wei, `liveness_caller_unfunded` fires.
     pub min_balance: U256,
-    /// How often it reads the chain: `POLL`.
+    /// The longest between its reads of the chain: `[liveness] read_interval`.
     pub poll: Duration,
     /// The caller's own clock, which it judges slots by when it is ahead of the latest block: `Reached`
     /// over the member's trusted time.
@@ -175,7 +178,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
     /// Error cases:
     /// - none: failed reads and sends are retried on the next poll
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let mut poll = interval(self.poll);
+        let mut poll = interval(self.poll.min(UNREAD_EVERY));
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let (mut read_failed, mut failing) = (false, false);
         loop {
@@ -202,6 +205,12 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                     continue;
                 }
             };
+            // Four reads a slot at least, however the rule's interval moves.
+            let every = read_every(self.poll, view.rule.interval);
+            if poll.period() != every {
+                poll = interval_at(tokio::time::Instant::now() + every, every);
+                poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            }
             if let Some(head) = self.copy.signed().filter(|signed| signed.epoch == view.epoch) {
                 self.copy.saw(head.epoch, head.head.head);
             }

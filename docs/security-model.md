@@ -752,6 +752,13 @@ state root. The mirror's frontier is the latest finalised block it has mirrored.
 epoch closes only once that frontier has passed the epoch's end, so no epoch's close pays a stake
 set that the mirror has not brought up to the epoch's end.
 
+The mirror reads a window of finalised blocks in one log read over its range, on which a strict
+majority of the custody providers must agree together with their header at the window's end, and
+each event must sit on its block's proven hash. Each block whose proven header's logs bloom admits a
+mirrored event is read again by its hash, and the mirror stops if those reads disagree with the range
+read. A provider whose log backend lags or holds another fork therefore cannot drop an event by
+answering the range from it.
+
 Epochs close in turn. When the mirror falls behind and then catches up, each epoch whose end it has
 passed closes in order, at the stake set the mirror held when it passed that end, and no epoch is
 skipped. A holder that stakes after the mirror's first completed scan past an epoch's end is

@@ -76,6 +76,7 @@ impl VaultReader for Provider {
                 hash: hash(number),
                 parent_hash: hash(number - 1),
                 timestamp: AGREED_TIME + number - AGREED,
+                staking_logs: false,
             })
             .collect())
     }

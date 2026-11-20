@@ -1,6 +1,6 @@
 //! A member's fallback fixer, for the node process's whole life, while it follows and while it holds a
 //! turn: from the liveness caller's account (`[liveness] caller`, signed by the `[checkpoints]`
-//! endpoint), each `POLL` it fixes the fallback of the turn whose draw deadline last passed when no seed
+//! endpoint), it fixes the fallback of the turn whose draw deadline last passed when no seed
 //! was relayed for it (`SeedReceiver.fixFallback`), while the registry's rotation switch is on, or, once
 //! anyone has fixed its block, whatever the switch, since the switch may come back on before the turn's
 //! boundary. One
@@ -8,6 +8,13 @@
 //! well within the 256 blocks `ArbSys` answers for. So a member that sees the hash cannot keep the turn
 //! from being drawn by leaving it unrecorded: not one taking a turn at the boundary, while the holder
 //! still sequences, either. Arbitrum's sequencer, which orders every call, still can (`docs/security-model.md`).
+//!
+//! It reads every `[liveness] fallback_interval`, 30 s by default and at most that in a production build,
+//! and every `FOLLOW_UP` once a fix is sent or a block is fixed, by anyone, until a read shows its hash
+//! recorded or its block past the reach, each interval counted from the last read's start, failed reads
+//! included. Anyone may make a turn's first fix, a draw
+//! included, and the schedule's governance may replace the seed receiver at any time, so a read must
+//! always come well within the 256 blocks (64 s on Arbitrum One) after any first fix.
 //!
 //! It reads through a custody reader of its own, which holds a read session for each pinned block, so
 //! no other read waits on it or delays it, and it sends one call at a time with the member's liveness
@@ -26,17 +33,19 @@ use alloy::sol_types::SolCall;
 use anyhow::Context as _;
 use engine_core::types::AccountId;
 use futures_util::future::BoxFuture;
-use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info, warn};
 
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
-use crate::liveness::caller::{Endpoint, POLL, Sending, check_balance};
+use crate::liveness::caller::{Endpoint, Sending, check_balance};
 use crate::liveness::chain::{PendingFallback, fixFallbackCall, pending_fallback};
 use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain};
 
 /// How many blocks back `ArbSys.arbBlockHash` answers: past it a fixed block's hash is never recorded.
 const BLOCK_HASH_REACH: u64 = 256;
+/// How soon the fixer reads again once a fix is under way, so the second call lands well within the
+/// 256 blocks (64 s on Arbitrum One) for which the first call's block hash can be recorded.
+pub(crate) const FOLLOW_UP: Duration = Duration::from_secs(5);
 
 /// The liveness caller's account, which the member's liveness caller and its fixer both send from.
 #[derive(Debug, Default)]
@@ -49,9 +58,16 @@ pub(crate) struct Account {
 /// its liveness calls send one call at a time.
 pub(crate) type Sends = tokio::sync::Mutex<Account>;
 
-/// A poll's outcome: the pending fallback, and the fix sent for it (its transaction hash, `None` when the
-/// chain would refuse it, or the send's failure), or `None` when its block passed the reach, unsent.
-type Fixed = (PendingFallback, Option<anyhow::Result<Option<B256>>>);
+/// What a poll found for the turn whose draw deadline last passed: its fallback.
+enum Fallback {
+    /// Nothing to fix: a relayed seed or a recorded fallback, no schedule, or the rotation switch off with
+    /// no block fixed.
+    Settled,
+    /// The fix sent: its transaction hash, `None` when the chain would refuse it, or the send's failure.
+    Sent(PendingFallback, anyhow::Result<Option<B256>>),
+    /// Its fixed block has passed the reach unrecorded.
+    Lapsed(PendingFallback),
+}
 
 /// A member's fallback fixer.
 pub(crate) struct Fixer<C, S> {
@@ -61,6 +77,9 @@ pub(crate) struct Fixer<C, S> {
     /// The custody chain and its vault, whose registry and schedule it reads at each block.
     pub chain_id: u64,
     pub vault: Address,
+    /// How often it reads: `[liveness] fallback_interval`.
+    pub idle: Duration,
+    /// How soon it reads again once a fix is under way: `FOLLOW_UP`.
     pub poll: Duration,
     /// Below this many wei, `liveness_caller_unfunded` fires.
     pub min_balance: U256,
@@ -85,7 +104,8 @@ impl Fixer<StandbyReader, Endpoint> {
             sending: Endpoint::new(checkpoints, liveness, cfg.custody.chain_id)?,
             chain_id: cfg.custody.chain_id,
             vault: Address::from(cfg.custody.vault.parse::<AccountId>().context("custody.vault")?.0),
-            poll: POLL,
+            idle: liveness.fallback_interval,
+            poll: FOLLOW_UP,
             min_balance: liveness.min_balance,
             sends,
         }))
@@ -97,18 +117,19 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
     /// Error cases:
     /// - none: failed reads and sends are retried on the next poll
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let mut poll = interval(self.poll);
-        poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The lapsed turn, if any, as of the last read; `None` before the first.
         let (mut failed, mut lapsed) = (false, None);
+        // Whether a fix is under way, as the last read that answered showed: a failed read keeps it.
+        let mut under_way = false;
         loop {
-            poll.tick().await;
-            let fixed: BoxFuture<'_, anyhow::Result<Option<Fixed>>> = Box::pin(self.fix());
-            let fixed = fixed.await;
+            let started = tokio::time::Instant::now();
+            let found: BoxFuture<'_, anyhow::Result<Fallback>> = Box::pin(self.fix());
+            let found = found.await;
             let funded: BoxFuture<'_, anyhow::Result<()>> =
                 Box::pin(async { check_balance(&self.sending, self.min_balance, &mut *self.sends.lock().await).await });
-            let failure = match (&fixed, funded.await) {
-                (Err(e), _) | (Ok(Some((_, Some(Err(e))))), _) => Some(format!("cannot fix turns: {e:#}")),
+            let failure = match (&found, funded.await) {
+                (Err(e), _) => Some(format!("cannot fix turns: {e:#}")),
+                (Ok(Fallback::Sent(_, Err(e))), _) => Some(format!("cannot fix turns: {e:#}")),
                 (Ok(_), Err(e)) => Some(format!("cannot read the liveness caller's balance: {e:#}")),
                 (Ok(_), Ok(())) => None,
             };
@@ -122,31 +143,36 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
                 ),
                 _ => {}
             }
-            if let Ok(fixed) = fixed {
-                report(fixed, &mut lapsed);
+            // A fix sent, or a block fixed whose hash is yet to be recorded, wants the next call soon.
+            if let Ok(fallback) = found {
+                under_way = matches!(&fallback, Fallback::Sent(pending, sent)
+                    if pending.fixed_in != 0 || !matches!(sent, Ok(None)));
+                report(fallback, &mut lapsed);
             }
+            tokio::time::sleep_until(started + if under_way { self.poll } else { self.idle }).await;
         }
     }
 
-    /// One poll: the pending fallback at the latest block, if any, and the fix sent for it, unless its
-    /// block has passed the reach.
+    /// One poll: the turn whose draw deadline last passed at the latest block, and the fix sent for its
+    /// fallback while the rotation switch is on or a block is fixed for it, unless that block has passed
+    /// the reach.
     /// Error cases:
     /// - the read fails; a failed send comes back with the pending fallback
-    async fn fix(&self) -> anyhow::Result<Option<Fixed>> {
+    async fn fix(&self) -> anyhow::Result<Fallback> {
         let block = self.chain.latest().await?;
         let Some(domain) = StandbyDomain::at_if_scheduled(&block, self.chain_id, self.vault).await? else {
-            return Ok(None);
+            return Ok(Fallback::Settled);
         };
         let Some(pending) = pending_fallback(&block, &domain).await? else {
-            return Ok(None);
+            return Ok(Fallback::Settled);
         };
         if pending.fixed_in != 0 && block.number().saturating_sub(pending.fixed_in) > BLOCK_HASH_REACH {
-            return Ok(Some((pending, None)));
+            return Ok(Fallback::Lapsed(pending));
         }
         drop(block);
         let _one = self.sends.lock().await;
         let data = fixFallbackCall { turn: pending.turn }.abi_encode();
-        Ok(Some((pending, Some(self.sending.send(pending.receiver, data).await))))
+        Ok(Fallback::Sent(pending, self.sending.send(pending.receiver, data).await))
     }
 }
 
@@ -154,9 +180,9 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
 /// the reach unrecorded and resolved once a read finds that turn no longer pending, at its boundary,
 /// when the next turn's draw deadline passes; `lapsed` holds the lapsed turn as of the last read, `None`
 /// before the first, which resolves an episode an earlier run left open unless a turn has lapsed.
-fn report(fixed: Option<Fixed>, lapsed: &mut Option<Option<u64>>) {
-    let now = match &fixed {
-        Some((pending, None)) => Some(pending.turn),
+fn report(fallback: Fallback, lapsed: &mut Option<Option<u64>>) {
+    let now = match &fallback {
+        Fallback::Lapsed(pending) => Some(pending.turn),
         _ => None,
     };
     if *lapsed != Some(now) {
@@ -164,7 +190,7 @@ fn report(fixed: Option<Fixed>, lapsed: &mut Option<Option<u64>>) {
         if matches!((*lapsed, now), (None, None) | (Some(Some(_)), _)) {
             info!(alert_resolved = "seed_fallback_lapsed", "no turn's fixed fallback block has lapsed unrecorded");
         }
-        if let Some((pending, None)) = &fixed {
+        if let Fallback::Lapsed(pending) = &fallback {
             warn!(
                 alert = "seed_fallback_lapsed",
                 "turn {}'s fallback block {} has passed the {BLOCK_HASH_REACH} blocks its hash is readable for \
@@ -175,9 +201,9 @@ fn report(fixed: Option<Fixed>, lapsed: &mut Option<Option<u64>>) {
         }
         *lapsed = Some(now);
     }
-    match fixed {
-        Some((pending, Some(Ok(Some(hash))))) => info!(turn = pending.turn, %hash, "fallback fix sent"),
-        Some((pending, Some(Ok(None)))) => {
+    match fallback {
+        Fallback::Sent(pending, Ok(Some(hash))) => info!(turn = pending.turn, %hash, "fallback fix sent"),
+        Fallback::Sent(pending, Ok(None)) => {
             debug!(turn = pending.turn, "the chain would refuse the fallback fix: not sent");
         }
         _ => {}

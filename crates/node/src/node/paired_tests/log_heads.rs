@@ -133,6 +133,7 @@ async fn paired_recovery_stamps_the_finalized_checkpoint_for_the_stall_alarm() {
             contract: alloy::primitives::Address::repeat_byte(0xaa),
             relayer: alloy::primitives::Address::repeat_byte(0xbb),
             interval: std::time::Duration::from_secs(3600),
+            read_interval: std::time::Duration::from_secs(60),
         });
         assert_eq!(recover(&copy, None), stamp, "{case}: no head posted");
         if case == "work" {

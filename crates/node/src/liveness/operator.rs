@@ -1,5 +1,7 @@
-//! The operator's side of the liveness rule. Every `POLL` it reads the chain at the latest agreed
-//! block and, while a turn names the operator and its set has another member:
+//! The operator's side of the liveness rule. It reads the chain at the latest agreed block every
+//! `[liveness] read_interval`, at least four times a heartbeat interval, and once trusted time reaches
+//! the turn boundary after the last read's block; every `POLL` it asks the members under the last read
+//! and, while a turn names the operator and its set has another member:
 //! - asks each other member for its status, over a fresh nonce, and takes a status that recovers to
 //!   the member's promotable standby key, or, while it has none, to the key whose attestation this
 //!   enclave verified (`attested`), names this signer epoch, and holds a link this log holds at that
@@ -44,7 +46,7 @@ use crate::standby_key::chain::StandbyChain;
 use crate::tee::sealing::Platform;
 use crate::trusted_time::TrustedClock;
 
-/// How often the operator reads the chain and asks the members.
+/// How often the operator asks the members.
 pub(crate) const POLL: Duration = Duration::from_secs(1);
 /// How often the fence is checked against trusted time.
 pub(super) const FENCE_TICK: Duration = if cfg!(test) { Duration::from_millis(10) } else { Duration::from_millis(250) };
@@ -138,8 +140,10 @@ pub(crate) struct Operator<C, A> {
     pub sequencer: mpsc::WeakSender<SequencerRequest>,
     /// The vault's signer as each read finds it, which `/v1/operator` names.
     pub vault_signer: watch::Sender<Option<VaultSigner>>,
-    /// How often it reads the chain and asks the members: `POLL`.
+    /// How often it asks the members: `POLL`.
     pub poll: Duration,
+    /// The longest between its reads of the chain: `[liveness] read_interval`.
+    pub read_every: Duration,
     /// For a promoted operator, the block its start read the promotion at: an older latest block, as a
     /// lagging provider majority serves, still names the outgoing key, so it counts as no read.
     pub floor: u64,
@@ -167,6 +171,8 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         let mut applied: Option<Applied> = None;
         let mut holders = Holders::new();
         let mut episodes = Episodes::default();
+        // When the chain was last read, and the last successful read's block time and heartbeat interval.
+        let (mut read_at, mut last): (Option<tokio::time::Instant>, Option<(u64, u64)>) = (None, None);
         loop {
             // A checkpoint that waits for a confirmation wakes the rule at once.
             let woken = tokio::select! {
@@ -182,6 +188,15 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 self.round(current, (&mut stamps, &mut confirmed, &mut holders), &mut episodes).await;
                 continue;
             }
+            // Between reads the members confirm under the last read the rule applied under.
+            let reached = self.trusted.reached_ms().and_then(|now| u64::try_from(now).ok());
+            // A read is due on the tick nearest its time, so a read every 15 s lands every 15 s, not 16.
+            let since = read_at.map(|at| at.elapsed() + self.poll / 2);
+            if !read_due(self.read_every, since, last, reached) {
+                self.unread(applied.as_ref(), (&mut stamps, &mut confirmed, &mut holders), &mut episodes).await;
+                continue;
+            }
+            read_at = Some(tokio::time::Instant::now());
             let cached = set
                 .as_ref()
                 .filter(|(_, at, _)| at.elapsed() < MEMBERS_EVERY)
@@ -206,6 +221,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
             };
             let (schedule, view, listed, turnable) = match read {
                 Read::Unscheduled { time, signer } => {
+                    last = Some((time, 0));
                     if !std::mem::replace(&mut episodes.unscheduled, true) {
                         info!("the vault's registry names no schedule: the liveness rule does not apply");
                     }
@@ -227,6 +243,7 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
                 continue;
             }
             episodes.unscheduled = false;
+            last = Some((view.time, view.rule.interval));
             self.vault_signer.send_replace(Some(VaultSigner { epoch: view.epoch, address: view.signer }));
             // Before any exemption: a vault naming another key ends this run whether the rule applies.
             self.named(&state, view.signer);
@@ -456,30 +473,14 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
     }
 }
 
-/// The alert episodes the rule keeps open.
-#[derive(Default)]
-struct Episodes {
-    read_failed: bool,
-    refused: bool,
-    start_refused: bool,
-    lagging: bool,
-    /// The last read found no schedule (logged, not an alert).
-    unscheduled: bool,
-}
-
-/// Ends the episode `open` marks, logging `line`.
-fn resolve(open: &mut bool, alert: &'static str, line: &str) {
-    if std::mem::take(open) {
-        info!(alert_resolved = alert, "{line}");
-    }
-}
-
 mod assess;
 pub(crate) use assess::assess;
 mod attested;
+mod episodes;
+use episodes::{Episodes, resolve};
 mod fencing;
 mod limits;
-use limits::{lagging, refused, unturned};
+use limits::{lagging, read_due, refused, unturned};
 mod read;
 use read::Read;
 mod stamps;
