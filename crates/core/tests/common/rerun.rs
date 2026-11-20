@@ -18,9 +18,10 @@ use super::{BTC, ETH, Harness, acct, f};
 /// #904's absolute bars apply as written.
 pub const SCALE_ENV: &str = "ENGINE_BENCH_SCALE_TO_RUNNER";
 /// What `reference_workload` took on a fast runner, in microseconds: the best of its `REPS` on an
-/// ubuntu-24.04 hosted runner of the kind that ran `portfolio_price_execution_latency` in 311 to
-/// 328 ms (#1119, from the runs of 20 November 2026). A runner twice as slow takes twice this.
-const REFERENCE_US: u128 = 100_000;
+/// ubuntu-24.04 hosted runner of the kind that ran `portfolio_price_execution_latency` in 312 ms
+/// (#1119's run of 20 November 2026 measured it 55 to 68 ms across this job's steps). A runner twice
+/// as slow takes twice this.
+const REFERENCE_US: u128 = 56_000;
 /// The scale's range in thousandths: never below 1 (a bar is never tighter than #904's), never above
 /// 2.5, so a runner slower than that still fails.
 const MIN_PERMILLE: u128 = 1_000;
