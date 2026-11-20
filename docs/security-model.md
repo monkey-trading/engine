@@ -265,6 +265,12 @@ Known limits:
 - The house loss trigger caps how fast the house loses, not what a fast client takes from the
   house's income. [The loss-rate trigger study](../research/loss-rate-trigger/README.md) gives the
   bound and the kinds of trading it leaves open.
+- The profit fee follows each position's own holding time, and nothing links one account to another.
+  Opposite positions held in two accounts can each age past the fee curve's last holding time. A
+  client who then closes one leg as the price moves, and the other moments later, pays the base fee
+  on a gain the curve would otherwise have taken. Offsetting positions in correlated markets within
+  one account do the same, at some basis risk. The toxicity score's spreads and the house loss
+  trigger bound what such trading takes.
 - Margins stay the same across a market's closures, and no market carries a weekend margin. The
   house therefore bears any loss beyond an account's equity when a market reopens at a different
   price. The exposure caps bound the house's net position in each market, but not that loss.
