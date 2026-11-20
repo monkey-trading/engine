@@ -17,7 +17,7 @@
 //! - a node's restart from the cache to its first command, on a copy of the log and its caches,
 //!   through its own recovery and start checks, with the head posted an hour (`POSTING_INTERVAL`)
 //!   before the log's end; with the cache's read, the posted head's check, the full pass over the log's
-//!   prefix the check replaces and one read of the whole log timed apart;
+//!   prefix the check replaces and the takeover cut's read of the log's last checkpoint timed apart;
 //! - a node's recovery by full replay to its first command, seeding the marks cache as it goes;
 //! - a member's replica build, one replay of its copy, and the history index's catch-up over the log;
 //! - a tail handover grown under launch flow on the recovered node to about each of `TAILS`, the
@@ -217,6 +217,7 @@ async fn run() {
         .expect("the node restarts from the cache");
     print_restart(&restarted, &cached);
     assert_eq!(restarted.recovered_seq, Some(last.seq), "the restart recovers the whole log past the cache");
+    assert_eq!(restarted.last_checkpoint, last.seq, "the takeover cut reads the log's last checkpoint");
 
     // A node's recovery by full replay, to its first command, which then holds the log.
     let recovered = recover(&base, &log, &run, key.clone(), workers).expect("the node recovers the log");

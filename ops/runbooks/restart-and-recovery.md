@@ -19,14 +19,13 @@ their output call a running trading server a node.
 - **The log lines go to the serial console.** Capture the guest's serial console to a file on the
   host, and keep it. Every `alert =` line that this runbook mentions is read there, and the webhook
   receives the same alerts as pages.
-- **A restart replays the log past the newest recovery cache, and still reads the whole log.** The
-  production template takes a cache every five minutes of sequenced time. A start reads the newest
-  cache, checks the posted log head over the instructions since the head, replays at most about five
-  minutes of instructions, and sequences again; the API answers nothing meanwhile. On a book of
-  100,000 accounts, a debug build on a shared development machine did this in about 20 seconds from
-  a cache five minutes of launch flow old. Outside the cache, the start reads the whole log three
-  times, for its signer history and the takeover cut, at about 120,000 instructions a second there,
-  so each weekday of launch flow, about 9.8 million instructions, adds about four minutes.
+- **A restart replays the log past the newest recovery cache.** The production template takes a
+  cache every five minutes of sequenced time. A start reads the newest cache, checks the posted log
+  head over the instructions since the head, replays at most about five minutes of instructions, and
+  sequences again; the API answers nothing meanwhile. On a book of 100,000 accounts, a debug build on
+  a shared development machine did this in about 20 seconds from a cache five minutes of launch flow
+  old. Outside those instructions, the start reads only the log's newest segments, back to its last
+  checkpoint, so a restart takes no longer on an old log than on a new one.
 - **Some starts replay much more.** A release without `[snapshots]`, as a first release is, replays
   every instruction in the log at each start. The replay checks the instructions' seals on a pool of
   threads, one per core unless `node.replay_workers` sets another number, so it runs faster on more

@@ -1,7 +1,7 @@
 //! The run's figures against #904's bars: each capture's hold on the sequencer against one command's;
 //! the full replay of 30 days of launch flow, projected from the commands the markets' calendars give
 //! 30 days and the replay's rate; the restart from the newest cache to its first command, with the
-//! start's reads of the whole log projected to 30 days apart; and each tail handover's switch against
+//! start's reads outside the cache apart; and each tail handover's switch against
 //! `SWITCH_BUDGET`, with the largest tail a switch fits by a straight line through the measured ones.
 
 use std::time::Duration;
@@ -16,9 +16,9 @@ use crate::sequencer::recovery_scale::{
     BAR_DAYS, COMMAND_BAR, DAY_SECS, Day, FULL_REPLAY_BAR, RESTART_BAR, SWITCH_BUDGET,
 };
 
-/// The whole-log reads a production start makes beside a cache: one for its signer history
-/// (`node::signer_history`) and two for the takeover cut (`node::keys::cut_to_finalized_anchor`).
-const START_LOG_READS: f64 = 3.0;
+/// The reads of the log a production start makes beside a cache: the takeover cut's two of its newest
+/// segments, back to its last checkpoint (`node::keys::cut_to_finalized_anchor`).
+const TAKEOVER_CUT_READS: u32 = 2;
 
 /// Prints a replay's commands, checkpoints, rate and wall time.
 pub(super) fn print_replay(name: &str, replayed: &Replayed) {
@@ -76,14 +76,14 @@ pub(super) fn print_restart(restarted: &Restarted, cached: &Cached) {
     assert_eq!(restarted.cache_seq, cached.seq, "the restart reads the cache taken before the stop");
     println!(
         "RECOVERY restart_parts cache_read_s={:.1} posted_seq={} since_head_commands={} posted_check_s={:.1} \
-         full_prefix_pass_s={:.1} log_commands={} whole_log_read_s={:.1}",
+         full_prefix_pass_s={:.1} last_checkpoint={} takeover_cut_read_s={:.4}",
         restarted.cache_read.as_secs_f64(),
         restarted.posted.seq,
         restarted.cache_seq.saturating_sub(restarted.posted.seq),
         restarted.posted_check.as_secs_f64(),
         restarted.full_prefix_pass.as_secs_f64(),
-        restarted.log_commands,
-        restarted.whole_log_read.as_secs_f64()
+        restarted.last_checkpoint,
+        restarted.takeover_cut_read.as_secs_f64()
     );
 }
 
@@ -150,11 +150,10 @@ pub(super) fn conclude(
         RESTART_BAR.as_secs(),
         verdict(restart, RESTART_BAR)
     );
-    // Outside the cache's bound: the whole-log reads of a production start grow with the log.
-    let reads =
-        START_LOG_READS * bar_commands / (restarted.log_commands as f64 / restarted.whole_log_read.as_secs_f64());
+    // Outside the cache's bound a start reads one checkpoint interval of the log, however long it is.
     println!(
-        "RECOVERY start_log_reads_{BAR_DAYS}d reads={START_LOG_READS} projected_s={reads:.0} restart_bar_s={}",
+        "RECOVERY start_log_reads reads={TAKEOVER_CUT_READS} s={:.4} whole_log_reads=0 restart_bar_s={}",
+        restarted.takeover_cut_read.as_secs_f64() * f64::from(TAKEOVER_CUT_READS),
         RESTART_BAR.as_secs()
     );
     for switch in switches {

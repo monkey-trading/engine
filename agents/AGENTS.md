@@ -907,9 +907,9 @@ an index: load only the rule whose hint matches the current action.
   500 ms), then takes a cache at a checkpoint and five minutes of flow past it before a hard stop (`cache.rs`); on that
   log it times `engine replay`'s replay, the restart from the cache on a copy of the log and its caches
   (`Sequencer::read_paired_log` with the head posted an hour before the log's end, then the start checks and the first
-  command, with the cache's read, the posted head's check, the full prefix pass it replaces and one whole-log read timed
-  apart), a node's recovery by full replay to its first command with the marks cache seeded
-  (`Sequencer::read_log_from`, a whole log's read started from the book), a member's replica build
+  command, with the cache's read, the posted head's check, the full prefix pass it replaces and the takeover cut's read
+  of the log's last checkpoint timed apart), a node's recovery by full replay to its first command with the marks
+  cache seeded (`Sequencer::read_log_from`, a whole log's read started from the book), a member's replica build
   (`Follower::open_seeded`) and the history index's catch-up,
   and tail handovers grown under launch flow to about 1 MiB, 64 MiB and 1 MiB under `MAX_TAIL_BYTES`, each read by the
   holder (`read_tail`) and taken through `take_tail` from the stand-in predecessor, each window with the member's start
