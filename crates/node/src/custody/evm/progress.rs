@@ -20,7 +20,7 @@ use alloy::primitives::{Address, B256};
 use anyhow::anyhow;
 use engine_core::deposits::{CustodyCheckpoint, DepositBeneficiary, DepositReceipt};
 use engine_core::types::AccountId;
-use futures_util::{StreamExt, TryStreamExt, stream};
+use futures_util::future::try_join_all;
 use tracing::info;
 
 use crate::custody::evm::lifecycle::receipt;
@@ -29,7 +29,7 @@ use crate::custody::quorum::last_header;
 use crate::custody::stall::PollError;
 use crate::custody::usdc_to_fixed;
 
-/// How many headers of deposit blocks are read at once.
+/// How many deposit blocks' headers, or deposits' records, are read at once.
 const HEADER_READS: usize = 8;
 
 #[derive(Default)]
@@ -179,11 +179,13 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// Error cases:
     /// - stalled: a read fails, lacks a quorum, or answers for another block
     pub(super) async fn block_hashes(&self, blocks: &BTreeSet<u64>) -> Result<BTreeMap<u64, B256>, PollError> {
-        stream::iter(blocks.iter().copied())
-            .map(|number| async move { Ok((number, self.header_at(number).await?.hash)) })
-            .buffered(HEADER_READS)
-            .try_collect()
-            .await
+        let blocks: Vec<u64> = blocks.iter().copied().collect();
+        let mut hashes = BTreeMap::new();
+        for chunk in blocks.chunks(HEADER_READS) {
+            let headers = try_join_all(chunk.iter().map(|&number| self.header_at(number))).await?;
+            hashes.extend(headers.into_iter().map(|header| (header.number, header.hash)));
+        }
+        Ok(hashes)
     }
 
     /// Discards all unfinalised evidence after a canonical conflict, retaining only core finality.
@@ -320,13 +322,11 @@ impl<V: VaultReader> DepositWatcher<V> {
             .collect();
         let expected = scan.count_at(released.number);
         let counted = scan.end == Some(released);
-        let records: Vec<VaultRecord> = stream::iter(releasing.iter())
-            .map(|(receipt, _)| async move {
-                self.vault.deposit_record(released, receipt.deposit_id).await.map_err(PollError::rpc)
-            })
-            .buffered(HEADER_READS)
-            .try_collect()
-            .await?;
+        let mut records = Vec::with_capacity(releasing.len());
+        for chunk in releasing.chunks(HEADER_READS) {
+            let reads = chunk.iter().map(|(receipt, _)| self.vault.deposit_record(released, receipt.deposit_id));
+            records.extend(try_join_all(reads).await.map_err(PollError::rpc)?);
+        }
         let blocks: BTreeSet<u64> = releasing.iter().map(|(receipt, _)| receipt.block).collect();
         let hashes = self.block_hashes(&blocks).await?;
         let moved = releasing
