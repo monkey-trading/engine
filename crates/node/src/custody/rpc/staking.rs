@@ -1,10 +1,10 @@
-//! The staking mirror's log reads: one read over a window's block range, and reads pinned to each
-//! block's hash for the blocks whose proven header's bloom admits an event the range read did not return.
+//! The staking mirror's log reads: one read over a window's block range, and reads pinned to the hash of
+//! each block the range read returned an event in.
 
 use alloy::primitives::Address;
 use alloy::rpc::types::{Filter, Log};
 use alloy::sol_types::SolEvent;
-use anyhow::{bail, ensure};
+use anyhow::ensure;
 use futures_util::{StreamExt, TryStreamExt, stream};
 
 use crate::custody::evm::{BlockRef, StakingEvent};
@@ -35,29 +35,21 @@ impl VaultRpc {
 
     /// Both mirrorable staking events from the configured contract, the operator registry's
     /// rotation switches and elections, its schedule's rotation sets and turns, the vote contract's
-    /// passed proposals, and the fault proof contract's proven faults, over the window's block range
-    /// in one log read, sorted by block and log index. Without a staking contract the answer is empty.
+    /// passed proposals, and the fault proof contract's proven faults, over blocks `from..=to` in one
+    /// log read, sorted by block and log index. Without a staking contract the answer is empty.
     /// Error cases:
-    /// - the window is empty or not contiguous, or the request fails or times out
+    /// - the range is empty, or the request fails or times out
     /// - a log is removed, lacks its position, does not decode as a staking or registry event, or
-    ///   carries an amount past `u128`, or a returned log is not on its block in the window
-    pub(super) async fn ranged_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let (Some(first), Some(last)) = (blocks.first(), blocks.last()) else { bail!("staking range is empty") };
-        ensure!(
-            blocks.windows(2).all(|pair| pair[0].number.checked_add(1) == Some(pair[1].number)),
-            "staking range is not contiguous"
-        );
+    ///   carries an amount past `u128`, or a returned log is outside the range
+    pub(super) async fn ranged_staking_events(&self, from: u64, to: u64) -> anyhow::Result<Vec<StakingEvent>> {
+        ensure!(from <= to, "staking range is empty");
         let Some(filter) = self.mirror_filter() else { return Ok(Vec::new()) };
-        let filter = filter.from_block(first.number).to_block(last.number);
+        let filter = filter.from_block(from).to_block(to);
         let logs = self.deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,))).await?;
         let mut events = Vec::with_capacity(logs.len());
         for log in &logs {
             let event = self.decode_staking(log)?;
-            let block = event.block.checked_sub(first.number).and_then(|index| blocks.get(index as usize));
-            ensure!(
-                block.is_some_and(|block| block.number == event.block && block.hash == event.block_hash),
-                "staking log is not on its proven block in the requested range"
-            );
+            ensure!((from..=to).contains(&event.block), "staking log is outside the requested range");
             events.push(event);
         }
         events.sort_by_key(|event| (event.block, event.log_index));
@@ -81,7 +73,7 @@ impl VaultRpc {
                     let event = self.decode_staking(log)?;
                     ensure!(
                         event.block == block.number && event.block_hash == block.hash,
-                        "staking log differs from its requested proven block"
+                        "staking log differs from its requested block"
                     );
                     events.push(event);
                 }

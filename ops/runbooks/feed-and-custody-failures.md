@@ -622,89 +622,110 @@ disagreeing with the others.
 
 ### RPC budget
 
-The deposit watcher polls every 5 s (`custody.evm.poll_interval`). This section counts what one
+The deposit watcher polls every 15 s (`custody.evm.poll_interval`). This section counts what one
 operator and two members sharing one account per provider send each provider, and says which plans
-carry it. No free tier does, as the last table shows.
+carry it. No free tier does once a turn names the operator, as the last table shows.
 
 Every read goes to all three providers, so each provider sees every logical read once. The counts are
 JSON-RPC calls per provider, measured by the harness `cargo test -p engine-node --lib rpc_budget --
 --ignored --nocapture --test-threads=1`. It counts the deposit watcher's calls over a fake chain at
-Arbitrum One's 4 blocks a second, with a finalized tag about 4,800 blocks behind the head, and one read
-of each other reader through the real quorum while a turn of a set of three names the operator, with
-the counted provider's tip a block ahead of the others', as one provider's often is: each read at a
-block the quorum agrees on then reads that provider's header there too. The seed relay and the operator
-list are read from the code.
+Arbitrum One's 4 blocks a second, with a finalized tag about 4,800 blocks behind the head. It also
+counts one read of each other reader through the real quorum while a turn of a set of three names the
+operator, with the counted provider's tip a block ahead of the others', as one provider's often is:
+each read at a block the quorum agrees on then reads that provider's header there too. The seed relay
+and the operator list are read from the code.
 
 | Reader (interval) | Calls per provider per read | Per day, per provider |
 | --- | --- | --- |
-| Deposit watcher (5 s, `custody.evm.poll_interval`) | 39 | 673,920 |
+| Deposit watcher (15 s, `custody.evm.poll_interval`) | 21 | 120,960 |
 | Liveness rule's chain read (15 s, `liveness.read_interval`, operator in a turn) | 18 | 103,680 |
 | Liveness rule's member list (60 s, operator in a turn) | 10 | 14,400 |
 | Log-head read-back (every 10 s while a turn names the operator) | 6 | 51,840 |
 | Log-head turn read (before each post, every 20 s, in a turn) | 14 | 60,480 |
 | Checkpoint relayer's balance read (5 minutes) | 6 | 1,728 |
+| Operator's standby renewal (60 s, with `operator.rotation_enabled`) | 8 | 11,520 |
 | Fallback fixer (30 s, `liveness.fallback_interval`, every node) | 14 | 40,320 |
 | Liveness caller (15 s, `liveness.read_interval`, member between turns) | 16 | 92,160 |
+| Follow stint (16 s, member between turns) | 22 | 118,800 |
 | Seed relay (60 s, every member) | 11 to 12 | 17,000 |
 | Operator list (60 s, only with `registry.lens`) | about 12 to 20 | up to 29,000 |
 
-The watcher's 39 calls a poll are 31 block headers, 5 `eth_call`, 2 `eth_getLogs` and one
-`eth_chainId`. Twenty of the headers are the new blocks: the confirmation proof links every block's
-header to the one below it up to the tag, which is how it detects a reorganisation, so this part follows
-the chain at about 345,600 headers a day, whatever the poll interval. The other 11 headers and 8 calls
-are fixed per poll. The proof keeps every hash of the newest 16,384 blocks, so the release, finalisation
-and staking windows below the head read no header again, and the staking, registry, schedule, vote and
-fault-proof mirrors read their events in one `eth_getLogs` over the window. A block whose header's logs
-bloom admits a mirrored event is read again by its hash, which a block with a staking event, or a
-bloom's false positive, costs.
+The watcher's 21 calls a poll are 12 block headers, 6 `eth_call`, 2 `eth_getLogs` and one
+`eth_chainId`, however many blocks the poll adds:
+
+- Six headers are the two finality tags, each read with the head and voted at a common height.
+- The others are the finalised frontier, the scanned boundary read again, the deposit window's last
+  block, the staking frontier, the staking window's last block, and the staking range read's binding
+  to it.
+
+It reads no header for each block. A block's hash commits to every block below it, so the boundary's
+header, read again each poll, detects any reorganisation of the blocks the scan has read
+(`docs/security-model.md`). A block that holds a deposit costs one more header when it is scanned and
+another once it is final, before its principal is released. A block that holds a mirrored event costs
+one more header and one more `eth_getLogs`, which reads it again by its hash.
+
+A member's follow stint reads, at the latest agreed block, whether a promotion names its standby key and
+whether the schedule still lists the key as promotable. It also reads the posted log head it pins its
+copy to. The operator's standby renewal reads whether the schedule still lists its standby key.
 
 The fallback fixer reads every 30 s because anyone may fix a turn's fallback block, a draw included,
 and the schedule's governance may replace the seed receiver at any time: the block's hash must then be
 recorded within 256 blocks, 64 s on Arbitrum One. Once a block is fixed it reads every 5 s until the
 hash is recorded.
 
-Per provider account, a day's load is the operator in effect's readers (the watcher, the liveness rule,
-the log-head reads, the relayer balance read, the fixer and the seed relay) plus the other two members'
-readers (the liveness caller, the fixer and the seed relay). While a turn names the operator, the
-harness counts 1,211,328 calls a day before the seed relays and the operator list: 644,544
-`eth_getBlockByNumber`, 479,808 `eth_call`, 52,128 `eth_chainId`, 34,560 `eth_getLogs` and 288
-`eth_getBalance`. The three seed relays add about 51,000, so the account sees about 1,262,000 calls a
-day, about 15 a second on average. The costs below count the seed relays' calls at the price of an
-`eth_call`.
+Per provider account, a day's load is the operator in effect's readers plus the other two members'.
+The operator's are the watcher, the liveness rule, the log-head reads, the relayer balance read, the
+standby renewal, the fixer and the seed relay. Each member's are the liveness caller, the follow
+stints, the fixer and the seed relay. While a turn names the operator, the harness counts 907,488 calls
+a day before the seed relays and the operator list:
+
+- 552,528 `eth_call`
+- 268,704 `eth_getBlockByNumber`
+- 74,448 `eth_chainId`
+- 11,520 `eth_getLogs`
+- 288 `eth_getBalance`
+
+The three seed relays add about 51,000, so the account sees about 958,000 calls a day, about 11 a
+second on average. The costs below count the seed relays' calls at the price of an `eth_call`.
 
 Before the registry names a schedule, as at launch, no turn names the operator and members run no
 caller. The liveness rule still reads every 15 s, 10 calls a read that stop at the registry, and the
 log-head poster reads the posted head and whether a turn names the operator every 30 s, 6 and 7 calls.
-The harness counts 848,448 calls a day for three nodes then, about 899,000 with the seed relays.
+The harness counts 295,488 calls a day for three nodes then, about 346,000 with the seed relays.
 
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |
-| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 29 million units a day, 863 million a month, and about 333 a second on average | The free tier does not fit. Pay as you go fits, at about $450 a month. |
-| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 103 million credits a day | No listed plan fits: it needs a custom plan. |
-| dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 757 million units per 30 days, 38 million requests | The free tier does not fit. Pay as you go fits, at about $230 a month. |
+| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 22 million units a day, 653 million a month, and about 252 a second on average | The free tier does not fit. Pay as you go fits, at about $345 a month. |
+| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 73 million credits a day | Team fits, at $225 a month, using 97.5% of its daily credits. The operator list's reads, when `registry.lens` is set, take it past the limit. |
+| dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 575 million units per 30 days, 29 million requests | The free tier does not fit. Pay as you go fits, at about $175 a month. |
 | PublicNode | None published ([publicnode.com](https://www.publicnode.com/)) | | Cannot be budgeted. A free public endpoint can limit any client without notice, so it counts as a provider that may fail, never as one the quorum can rest on. |
 
 Check each limit on the provider's page before relying on it, because they change.
 
-**What fits.** The cheapest set that carries the load is dRPC and Alchemy on pay as you go, at about
-$680 a month together, with PublicNode as the third provider. The quorum then rests on the two paid
-providers, and loses its majority whenever either of them fails, so a second paid provider in the third
-seat costs more and keeps a provider's failure from pausing crediting.
+**What fits.** The cheapest set that carries the load with room to spare is dRPC and Alchemy on pay as
+you go, at about $520 a month together, with PublicNode as the third provider. Infura's Team plan, in
+Alchemy's place, costs about $400 a month with dRPC. It leaves 2.5% of its daily credits spare and none
+for the operator list, and a provider past its daily limit fails every read until the day resets. The
+quorum rests on the two paid providers, and loses its majority whenever either of them fails, so a
+second paid provider in the third seat costs more and keeps a provider's failure from pausing
+crediting.
 
-**What would lower it further.** `custody.evm.poll_interval` is the one setting left: the watcher's
-fixed part is 19 calls a poll, 328,320 a day at 5 s and 109,440 at 15 s, and a deposit is credited up to
-one interval later. The liveness rule and the callers, 302,400 calls a day between them, already read
-at their floor of four times a 60 s heartbeat interval, which `liveness.read_interval` cannot lower.
+Before a schedule is named, the load fits dRPC's free tier with 1% to spare, Infura's Team plan, or
+Alchemy on pay as you go at about $125 a month. Size the plans for the load once a turn names the
+operator, since that starts with a mirrored event, not a configuration change.
 
-The one header per block the watcher reads, about 345,600 a day, is the floor while the confirmation
-proof links every block to detect a reorganisation. Reading fewer headers would change that check, and
-needs the owner's decision.
+**What would lower it further.** The deposit watcher's 21 calls a poll no longer grow with the chain,
+so `custody.evm.poll_interval` trades 120,960 calls a day at 15 s against a deposit credited up to one
+interval after its block is two blocks deep. The liveness readers now carry most of the load. The rule
+and the callers, 288,000 calls a day between them, already read at their floor of four times a 60 s
+heartbeat interval, which `liveness.read_interval` cannot lower. The follow stints, 237,600 calls a day
+for two members, read once a stint so a member notices its own promotion promptly.
 
-**`max_block_range` and `stall_critical_after` at 5 s.** Both stay. At 5 s the watcher reads about 20
+**`max_block_range` and `stall_critical_after` at 15 s.** Both stay. At 15 s the watcher reads about 60
 new blocks a poll, far under `max_block_range = 1000`, and after an outage it reads 1,000 a poll, which
-is 200 blocks a second against 4 produced. The staking mirror's range read stays within it too. A
+is about 67 blocks a second against 4 produced. The staking mirror's range read stays within it too. A
 provider that refuses a range this large makes the watcher halve the range and grow it back
-(`custody/sizing.rs`), so the value is a ceiling. `stall_critical_after` is 1 hour, 720 polls, so the
+(`custody/sizing.rs`), so the value is a ceiling. `stall_critical_after` is 1 hour, 240 polls, so the
 longer interval does not change when a stall pages.
 
 ## Checkpoint endpoint

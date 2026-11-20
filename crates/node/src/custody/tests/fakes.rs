@@ -1,7 +1,7 @@
 //! The custody tests' harness: a fake chain, a sequencer over a scratch log, captured log lines,
 //! and deposit fixtures.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -81,9 +81,11 @@ pub(super) struct ChainState {
     pub(super) deposits: Vec<VaultDeposit>,
     /// Staking events served by `staking_events`.
     pub(super) staking: Vec<StakingEvent>,
-    /// Answer range staking reads with no events, as a log backend on another fork would, while
-    /// hash-pinned reads still hold them.
-    pub(super) omit_ranged_staking: bool,
+    /// Staking events, by transaction, that range reads leave out, as a log backend that lags would,
+    /// while hash-pinned reads still hold them.
+    pub(super) omit_ranged_staking: BTreeSet<B256>,
+    /// Refuse hash-pinned staking reads, as log backends that do not hold the blocks would.
+    pub(super) refuse_pinned_staking: bool,
     /// Answer `deposits` with nothing, like a node that lags the one counting.
     pub(super) hide_logs: bool,
     /// Block hashes that differ from `canonical_hash`, as after a reorg.
@@ -192,8 +194,6 @@ impl VaultReader for FakeChain {
                 hash: chain.hash_at(number),
                 parent_hash: parent(number),
                 timestamp: number * 12,
-                // As a bloom does, for the blocks that hold a staking event.
-                staking_logs: chain.staking.iter().any(|event| event.block == number),
             })
             .collect();
         match chain.bad_headers {
@@ -236,9 +236,7 @@ impl VaultReader for FakeChain {
         Ok(chain.deposits.iter().filter(|d| d.block <= at.number).count() as u64)
     }
 
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let from = blocks.first().unwrap().number;
-        let to = *blocks.last().unwrap();
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         let mut chain = self.0.lock().unwrap();
         if chain.log_range_cap.is_some_and(|cap| to.number - from + 1 > cap) {
             chain.staking_refusals += 1;
@@ -248,15 +246,19 @@ impl VaultReader for FakeChain {
         if chain.hash_at(to.number) != to.hash {
             bail!("staking endpoint is not canonical");
         }
-        let hidden = chain.hide_logs || chain.omit_ranged_staking;
-        let visible = chain.staking.iter().filter(|e| !hidden && (from..=to.number).contains(&e.block));
+        let visible = chain.staking.iter().filter(|e| {
+            !chain.hide_logs && !chain.omit_ranged_staking.contains(&e.tx_hash) && (from..=to.number).contains(&e.block)
+        });
         Ok(visible.cloned().collect())
     }
 
     async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
         let chain = self.0.lock().unwrap();
         // A log backend pinned to a hash it does not hold refuses, as one that lags does.
-        if chain.hide_logs || blocks.iter().any(|block| chain.hash_at(block.number) != block.hash) {
+        if chain.hide_logs
+            || chain.refuse_pinned_staking
+            || blocks.iter().any(|block| chain.hash_at(block.number) != block.hash)
+        {
             bail!("unknown block");
         }
         let pinned = |event: &&StakingEvent| blocks.iter().any(|block| block.number == event.block);

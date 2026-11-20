@@ -37,14 +37,32 @@ pub trait VaultReader {
     /// Every vault deposit event in blocks `from..=to`, in chain order.
     fn deposits(&self, from: u64, to: u64) -> impl Future<Output = anyhow::Result<Vec<VaultDeposit>>> + Send;
 
+    /// `deposits`, with the hash of block `to` as the same reader reports it, read first, so a reader
+    /// that does not serve the range's last block refuses rather than answering it as empty.
+    /// Error cases:
+    /// - either read fails, or the header answers for another height
+    fn ranged_deposits(
+        &self,
+        from: u64,
+        to: u64,
+    ) -> impl Future<Output = anyhow::Result<(B256, Vec<VaultDeposit>)>> + Send {
+        // Futures do nothing until awaited, so the header is read before the logs.
+        let (header, deposits) = (self.headers(to, to), self.deposits(from, to));
+        async move {
+            let header = crate::custody::quorum::last_header(header.await?, to)?;
+            Ok((header.hash, deposits.await?))
+        }
+    }
+
     /// The vault's deposit count in block `at`, which the endpoint must hold as canonical.
     fn deposit_count(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<u64>> + Send;
 
-    /// Every staking and operator registry event in the contiguous proven window, in chain order, from
-    /// one log read over its block range. Every event must be on its block's proven hash.
-    fn staking_events(&self, blocks: &[BlockRef]) -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
+    /// Every staking and operator registry event in blocks `from..=to.number`, in chain order, from one
+    /// log read over the range. A reader that reports `to` with another hash refuses.
+    fn staking_events(&self, from: u64, to: BlockRef)
+    -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
 
-    /// The same events at each of `blocks`, in chain order, each read by its proven block hash, so an
+    /// The same events at each of `blocks`, in chain order, each read by its canonical block hash, so an
     /// empty answer is bound to that block. A reader that cannot read them refuses.
     fn pinned_staking_events(
         &self,

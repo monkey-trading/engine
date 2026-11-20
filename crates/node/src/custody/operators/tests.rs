@@ -146,7 +146,6 @@ impl VaultReader for Provider {
                 hash: if number == FINAL { final_block().hash } else { B256::repeat_byte(0x11) },
                 parent_hash: B256::ZERO,
                 timestamp: if number == FINAL { FINAL_TIME } else { 0 },
-                staking_logs: false,
             })
             .collect())
     }
@@ -159,7 +158,7 @@ impl VaultReader for Provider {
         Ok(0)
     }
 
-    async fn staking_events(&self, _blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, _from: u64, _to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         Ok(Vec::new())
     }
 

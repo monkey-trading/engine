@@ -57,7 +57,7 @@ impl VaultReader for Provider {
         unreachable!("the terms read no deposit count")
     }
 
-    async fn staking_events(&self, _: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, _: u64, _: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         unreachable!("the terms read no events")
     }
 

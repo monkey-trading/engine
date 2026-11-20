@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::sync::Mutex;
 
-use alloy::primitives::{Address, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use anyhow::{Context, bail};
 use futures_util::future::join_all;
 use tracing::{error, info, warn};
@@ -211,18 +211,25 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
     /// Error cases:
     /// - no quorum, or a provider cannot return the range's last block
     async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
-            self.qualified(i)?;
-            let header = last_header(r.headers(to, to).await?, to)?;
-            Ok((header.hash, r.deposits(from, to).await?))
-        }))
-        .await;
-        self.vote("deposits", answers).map(|v| v.0.1)
+        self.ranged_deposits(from, to).await.map(|(_, deposits)| deposits)
     }
 
-    /// Identical staking event sets over the window, anchored to the endpoint it proved (`staking`).
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        self.ranged_staking_events(blocks).await
+    /// Identical complete log sets with the hash of the range's last block, each provider's read after its
+    /// own header there; a lagging absence cannot vote.
+    /// Error cases:
+    /// - no quorum, or a provider cannot return the range's last block
+    async fn ranged_deposits(&self, from: u64, to: u64) -> anyhow::Result<(B256, Vec<VaultDeposit>)> {
+        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
+            self.qualified(i)?;
+            r.ranged_deposits(from, to).await
+        }))
+        .await;
+        self.vote("deposits", answers).map(|v| v.0)
+    }
+
+    /// Identical staking event sets over the range, anchored to the hash of its last block (`staking`).
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        self.ranged_staking_events(from, to).await
     }
 
     /// Identical staking event sets, each provider's read pinned to every block's hash (`staking`).
@@ -468,7 +475,7 @@ fn majority<T: PartialEq>(answers: &[anyhow::Result<T>], required: usize) -> Opt
 /// Requires exactly the header requested, so a lagging absence carries a verified height.
 /// Error cases:
 /// - a missing, extra, or wrong-height header
-fn last_header(headers: Vec<BlockLink>, number: u64) -> anyhow::Result<BlockLink> {
+pub(crate) fn last_header(headers: Vec<BlockLink>, number: u64) -> anyhow::Result<BlockLink> {
     let header = headers.first().copied().ok_or(InvalidRpcResponse).context("provider has no requested block")?;
     if headers.len() != 1 || header.number != number {
         return Err(anyhow::Error::new(InvalidRpcResponse).context("provider returned the wrong header range"));

@@ -6,7 +6,8 @@ use crate::custody::chain::BlockLink;
 use crate::custody::evm::{BlockRef, Finality, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
 use crate::custody::tests::fakes::{CHAIN_ID, canonical_hash};
 
-/// A reader answering only `staking_events`, from a fixed event list.
+/// A reader answering `staking_events` and their reads by hash from a fixed event list, with canonical
+/// headers.
 pub(super) struct StubReader(pub(super) Vec<StakingEvent>);
 
 impl VaultReader for StubReader {
@@ -25,7 +26,6 @@ impl VaultReader for StubReader {
                 hash: canonical_hash(number),
                 parent_hash: B256::ZERO,
                 timestamp: number * 12,
-                staking_logs: false,
             })
             .collect())
     }
@@ -40,10 +40,13 @@ impl VaultReader for StubReader {
         Ok(0)
     }
 
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let from = blocks.first().unwrap().number;
-        let to = *blocks.last().unwrap();
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         anyhow::ensure!(to.hash == canonical_hash(to.number), "staking endpoint is not canonical");
         Ok(self.0.iter().filter(|e| (from..=to.number).contains(&e.block)).cloned().collect())
+    }
+
+    async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        anyhow::ensure!(blocks.iter().all(|block| block.hash == canonical_hash(block.number)), "unknown block");
+        Ok(self.0.iter().filter(|e| blocks.iter().any(|block| block.number == e.block)).cloned().collect())
     }
 }

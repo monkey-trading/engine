@@ -106,13 +106,7 @@ pub(super) fn decode_header(header: Option<Header>, number: u64) -> anyhow::Resu
         return Err(anyhow::Error::new(InvalidRpcResponse)
             .context(format!("asked for block {number}, got block {}", header.number)));
     }
-    Ok(BlockLink {
-        number,
-        hash: header.hash,
-        parent_hash: header.parent_hash,
-        timestamp: header.timestamp,
-        staking_logs: false,
-    })
+    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash, timestamp: header.timestamp })
 }
 
 impl VaultReader for VaultRpc {
@@ -143,12 +137,10 @@ impl VaultReader for VaultRpc {
         self.read_finality(self.withdrawal_finality_tag).await
     }
 
-    /// The headers of blocks `from..=to`, read in one JSON-RPC batch, each with whether its logs bloom
-    /// admits an event the staking mirror reads.
+    /// The headers of blocks `from..=to`, read in one JSON-RPC batch.
     /// Error cases:
     /// - the batch fails or times out, or a block is missing or answers for another height
     async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
-        let mirrored = self.mirror_filter();
         let mut batch = self.client.new_batch();
         let waiters = (from..=to)
             .map(|number| {
@@ -160,11 +152,7 @@ impl VaultReader for VaultRpc {
         let mut links = Vec::with_capacity(waiters.len());
         for (number, waiter) in (from..=to).zip(waiters) {
             let header = self.deadline("eth_getBlockByNumber", waiter).await?;
-            let staking_logs = header
-                .as_ref()
-                .zip(mirrored.as_ref())
-                .is_some_and(|(header, filter)| filter.matches_bloom(header.logs_bloom));
-            links.push(BlockLink { staking_logs, ..decode_header(header, number)? });
+            links.push(decode_header(header, number)?);
         }
         Ok(links)
     }
@@ -304,9 +292,9 @@ impl VaultReader for VaultRpc {
         Ok((header.number, header.hash))
     }
 
-    /// Every event the staking mirror reads over the window's block range, in one log read (`staking`).
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        self.ranged_staking_events(blocks).await
+    /// Every event the staking mirror reads over the range, in one log read (`staking`).
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        self.ranged_staking_events(from, to.number).await
     }
 
     /// Every event the staking mirror reads, at each block by its hash (`staking`).

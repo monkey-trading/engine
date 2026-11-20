@@ -71,20 +71,9 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.mirror_staking(tx, release.tagged.map(|tag| tag.number.min(eligible))).await?;
             return Ok(Polled::Waiting);
         }
-        if !self.prove_confirmed(from, tagged).await? {
-            return Ok(self.behind(from, eligible));
-        }
         let release_at = if let Some(released) = release.tagged {
             if released.number > tagged.number {
                 return Err(PollError::unsettled(anyhow!("withdrawal finality is ahead of the confirmation view")));
-            }
-            if released.number >= from {
-                let Some(hashes) = self.confirmed_window(released.number, released.number).await? else {
-                    return Ok(self.behind(from, eligible));
-                };
-                if hashes[&released.number] != released.hash {
-                    return Err(PollError::unsettled(anyhow!("withdrawal finality is on another canonical chain")));
-                }
             }
             Some(released.number.min(eligible))
         } else {
@@ -94,14 +83,18 @@ impl<V: VaultReader> DepositWatcher<V> {
             .await
             .map_err(PollError::Fatal)?;
         self.resume_confirmed_scan(checkpoint, from, next_id)?;
-        let needed_hashes: BTreeSet<_> = pending.iter().map(|record| record.receipt.block).collect();
-        if !self.advance_confirmed_scan(eligible, &needed_hashes).await? {
+        // The boundary is read after the window, so a reorganisation between the two reads is caught; a
+        // window that fails is checked too, as a reorganisation below it can be why.
+        let boundary = self.chain.top();
+        let advanced = self.advance_confirmed_scan(eligible).await;
+        if !self.check_boundary(checkpoint.map(|p| p.block), boundary).await? {
             return Ok(self.behind(from, eligible));
         }
+        advanced?;
         let to = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists").number;
-        // A lagging quorum tag drops the eligible block below the proven scan end or an already
-        // credited receipt; the scan is ahead, so this waits out the tag without arming the lag
-        // watchdog, and the poll loop sleeps its normal interval.
+        // A lagging quorum tag drops the eligible block below the scan end or an already credited receipt;
+        // the scan is ahead, so this waits out the tag without arming the lag watchdog, and the poll loop
+        // sleeps its normal interval.
         if to > eligible || pending.iter().any(|record| record.receipt.block > eligible) {
             return Ok(Polled::Waiting);
         }
@@ -110,15 +103,13 @@ impl<V: VaultReader> DepositWatcher<V> {
         if pending.iter().any(|record| record.receipt.block > to) {
             return Ok(self.behind(from, eligible));
         }
-        for recorded in &pending {
-            let block = recorded.receipt.block;
-            if !self.confirmed.scan.as_ref().expect("scan retained").hashes.contains_key(&block) {
-                let Some(hashes) = self.confirmed_window(block, block).await? else {
-                    return Ok(self.behind(from, eligible));
-                };
-                self.confirmed.scan.as_mut().expect("scan retained").hashes.extend(hashes);
-            }
-        }
+        let uncovered: BTreeSet<u64> = pending
+            .iter()
+            .map(|record| record.receipt.block)
+            .filter(|block| !self.confirmed.scan.as_ref().expect("scan retained").hashes.contains_key(block))
+            .collect();
+        let hashes = self.block_hashes(&uncovered).await?;
+        self.confirmed.scan.as_mut().expect("scan retained").hashes.extend(hashes);
         let scan = self.confirmed.scan.as_ref().expect("scan retained");
         let orphans = reconcile(&pending, &scan.canonical, &scan.hashes, to == eligible)?;
         let deferred = orphans.iter().any(|(_, orphaned)| *orphaned == Orphaned::Deferred);
@@ -154,11 +145,17 @@ impl<V: VaultReader> DepositWatcher<V> {
         if deferred {
             return Ok(self.behind(from, eligible));
         }
-        if let Some(finalised) = release_at.filter(|number| *number >= from).map(|number| number.min(to)) {
-            let Some(hashes) = self.confirmed_window(finalised, finalised).await? else {
+        if let Some(number) = release_at.filter(|number| *number >= from).map(|number| number.min(to)) {
+            // The frontier is the release tag's block, or the scan's end below it; both are final.
+            let scan_end = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists");
+            let finalised = release.tagged.filter(|released| released.number == number).unwrap_or(scan_end);
+            if finalised.number != number {
+                return Err(PollError::unsettled(anyhow!("the finalised frontier {number} has no known hash")));
+            }
+            if !self.verify_final(from, finalised).await? {
                 return Ok(self.behind(from, eligible));
-            };
-            self.finalise_confirmed_scan(tx, finalised, hashes[&finalised]).await?;
+            }
+            self.finalise_confirmed_scan(tx, finalised.number, finalised.hash).await?;
         }
         self.mirror_staking(tx, release_at).await?;
         self.finish_confirmed_read(tx, to, eligible).await
@@ -282,7 +279,7 @@ impl<V: VaultReader> DepositWatcher<V> {
     }
 
     /// Records a poll that stopped short of the eligible block, so a catch-up that never completes
-    /// a window, such as a header proof outrun by the head, still raises the lag alert.
+    /// a window, such as one whose reads the head outruns, still raises the lag alert.
     fn behind(&mut self, from: u64, eligible: u64) -> Polled {
         let next_block = self.confirmed.scan.as_ref().map_or(from, |scan| scan.next());
         self.watchdog.observe_read(false, next_block, eligible);

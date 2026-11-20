@@ -76,7 +76,6 @@ impl VaultReader for Provider {
                 hash: hash(number),
                 parent_hash: hash(number - 1),
                 timestamp: AGREED_TIME + number - AGREED,
-                staking_logs: false,
             })
             .collect())
     }
@@ -89,7 +88,7 @@ impl VaultReader for Provider {
         bail!("the standby reader reads no deposit count")
     }
 
-    async fn staking_events(&self, _blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, _from: u64, _to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         bail!("the standby reader reads no staking events")
     }
 

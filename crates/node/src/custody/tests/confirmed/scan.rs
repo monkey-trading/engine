@@ -199,18 +199,21 @@ async fn failed_ranges_and_restart_cannot_advance_an_empty_scan_past_an_uncredit
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_confirmed_header_proof_that_holds_back_every_read_raises_the_lag_alert() {
+async fn a_confirmed_scan_that_slow_headers_hold_behind_raises_the_lag_alert() {
     let (logs, _guard) = Logs::capture();
-    let dir = scratch("confirmed-long-proof");
+    let dir = scratch("confirmed-slow-headers");
     let node = Node::start_confirmed(&dir);
-    // Ten headers per poll at 100ms each: proving 2,000 blocks takes far longer than the 1s budget.
+    // Ten blocks a window, each poll's header reads at 100ms each: 2,000 blocks take far longer than the
+    // 1s budget.
     let chains = chains(2_000, None);
     for chain in &chains {
         chain.0.lock().unwrap().header_latency = Some(Duration::from_millis(100));
     }
     let run = tokio::spawn(watcher(&chains, &dir, 10, None).run(node.tx.clone()));
     sleep(Duration::from_millis(1_500)).await;
-    assert!(chains[0].reads().is_empty(), "no deposit is read while the chain is proven");
+    assert!(chains[0].reads().len() < 200, "the scan is still behind");
     assert_eq!(logs.count("alert=\"custody_deposits_lagging\""), 1);
     run.abort();
 }
+
+mod boundary;

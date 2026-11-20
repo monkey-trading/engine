@@ -1,4 +1,17 @@
-//! Bounded, cancellation-safe confirmation reads. Only complete proofs can drive transitions.
+//! The confirmed scan's progress and its reorganisation checks.
+//!
+//! Each window of blocks is read once, from the provider quorum: its deposits together with the hash of
+//! its last block, the vault's count in that block, and the header of every block a deposit is in. The
+//! window's last block becomes the boundary. Each poll, after its window read, reads the boundary the poll
+//! started from again and compares its hash with the one stored. A block's hash commits to its parent's,
+//! and so to every block below it, so a reorganisation at or below the boundary changes it; one above
+//! changes nothing the scan had read. Read after the window, it also catches a reorganisation that lands
+//! between the two reads. On a mismatch the scan drops the poll's window, walks back through the stored
+//! window ends to the highest that still matches, and reads again from there.
+//!
+//! Finalisation reads the frontier's blocks once they are final, which no reorganisation can change: the
+//! header of every block a receipt it releases is in, and the vault's count at the frontier, so nothing a
+//! reorganisation between a poll's reads let through is ever released.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -6,43 +19,26 @@ use alloy::primitives::B256;
 use anyhow::anyhow;
 use engine_core::deposits::{CustodyCheckpoint, DepositReceipt};
 use engine_core::types::AccountId;
+use tracing::info;
 
-use crate::custody::chain::{LinkedRun, ProvenChain, ProvenWindow};
 use crate::custody::evm::lifecycle::receipt;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultDeposit, VaultReader, check_complete};
+use crate::custody::quorum::last_header;
 use crate::custody::stall::PollError;
 
 #[derive(Default)]
 pub(super) struct ConfirmedProgress {
     pub(super) scan: Option<ConfirmedScan>,
-    proof: Option<HeaderProof>,
-    window: Option<WindowProof>,
-    /// The staking mirror's own retained window, separate from the deposit proofs that share
-    /// `window`: catch-up survives deposit activity and an advancing release tag.
-    staking_window: Option<WindowProof>,
-    /// At most 64 binary levels plus two endpoints; an incomplete run has two private candidates.
-    pub(super) staking_chain: ProvenChain,
     raw: Option<RawWindow>,
 }
 
-struct HeaderProof {
-    below: Option<(u64, B256)>,
-    first: u64,
-    run: LinkedRun,
-}
-
-struct WindowProof {
-    from: u64,
-    to: u64,
-    upper: (u64, B256),
-    run: LinkedRun,
-}
-
+/// A window's deposits and the hash of its last block, kept until its count reads, so a failed count read
+/// or a cancelled poll does not read the logs again.
 struct RawWindow {
     from: u64,
     to: u64,
-    hashes: BTreeMap<u64, B256>,
-    deposits: Option<Vec<VaultDeposit>>,
+    hash: B256,
+    deposits: Vec<VaultDeposit>,
 }
 
 pub(super) struct ConfirmedScan {
@@ -85,192 +81,96 @@ impl ConfirmedScan {
     pub(super) fn count_at(&self, block: u64) -> u64 {
         self.start_count + self.canonical.partition_point(|receipt| receipt.block <= block) as u64
     }
+
+    /// Drops everything above `kept`, a window end of this scan, which becomes its end.
+    fn truncate(&mut self, kept: BlockRef) {
+        let keep = self.canonical.partition_point(|receipt| receipt.block <= kept.number);
+        self.count = self.count_at(kept.number);
+        self.canonical.truncate(keep);
+        self.applied = self.applied.min(keep);
+        self.finalised = self.finalised.min(keep);
+        self.hashes.retain(|block, _| *block <= kept.number);
+        self.hashes.insert(kept.number, kept.hash);
+        self.payers.split_off(&format!("{:020}:", kept.number + 1));
+        self.end = Some(kept);
+    }
 }
 
 impl<V: VaultReader> DepositWatcher<V> {
-    /// Extends the canonical proof by at most one configured header batch per poll.
-    /// The run stays in the watcher across every await, including cancellation.
+    /// Reads `boundary`, the highest stored block when the poll started, again and compares its hash with
+    /// the stored one, unless it is the finalised frontier `floor`, which the poll has already read. On a
+    /// mismatch, walks back through the stored window ends below it, by halves, to the highest that still
+    /// matches, drops everything above that, the poll's own window included, and leaves the scan to read
+    /// again from there. Returns whether the boundary held.
     /// Error cases:
-    /// - quorum reads fail or headers are inconsistent
-    pub(super) async fn prove_confirmed(&mut self, from: u64, tagged: BlockRef) -> Result<bool, PollError> {
-        if self.chain.get(tagged.number) == Some(tagged.hash) {
-            self.confirmed.proof = None;
+    /// - stalled: a header read fails or lacks a quorum
+    pub(super) async fn check_boundary(
+        &mut self,
+        floor: Option<u64>,
+        boundary: Option<(u64, B256)>,
+    ) -> Result<bool, PollError> {
+        let Some((top, hash)) = boundary.filter(|(top, _)| floor.is_none_or(|floor| *top > floor)) else {
+            return Ok(true);
+        };
+        if self.header_at(top).await?.hash == hash {
             return Ok(true);
         }
-        if self.chain.top().is_some_and(|(top, _)| top > tagged.number) {
-            let Some(hashes) = self.confirmed_window(tagged.number, tagged.number).await? else {
-                return Ok(false);
-            };
-            if hashes[&tagged.number] == tagged.hash {
-                return Ok(true);
-            }
-            self.reset_confirmed_chain(from);
-            return Ok(false);
-        }
-        let below = self.chain.top();
-        let first = below.map_or(from, |(number, _)| number + 1);
-        if !self.confirmed.proof.as_ref().is_some_and(|proof| proof.below == below && proof.first == first) {
-            self.confirmed.proof = Some(HeaderProof { below, first, run: LinkedRun::recording(below, first) });
-        }
-        let next = self.confirmed.proof.as_ref().expect("proof initialized").run.next();
-        if next <= tagged.number {
-            let end = tagged.number.min(next.saturating_add(self.header_batch.get() - 1));
-            let links = self.headers(next, end).await?;
-            let window_from = self.confirmed.scan.as_ref().map_or(from, ConfirmedScan::next);
-            let window_end = window_from.saturating_add(self.max_block_range);
-            let every = self.max_block_range;
-            if let Err(cause) = self.confirmed.proof.as_mut().expect("proof retained").run.extend(
-                end,
-                &links,
-                |n| (n + 1).is_multiple_of(every),
-                |n| n >= window_from && n < window_end,
-            ) {
-                self.reset_confirmed_chain(from);
-                return if below.is_some_and(|(number, _)| number >= from) {
-                    Ok(false)
-                } else {
-                    Err(PollError::unsettled(cause))
-                };
-            }
-        }
-        let run = &self.confirmed.proof.as_ref().expect("proof retained").run;
-        if run.next() <= tagged.number {
-            return Ok(false);
-        }
-        if run.last() != Some((tagged.number, tagged.hash)) {
-            self.reset_confirmed_chain(from);
-            return if below.is_some_and(|(number, _)| number >= from) {
-                Ok(false)
+        // Every stored end above the frontier and below the boundary, lowest first. Those below the fork
+        // match and those above it do not, so the highest match is found by halves.
+        let ends = self.chain.between(floor, top);
+        let (mut low, mut high) = (0, ends.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let (number, hash) = ends[middle];
+            if self.header_at(number).await?.hash == hash {
+                low = middle + 1;
             } else {
-                Err(PollError::unsettled(anyhow!("confirmation headers did not reach the quorum tag")))
-            };
+                high = middle;
+            }
         }
-        let proof = self.confirmed.proof.take().expect("complete proof retained");
-        self.chain.keep(proof.run);
-        self.chain.insert(tagged.number, tagged.hash);
-        Ok(true)
+        let kept = low.checked_sub(1).map(|index| ends[index]);
+        info!(
+            boundary = top,
+            kept = ?kept.map(|(number, _)| number).or(floor),
+            "the chain reorganised at or below the scanned boundary; scanning again above the highest end that matches"
+        );
+        self.chain.prune_above(kept.map(|(number, _)| number).or(floor));
+        match (kept, &mut self.confirmed.scan) {
+            // A stored end above everything the scan holds leaves it as it is.
+            (Some((number, _)), Some(scan)) if scan.end.is_none_or(|end| number > end.number) => {}
+            (Some((number, hash)), Some(scan)) if number >= scan.start => scan.truncate(BlockRef { number, hash }),
+            _ => self.confirmed.scan = None,
+        }
+        self.confirmed.raw = None;
+        Ok(false)
+    }
+
+    /// Block `number`'s header, read through the quorum.
+    /// Error cases:
+    /// - stalled: the read fails, lacks a quorum, or answers for another block
+    pub(super) async fn header_at(&self, number: u64) -> Result<crate::custody::chain::BlockLink, PollError> {
+        let headers = self.vault.headers(number, number).await.map_err(PollError::rpc)?;
+        last_header(headers, number).map_err(PollError::rpc)
+    }
+
+    /// The hashes of `blocks`, each read through the quorum.
+    /// Error cases:
+    /// - stalled: a read fails, lacks a quorum, or answers for another block
+    pub(super) async fn block_hashes(&self, blocks: &BTreeSet<u64>) -> Result<BTreeMap<u64, B256>, PollError> {
+        let mut hashes = BTreeMap::new();
+        for &number in blocks {
+            hashes.insert(number, self.header_at(number).await?.hash);
+        }
+        Ok(hashes)
     }
 
     /// Discards all unfinalised evidence after a canonical conflict, retaining only core finality.
-    fn reset_confirmed_chain(&mut self, from: u64) {
+    pub(super) fn reset_confirmed_chain(&mut self, from: u64) {
         self.chain.prune_above(from.checked_sub(1));
         self.confirmed = ConfirmedProgress::default();
     }
 
-    /// Proves a window in at most one header batch, retaining partial work across cancellation.
-    /// Error cases:
-    /// - headers lack quorum, fail to link, or do not reach the previously proven anchor
-    pub(super) async fn confirmed_window(
-        &mut self,
-        from: u64,
-        to: u64,
-    ) -> Result<Option<BTreeMap<u64, B256>>, PollError> {
-        Ok(self.prove_window(from, to, false).await?.map(|window| window.hashes))
-    }
-
-    /// The end of the staking window whose header proof, begun at `from`, is still in progress.
-    pub(super) fn staking_window_end(&self, from: u64) -> Option<u64> {
-        self.confirmed.staking_window.as_ref().filter(|proof| proof.from == from).map(|proof| proof.to)
-    }
-
-    /// Proves a window for the staking mirror on its own retained slot, so deposit proofs cannot
-    /// discard a catch-up in progress, with the blocks whose header's bloom admits a mirrored event. See
-    /// `confirmed_window`.
-    /// Error cases:
-    /// - headers lack quorum, fail to link, or do not reach the previously proven anchor
-    pub(super) async fn staking_window(&mut self, from: u64, to: u64) -> Result<Option<ProvenWindow>, PollError> {
-        self.prove_window(from, to, true).await
-    }
-
-    /// A window's proven hashes: the deposit proofs' window, else the recent hashes the confirmation proof
-    /// kept, which read nothing, else headers read from `from` up to the lowest anchor at or above `to`.
-    async fn prove_window(&mut self, from: u64, to: u64, staking: bool) -> Result<Option<ProvenWindow>, PollError> {
-        if let Some(hashes) = self.chain.window(from, to).filter(|_| !staking) {
-            self.chain.insert(to, hashes[&to]);
-            let staking_logs = self.chain.window_logs(from, to);
-            return Ok(Some(ProvenWindow { hashes, staking_logs }));
-        }
-        // A staking read binds its range's end to each provider's header there, so a recent window needs
-        // no anchor read either.
-        if let Some(window) = self.chain.recent(from, to) {
-            if !staking {
-                self.chain.insert(to, window.hashes[&to]);
-            }
-            return Ok(Some(window));
-        }
-        let retained = staking
-            .then_some(self.confirmed.staking_window.as_ref())
-            .flatten()
-            .filter(|proof| (proof.from, proof.to) == (from, to))
-            .map(|proof| proof.upper);
-        let upper = retained
-            .or_else(|| {
-                staking
-                    .then(|| self.confirmed.staking_chain.at_or_above(to))
-                    .flatten()
-                    .into_iter()
-                    .chain(self.chain.at_or_above(to))
-                    .min_by_key(|(number, _)| *number)
-            })
-            .ok_or_else(|| PollError::unsettled(anyhow!("block {to} is above the proven chain")))?;
-        if staking {
-            let links = self.headers(upper.0, upper.0).await?;
-            if links.len() != 1 || links[0].number != upper.0 || links[0].hash != upper.1 {
-                self.confirmed.staking_window = None;
-                self.confirmed.staking_chain = ProvenChain::default();
-                return Err(PollError::unsettled(anyhow!("staking proof anchor changed")));
-            }
-        }
-        if staking && let Some(hashes) = self.confirmed.staking_chain.window(from, to) {
-            let staking_logs = self.confirmed.staking_chain.window_logs(from, to);
-            return Ok(Some(ProvenWindow { hashes, staking_logs }));
-        }
-        let midpoint = from + (upper.0 - from) / 2;
-        let (next, end) = {
-            let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
-            if slot.as_ref().is_none_or(|proof| (proof.from, proof.to, proof.upper) != (from, to, upper)) {
-                *slot = Some(WindowProof { from, to, upper, run: LinkedRun::new(None, from) });
-            }
-            let next = slot.as_ref().expect("window initialized").run.next();
-            (next, upper.0.min(next.saturating_add(self.header_batch.get() - 1)))
-        };
-        // The retained slot is not read across the header fetch; headers cannot touch it, so the
-        // run below is the same one initialized above.
-        let links = self.headers(next, end).await?;
-        let slot = if staking { &mut self.confirmed.staking_window } else { &mut self.confirmed.window };
-        let run = &mut slot.as_mut().expect("window retained").run;
-        if let Err(cause) = run.extend(
-            end,
-            &links,
-            |number| staking && (number == midpoint || number == upper.0),
-            |number| (from..=to).contains(&number),
-        ) {
-            *slot = None;
-            return Err(PollError::unsettled(cause));
-        }
-        if run.next() <= upper.0 {
-            return Ok(None);
-        }
-        if run.last() != Some(upper) {
-            *slot = None;
-            return Err(PollError::unsettled(anyhow!("window did not reach its canonical anchor")));
-        }
-        let proof = slot.take().expect("complete window retained");
-        let hashes = proof.run.window(from, to);
-        let staking_logs = proof.run.window_logs(from, to);
-        // Midpoints form a depth-first binary hierarchy: O(N log(N/chunk)) header work,
-        // at most 66 anchors and one configured chunk of full hashes, independent of deposits.
-        let chain = if staking { &mut self.confirmed.staking_chain } else { &mut self.chain };
-        chain.clear_window();
-        chain.keep(proof.run);
-        chain.insert(to, hashes[&to]);
-        if staking {
-            chain.cap_anchors(66);
-        }
-        Ok(Some(ProvenWindow { hashes, staking_logs }))
-    }
-
-    /// Reuses complete windows only while their endpoint is on the freshly proved chain.
+    /// Reuses complete windows only while their endpoint is still a stored boundary.
     /// Trims finalized receipts without discarding the independently verified suffix.
     /// Error cases:
     /// - the core frontier's count contradicts the complete canonical scan
@@ -318,55 +218,44 @@ impl<V: VaultReader> DepositWatcher<V> {
         Ok(())
     }
 
-    /// Appends at most one complete log window. Logs awaiting their exact-hash count remain
-    /// private evidence, so quota errors and cancellation do not repeat completed reads.
+    /// Appends at most one complete log window: its deposits and the hash of its last block, the vault's
+    /// count in that block, and the header of every block holding a deposit, each through the quorum. The
+    /// window's last block becomes the boundary. Logs awaiting their count remain private evidence, so
+    /// quota errors and cancellation do not repeat completed reads.
     /// Error cases:
-    /// - reads fail or canonical headers, complete event ids, counts or economics disagree
-    pub(super) async fn advance_confirmed_scan(
-        &mut self,
-        eligible: u64,
-        needed: &BTreeSet<u64>,
-    ) -> Result<bool, PollError> {
+    /// - reads fail or lack a quorum, or a deposit's block is not the canonical one there, or complete event
+    ///   ids, counts or economics disagree
+    pub(super) async fn advance_confirmed_scan(&mut self, eligible: u64) -> Result<(), PollError> {
         let scan = self.confirmed.scan.as_ref().expect("scan initialized");
         let next = scan.next();
         if next > eligible {
-            return Ok(true);
+            return Ok(());
         }
         let end = eligible.min(next.saturating_add(self.log_range.get() - 1));
-        if self.confirmed.raw.as_ref().is_some_and(|raw| {
-            raw.from != next || raw.to > eligible || self.chain.get(raw.to) != Some(raw.hashes[&raw.to])
-        }) {
+        if self.confirmed.raw.as_ref().is_some_and(|raw| raw.from != next || raw.to > eligible) {
             self.confirmed.raw = None;
         }
         if self.confirmed.raw.is_none() {
-            let Some(hashes) = self.confirmed_window(next, end).await? else {
-                return Ok(false);
-            };
-            self.chain.insert(end, hashes[&end]);
-            self.confirmed.raw = Some(RawWindow { from: next, to: end, hashes, deposits: None });
-        }
-        let raw = self.confirmed.raw.as_ref().expect("window retained");
-        if raw.deposits.is_none() {
-            let deposits = match self.vault.deposits(raw.from, raw.to).await {
-                Ok(deposits) => deposits,
+            let (hash, deposits) = match self.vault.ranged_deposits(next, end).await {
+                Ok(read) => read,
                 Err(cause) => {
                     self.log_range.failed();
-                    self.confirmed.raw = None;
                     return Err(PollError::rpc(cause));
                 }
             };
-            self.confirmed.raw.as_mut().expect("window retained").deposits = Some(deposits);
+            self.confirmed.raw = Some(RawWindow { from: next, to: end, hash, deposits });
         }
         let raw = self.confirmed.raw.as_ref().expect("window retained");
-        let count = self
-            .vault
-            .deposit_count(BlockRef { number: raw.to, hash: raw.hashes[&raw.to] })
-            .await
-            .map_err(PollError::rpc)?;
-        let deposits = raw.deposits.as_ref().expect("logs retained");
+        let window_end = BlockRef { number: raw.to, hash: raw.hash };
+        let count = self.vault.deposit_count(window_end).await.map_err(PollError::rpc)?;
+        let raw = self.confirmed.raw.as_ref().expect("window retained");
+        let blocks: BTreeSet<u64> = raw.deposits.iter().map(|deposit| deposit.block).filter(|b| *b != raw.to).collect();
+        let mut hashes = self.block_hashes(&blocks).await?;
+        hashes.insert(window_end.number, window_end.hash);
+        let raw = self.confirmed.raw.as_ref().expect("window retained");
         let mut ordinals = BTreeMap::<B256, u64>::new();
         let validated = check_complete(
-            deposits,
+            &raw.deposits,
             raw.from,
             raw.to,
             self.confirmed.scan.as_ref().expect("scan retained").count,
@@ -374,11 +263,16 @@ impl<V: VaultReader> DepositWatcher<V> {
         )
         .map_err(PollError::unsettled)
         .and_then(|()| {
-            deposits
+            raw.deposits
                 .iter()
                 .map(|deposit| {
-                    if raw.hashes.get(&deposit.block) != Some(&deposit.block_hash) {
-                        return Err(PollError::unsettled(anyhow!("deposit is outside the proven canonical chain")));
+                    if hashes.get(&deposit.block) != Some(&deposit.block_hash) {
+                        return Err(PollError::unsettled(anyhow!(
+                            "deposit {} is reported in block {} {}, which is not the canonical block there",
+                            deposit.id,
+                            deposit.block,
+                            deposit.block_hash
+                        )));
                     }
                     let ordinal = ordinals.entry(deposit.tx_hash).or_default();
                     let receipt = receipt(deposit, *ordinal)?;
@@ -394,22 +288,55 @@ impl<V: VaultReader> DepositWatcher<V> {
                 return Err(cause);
             }
         };
-        let raw = self.confirmed.raw.take().expect("validated window retained");
-        let receipt_blocks: BTreeSet<_> = receipts.iter().map(|(receipt, _)| receipt.block).collect();
+        self.confirmed.raw = None;
         let scan = self.confirmed.scan.as_mut().expect("scan retained");
-        scan.hashes.extend(
-            raw.hashes
-                .into_iter()
-                .filter(|(block, _)| *block == raw.to || needed.contains(block) || receipt_blocks.contains(block)),
-        );
-        let block = BlockRef { number: raw.to, hash: scan.hashes[&raw.to] };
+        scan.hashes.extend(hashes);
         scan.payers.extend(receipts.iter().map(|(receipt, payer)| (receipt.reference(), *payer)));
         scan.canonical.extend(receipts.into_iter().map(|(receipt, _)| receipt));
-        scan.end = Some(block);
+        scan.end = Some(window_end);
         scan.count = count;
-        self.chain.insert(block.number, block.hash);
-        self.chain.clear_window();
+        self.chain.insert(window_end.number, window_end.hash);
         self.log_range.succeeded();
-        Ok(true)
+        Ok(())
+    }
+
+    /// Checks the scan against the finalised chain before receipts through `finalised` are released: the
+    /// header of every block such a receipt is in, the vault's count at `finalised`, whose hash the release
+    /// tag or the scan's own end gives, and any window end stored there. Final blocks never change, so a
+    /// read of them names the chain every later one builds on. On a mismatch the scan starts again from the
+    /// finalised frontier, whose reconciliation then moves or reverses whatever the final chain does not
+    /// hold. Returns whether the scan held.
+    /// Error cases:
+    /// - stalled: a read fails or lacks a quorum
+    pub(super) async fn verify_final(&mut self, from: u64, finalised: BlockRef) -> Result<bool, PollError> {
+        let scan = self.confirmed.scan.as_ref().expect("scan retained");
+        let releasing =
+            || scan.canonical[scan.finalised..].iter().take_while(|receipt| receipt.block <= finalised.number);
+        let blocks: BTreeSet<u64> = releasing().map(|receipt| receipt.block).collect();
+        let expected = scan.count_at(finalised.number);
+        let counted = scan.end == Some(finalised);
+        let hashes = self.block_hashes(&blocks).await?;
+        let scan = self.confirmed.scan.as_ref().expect("scan retained");
+        let moved = scan.canonical[scan.finalised..]
+            .iter()
+            .take_while(|receipt| receipt.block <= finalised.number)
+            .find(|receipt| hashes.get(&receipt.block) != Some(&receipt.block_hash))
+            .map(DepositReceipt::reference);
+        let count =
+            if counted { expected } else { self.vault.deposit_count(finalised).await.map_err(PollError::rpc)? };
+        let end_holds = self.chain.get(finalised.number).is_none_or(|hash| hash == finalised.hash);
+        if moved.is_none() && count == expected && end_holds {
+            return Ok(true);
+        }
+        info!(
+            finalised = finalised.number,
+            moved = ?moved,
+            count,
+            expected,
+            end_holds,
+            "the finalised chain differs from the scan; reading again from the finalised frontier"
+        );
+        self.reset_confirmed_chain(from);
+        Ok(false)
     }
 }

@@ -615,6 +615,34 @@ the `finalized` tag. A trading server with real attestation refuses any other pa
 receipts, unfinalised principal and finalised scan progress are deterministic state in the log, so
 the host's scan cursor cannot move them.
 
+The scan reads each window of blocks once. A strict majority of the providers must agree on the
+window's deposits together with the hash of its last block, which each provider reads before its log
+read. They must also agree on the vault's deposit count in that block, read by its hash, and on the
+header of every block a deposit is in, whose hash must be the deposit's. The window's last block
+becomes the boundary.
+
+Each poll, after its window read, reads the header of the boundary it started from again and compares
+its hash with the one stored. A block's hash commits to its parent's, and so to every block below it. A
+reorganisation at or below the boundary therefore changes the boundary's hash, including one that lands
+between the poll's two reads. One above the boundary changes no block the scan had read. On a mismatch,
+the scan drops the poll's window and walks back through the stored window ends, halving the stretch
+each time, to the highest end that still matches. It then reads again from there, and reconciliation
+moves or reverses whatever the new chain does not hold. A reorganisation deeper than every stored end sends the scan back
+to the finalised frontier. That frontier's header is read each poll, and a change to it is refused as
+inconsistent. One boundary read a poll therefore detects every reorganisation of blocks the scan has
+read that is still in place at the poll. Reading every block's header found the same reorganisations,
+and a block with no deposit changes no state.
+
+What the boundary read does not catch is a chain that changes three times: to another branch before a
+poll's window read, back before its boundary read, and to the other branch again by the next poll. In
+that case the stored window ends come from two branches, and the next boundary read matches only the
+newer one. Before any principal is released, the trading server therefore
+reads the frontier's blocks again once they are final, which no reorganisation can change. It reads the
+header of every block a released receipt is in and the vault's deposit count at the frontier. On any
+difference, it scans again from the finalised frontier. A deposit credited from such a window is
+therefore reversed or moved, as after any reorganisation before finality, at the latest when its block
+becomes final, and never released.
+
 When the quorum proves that a deposit was reversed before finality, the engine debits it once,
 raises a Critical alert, and runs the usual close-out, writing off against the house any loss on an
 account left with no positions. Positions without a price wait for one, and a negative house net
@@ -752,12 +780,14 @@ state root. The mirror's frontier is the latest finalised block it has mirrored.
 epoch closes only once that frontier has passed the epoch's end, so no epoch's close pays a stake
 set that the mirror has not brought up to the epoch's end.
 
-The mirror reads a window of finalised blocks in one log read over its range, on which a strict
-majority of the custody providers must agree together with their header at the window's end, and
-each event must sit on its block's proven hash. Each block whose proven header's logs bloom admits a
-mirrored event is read again by its hash, and the mirror stops if those reads disagree with the range
-read. A provider whose log backend lags or holds another fork therefore cannot drop an event by
-answering the range from it.
+The mirror reads a window of finalised blocks in one log read over its range. A strict majority of
+the custody providers must agree on it together with their header at the window's end, read through
+the quorum. Final blocks never change, so that header binds the window, and the frontier the mirror
+records is read again each poll. The header of every block an event is in is read through the quorum,
+and the event must be on that block. Each such block is also read again by its hash, and the mirror
+stops if those reads disagree with the range read. A provider whose log backend holds another fork
+therefore cannot add an event. A log backend that lags cannot drop one from a block where it returns
+another.
 
 Epochs close in turn. When the mirror falls behind and then catches up, each epoch whose end it has
 passed closes in order, at the stake set the mirror held when it passed that end, and no epoch is
@@ -785,6 +815,11 @@ Known limits:
   share through that delay.
 - In a log from before staking mirror references entered the state root, recovery that can write to
   the log needs authenticated origin seals on the older staking instructions.
+- The quorum alone stands behind a window's range read for a block from which it returns no event. If
+  a strict majority of providers have log backends that lag behind their own header at the window's
+  end, and all return the same range without some block's every event, the mirror passes that block.
+  Reading every block's header, whose logs bloom flags any mirrored event, would catch this, at one
+  header read per Arbitrum block.
 
 ## The enclave and its keys
 

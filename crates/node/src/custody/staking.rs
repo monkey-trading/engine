@@ -1,12 +1,11 @@
 //! Mirroring the staking contract's finalised events, and from `V37` the operator registry's, into
-//! the engine. The deposit watcher calls `mirror` once per confirmed poll, after the same proven
-//! window, and only through the Ethereum-finalised boundary the poll proved: a staking mirror has
-//! no reversal, so a merely confirmed event must never become a permanent engine balance or
+//! the engine. The deposit watcher calls `mirror` once per confirmed poll, and only through the
+//! Ethereum-finalised boundary the poll read: a staking mirror has no reversal, so a merely confirmed event must never become a permanent engine balance or
 //! election. Events hold until `InitStaking` has applied, credit once under `tx:logIndex`, and
 //! advance the engine's authenticated mirrored-through frontier, so a host cursor cannot skip an
 //! event and a restart that re-reads a range mirrors nothing twice.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use alloy::primitives::{B256, U256};
@@ -25,9 +24,9 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 use tracing::{debug, info, info_span};
 
-use crate::custody::chain::ProvenWindow;
+use crate::custody::chain::BlockLink;
 use crate::custody::credit::{query, submit, sync};
-use crate::custody::evm::VaultReader;
+use crate::custody::evm::{BlockRef, VaultReader};
 use crate::custody::sizing::AdaptiveSize;
 use crate::custody::stall::{PollError, Stall};
 use crate::sequencer::Request;
@@ -209,17 +208,16 @@ impl StakingCursor {
     }
 }
 
-/// Mirrors every staking event in `window` (`from..=to`) that the engine has not credited, then
-/// advances the cursor to `to + 1`. `to` is the Ethereum-finalised boundary the poll proved: staking mirrors
-/// have no reversal, so blocks above it wait for finality. Events hold, with the cursor, until
-/// `InitStaking` has applied: a mirror the engine would refuse as premature is never sequenced,
-/// and a cursor that has not moved only makes the next poll read the same blocks again. The
-/// caller proves the range's blocks before calling, and passes their hashes and which of them have a
-/// header whose logs bloom admits a mirrored event. The events come from one read over the range, which
-/// must match the proven endpoint even when empty; an event on an unproven block also stalls. Each block
-/// whose bloom admits an event is read again by its hash, so log backends that hold another fork, or lag,
-/// cannot drop an event by answering the range from it: pinned reads that differ from the range read in
-/// those blocks stall, as do pinned reads that fail.
+/// Mirrors every staking event in `from..=end` that the engine has not credited, then advances the
+/// cursor to `end + 1`. `end` is the header, read through the quorum, of a block at or below the
+/// Ethereum-finalised boundary: staking mirrors have no reversal, so blocks above it wait for finality.
+/// Events hold, with the cursor, until `InitStaking` has applied: a mirror the engine would refuse as
+/// premature is never sequenced, and a cursor that has not moved only makes the next poll read the same
+/// blocks again. The events come from one read over the range, which must match `end`'s hash even when
+/// empty. The header of every block an event is in is read through the quorum, and the event must be on
+/// that block, so an event from another fork stalls. Each such block is then read again by its hash, so a
+/// log backend that lags cannot drop an event from a block it returned another in: pinned reads that
+/// differ from the range read in those blocks stall, as do pinned reads that fail.
 /// `bound` is whether the poll has verified the configured registry as the staking contract's
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
@@ -231,7 +229,7 @@ impl StakingCursor {
 /// the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or none. A
 /// failed event read, by range or by hash, halves `range`; a completed chunk lets it grow back.
 /// Error cases:
-/// - stalled: a read fails, an event is on an unproven block, an event arrives before the
+/// - stalled: a read fails, an event is not on the canonical block there, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
 #[allow(clippy::too_many_arguments)]
@@ -241,12 +239,12 @@ pub(super) async fn mirror<V: VaultReader>(
     cursor: &mut StakingCursor,
     cursor_path: &Path,
     range: &mut AdaptiveSize,
-    window: std::ops::RangeInclusive<u64>,
-    proven: &ProvenWindow,
+    from: u64,
+    end: BlockLink,
     (bound, schedule_bound, vote_bound, fault_bound): (bool, bool, bool, bool),
     turns: Option<alloy::primitives::Address>,
 ) -> Result<(), PollError> {
-    let (from, to) = (*window.start(), *window.end());
+    let (to, block_hash) = (end.number, end.hash);
     if from > to {
         return Ok(());
     }
@@ -255,20 +253,7 @@ pub(super) async fn mirror<V: VaultReader>(
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
         return Ok(());
     }
-    let hashes = &proven.hashes;
-    let block_hash = *hashes
-        .get(&to)
-        .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
-    let blocks = (from..=to)
-        .map(|number| {
-            hashes
-                .get(&number)
-                .copied()
-                .map(|hash| crate::custody::evm::BlockRef { number, hash })
-                .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking range lacks a proven block")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let events = match reader.staking_events(&blocks).await {
+    let events = match reader.staking_events(from, BlockRef { number: to, hash: block_hash }).await {
         Ok(events) => events,
         // A response-size or timeout limit is met with a narrower range on the retry, as for deposits.
         Err(cause) => {
@@ -276,18 +261,8 @@ pub(super) async fn mirror<V: VaultReader>(
             return Err(PollError::rpc(cause));
         }
     };
-    for event in &events {
-        if hashes.get(&event.block) != Some(&event.block_hash) {
-            return Err(PollError::unsettled(anyhow::anyhow!(
-                "staking event {} is reported in block {} {}, which is not the proven block there",
-                event.chain_ref(),
-                event.block,
-                event.block_hash
-            )));
-        }
-    }
     // A failed read by hash, one a block, narrows the next window and its reads, as a failed range read does.
-    if let Err(stalled) = confirm_blooms(reader, &blocks, &proven.staking_logs, &events).await {
+    if let Err(stalled) = confirm_event_blocks(reader, end, &events).await {
         if matches!(stalled, PollError::Stalled(Stall::Rpc(_))) {
             range.failed();
         }
@@ -322,8 +297,7 @@ pub(super) async fn mirror<V: VaultReader>(
     let version = query(tx, |engine| engine.protocol_version()).await.map_err(PollError::Fatal)?;
     if version >= ProtocolVersion::V27 {
         // From V37 the frontier carries its block time, which an elected key waits for.
-        let block_time =
-            if version >= ProtocolVersion::V37 { Some(block_time(reader, to, block_hash).await?) } else { None };
+        let block_time = if version >= ProtocolVersion::V37 { Some(block_time(end)?) } else { None };
         let named_turn = match turns.filter(|_| version >= ProtocolVersion::V65) {
             Some(registry) => {
                 // From V67 a drawn turn that has yet to start counts, as the engine accepts it.
@@ -351,33 +325,50 @@ pub(super) async fn mirror<V: VaultReader>(
     Ok(())
 }
 
-/// Reads again, each by its hash, the blocks in `blocks` whose proven header's bloom admits a mirrored
-/// event, and requires the same events there as `events`, the range read, holds: a bloom's false positive
-/// reads empty both ways.
+/// Reads the header of every block in `events` through the reader and requires each event's block to be
+/// the one there, then reads those blocks again, each by its hash, and requires the same events as the
+/// range read holds there. `end`, the range's last block, needs no header read.
 /// Error cases:
-/// - stalled: a pinned read fails, or its events differ from the range read's in those blocks
-async fn confirm_blooms<V: VaultReader>(
+/// - stalled: a read fails, an event is not on the canonical block there, or the reads by hash differ
+async fn confirm_event_blocks<V: VaultReader>(
     reader: &V,
-    blocks: &[crate::custody::evm::BlockRef],
-    staking_logs: &BTreeSet<u64>,
+    end: BlockLink,
     events: &[StakingEvent],
 ) -> Result<(), PollError> {
-    let admitted: Vec<_> = blocks.iter().filter(|block| staking_logs.contains(&block.number)).copied().collect();
-    if admitted.is_empty() {
+    let mut blocks = BTreeMap::new();
+    for event in events {
+        let hash = match blocks.get(&event.block) {
+            Some(hash) => *hash,
+            None if event.block == end.number => end.hash,
+            None => {
+                let headers = reader.headers(event.block, event.block).await.map_err(PollError::rpc)?;
+                crate::custody::quorum::last_header(headers, event.block).map_err(PollError::rpc)?.hash
+            }
+        };
+        if hash != event.block_hash {
+            return Err(PollError::unsettled(anyhow!(
+                "staking event {} is reported in block {} {}, which is not the canonical block there",
+                event.chain_ref(),
+                event.block,
+                event.block_hash
+            )));
+        }
+        blocks.insert(event.block, hash);
+    }
+    if blocks.is_empty() {
         return Ok(());
     }
-    let pinned = reader.pinned_staking_events(&admitted).await.map_err(PollError::rpc)?;
-    let ranged: Vec<_> = events.iter().filter(|event| staking_logs.contains(&event.block)).cloned().collect();
-    if pinned != ranged {
+    let pinned: Vec<_> = blocks.into_iter().map(|(number, hash)| BlockRef { number, hash }).collect();
+    let read = reader.pinned_staking_events(&pinned).await.map_err(PollError::rpc)?;
+    if read != events {
         return Err(PollError::unsettled(anyhow!(
-            "the range read returns {} staking events in the {} blocks whose blooms admit one, but reads by their \
-             hashes return {}",
-            ranged.len(),
-            admitted.len(),
-            pinned.len()
+            "the range read returns {} staking events in {} blocks, but reads by their hashes return {}",
+            events.len(),
+            pinned.len(),
+            read.len()
         )));
     }
-    debug!(blocks = admitted.len(), events = pinned.len(), "staking events confirmed by block hash");
+    debug!(blocks = pinned.len(), events = read.len(), "staking events confirmed by block hash");
     Ok(())
 }
 
@@ -433,24 +424,16 @@ async fn mirror_one(tx: &mpsc::Sender<Request>, event: StakingEvent) -> Result<(
     .await
 }
 
-/// The time of proven block `to`, in milliseconds, from its header read through the reader.
+/// The time of block `end`, in milliseconds, from its header.
 /// Error cases:
-/// - stalled: the read fails, answers for another block or hash, or the time passes `i64` milliseconds
-async fn block_time<V: VaultReader>(reader: &V, to: u64, hash: B256) -> Result<Millis, PollError> {
-    let links = reader.headers(to, to).await.map_err(PollError::rpc)?;
-    let [link] = links.as_slice() else {
-        return Err(PollError::unsettled(anyhow::anyhow!("staking progress has no header at block {to}")));
-    };
-    if link.number != to || link.hash != hash {
-        return Err(PollError::unsettled(anyhow::anyhow!("block {to}'s header is not the proven block")));
-    }
-    i64::try_from(link.timestamp)
-        .ok()
-        .and_then(|seconds| seconds.checked_mul(1000))
-        .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("block {to}'s time {} is out of range", link.timestamp)))
+/// - stalled: the time passes `i64` milliseconds
+fn block_time(end: BlockLink) -> Result<Millis, PollError> {
+    i64::try_from(end.timestamp).ok().and_then(|seconds| seconds.checked_mul(1000)).ok_or_else(|| {
+        PollError::unsettled(anyhow::anyhow!("block {}'s time {} is out of range", end.number, end.timestamp))
+    })
 }
 
-/// The boundary of the drawn turn `registry` names the operator by in proven block `to`, if one does.
+/// The boundary of the drawn turn `registry` names the operator by in final block `to`, if one does.
 /// With none, and `upcoming` the block's time, the boundary of the last turn its schedule has drawn if
 /// that is after the block, a turn the registry will name from then.
 /// Error cases:
@@ -463,7 +446,7 @@ async fn named_turn<V: VaultReader>(
     upcoming: Option<Millis>,
 ) -> Result<Option<Millis>, PollError> {
     use crate::custody::registry::{decode_last_drawn_turn, decode_named_turn, rotation_state_call};
-    let at = crate::custody::evm::BlockRef { number: to, hash };
+    let at = BlockRef { number: to, hash };
     let out = reader.contract_call(at, registry, rotation_state_call()).await.map_err(PollError::rpc)?;
     let named = decode_named_turn(&out).map_err(PollError::rpc)?;
     let Some(time) = upcoming.filter(|_| named.is_none()) else {

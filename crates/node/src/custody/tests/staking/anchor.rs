@@ -1,4 +1,4 @@
-//! The quorum must bind empty and partial log results to the independently proven endpoint.
+//! The quorum must bind empty and partial log results to the window's canonical last block.
 
 use super::*;
 
@@ -24,7 +24,6 @@ impl VaultReader for ForkReader {
                 hash: if number == 3 { self.endpoint } else { canonical_hash(number) },
                 parent_hash: B256::ZERO,
                 timestamp: number * 12,
-                staking_logs: false,
             })
             .collect())
     }
@@ -37,11 +36,20 @@ impl VaultReader for ForkReader {
         Ok(0)
     }
 
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let from = blocks.first().unwrap().number;
-        let to = *blocks.last().unwrap();
-        // Fault injection: the backend ignores the proven hash and returns its own fork's logs.
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        // Fault injection: the backend ignores the requested hash and returns its own fork's logs.
         Ok(self.events.iter().filter(|event| (from..=to.number).contains(&event.block)).cloned().collect())
+    }
+
+    async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        let mut events: Vec<_> = self
+            .events
+            .iter()
+            .filter(|event| blocks.iter().any(|block| block.number == event.block))
+            .cloned()
+            .collect();
+        events.sort_by_key(|event| (event.block, event.log_index));
+        Ok(events)
     }
 }
 
@@ -70,8 +78,8 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
             &mut cursor,
             &dir.join("staking-cursor.json"),
             &mut AdaptiveSize::new(1_000),
-            1..=3,
-            &hashes_through(3),
+            1,
+            end_at(3),
             (true, true, true, true),
             None,
         )
@@ -120,8 +128,8 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
         &mut cursor,
         &dir.join("staking-cursor.json"),
         &mut AdaptiveSize::new(1_000),
-        1..=3,
-        &hashes_through(3),
+        1,
+        end_at(3),
         (true, true, true, true),
         None,
     )
