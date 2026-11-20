@@ -176,7 +176,6 @@ impl Replay {
     /// - a checkpoint for a seq other than the last applied
     /// - a checkpoint root that differs from the replayed state
     fn apply_entry(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
-        self.before(entry)?;
         let engine = &mut self.engine;
         self.last_offset = log::offset_of(self.last_offset, entry).ok();
         match entry {

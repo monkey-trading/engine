@@ -219,11 +219,13 @@ impl Replay {
         self.origin.check_run_ends();
     }
 
-    /// Applies the log's next entry (`apply_entry`), reporting, for an entry that fails, an earlier fault
-    /// first (`earlier_fault`).
+    /// Notes what the replay notes before the log's next entry (`before`), then applies it (`apply_entry`),
+    /// reporting, for an entry that fails, an earlier fault first (`earlier_fault`). What `before` refuses is
+    /// the root at the last checkpoint, which comes before the run open since.
     /// Error cases:
-    /// - as `apply_entry`
+    /// - as `before` and `apply_entry`
     pub(in crate::sequencer) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
+        self.before(entry).map_err(|failed| self.roots.check_due().err().unwrap_or(failed))?;
         self.apply_entry(entry).map_err(|failed| self.earlier_fault().unwrap_or(failed))
     }
 
