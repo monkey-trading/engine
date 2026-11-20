@@ -90,6 +90,11 @@ fn ranges_bench() {
         cpu_secs() - cpu
     );
     drop(start);
+    // What a replay with `--custody-config` adds before its ranges: one whole read of the log on one thread
+    // for its checkpoints (`replay_audit::checkpoint_candidates`).
+    let started = Instant::now();
+    crate::log::SegmentedLog::open(&dir.join("log"), &mut |_| Ok(())).expect("the log reads");
+    println!("BENCH whole_read s={:.1}", started.elapsed().as_secs_f64());
     let cores = std::thread::available_parallelism().expect("the cores this process may use");
     let jobs = std::num::NonZeroUsize::new(env("RANGES_BENCH_JOBS", (cores.get() / 2).max(1))).expect("jobs");
     for _ in 0..env("REPLAY_BENCH_RUNS", 1) {
