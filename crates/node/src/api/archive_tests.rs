@@ -1,26 +1,31 @@
 //! The daily snapshots the archive serves beside the log's segments.
 
 use std::fs;
+use std::sync::Arc;
 
 use engine_core::Engine;
 use engine_core::command::{Command, Sequenced};
+use tokio::sync::Semaphore;
 
+use crate::api::ServedSnapshots;
 use crate::api::tests::{api_state, get, serve_state};
 use crate::daily_snapshots::{Job, MANIFEST, publish_now};
 use crate::log::{Checkpoint, Offset};
 use crate::snapshot::sealing::Encoding;
 use crate::test_support::scratch_dir;
 
-/// The archive serves the daily snapshots' manifest and each snapshot it lists, as written, and answers
-/// 404 for any other name, or when the node publishes none, and 500 for a snapshot that differs from its
-/// listing.
+/// The archive serves the daily snapshots' manifest and each snapshot it lists, as written, with no backfill
+/// permit, and answers 404 for any other name, or when the node publishes none, and 500 for a snapshot that
+/// differs from its listing.
 #[tokio::test]
 async fn the_archive_serves_the_daily_snapshots_it_lists_as_written() {
     let dir = scratch_dir("archive-daily");
     let (mut state, _requests) = api_state(true);
     let unpublished = serve_state(state.clone()).await;
     assert_eq!(get(unpublished, &format!("/v1/archive/snapshots/{MANIFEST}")).await.0, 404);
-    state.daily_snapshots = Some(dir.clone());
+    state.daily_snapshots = Some(Arc::new(ServedSnapshots::new(dir.clone())));
+    // A snapshot's read takes none of the stream's backfills.
+    state.backfills = Arc::new(Semaphore::new(0));
     let addr = serve_state(state).await;
     assert_eq!(get(addr, &format!("/v1/archive/snapshots/{MANIFEST}")).await, (200, Vec::new()));
 

@@ -258,6 +258,16 @@ impl NodeConfig {
             marks.validate(PRODUCTION_BUILD).context("history.marks")?;
         }
         self.stats.validate()?;
+        if let Some(daily) = &self.daily_snapshots {
+            // A start removes the files in it named as snapshots but unlisted, as recovery caches are named.
+            let dir = std::path::absolute(&daily.dir)?;
+            let snapshots = self.snapshots.as_ref().map(|snapshots| &snapshots.dir);
+            for other in [&self.node.log_dir, &self.history.dir, &self.alerts.outbox.dir].into_iter().chain(snapshots) {
+                if std::path::absolute(other)? == dir {
+                    bail!("[daily_snapshots] dir must be a directory of its own, but is {}", other.display());
+                }
+            }
+        }
         self.validate_custody()?;
         self.validate_checkpoints()?;
         self.validate_log_heads()?;

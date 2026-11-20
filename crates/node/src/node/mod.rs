@@ -17,7 +17,7 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::alerts::Routing;
-use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
+use crate::api::{ApiState, Feed, MAX_BACKFILLS, ServedSnapshots, Signing, router};
 use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, NodeConfig};
 mod shutdown;
@@ -428,7 +428,7 @@ async fn serve_node(
         payouts_enabled: mock_custody || cfg.checkpoints.is_some(),
         clock: Arc::new(SystemClock),
         log_dir: cfg.node.log_dir.clone(),
-        daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone()),
+        daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| Arc::new(ServedSnapshots::new(daily.dir.clone()))),
         manifest: manifest_rx,
         backfills,
         limits: limits.clone(),

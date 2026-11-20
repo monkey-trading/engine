@@ -101,3 +101,14 @@ fn job(offset: Offset, ts: Millis) -> Job {
     };
     Job { offset, checkpoint, ts, engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()) }
 }
+
+/// A staged file whose rename fails is removed, so the next write can stage it again.
+#[test]
+fn a_staged_file_that_cannot_be_published_is_removed() {
+    let dir = scratch_dir("daily-snapshots-staged");
+    std::fs::create_dir_all(dir.join(MANIFEST).join("held")).unwrap();
+    let staged = dir.join(format!("{MANIFEST}.tmp"));
+    std::fs::write(&staged, b"{}\n").unwrap();
+    assert!(writer::publish_staged(&staged, &dir.join(MANIFEST)).is_err(), "a rename onto a full directory");
+    assert!(!staged.exists(), "the staged file is removed");
+}

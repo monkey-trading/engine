@@ -180,7 +180,7 @@ fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Lis
     let staged = dir.join(format!("{file}.tmp"));
     let written = Written { schema: SCHEMA, offset: job.offset, checkpoint: &job.checkpoint, engine: &engine };
     let (hash, bytes) = write_synced(&staged, |out| serde_json::to_writer(out, &written).map_err(Into::into))?;
-    fs::rename(&staged, dir.join(&file)).with_context(|| format!("publishing {file}"))?;
+    publish_staged(&staged, &dir.join(&file)).with_context(|| format!("publishing {file}"))?;
     sync_dir(dir)?;
     let listing = Listed {
         file,
@@ -207,8 +207,17 @@ fn write_manifest(dir: &Path, listed: &[Listed]) -> anyhow::Result<()> {
             out.write_all(b"\n").map_err(Into::into)
         })
     })?;
-    fs::rename(&staged, dir.join(MANIFEST)).context("publishing the daily snapshot manifest")?;
+    publish_staged(&staged, &dir.join(MANIFEST)).context("publishing the daily snapshot manifest")?;
     sync_dir(dir)
+}
+
+/// Renames `staged` to `to`, or removes it when the rename fails, so the next write can stage it again.
+/// Error cases:
+/// - the rename fails
+pub(super) fn publish_staged(staged: &Path, to: &Path) -> std::io::Result<()> {
+    fs::rename(staged, to).inspect_err(|_| {
+        let _ = fs::remove_file(staged);
+    })
 }
 
 /// Creates `path` and writes it through `write`, synced, with the SHA-256 of what it holds and its length;

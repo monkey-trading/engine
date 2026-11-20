@@ -176,7 +176,8 @@ pub fn replay_ranges_with_attested(
 /// fails the replay as a whole-log replay would fail it: the earliest range's, or the pass's at an entry
 /// before any later range's.
 /// Error cases:
-/// - `path` is not a log directory, or `snapshots` cannot be listed
+/// - `path` is not a log directory, its last checkpoint cannot be read (`log::last_checkpoint`), or
+///   `snapshots` cannot be listed
 /// - a range fails (`replay_range`), or the pass does (`stitch`)
 /// - the log holds no command or no checkpoint, or, under custody trust, omits the finalized anchor
 pub(crate) fn replay_ranges(
@@ -201,10 +202,14 @@ pub(crate) fn replay_ranges_from(
     jobs: NonZeroUsize,
 ) -> anyhow::Result<Audited> {
     ensure!(path.is_dir(), "{} is not a log directory: a replay in ranges reads a segmented log", path.display());
+    // A snapshot past the log's last checkpoint, as a node's newest is past an archive of its completed
+    // segments, starts no range.
+    let held = log::last_checkpoint(path)?.map(|checkpoint| checkpoint.seq);
     let mut starts: Vec<(Offset, PathBuf)> = Vec::new();
     for (offset, file) in daily_snapshots::list(snapshots)? {
         let later = starts.last().is_none_or(|(last, _)| offset.seq > last.seq);
-        if later && trust.last_start().is_none_or(|last| offset.seq <= last) {
+        let start = trust.last_start().map_or(held, |last| held.map(|held| held.min(last)));
+        if later && start.is_some_and(|start| offset.seq <= start) {
             starts.push((offset, file));
         }
     }

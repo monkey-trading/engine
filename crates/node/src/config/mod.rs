@@ -279,16 +279,18 @@ pub struct HistorySection {
     pub marks: Option<MarksSection>,
 }
 
-/// Optional signed recovery caches; signer pins must come from verified attestation.
 /// Where the node writes the engine's state at the first checkpoint of each UTC day by sequenced time,
 /// which `GET /v1/archive/snapshots/{file}` serves for a replay's ranges.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DailySnapshotsSection {
-    /// The directory, apart from the log. Every day's snapshot is kept.
+    /// A directory of its own, apart from the log, the history index, the recovery caches and the alert
+    /// outbox, since a start removes the files in it that are named as snapshots but unlisted. Every day's
+    /// snapshot is kept.
     pub dir: PathBuf,
 }
 
+/// Optional signed recovery caches; signer pins must come from verified attestation.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotSection {

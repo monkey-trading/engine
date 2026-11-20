@@ -115,3 +115,26 @@ fn an_outbox_symlink_into_the_public_log_is_refused() {
     cfg.alerts.outbox.dir = dir.join("alerts");
     assert!(cfg.alerts.outbox.check_disk_location(&dir.join("log")).unwrap_err().to_string().contains("overlaps"));
 }
+
+/// A start removes the files in the daily snapshots' directory that its manifest does not list, so it shares
+/// none with the log, the history index, the alert outbox or the recovery caches.
+#[test]
+fn the_daily_snapshots_directory_is_one_of_its_own() {
+    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    cfg.snapshots = Some(SnapshotSection {
+        dir: "data/dev/snapshots".into(),
+        retain: NonZeroUsize::MIN,
+        interval: Duration::from_secs(3600),
+        max_bytes: NonZeroUsize::MIN,
+        trusted_signers: Vec::new(),
+    });
+    let (log, history, outbox) = (&cfg.node.log_dir, &cfg.history.dir, &cfg.alerts.outbox.dir);
+    let shared = [log.clone(), history.clone(), outbox.clone(), "data/dev/snapshots".into()];
+    for dir in shared {
+        cfg.daily_snapshots = Some(DailySnapshotsSection { dir: dir.clone() });
+        let refused = cfg.validate().expect_err("a shared directory");
+        assert!(refused.to_string().contains("[daily_snapshots] dir must be a directory of its own"), "{refused:#}");
+    }
+    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: "data/dev/daily-snapshots".into() });
+    cfg.validate().unwrap();
+}

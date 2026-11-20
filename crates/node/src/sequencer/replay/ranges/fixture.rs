@@ -22,8 +22,7 @@ pub(crate) fn snapshot_log(
     out: &Path,
     mut due: impl FnMut(&Checkpoint, Millis) -> bool,
 ) -> anyhow::Result<usize> {
-    let mut replay = Replay::default();
-    replay.engine = base;
+    let mut replay = Replay { engine: base, ..Replay::default() };
     replay.check_run_ends();
     replay.check_roots_ahead();
     let (mut at, mut published) = (None, 0);

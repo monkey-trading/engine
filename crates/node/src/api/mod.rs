@@ -14,6 +14,7 @@ use actions::{
 };
 mod admin;
 mod archive;
+pub use archive::ServedSnapshots;
 mod attestation;
 mod benchmark_schedule;
 mod distributions;
@@ -141,9 +142,9 @@ pub struct ApiState {
     /// one to stamp commands with.
     pub clock: Arc<dyn Clock>,
     pub log_dir: PathBuf,
-    /// Where `[daily_snapshots]` publishes the daily snapshots `/v1/archive/snapshots/` serves; `None`
+    /// The daily snapshots `[daily_snapshots]` publishes, which `/v1/archive/snapshots/` serves; `None`
     /// answers it 404.
-    pub daily_snapshots: Option<PathBuf>,
+    pub daily_snapshots: Option<Arc<ServedSnapshots>>,
     /// The log writer's manifest, held in enclave memory.
     pub manifest: watch::Receiver<Manifest>,
     /// Permits for stream subscribers reading from disk.

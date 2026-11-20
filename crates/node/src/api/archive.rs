@@ -1,6 +1,8 @@
 //! Public canonical manifest and authenticated completed-segment bytes, and the daily snapshots beside them.
 
 use std::io::{self, Read};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -8,6 +10,7 @@ use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::try_unfold;
 use sha2::{Digest, Sha256};
+use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 use tracing::field::display;
 use tracing::{Span, error};
@@ -19,6 +22,22 @@ use crate::log::{MANIFEST, open_segment_archive, segment_seq};
 const JSON_LINES: &str = "application/x-ndjson";
 const JSON: &str = "application/json";
 const ARCHIVE_CHUNK_BYTES: usize = 64 * 1024;
+/// How many daily snapshot requests may read their files at once.
+const SNAPSHOT_READS: usize = 2;
+
+/// The daily snapshots the archive serves: their directory, and the reads of them under way, held apart
+/// from the stream's backfills, since a snapshot's check reads all of a file of hundreds of megabytes.
+#[derive(Debug)]
+pub struct ServedSnapshots {
+    pub dir: PathBuf,
+    reads: Arc<Semaphore>,
+}
+
+impl ServedSnapshots {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir, reads: Arc::new(Semaphore::new(SNAPSHOT_READS)) }
+    }
+}
 
 /// Serves a pinned canonical catalog listing or an authenticated completed segment.
 /// Error cases:
@@ -93,15 +112,17 @@ fn chunked(reader: impl Read + Send + 'static, what: &'static str) -> Body {
 }
 
 /// Serves the daily snapshots' manifest, or one daily snapshot it lists, once its length and SHA-256 are the
-/// listing's. Nothing but its root authenticates a snapshot to a replay, which checks it against the
-/// checkpoint the log holds (`daily_snapshots`), so the check here only keeps a damaged file from being served.
+/// listing's, `SNAPSHOT_READS` at a time. A replay checks a snapshot against the checkpoint the log holds and
+/// the replay of the log before it (`daily_snapshots`), so the check here only keeps a damaged file from being
+/// served.
 /// Error cases:
 /// - the node publishes no daily snapshots, or the file is neither the manifest nor a listed snapshot
 /// - the manifest or the file cannot be read, or the file differs from its listing
 pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Result<Response, ApiError> {
     Span::current().record("id", display(&file));
-    let dir = s.daily_snapshots.clone().ok_or(ApiError::NotFound)?;
-    let permit = s.backfills.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
+    let served = s.daily_snapshots.clone().ok_or(ApiError::NotFound)?;
+    let permit = served.reads.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
+    let dir = served.dir.clone();
     let opened = spawn_blocking(move || {
         let _held = permit;
         if file == daily_snapshots::MANIFEST {

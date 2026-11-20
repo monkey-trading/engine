@@ -1,7 +1,8 @@
 //! Daily snapshots on a log of launch flow across a UTC midnight, published by the node that writes the log,
 //! and the log's replay in ranges from them, which `scripts/dev-daily-snapshots.sh` runs: the ranges replay
-//! to what the whole log replays to, a snapshot whose resting-order index lost an order replays the same,
-//! and one whose state or checkpoint the log's signed root does not vouch for is refused.
+//! to what the whole log replays to, under a pinned and an attested signer, a snapshot past the log's last
+//! checkpoint starts no range, a snapshot whose resting-order index lost an order replays the same, and one
+//! whose state or checkpoint the log's signed root does not vouch for is refused.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
@@ -61,6 +62,17 @@ fn dev_scenario_daily_snapshots() {
     let in_ranges = ranges(&base, &log, &snapshots, signer).expect("the log replays in ranges");
     assert_eq!(in_ranges.ranges, 3);
     agree(&whole, &in_ranges);
+
+    // So do they under the attested signer, and a snapshot past the log's last checkpoint, as a node's newest
+    // is past an archive of its completed segments, starts no range.
+    let past = snapshots.join(crate::snapshot::name(crate::log::Offset { seq: u64::MAX / 2, index: 1 }));
+    std::fs::copy(snapshots.join(&listed[1].file), &past).unwrap();
+    let attested = Trust::Attested { domain: None, attested: [signer].into() };
+    let jobs = NonZeroUsize::new(2).unwrap();
+    let in_ranges = replay_ranges_from(&|| base.engine(), &log, &snapshots, attested, jobs).expect("attested");
+    assert_eq!(in_ranges.ranges, 3);
+    agree(&whole, &in_ranges);
+    std::fs::remove_file(&past).unwrap();
 
     // A snapshot whose index of resting orders lost an order still replays the same: the order's leaf
     // holds it, and the index is rebuilt from the orders.

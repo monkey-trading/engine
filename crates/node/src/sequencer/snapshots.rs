@@ -50,7 +50,12 @@ impl Captures {
     pub(super) fn publishing(daily: Option<&std::path::Path>, last_checkpoint: Option<u64>) -> Self {
         let daily = daily.and_then(|dir| {
             crate::daily_snapshots::Writer::start(dir, last_checkpoint)
-                .inspect_err(|e| warn!(alert = "daily_snapshot_failed", "no daily snapshots: {e:#}"))
+                .inspect_err(|e| {
+                    warn!(
+                        alert = "daily_snapshot_failed",
+                        "the daily snapshot writer did not start, so none until a restart: {e:#}"
+                    )
+                })
                 .ok()
         });
         Self { daily, ..Self::default() }
