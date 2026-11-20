@@ -8,12 +8,13 @@ use std::time::{Duration, Instant};
 
 use engine_core::types::AccountId;
 
-use crate::common::launch_book::{Mix, NamedCounts, build};
+use crate::common::launch_book::{NamedCounts, build};
 use crate::log::ReplayWorkers;
-use crate::sequencer::recovery_scale::flow::{Flow, Node};
+use crate::sequencer::recovery_scale::flow::Flow;
 use crate::sequencer::recovery_scale::orders::Traders;
+use crate::sequencer::recovery_scale::paired::{Paired, node_config};
 use crate::sequencer::recovery_scale::restart::replay;
-use crate::sequencer::recovery_scale::{ACCOUNTS, Base, TRADERS, env, rates};
+use crate::sequencer::recovery_scale::{ACCOUNTS, Base, TRADERS, env, mix, rates};
 use crate::tee::EnclaveKey;
 
 #[test]
@@ -43,26 +44,32 @@ fn replay_bench() {
     }
 }
 
-/// Writes the book's encoding and `RECOVERY_LAUNCH_SECS` of launch flow on it into `dir`.
+/// Writes the book's encoding and `RECOVERY_LAUNCH_SECS` of launch flow on it into `dir`, through a node
+/// started as the scenario starts one, which captures no cache in that time.
 fn write(dir: &Path, key: Arc<EnclaveKey>) {
     std::fs::create_dir_all(dir).expect("the bench's directory");
-    let accounts = env("RECOVERY_ACCOUNTS", ACCOUNTS);
+    let (accounts, launch_secs) = (env("RECOVERY_ACCOUNTS", ACCOUNTS), env("RECOVERY_LAUNCH_SECS", 3_600));
     let counts = NamedCounts { adders: 1, openers: env("RECOVERY_TRADERS", TRADERS), closeouts: 0 };
-    let mut book = build(&Mix::proposal(accounts), counts);
+    let mut book = build(&mix(accounts, 0, launch_secs), counts);
     let engine = std::mem::take(&mut book.h.engine);
-    let encoded = serde_json::to_string(&engine).expect("the book encodes");
+    let base = Base::new(&engine).expect("the book encodes");
     let rates = rates(&engine);
     let traders = Traders::new(std::mem::take(&mut book.named.openers), &engine);
-    drop(book);
-    let mut node = Node::start(engine, &dir.join("log"), key);
-    let mut flow = Flow::new(traders, rates);
-    let started = Instant::now();
-    flow.run(&mut node, Duration::from_secs(env("RECOVERY_LAUNCH_SECS", 3_600)), 1.0, |_, _, _| {});
-    node.checkpoint_now();
-    println!("BENCH wrote seq={:?} s={:.0}", node.seq.last_seq(), started.elapsed().as_secs_f64());
-    drop(node);
+    drop((book, engine));
+    let signer = AccountId(key.address());
+    let cfg = node_config(dir, Duration::from_secs(2 * launch_secs), (signer, ReplayWorkers::available()));
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("a runtime");
+    runtime.block_on(async {
+        let mut paired = Paired::start(base.engine(), &cfg, key).expect("the node takes over the book");
+        let mut flow = Flow::new(traders, rates);
+        let started = Instant::now();
+        flow.run(&mut paired.node, Duration::from_secs(launch_secs), 1.0, |_, _, _| {});
+        let last = paired.node.checkpoint_now();
+        println!("BENCH wrote seq={} s={:.0}", last.seq, started.elapsed().as_secs_f64());
+        paired.stop().await.expect("the node stops");
+    });
     // Written last, so a run stopped before it writes the log again.
-    std::fs::write(dir.join("base.json"), encoded).expect("the book's encoding is written");
+    std::fs::write(dir.join("base.json"), &base.encoded).expect("the book's encoding is written");
 }
 
 /// The kind of a command, for the apply bench's breakdown.
