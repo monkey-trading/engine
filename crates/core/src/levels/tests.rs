@@ -422,7 +422,7 @@ fn the_level_path_of_a_price_reaching_no_level_at_100k_levels_measured() {
         let (p50, p99) = (times[samples / 2 - 1], times[samples * 99 / 100 - 1]);
         println!("LATENCY level_path_{name} levels={COPIES} samples={samples} p50_us={p50} p99_us={p99}");
         if stop_held(name) {
-            assert!(p99 <= 200, "{name} p99 {p99}us exceeds 200us");
+            crate::common::rerun::hold(&format!("level_path_{name}"), p99, 200);
         }
     }
 }

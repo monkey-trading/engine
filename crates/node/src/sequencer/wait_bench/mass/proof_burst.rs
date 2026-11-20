@@ -15,6 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use super::{BAR_US, PRICES, SPACING, sequencer, stream_market};
 use crate::clock::test_clock::TestClock;
 use crate::common::launch_book::{Mix, NamedCounts, build, price_command};
+use crate::common::rerun::hold;
 use crate::sequencer::wait_bench::{StampClock, report, time};
 use crate::sequencer::{Request, Sequencer};
 
@@ -146,5 +147,5 @@ pub(super) fn run() {
     let queueing: Vec<u128> = bursts.iter().map(|(from, queued)| queued.duration_since(*from).as_micros()).collect();
     println!("WAIT proof_burst bursts={} reads={} queueing_each_us={queueing:?}", bursts.len(), BURST * bursts.len());
     report("proof_burst_read_answer_latency", latencies.lock().unwrap().clone());
-    assert!(longest <= BAR_US, "a price waited {longest}us beside the bursts of reads");
+    hold("proof_burst_longest_wait", longest, BAR_US);
 }

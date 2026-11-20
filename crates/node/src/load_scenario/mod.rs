@@ -21,7 +21,9 @@
 //! (`rerun`), under the tolerance for a loaded runner
 //! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`); order-to-fill p50 is
 //! held instead to a regression guard of twice the bar until the request path meets it (#1045,
-//! `plan::ORDER_TO_FILL_P50_GUARD_US`), each run still printing the bar's verdict. They pass only
+//! `plan::ORDER_TO_FILL_P50_GUARD_US`), each run still printing the bar's verdict. On CI the order-to-fill and
+//! stream-lag bars and that guard are scaled by the runner's measured speed (`ENGINE_BENCH_SCALE_TO_RUNNER`,
+//! `common::rerun`), printed on each leg's lines. They pass only
 //! if they measured what they claim (`report::unmeasured`): every request answered 200 with no
 //! rejection, so every account stays within its tier's request rate and no request lacks a screening
 //! slot, every answer in, a market order filled, every subscriber taking frames to the leg's last
@@ -114,6 +116,8 @@ fn env<T: std::str::FromStr>(name: &str, default: T) -> T {
 #[test]
 #[ignore = "load test of a running node, run by scripts/dev-load.sh"]
 fn dev_scenario_load() {
+    // The runner's scale is measured before the node and the generator load the machine.
+    crate::common::rerun::runner_permille();
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("the node's runtime");
     runtime.block_on(run());
 }

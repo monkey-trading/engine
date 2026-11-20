@@ -2,6 +2,8 @@
 
 use std::time::Instant;
 
+use crate::common::rerun::{scale, scaled};
+
 /// The sorted `times` (microseconds) at `per_mille` thousandths, the sample at or above that share.
 pub fn at(times: &[u128], per_mille: usize) -> u128 {
     times[(times.len() * per_mille).div_ceil(1000).clamp(1, times.len()) - 1]
@@ -35,20 +37,26 @@ pub fn rss_mib() -> u64 {
 /// The budgets a case's figure exceeded, collected so every case prints before the test fails.
 static OVER: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
-/// Holds `us` microseconds of `name` to `budget_us`, printing the verdict and noting an excess.
+/// Holds `us` microseconds of `name` to `budget_us` scaled to the runner (`rerun::scaled`), printing the
+/// verdict with the scale and noting an excess.
 pub fn within(name: &str, us: u128, budget_us: u128) {
-    let verdict = if us <= budget_us { "within" } else { "OVER" };
-    println!("LAUNCH budget {name} us={us} budget_us={budget_us} {verdict}");
-    if us > budget_us {
-        OVER.lock().expect("budget notes").push(format!("{name} took {us}us against {budget_us}us"));
+    let scaled_us = scaled(budget_us);
+    let verdict = if us <= scaled_us { "within" } else { "OVER" };
+    println!(
+        "LAUNCH budget {name} us={us} budget_us={budget_us} scale={} scaled_budget_us={scaled_us} {verdict}",
+        scale()
+    );
+    if us > scaled_us {
+        OVER.lock().expect("budget notes").push(format!("{name} took {us}us against {scaled_us}us"));
     }
 }
 
 /// Prints how `us` microseconds of `name` stand against `budget_us`, a bar the book is known to miss,
 /// and notes no excess.
 pub fn noted(name: &str, us: u128, budget_us: u128) {
-    let verdict = if us <= budget_us { "within" } else { "OVER" };
-    println!("LAUNCH bar {name} us={us} bar_us={budget_us} {verdict}");
+    let scaled_us = scaled(budget_us);
+    let verdict = if us <= scaled_us { "within" } else { "OVER" };
+    println!("LAUNCH bar {name} us={us} bar_us={budget_us} scale={} scaled_bar_us={scaled_us} {verdict}", scale());
 }
 
 /// The budgets exceeded since the last call, which it forgets, so a run measured again starts clean.

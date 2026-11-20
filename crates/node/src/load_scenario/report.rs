@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::common::rerun::{scale, scaled};
 use crate::load_scenario::plan::{
     BUSY_SHARE, Figures, ORDER_TO_FILL_P50_GUARD_US, ORDER_TO_FILL_US, PRICE_TO_STAMP_S, Quantiles, STREAM_LAG_P99_MS,
 };
@@ -229,13 +230,24 @@ impl Drop for Resident {
     }
 }
 
+/// The order-to-fill bars at this runner's scale (`rerun::scaled`: 1 unless CI sets it, never below
+/// #904's).
+fn order_to_fill_bars() -> [u64; 3] {
+    ORDER_TO_FILL_US.map(|bar| scaled(bar.into()) as u64)
+}
+
+/// The stream lag's p99 bar in milliseconds at this runner's scale.
+fn stream_lag_bar_ms() -> u64 {
+    scaled(STREAM_LAG_P99_MS.into()) as u64
+}
+
 /// The budgets `figures` and `node` break, of #904's launch bar.
 pub(super) fn judge(figures: &Figures, node: &Delta) -> Vec<Breach> {
     let mut breaches = Vec::new();
     let quantiles = ["p50", "p99", "p999"];
     let fill = &figures.order_to_fill_us;
     let fills = [fill.p50, fill.p99, fill.p999];
-    for ((quantile, figure), bar) in quantiles.iter().zip(fills).zip(ORDER_TO_FILL_US) {
+    for ((quantile, figure), bar) in quantiles.iter().zip(fills).zip(order_to_fill_bars()) {
         if figure > bar {
             breaches.push(Breach { budget: "order_to_fill_us", quantile, figure: figure as f64, bar: bar as f64 });
         }
@@ -247,8 +259,8 @@ pub(super) fn judge(figures: &Figures, node: &Delta) -> Vec<Breach> {
         }
     }
     // The bar holds every subscriber: a frame reaches each within it, at its own p99.
-    if figures.slowest_subscriber_p99_ms > STREAM_LAG_P99_MS {
-        let (figure, bar) = (figures.slowest_subscriber_p99_ms as f64, STREAM_LAG_P99_MS as f64);
+    if figures.slowest_subscriber_p99_ms > stream_lag_bar_ms() {
+        let (figure, bar) = (figures.slowest_subscriber_p99_ms as f64, stream_lag_bar_ms() as f64);
         breaches.push(Breach { budget: "stream_lag_ms", quantile: "p99", figure, bar });
     }
     if node.busy_share > BUSY_SHARE {
@@ -290,7 +302,7 @@ pub(super) fn unmeasured(figures: &Figures, node: &Delta) -> Vec<String> {
 pub(super) fn guarded(windows: &[Vec<Breach>]) -> Vec<Vec<Breach>> {
     let within_guard = |breach: &&Breach| {
         (breach.budget, breach.quantile) == ("order_to_fill_us", "p50")
-            && breach.figure <= ORDER_TO_FILL_P50_GUARD_US as f64
+            && breach.figure <= scaled(ORDER_TO_FILL_P50_GUARD_US.into()) as f64
     };
     windows.iter().map(|breaches| breaches.iter().filter(|b| !within_guard(b)).cloned().collect()).collect()
 }
@@ -339,7 +351,12 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
         node.commands / node.secs,
         replies.join(" ")
     );
-    println!("LOAD leg={leg} order_to_fill_us {} bar={ORDER_TO_FILL_US:?}", us(&figures.order_to_fill_us));
+    println!(
+        "LOAD leg={leg} order_to_fill_us {} bar={ORDER_TO_FILL_US:?} scale={} scaled_bar={:?}",
+        us(&figures.order_to_fill_us),
+        scale(),
+        order_to_fill_bars()
+    );
     println!("LOAD leg={leg} cold_order_to_fill_us {}", us(&figures.cold_order_to_fill_us));
     println!("LOAD leg={leg} lapsing_order_to_fill_us {}", us(&figures.lapsing_order_to_fill_us));
     println!("LOAD leg={leg} queued_order_to_fill_us {}", us(&figures.queued_order_to_fill_us));
@@ -349,13 +366,15 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     println!("LOAD leg={leg} price_to_stamp_us {} bar={bar:?}", node_us(&node.price_to_stamp));
     println!(
         "LOAD leg={leg} stream_lag_ms(client) {} slowest_subscriber_p99={} silent={} frames={} quote_frames={} \
-         disconnects={} bar_p99={STREAM_LAG_P99_MS}",
+         disconnects={} bar_p99={STREAM_LAG_P99_MS} scale={} scaled_bar_p99={}",
         us(&figures.stream_lag_ms),
         figures.slowest_subscriber_p99_ms,
         figures.silent_subscribers,
         figures.frames,
         figures.quote_frames,
-        figures.disconnects
+        figures.disconnects,
+        scale(),
+        stream_lag_bar_ms()
     );
     println!("LOAD leg={leg} stream_send_us(node) {}", node_us(&node.stream_lag));
     println!("LOAD leg={leg} sequencer_batch_us {}", node_us(&node.batch));

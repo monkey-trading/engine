@@ -5,7 +5,7 @@
 //! resident memory with the worker's copy of the engine. Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib stats::launch_bench -- --ignored --nocapture --test-threads=1`.
 
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold, rerun_once};
 use std::time::Instant;
 
 use engine_core::command::{Command, Sequenced};
@@ -57,7 +57,7 @@ fn launch_book_scans_and_copy_measured() {
             percentile(&mut scans.clone(), 50),
             scans.iter().max().expect("samples")
         );
-        assert!(p99 <= SCAN_US, "a {name} p99 {p99}us exceeds {SCAN_US}us");
+        hold(&format!("stats_launch_book_{name}"), p99, SCAN_US);
     }
     // What the worker's copy of the engine takes: the process's resident memory before the worker
     // starts, and after its copy is decoded, has followed a command, which builds the indexes the

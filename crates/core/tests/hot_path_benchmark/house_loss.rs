@@ -14,7 +14,7 @@
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold_at, rerun_once, scaled};
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::house_loss::{SLOT_MS, WINDOW_MS};
@@ -79,7 +79,7 @@ fn house_loss_latency_measured() {
         }
     }
     let (before, after) = (price_p99s[0], price_p99s[1]);
-    assert!(after <= 2 * before + ADDED_BUDGET_US, "a V62 price's p99 {after}us against V61's {before}us");
+    hold_at("house_loss_v62_against_v61", after, 2 * before + scaled(ADDED_BUDGET_US));
 }
 
 /// `scored_fixture` at `version` for 100k accounts, each holding 0.01 BTC, with a third stress level

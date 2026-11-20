@@ -4,7 +4,7 @@
 //! a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::wait_bench -- --ignored --nocapture --test-threads=1`.
 
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{rerun_once, verdict};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -337,9 +337,8 @@ impl Clock for StampClock {
 /// per-price slowdown moves the median on every batch. A scheduler hiccup on a loaded runner lifts
 /// wall-clock waits without any work behind them (a stall of the runner's CPU covers a tenth of a
 /// batch in 120 ms), so the median must hold on every batch while the p90 must hold on at least one
-/// of five windows; every batch is reported in full. A slow runner lifts the p99 alone (30 us to
-/// 250 us on unchanged code), so each batch's p99 is held to a multiple of the p99 of a probe
-/// thread woken beside every price (`tail`), and three of the five batches must hold it.
+/// of five windows, both bars scaled to the runner. A slow runner lifts the p99 alone (30 to 250 us), so
+/// each batch's p99 is held to a multiple of a probe thread's woken beside every price (`tail`), in three of five.
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn price_wait_budget() {
@@ -489,8 +488,9 @@ pub(super) fn hold_price_wait(mut rig: Rig) {
         .collect();
     let medians: Vec<u128> = stats.iter().map(|(median, ..)| *median).collect();
     let p90s: Vec<u128> = stats.iter().map(|(_, p90, ..)| *p90).collect();
-    assert!(medians.iter().all(|median| *median <= MEDIAN_US), "a batch's median exceeded {MEDIAN_US}us: {medians:?}");
-    assert!(p90s.iter().any(|p90| *p90 <= P90_US), "every batch's p90 exceeded {P90_US}us: {p90s:?}");
+    let (worst, best) = (*medians.iter().max().expect("batches"), *p90s.iter().min().expect("batches"));
+    assert!(verdict("price_wait_worst_median", worst, MEDIAN_US), "a median is over: {medians:?}");
+    assert!(verdict("price_wait_best_p90", best, P90_US), "every p90 is over: {p90s:?}");
     let tails: Vec<(u128, u128)> = stats.iter().map(|(_, _, p99, probe)| (*p99, *probe)).collect();
     assert!(
         tail::tail_holds(&tails),

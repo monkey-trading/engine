@@ -9,7 +9,7 @@
 use super::common::close_spread::rest;
 use super::common::session_keys::funded_at;
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold, rerun_once};
 use engine_core::event::Event;
 
 const LIMITS: usize = 100_000;
@@ -41,7 +41,7 @@ fn out_of_reach_limits_latency_measured() {
         println!("LATENCY out_of_reach_limits_{version:?} accounts={LIMITS} p50_us={p50} p99_us={p99}");
         assert_eq!(h.engine.markets()[&BTC].resting.len(), LIMITS + 1);
         if version >= ProtocolVersion::V74 {
-            assert!(p99 <= 200, "{version:?} p99 {p99}us exceeds 200us");
+            hold(&format!("out_of_reach_limits_{version:?}"), p99, 200);
         }
     }
 }

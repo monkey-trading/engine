@@ -22,7 +22,7 @@
 //! engine's next seq and last stamp as recovery takes a replayed engine's. The log so holds only what
 //! the run sequences, which no replay could check, and no checkpoint is written before the drain's.
 
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{rerun_once, verdict};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -328,8 +328,7 @@ pub(super) fn sequence(mut book: Book, case: Case) -> Outcome {
     );
     report(&format!("mass_{name}_prices_before"), waits[..event_at].to_vec());
     report(&format!("mass_{name}_prices_behind"), behind);
-    let verdict = if longest <= BAR_US { "within" } else { "OVER" };
-    println!("WAIT bar mass_{name} longest_wait_us={longest} bar_us={BAR_US} {verdict}");
+    verdict(&format!("mass_{name}_longest_wait"), longest, BAR_US);
     assert!(longest < GUARD.as_micros(), "a price waited {longest}us behind {name}, past the guard");
     // Each position financed: an event before `V80`, and from it a row its rollover's aggregate covers.
     let financing = emitted
