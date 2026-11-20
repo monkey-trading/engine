@@ -17,8 +17,8 @@ pub use alloy_primitives::B256;
 use alloy_primitives::{Address, FixedBytes, U256};
 pub use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use k256::ecdsa::signature::hazmat::PrehashVerifier;
 use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, SigningKey, VerifyingKey};
+use k256::elliptic_curve::scalar::IsHigh;
 use serde::Serialize;
 use sha3::{Digest, Keccak256};
 
@@ -428,8 +428,14 @@ pub fn recover(hash: &B256, signature: &Signature) -> Option<AccountId> {
         _ => return None,
     };
     let ecdsa = EcdsaSignature::from_slice(&signature[..64]).ok()?;
+    // The low-S rule: of the two signatures that differ only in the sign of `s`, only the low one
+    // counts. Once the recovery succeeds, a full verification could refuse nothing else: it computes
+    // `u1·G + u2·Q` for the recovered `Q`, which is the point `R` the recovery started from, whose
+    // x-coordinate is `r`.
+    if bool::from(ecdsa.s().is_high()) {
+        return None;
+    }
     let key = VerifyingKey::recover_from_prehash(hash.as_slice(), &ecdsa, recovery_id).ok()?;
-    key.verify_prehash(hash.as_slice(), &ecdsa).ok()?;
     Some(address(&key))
 }
 

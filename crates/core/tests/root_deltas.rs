@@ -39,6 +39,58 @@ fn a_tree_fed_in_parts_gives_every_reference_root_and_the_inline_proofs() {
     assert!(totals.exit_proofs > 100 && totals.approvals > 10, "{totals:?}");
 }
 
+#[test]
+fn a_tree_taken_back_computes_the_roots_of_one_the_engine_kept() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/reference");
+    let mut logs: Vec<_> = fs::read_dir(&dir).expect("reference directory").map(|e| e.expect("entry").path()).collect();
+    logs.retain(|path| path.extension().is_some_and(|ext| ext == "jsonl"));
+    logs.sort();
+    let (mut attached, mut with_parts) = (0, 0);
+    for (index, path) in logs.iter().enumerate() {
+        let mut rng = Rng(0x1116 + index as u64);
+        let mut engine = Engine::new();
+        let mut tree: Option<StateTree> = None;
+        for line in fs::read_to_string(path).expect("readable log").lines() {
+            let entry: ReferenceEntry = serde_json::from_str(line).expect("a reference entry");
+            let seq = entry.sequenced.seq;
+            engine.apply(&entry.sequenced).unwrap_or_else(|e| panic!("{}: seq {seq}: {e}", path.display()));
+            let Some(detached) = &mut tree else {
+                // Inline: the engine's own root, then the tree handed out at random commands.
+                assert_eq!(root_hex(engine.state_root()), entry.root, "{}: seq {seq} inline", path.display());
+                if rng.below(4) == 0 {
+                    tree = engine.detach_tree();
+                }
+                continue;
+            };
+            match engine.take_tree_event() {
+                Some(TreeEvent::Reset) => detached.reset(),
+                Some(TreeEvent::Discard) => *detached = StateTree::default(),
+                None => {}
+            }
+            let mut parts = 0;
+            for _ in 0..rng.below(3) {
+                engine.take_root_delta(1 + rng.below(48) as usize).apply(detached);
+                parts += 1;
+            }
+            if rng.below(3) == 0 {
+                let (committed, _) = engine.commit_inputs().apply(detached);
+                assert_eq!(root_hex(committed.0), entry.root, "{}: seq {seq} detached", path.display());
+                detached.release(seq, committed);
+                detached.collect(usize::MAX);
+                parts = 0;
+            }
+            if rng.below(4) == 0 {
+                engine.attach_tree(tree.take().expect("detached"));
+                // The root after taking it back covers every write, those sent in parts included.
+                assert_eq!(root_hex(engine.state_root()), entry.root, "{}: seq {seq} taken back", path.display());
+                attached += 1;
+                with_parts += usize::from(parts > 0);
+            }
+        }
+    }
+    assert!(attached > 500 && with_parts > 100, "taken back {attached}, with parts sent {with_parts}");
+}
+
 // ── Helpers ──
 
 /// What the replays went through.

@@ -66,7 +66,7 @@ pub(crate) fn rebuild_history_view(
     let mut reader =
         crate::log::LogReader::open(dir, crate::log::Offset::start_of(0), tokio::sync::watch::channel(view).1)?;
     let mut replay = Replay::with_trust(Some(domain), signer);
-    replay.check_seals_ahead(dir, workers);
+    replay.check_ahead(dir, workers);
     let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
     let mut batch = Vec::with_capacity(REBUILD_BATCH);
     while let Some((_, entry)) = reader.next_entry()? {
@@ -85,6 +85,7 @@ pub(crate) fn rebuild_history_view(
         }
     }
     index.ingest_taken(&batch)?;
+    replay.settle()?;
     expected.verify(&fingerprint.finish())
 }
 

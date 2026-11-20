@@ -323,3 +323,47 @@ fn recovery_rejects_high_s_malformed_scalars_and_non_ethereum_recovery_ids() {
         }
     }
 }
+
+#[test]
+fn recovery_accepts_exactly_what_recovery_and_a_full_verification_accept() {
+    use engine_core::eip712::B256;
+    use k256::ecdsa::signature::hazmat::PrehashVerifier;
+    use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
+    use k256::elliptic_curve::PrimeField;
+    use sha3::{Digest, Keccak256};
+
+    // What recovery alone accepts, refused unless a full verification of the recovered key passes.
+    let verified = |hash: &B256, signed: &Signature| {
+        let id = RecoveryId::from_byte(signed[64].checked_sub(27).filter(|v| *v < 2)?)?;
+        let ecdsa = EcdsaSignature::from_slice(&signed[..64]).ok()?;
+        let key = VerifyingKey::recover_from_prehash(hash.as_slice(), &ecdsa, id).ok()?;
+        key.verify_prehash(hash.as_slice(), &ecdsa).ok()?;
+        Some(eip712::address(&key))
+    };
+    let (mut accepted, mut refused) = (0, 0);
+    for seed in 1..=48u8 {
+        let key = SigningKey::from_slice(&Keccak256::digest([seed])).unwrap();
+        let hash = B256::from(<[u8; 32]>::from(Keccak256::digest([seed, 1])));
+        let signed = eip712::sign(&key, &hash);
+        let low = EcdsaSignature::from_slice(&signed[..64]).unwrap();
+        let high = EcdsaSignature::from_scalars(low.r().to_repr(), (-low.s()).to_repr()).unwrap();
+        let other = B256::from(<[u8; 32]>::from(Keccak256::digest([seed, 2])));
+        let mut variants = vec![(hash, signed), (other, signed)];
+        for (s, v) in [(low, 55 - signed[64]), (high, signed[64]), (high, 55 - signed[64])] {
+            let mut changed = signed;
+            changed[..64].copy_from_slice(&s.to_bytes());
+            changed[64] = v;
+            variants.push((hash, changed));
+        }
+        let mut garbled = signed;
+        garbled[..64].copy_from_slice(&Keccak256::digest([seed, 3]).repeat(2));
+        variants.push((hash, garbled));
+        for (hash, signed) in variants {
+            let expected = verified(&hash, &signed);
+            assert_eq!(eip712::recover(&hash, &signed), expected, "seed {seed}");
+            if expected.is_some() { accepted += 1 } else { refused += 1 }
+        }
+    }
+    // Both outcomes were reached: a genuine signature each, and its high-S twin refused each.
+    assert!(accepted >= 48 && refused >= 48, "accepted {accepted}, refused {refused}");
+}

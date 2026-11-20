@@ -37,6 +37,7 @@
 //! `RECOVERY_SUFFIX_SECS` (300), `RECOVERY_TAILS` (bytes, comma-separated) and `RECOVERY_REPLAY_WORKERS`
 //! (the threads that check command seals ahead of each replay, the node's included: one per core).
 
+mod bench;
 mod cache;
 mod flow;
 mod handover;

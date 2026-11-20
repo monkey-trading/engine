@@ -261,18 +261,25 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
     command.seal.as_mut().expect("sealed").signer = AccountId([0x77; 20]);
     let _ = next.apply(&LogEntry::Command(command));
     assert!(next.checkpoint_at(accepted.seq).is_some(), "another key's command captures the tip first");
-    // In a full recovery's replay anchored at the vault's checkpoint.
-    let recovered = |root: B256| {
-        let mut replay = Replay::with_recovery(Some(DOMAIN), Some(signer()), vault(root));
-        copy.iter().for_each(|entry| replay.apply(entry).unwrap());
-        replay.finish()
-    };
-    let replayed = recovered(root);
-    assert_eq!(replayed.checkpoint_root(accepted.seq), Some(root));
-    assert_eq!(replayed.recovery_anchor_work.map(|work| work.checkpoint.seq), Some(accepted.seq));
-    let refused = recovered(other);
-    assert!(refused.recovery_anchor_work.is_none(), "another root anchors nothing");
-    assert_eq!(refused.checkpoint_root(accepted.seq), None, "nor counts as a checkpoint root");
+    // In a full recovery's replay anchored at the vault's checkpoint, its roots computed by its engine
+    // or on its root thread, which hands the tree back for the anchor's root.
+    for ahead in [false, true] {
+        let recovered = |root: B256| {
+            let mut replay = Replay::with_recovery(Some(DOMAIN), Some(signer()), vault(root));
+            if ahead {
+                replay.check_roots_ahead();
+            }
+            copy.iter().for_each(|entry| replay.apply(entry).unwrap());
+            replay.settle().unwrap();
+            replay.finish()
+        };
+        let replayed = recovered(root);
+        assert_eq!(replayed.checkpoint_root(accepted.seq), Some(root), "ahead: {ahead}");
+        assert_eq!(replayed.recovery_anchor_work.map(|work| work.checkpoint.seq), Some(accepted.seq));
+        let refused = recovered(other);
+        assert!(refused.recovery_anchor_work.is_none(), "another root anchors nothing");
+        assert_eq!(refused.checkpoint_root(accepted.seq), None, "nor counts as a checkpoint root");
+    }
 }
 
 /// A full recovery under a promoted key passes the checkpoints the outgoing key signed past the vault's
@@ -320,7 +327,7 @@ async fn a_recovery_under_a_promoted_key_passes_the_outgoing_keys_unaccepted_che
         _ => None,
     });
     next.as_mut().and_then(|command| command.seal.as_mut()).expect("sealed").signer = promoted;
-    continued.before(&LogEntry::Command(next.unwrap()));
+    continued.before(&LogEntry::Command(next.unwrap())).unwrap();
     continued.ensure_superseded_continued().expect("a later key's command follows the checkpoint");
     assert_eq!(passed.recovery_anchor.as_ref().map(|cp| cp.seq), Some(accepted.seq));
     let refused = recovered(BTreeMap::from([(1, outgoing)])).err().expect("no later epoch names the promoted key");

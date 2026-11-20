@@ -175,6 +175,21 @@ impl Engine {
         Some(*tree)
     }
 
+    /// Takes back the tree `detach_tree` handed out, after its owner applied every tree event the
+    /// engine gave (`take_tree_event`), so the engine computes its own roots again (`state_root`) and
+    /// they are the roots it would have computed had it kept the tree. Writes sent in parts since the
+    /// last commit stay in the tree's working version: each was read from the state when it was taken,
+    /// and a key changed since is in the record again.
+    pub fn attach_tree(&mut self, tree: StateTree) {
+        let Tree::Detached(detached) = std::mem::take(&mut self.tree) else {
+            panic!("only a detached tree is taken back")
+        };
+        // The owner takes each event after the command that gives it, and an activation sets the
+        // discard and turns it into an event within one command.
+        assert!(detached.event.is_none() && !detached.discard, "a tree is taken back with a tree event not applied");
+        self.tree = Tree::Inline(Box::new(tree));
+    }
+
     /// The engine's side of its detached tree.
     fn detached(&mut self) -> &mut Detached {
         let Tree::Detached(detached) = &mut self.tree else { panic!("parts and commits feed a detached tree") };
