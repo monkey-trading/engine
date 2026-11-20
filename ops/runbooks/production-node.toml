@@ -120,10 +120,10 @@ withdrawal_finality_tag = "finalized"
 confirmations = 2 # OWNER: blocks of the credit tag to wait
 start_block = 1 # REPLACE: the vault's deployment block
 max_block_range = 1000 # OWNER: within every provider's limits
-# OWNER (decided 2026-11-20): the three providers run on free tiers, so the watcher polls every 5 s. A
-# deposit is credited up to about 4 s later than at 1 s, and it already waits its confirmations. See
-# the RPC budget in feed-and-custody-failures.md.
-poll_interval = "5s"
+# The owner decided on 2026-11-20 to run the three providers on free tiers, so the watcher polls every
+# 5 s. A deposit is credited up to about 4 s later than at 1 s, and it already waits its confirmations.
+# The RPC budget in feed-and-custody-failures.md counts the requests.
+poll_interval = "5s" # OWNER: confirm against the providers' plans
 rpc_timeout = "5s"
 # Must exceed the credit tag's lag, one finalized-tag delay, and the wait for the next checkpoint, or
 # a deposit pauses withdrawals; and the longest gap between batch posts. Not measured on Arbitrum
