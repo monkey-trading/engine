@@ -135,6 +135,12 @@ pub struct VenueConnection {
     /// The API key ID and secret key the login message carries: required for Alpaca and refused for
     /// every other venue.
     pub key_pair: Option<KeyPairSection>,
+    /// Whether a rotation-set member opens this connection ahead of its own turn, so its first
+    /// prices are fresh (`WARM_LEAD` before the boundary), or only when its turn starts. A vendor
+    /// allows one live connection per account, and the members share the account, so a connection
+    /// that carries a key opens at the turn unless this says otherwise. Absent, a keyless connection
+    /// warms and a keyed one does not.
+    pub warm: Option<bool>,
     pub symbols: Vec<VenueSymbol>,
 }
 
@@ -272,6 +278,23 @@ impl ApiKey {
 }
 
 impl VenueConnection {
+    /// A connection to `venue` at `url` for `symbols`, with no key.
+    #[cfg(test)]
+    pub(crate) fn public(venue: Venue, url: String, symbols: Vec<VenueSymbol>) -> Self {
+        Self { venue, url, api_key_env: None, api_key_secret: None, oauth: None, key_pair: None, warm: None, symbols }
+    }
+
+    /// Whether the connection carries a key: an API key from the environment or a delivered secret,
+    /// an OAuth login or a key pair.
+    pub fn keyed(&self) -> bool {
+        self.api_key_env.is_some() || self.api_key_secret.is_some() || self.oauth.is_some() || self.key_pair.is_some()
+    }
+
+    /// Whether a member opens the connection before its turn (see `warm`).
+    pub fn warms(&self) -> bool {
+        self.warm.unwrap_or(!self.keyed())
+    }
+
     /// Every delivered secret the connection names, with the field that names it.
     pub(crate) fn secret_fields(&self) -> impl Iterator<Item = (&'static str, &SecretName)> {
         let api_key = self.api_key_secret.iter().map(|name| ("api_key_secret", name));

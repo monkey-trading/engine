@@ -232,6 +232,12 @@ min_quote_spacing = "10ms"
 ping_interval = "500ms"
 max_delay = "2s"
 
+# A keyed vendor allows one live connection per account, and the three launch operators share one
+# account per vendor (Massive, TraderMade, Alpaca). A member therefore opens a keyed connection when its
+# turn starts, not ahead of it (`warm = false`, the default for a connection that carries a key), and
+# the incumbent has closed its own by then. Those markets are unpriced for a few seconds at each daily
+# handover. Keyless connections warm up before the turn.
+
 # Crypto: Coinbase and Kraken, public feeds with no key. Each market needs both (min_sources = 2).
 # Coinbase is read on two hosts, Advanced Trade and Exchange, quoted as the one source `coinbase`,
 # and Kraken on two connections, quoted as `kraken`: the engine holds the later-stamped of a source's
@@ -253,6 +259,7 @@ symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" 
 venue = "massive"
 url = "wss://socket.massive.com/forex"
 api_key_secret = "massive_api_key"
+warm = false
 symbols = [
   { market = 10, symbol = "EUR-USD" },
   { market = 11, symbol = "GBP-USD" },
@@ -264,6 +271,7 @@ symbols = [
 venue = "tradermade"
 url = "wss://stream.tradermade.com/feedAdv"
 api_key_secret = "tradermade_api_key"
+warm = false
 symbols = [
   { market = 10, symbol = "EURUSD" },
   { market = 11, symbol = "GBPUSD" },
@@ -285,6 +293,7 @@ symbols = [
 venue = "massive"
 url = "wss://socket.massive.com/futures"
 api_key_secret = "massive_api_key"
+warm = false
 symbols = [
   { market = 20, symbol = "ESZ6", contract = "ESZ6" },
   { market = 20, symbol = "ESH7", contract = "ESH7" },
@@ -353,6 +362,7 @@ symbols = [
 venue = "massive"
 url = "wss://socket.massive.com/stocks"
 api_key_secret = "massive_api_key"
+warm = false
 symbols = [
   { market = 40, symbol = "AAPL" },
   { market = 41, symbol = "MSFT" },
@@ -380,6 +390,7 @@ symbols = [
 venue = "alpaca"
 url = "wss://stream.data.alpaca.markets/v2/sip"
 key_pair = { key_id_secret = "alpaca_key_id", secret_key_secret = "alpaca_secret_key" } # OWNER: the secret names; promote after #684's owner action
+warm = false
 symbols = [
   { market = 40, symbol = "AAPL" },
   { market = 41, symbol = "MSFT" },

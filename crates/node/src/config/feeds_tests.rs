@@ -408,3 +408,33 @@ fn with_vendors() -> NodeConfig {
     let (head, tail) = dev.split_once("\n[time]\n").expect("dev.toml has a [time] section");
     toml::from_str(&format!("{head}\n{VENDORS}\n[time]\n{tail}")).unwrap()
 }
+
+#[test]
+fn a_connection_that_carries_a_key_warms_only_when_its_config_says_so() {
+    let cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    let mut conn = cfg.feeds.venues.unwrap().connections.remove(0);
+    conn.api_key_env = None;
+    conn.api_key_secret = None;
+    conn.oauth = None;
+    conn.key_pair = None;
+    assert!(!conn.keyed() && conn.warms(), "a keyless connection warms by default");
+    conn.warm = Some(false);
+    assert!(!conn.warms(), "warm = false keeps a keyless connection to its turn");
+    conn.warm = None;
+    conn.api_key_env = Some("KEY".into());
+    assert!(conn.keyed() && !conn.warms(), "an API key from the environment");
+    conn.api_key_env = None;
+    conn.api_key_secret = Some(SecretName::try_from("key".to_owned()).unwrap());
+    assert!(conn.keyed() && !conn.warms(), "a delivered API key");
+    conn.api_key_secret = None;
+    conn.oauth = Some(
+        toml::from_str("token_url = 'https://a.example/t'\nclient_id_secret = 'a'\nclient_secret_secret = 'b'")
+            .unwrap(),
+    );
+    assert!(conn.keyed() && !conn.warms(), "an OAuth login");
+    conn.oauth = None;
+    conn.key_pair = Some(toml::from_str("key_id_secret = 'a'\nsecret_key_secret = 'b'").unwrap());
+    assert!(conn.keyed() && !conn.warms(), "a key pair");
+    conn.warm = Some(true);
+    assert!(conn.warms(), "warm = true warms a keyed connection");
+}

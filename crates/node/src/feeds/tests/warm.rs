@@ -6,6 +6,7 @@ use std::time::Duration;
 use engine_core::command::Command;
 use engine_core::price::SourceQuote;
 use engine_core::types::MarketId;
+use futures_util::StreamExt;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{Instant, sleep, timeout};
 
@@ -110,6 +111,35 @@ async fn a_held_back_connection_that_drops_raises_nothing_and_starts_afresh_once
     assert!(dropped.elapsed() < Duration::from_millis(800), "its first live drop waited {:?}", dropped.elapsed());
 }
 
+/// A node that stops, as an incumbent does before it hands over its turn, closes its venue connections
+/// at once, so a vendor that allows one live connection per account takes its successor's.
+#[tokio::test]
+async fn stopping_the_feeds_closes_their_connections_at_once() {
+    let (listener, url) = listen().await;
+    let (tx, _rx) = fake_sequencer();
+    let mut feeds = tokio::task::JoinSet::new();
+    feeds.spawn(async move {
+        let _ = venue::run_reporting(
+            connection(&url),
+            Credentials::Public,
+            fast(TIMEOUT),
+            venue::tls_config().expect("tls config"),
+            (tx, Held::never()),
+            (FeedStatus::default(), 0),
+        )
+        .await;
+    });
+    let (mut ws, _) = accept(&listener).await;
+    feeds.shutdown().await;
+    let closed = timeout(WAIT, async {
+        while let Some(Ok(message)) = ws.next().await {
+            assert!(!message.is_text(), "the stopped feed sent {message:?}");
+        }
+    })
+    .await;
+    assert!(closed.is_ok(), "the connection stayed open after the feeds stopped");
+}
+
 /// Sends heartbeats for `span`, so the connection's read deadline never passes.
 async fn beat(ws: &mut Conn, span: Duration) {
     let until = Instant::now() + span;
@@ -150,6 +180,7 @@ fn connection(url: &str) -> VenueConnection {
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: symbols.collect(),
     }
 }

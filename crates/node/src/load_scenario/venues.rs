@@ -181,8 +181,15 @@ pub(super) async fn start(moves: Moves, source_delay: Duration) -> Venues {
             };
             let probed = matches!(conn.venue, Venue::Coinbase | Venue::CoinbaseExchange | Venue::Kraken);
             let timing = if probed { timing } else { unprobed };
-            let conn =
-                VenueConnection { url, api_key_env: None, api_key_secret: None, oauth: None, key_pair: None, ..conn };
+            let conn = VenueConnection {
+                url,
+                api_key_env: None,
+                api_key_secret: None,
+                oauth: None,
+                key_pair: None,
+                warm: None,
+                ..conn
+            };
             (conn, credentials, config, timing)
         })
         .collect();

@@ -1,7 +1,8 @@
 //! The price feed tasks a node runs: the mock feed, or one task per venue connection. A rotation-set
-//! member opens its venue connections a lead before its own turn's boundary (`Warm`), with their
+//! member opens its warm venue connections a lead before its own turn's boundary (`Warm`), with their
 //! quotes held back (`feeds::venue::live`) on the request channel the node it starts then sequences
-//! from, so its first commands have fresh quotes from every venue.
+//! from, so its first commands have fresh quotes from those venues. A connection that carries a key
+//! opens only as the node starts, since the members share a vendor's one live connection per account.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 use tracing::info;
 
-use crate::config::{FeedProvider, FeedsSection};
+use crate::config::{FeedProvider, FeedsSection, VenueConnection};
 use crate::feeds;
 use crate::feeds::status::{Connection, FeedStatus, SymbolState, SymbolStatus};
 use crate::feeds::venue::{self, Held, Timing};
@@ -47,7 +48,7 @@ pub(crate) struct Live {
 }
 
 impl Warm {
-    /// Opens `feeds`' venue connections with their quotes held back, on a channel of their own, judging
+    /// Opens `feeds`' warm venue connections with their quotes held back, on a channel of their own, judging
     /// their markets' hours by `hours` until the engine answers; `None` for the mock feed, which opens
     /// nothing.
     /// Error cases:
@@ -63,7 +64,7 @@ impl Warm {
         let (channel, (live, switch)) = (mpsc::channel(CHANNEL_CAPACITY), watch::channel(false));
         let (mut tasks, status) = (JoinSet::new(), FeedStatus::default());
         let held = Held { live: switch, hours: Arc::new(hours) };
-        spawn(&mut tasks, feeds.clone(), delivered, (&channel.0, &held), &status)?;
+        spawn(&mut tasks, feeds.clone(), delivered, (&channel.0, &held), &status, Opens::Warm)?;
         Ok(Some(Self { channel, feeds: Live { tasks, live, status } }))
     }
 }
@@ -101,8 +102,9 @@ pub(super) fn channel(warm: Option<Warm>, status: &mut FeedStatus) -> (Channel, 
     }
 }
 
-/// Starts the node's price feeds: lets through the quotes of those a member opened before its turn,
-/// or spawns `feeds`' own, sending to `tx` and reporting to `status`.
+/// Starts the node's price feeds: lets through the quotes of those a member opened before its turn and
+/// spawns the rest, the connections that open only at the turn (`VenueConnection::warms`), or spawns
+/// all of `feeds`', sending to `tx` and reporting to `status`.
 /// Error cases:
 /// - as `spawn`
 pub(super) fn start(
@@ -115,9 +117,9 @@ pub(super) fn start(
     match warm {
         Some(warm) => {
             warm.start(tasks);
-            Ok(())
+            spawn(tasks, feeds, delivered, (tx, &Held::never()), status, Opens::Rest)
         }
-        None => spawn(tasks, feeds, delivered, (tx, &Held::never()), status),
+        None => spawn(tasks, feeds, delivered, (tx, &Held::never()), status, Opens::All),
     }
 }
 
@@ -133,7 +135,28 @@ pub(crate) fn warm_due(boundary: Millis, reached: Millis) -> bool {
     boundary.saturating_sub(reached) <= lead
 }
 
-/// Spawns into `tasks` the feeds `feeds` configures, each sending its prices to `tx` as `held` lets it.
+/// Which of the venue connections a config names a call opens. A member opens the warm ones ahead of
+/// its turn and the rest as its turn starts, so connections to a vendor whose account the members
+/// share are never open on two nodes at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Opens {
+    All,
+    Warm,
+    Rest,
+}
+
+impl Opens {
+    fn includes(self, conn: &VenueConnection) -> bool {
+        match self {
+            Opens::All => true,
+            Opens::Warm => conn.warms(),
+            Opens::Rest => !conn.warms(),
+        }
+    }
+}
+
+/// Spawns into `tasks` the feeds `feeds` configures that `opens` includes, each sending its prices to
+/// `tx` as `held` lets it.
 /// Error cases:
 /// - `provider = "venues"` without `[feeds.venues]`, or the venues' TLS config or a connection's
 ///   credentials do not read
@@ -143,6 +166,7 @@ fn spawn(
     delivered: &Delivered,
     (tx, held): (&mpsc::Sender<Request>, &Held),
     status: &FeedStatus,
+    opens: Opens,
 ) -> anyhow::Result<()> {
     match feeds.provider {
         FeedProvider::Mock => {
@@ -157,6 +181,9 @@ fn spawn(
             let timing = Timing::for_venues(&venues);
             let tls = venue::tls_config()?;
             for (index, conn) in venues.connections.into_iter().enumerate() {
+                if !opens.includes(&conn) {
+                    continue;
+                }
                 let (name, tls, feed_tx) = (conn.venue.name(), tls.clone(), tx.clone());
                 // Off under the `secret_missing` startup raised; the monitor pages its markets.
                 if delivered.withholds(&conn) {

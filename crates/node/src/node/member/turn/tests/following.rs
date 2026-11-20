@@ -99,6 +99,7 @@ async fn a_member_fetches_the_provider_history_while_it_follows() {
                 api_key_secret: None,
                 oauth: None,
                 key_pair: None,
+                warm: None,
                 symbols: vec![crate::config::VenueSymbol { market: 1, symbol: "BTC-USD".to_owned(), contract: None }],
             }],
         }),

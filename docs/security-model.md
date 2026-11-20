@@ -338,9 +338,11 @@ monotonic clock instead:
   once it reaches the engine.
 - A stall after an instruction is stamped delays that instruction, but not the stamp of any
   instruction after it.
-- A rotation-set member opens its venue connections a minute before its own turn, and holds their
-  quotes back until its sequencer runs. A quote kept that way is held at its stamp to the same
-  `max_delay` and `max_age_ms` as any other, so it gains no time.
+- A rotation-set member opens its keyless venue connections a minute before its own turn, and holds
+  their quotes back until its sequencer runs. A quote kept that way is held at its stamp to the same
+  `max_delay` and `max_age_ms` as any other, so it gains no time. A connection that carries a key
+  opens when the turn starts, since a vendor allows one live connection per account and the members
+  share it, so those markets have no price for a few seconds at each handover.
 
 A quote that sets the price at which an order is executed was therefore sent by its venue at most
 about `max_delay` plus `max_age_ms` earlier. Under the production values of 2 seconds and 1 second,

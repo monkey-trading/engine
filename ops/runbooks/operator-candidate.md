@@ -83,7 +83,7 @@ candidate account's key.
 | A bare-metal AMD SEV-SNP host | The candidate's own host, started with the image's launch flags, as [Deploy and rollback](deploy-and-rollback.md) describes, and with a data disk. |
 | A hostname and a CAA record | The candidate's `apiHostname` needs DNS, port 443 forwarded unmodified to the trading server, and a CAA record that names the chosen certificate authority and TLS-ALPN-01, as [Before the first certificate](certificate-renewal-failure.md#before-the-first-certificate) describes. The enclave orders its certificate for this name under the ACME account that moves with the keys. |
 | Its own custody providers | At least three providers, run by different operators, that serve archive state back to the vault's deployment block. The quorum that credits deposits is the candidate's own choice, which is why the timelock approves each release. |
-| Its own market-data accounts and secrets | The venues and vendors in its configuration, with their API keys. No secret moves from the incumbent. The candidate delivers its own secrets to its own enclave, as [Secrets](key-recovery.md#secrets) describes. |
+| Its market-data accounts and secrets | The venues and vendors in its configuration, with their API keys. The launch operators share one account for each of Massive, TraderMade and Alpaca, so a launch candidate takes those keys from the other operators. No secret moves from the incumbent through the node. The candidate delivers the secrets to its own enclave, as [Secrets](key-recovery.md#secrets) describes. |
 | A checkpoint endpoint and a funded relayer | The candidate's own, as [Checkpoint endpoint](feed-and-custody-failures.md#checkpoint-endpoint) describes. |
 | A seed relayer | Ethereum providers, a beacon node, and a funded relayer key that is separate from the checkpoint relayer's, as [Seed relay](seed-relay.md) describes. |
 | An alert receiver | `[alerts.critical]` is required with real attestation. |
@@ -717,10 +717,14 @@ these:
 - It keeps a copy of the log, with a live replica that one replay builds when it starts following.
 - It resolves the operator again at each boundary, and after a failed stint: a second later, then
   twice as long each time, up to a stint.
-- From a minute before its own turn's boundary, it holds its venue connections open beside the
-  incumbent's, with their quotes held back until it takes the turn, so it sends fresh quotes from its
-  first instruction. A vendor that streams one connection per account, as Alpaca does, therefore
-  needs each member's own keys.
+- From a minute before its own turn's boundary, it holds its keyless venue connections, such as
+  Coinbase's and Kraken's, open beside the incumbent's, with their quotes held back until it takes the
+  turn, so it sends fresh quotes from its first instruction. A connection that carries a key opens
+  only when the turn starts (`warm = false`, the default for such a connection), because a vendor
+  allows one live connection per account and the launch operators share one account for each of
+  Massive, TraderMade and Alpaca. The incumbent closes its connections before it hands over, so the
+  successor's is accepted. The markets those vendors price have no price for a few seconds at each
+  daily handover, until their first quotes arrive.
 - It pins the latest posted log head as its replica passes that head.
 
 These alerts page what it finds. Each pages once per episode, and each resolves once the step works

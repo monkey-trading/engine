@@ -399,6 +399,7 @@ fn spawn_cme(
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: symbols
             .iter()
             .map(|(market, symbol, contract)| VenueSymbol {
@@ -430,6 +431,7 @@ async fn start_massive(node: &Node, tls: &TlsFront) -> Vec<AbortHandle> {
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: symbols.to_vec(),
     };
     let credentials = Credentials::ApiKey(key(KEY));

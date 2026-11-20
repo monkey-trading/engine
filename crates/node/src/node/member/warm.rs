@@ -1,6 +1,8 @@
-//! A member's venue feeds for its own turn: opened once trusted time is within `WARM_LEAD` of the
+//! A member's venue feeds for its own turn: the connections that warm (`VenueConnection::warms`, the
+//! keyless ones unless config says otherwise) opened once trusted time is within `WARM_LEAD` of the
 //! turn's boundary, kept while it takes the turn, and handed to the node it starts, which sends their
-//! quotes from its first command (`price_feeds::Warm`). They close when it follows on instead, so a
+//! quotes from its first command (`price_feeds::Warm`) and opens the rest, those that carry a key,
+//! as the turn starts. They close when it follows on instead, so a
 //! member holds venue connections only around its own turns, and when its start takes the whole log,
 //! which opens the node's own as a node with no copy does.
 
