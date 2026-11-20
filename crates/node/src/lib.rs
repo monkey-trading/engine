@@ -16,6 +16,7 @@ pub mod config;
 pub use config::NodeConfig;
 pub mod ct_watch;
 mod custody;
+mod daily_snapshots;
 mod episodes;
 pub mod exit;
 mod feeds;
@@ -33,7 +34,7 @@ pub use node::{KeyStart, parse_launch_digest, run};
 mod replay_audit;
 mod root_worker;
 mod roughtime;
-pub use replay_audit::replay_path_with_custody;
+pub use replay_audit::{replay_path_with_custody, replay_ranges_with_custody};
 mod secrets;
 pub mod seed_relay;
 pub mod sequencer;
@@ -43,6 +44,7 @@ pub mod standby;
 mod standby_key;
 mod stats;
 mod status;
+pub use sequencer::replay::{Audited, replay_ranges_with_attested, replay_ranges_with_trust};
 pub use sequencer::{
     replay, replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };

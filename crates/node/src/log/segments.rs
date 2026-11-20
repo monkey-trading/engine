@@ -155,7 +155,7 @@ impl Manifest {
     /// one, and is listed again when the next segment starts.
     /// Error cases:
     /// - the file exists but cannot be read, or a whole line is not a valid listing
-    fn read(dir: &Path) -> anyhow::Result<(Self, u64)> {
+    pub(super) fn read(dir: &Path) -> anyhow::Result<(Self, u64)> {
         let path = dir.join(MANIFEST);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,

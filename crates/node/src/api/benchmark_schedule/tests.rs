@@ -138,6 +138,7 @@ fn state() -> (ApiState, mpsc::Receiver<Request>) {
         payouts_enabled: true,
         clock: Arc::new(SystemClock),
         log_dir: scratch_dir("benchmark-schedule-api"),
+        daily_snapshots: None,
         manifest: watch::channel(Manifest::default()).1,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&cfg.api)),

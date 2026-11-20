@@ -95,6 +95,8 @@ pub(super) struct Replay {
     derived: crate::history::derived::DerivedRows,
     /// Where the state roots are computed: in the engine, or on a thread of their own.
     roots: roots::Roots,
+    /// In a replay of one range of a log from a daily snapshot, what its entries name before it (`ranges`).
+    range: Option<ranges::Refs>,
 }
 
 impl Replay {
@@ -205,7 +207,10 @@ impl Replay {
                 }
                 marks::sample_marks(&mut self.marks, &mut self.last_marks, engine, c.sequenced.ts);
                 stats::record(self.stats.as_ref(), engine, &c.sequenced, &events);
-                self.accounting.apply(&c.sequenced.cmd, &events)?;
+                // A range of an audit folds no checkpoint accounting, which only a node's checkpoint work reads.
+                if self.range.is_none() {
+                    self.accounting.apply(&c.sequenced.cmd, &events)?;
+                }
                 if !version.supports_deposit_finality()
                     && let Some(deposit) = LegacyDeposit::from_command(&c.sequenced.cmd, &events)
                 {
@@ -234,89 +239,19 @@ impl Replay {
                     })
                     .collect();
                 self.logs_events = c.events.is_some();
-                self.command_prefix =
-                    crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(c)?);
-                self.prefix_ring.record(seq, engine_core::eip712::B256::from(self.command_prefix));
+                // Nor the command prefix, which only a node's start and its checks against the chain read.
+                if self.range.is_none() {
+                    self.command_prefix =
+                        crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(c)?);
+                    self.prefix_ring.record(seq, engine_core::eip712::B256::from(self.command_prefix));
+                }
                 if self.capture_link_at == Some(seq) {
                     self.captured_link = Some(engine_core::eip712::B256::from(self.command_prefix));
                     self.captured_ts = Some(c.sequenced.ts);
                 }
                 self.commands += 1;
             }
-            LogEntry::Withdrawal(w) => {
-                let recorded = engine
-                    .operator()
-                    .map(|operator| CheckpointDomain { chain_id: operator.chain_id, vault: operator.vault })
-                    .or_else(|| match engine.client_auth() {
-                        Some(engine_core::auth::ClientAuth::Eip712 { chain_id, vault }) => {
-                            Some(CheckpointDomain { chain_id: *chain_id, vault: *vault })
-                        }
-                        _ => None,
-                    });
-                if let (Some(explicit), Some(recorded)) = (self.domain, recorded) {
-                    ensure!(explicit == recorded, "withdrawal trusted deployment differs from recorded deployment");
-                }
-                let authority = if let Some(auth) = &w.authorization {
-                    if self.signer_epochs.is_empty() {
-                        self.trusted_signer
-                    } else {
-                        ensure!(
-                            self.authorities
-                                .get(&auth.checkpoint_seq)
-                                .is_some_and(|accepted| accepted.root == auth.checkpoint_root.to_string()),
-                            "typed payout root was not accepted in the finalized prefix"
-                        );
-                        let signer = self
-                            .signer_epochs
-                            .get(&auth.signer_epoch)
-                            .context("typed payout signer epoch lacks authenticated history")?;
-                        ensure!(*signer == auth.signer, "typed payout signer differs from immutable epoch history");
-                        Some(*signer)
-                    }
-                } else {
-                    self.authorities.range(engine.last_seq().unwrap_or(0)..).next().map(|(_, accepted)| accepted.signer)
-                };
-                let signer = authority.or(self.trusted_signer).or_else(|| {
-                    // A pure multi-signer audit has no single pinned authority: a typed withdrawal
-                    // authenticates against its own authorization's signer, which the attested set
-                    // must name.
-                    let auth = w.authorization.as_ref()?;
-                    self.attested.as_ref()?.contains(&auth.signer).then_some(auth.signer)
-                });
-                crate::checkpoints::signature::verify_withdrawal(w, self.domain.or(recorded), signer)?;
-                if let Some(auth) = &w.authorization {
-                    let approval =
-                        engine.withdrawal_approval(w.account, w.nonce).context("typed payout was never approved")?;
-                    ensure!(
-                        approval.amount == w.amount && Some(approval.approved_seq) == w.approved_seq,
-                        "typed payout differs from its immutable approval"
-                    );
-                    ensure!(
-                        self.payout_checkpoints.get(&auth.checkpoint_seq) == Some(&auth.checkpoint_root),
-                        "typed payout checkpoint is absent from the preceding log"
-                    );
-                    self.signed.insert((w.account, w.nonce));
-                    self.authorized.insert((w.account, w.nonce), w.clone());
-                    return Ok(());
-                }
-                if let Some(seq) = w.approved_seq {
-                    let at = self
-                        .deferred
-                        .iter()
-                        .position(|value| *value == (seq, w.account, w.amount, w.nonce))
-                        .context("deferred withdrawal was not approved")?;
-                    self.deferred.remove(at);
-                    self.legacy_approvals.signed(w.account, w.amount, w.nonce);
-                    self.signed.insert((w.account, w.nonce));
-                    return Ok(());
-                }
-                if self.approved.front() != Some(&(w.account, w.amount, w.nonce)) {
-                    bail!("withdrawal {} nonce {} was not approved at seq {:?}", w.account, w.nonce, engine.last_seq());
-                }
-                self.approved.pop_front();
-                self.legacy_approvals.signed(w.account, w.amount, w.nonce);
-                self.signed.insert((w.account, w.nonce));
-            }
+            LogEntry::Withdrawal(w) => self.apply_withdrawal(w)?,
             LogEntry::Checkpoint(cp) => {
                 // The run of seals before the checkpoint is checked first: it is the earlier fault.
                 self.origin.end_run()?;
@@ -475,6 +410,8 @@ mod live;
 pub(crate) use live::LiveReplay;
 mod marks;
 mod paths;
+pub(crate) mod ranges;
+pub use ranges::{Audited, replay_ranges_with_attested, replay_ranges_with_trust};
 mod replayed;
 pub use replayed::Replayed;
 mod replayed_log;
@@ -484,6 +421,7 @@ mod signed;
 mod snapshot;
 mod stats;
 mod unheld;
+mod withdrawal;
 use signed::ensure_signed;
 
 #[cfg(test)]

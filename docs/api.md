@@ -175,6 +175,7 @@ maximum `limit`.
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
 | GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment |
+| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
 | GET | `/v1/stream` | The WebSocket stream of the log, quotes, status and notices |
 
 ## Signing requests
@@ -1417,6 +1418,7 @@ is too old.
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
 | GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment |
+| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
 
 None of these answers is signed, and `/v1/health` answers the text `ok`.
 
@@ -1463,6 +1465,26 @@ JSON line for each completed segment:
 file that the manifest does not list answers 404. The segment still being written is not in the
 archive, and the stream carries it instead. `engine replay` verifies a downloaded archive, and the
 server checks each segment against the manifest before serving it.
+
+### Daily snapshots
+
+A server configured with `[daily_snapshots]` keeps the engine's state at the first checkpoint of
+each UTC day, by the sequenced time of the instruction the checkpoint covers.
+`GET /v1/archive/snapshots/manifest.jsonl` returns their manifest, with one JSON line for each
+snapshot:
+
+```json
+{"file": "00000000000008190311-0000000001.json", "seq": 8190311, "index": 1, "ts": 1795219200412, "root": "0x5e1c…", "bytes": 440817152, "sha256": "9b07…"}
+```
+
+`seq` and `index` are the offset of the checkpoint's entry in the log, which names the file, `ts` is
+its sequenced time and `root` its state root. `GET /v1/archive/snapshots/{file}` returns one listed
+snapshot as a JSON object: `schema` (1), `offset`, `checkpoint`, the checkpoint entry as the log
+holds it, and `engine`, the engine's state. A file the manifest does not list answers 404, and so
+does every request to a server without `[daily_snapshots]`. The server checks each snapshot's length
+and hash against the manifest before serving it, but nothing signs a snapshot:
+`engine replay --snapshots` takes one only at a checkpoint the log holds, equal to the snapshot's,
+and only once the root of the snapshot's state is that checkpoint's.
 
 ## The stream
 

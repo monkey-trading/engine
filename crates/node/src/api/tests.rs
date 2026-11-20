@@ -329,6 +329,7 @@ async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<
         payouts_enabled: true,
         clock: Arc::new(SystemClock),
         log_dir: dir.to_owned(),
+        daily_snapshots: None,
         manifest,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&dev_config().api)),
@@ -414,7 +415,7 @@ fn offset(msg: &str) -> Offset {
 }
 
 /// A plain HTTP/1.1 GET: the status and the body.
-async fn get(addr: SocketAddr, path: &str) -> (u16, Vec<u8>) {
+pub(super) async fn get(addr: SocketAddr, path: &str) -> (u16, Vec<u8>) {
     let mut conn = TcpStream::connect(addr).await.unwrap();
     let request = format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     conn.write_all(request.as_bytes()).await.unwrap();
@@ -445,6 +446,7 @@ pub(crate) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         payouts_enabled: mock_custody,
         clock: Arc::new(SystemClock),
         log_dir: scratch_dir("api-state"),
+        daily_snapshots: None,
         manifest,
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::new(&dev_config().api)),

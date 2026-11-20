@@ -425,6 +425,30 @@ instructions before the seal that authenticates them is checked, which changes o
 reported, since an audit acts on nothing. `engine replay --every-seal` checks every seal in full, as
 below.
 
+`engine replay --snapshots <dir>` replays a log in ranges, several at once, from the daily snapshots
+in `<dir>`. A trading server with `[daily_snapshots]` keeps the engine's state at the first
+checkpoint of each UTC day and serves it beside the archive. Nothing signs a snapshot. The replay
+splits the log at each snapshot's checkpoint, and starts a range from a snapshot only where the log
+holds a checkpoint at the snapshot's offset equal to the snapshot's, which it checks as it checks
+every checkpoint, and only once the root it computes over every part of the snapshot's state is that
+checkpoint's. From `V27` the root covers every part of the state the snapshot holds but each
+market's index of resting orders, which the replay rebuilds from the accounts' orders, whose leaves
+the root covers; a snapshot of a state before `V27`, or before custody finality, is refused. Each
+range then replays as a whole replay does, through the checkpoint where the next range starts, whose
+root it reproduces, so the ranges chain. What a whole replay carries across that checkpoint besides
+the state is reset at every checkpoint, such as the seal chain, or recomputed from the ranges' own
+results in log order, such as the checkpoints that typed withdrawal authorizations name and the
+approvals deferred before a range. So a replay in ranges checks what a whole replay checks, barring
+a keccak-256 collision, and reports the fault of the earliest range that holds one. It does not
+compute the running digest of every instruction, or the checkpoint accounting, which only a trading
+server's start reads.
+
+What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
+signer it pins, the attested signers, or the vault's signer history, and computes everything else
+from the log. A replay in ranges trusts the same, and trusts nothing a snapshot says that the
+checkpoint's root does not bind; a snapshot changes only where a range starts. With
+`--custody-config`, no range starts after the vault's finalized checkpoint.
+
 A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
 replica build and a taken copy's replay check every seal in full, since each goes on to sign over,
 or hold as its own, the running digest of every instruction that log heads carry (below), which

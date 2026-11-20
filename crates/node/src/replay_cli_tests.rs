@@ -92,3 +92,15 @@ fn replay_checks_run_ends_unless_every_seal_is_asked_for_with_its_workers() {
     // Workers check every seal ahead, so they come only with `--every-seal`.
     assert!(Cli::try_parse_from(["engine", "replay", "--log", "public", "--replay-workers", "3"]).is_err());
 }
+
+#[test]
+fn replay_in_ranges_takes_a_snapshot_directory_and_its_jobs_but_not_every_seal() {
+    let cli =
+        Cli::try_parse_from(["engine", "replay", "--log", "public", "--snapshots", "daily", "--jobs", "6"]).unwrap();
+    assert!(matches!(cli.cmd, Cmd::Replay { snapshots: Some(_), jobs: Some(n), .. } if n.get() == 6));
+    // Jobs are ranges at once, so they come only with snapshots, which check run ends.
+    assert!(Cli::try_parse_from(["engine", "replay", "--log", "public", "--jobs", "6"]).is_err());
+    assert!(
+        Cli::try_parse_from(["engine", "replay", "--log", "public", "--snapshots", "daily", "--every-seal"]).is_err()
+    );
+}

@@ -138,6 +138,8 @@ pub struct NodeConfig {
     #[serde(default)]
     pub stats: StatsSection,
     pub snapshots: Option<SnapshotSection>,
+    /// The daily snapshots the node publishes beside its archive, for a replay's ranges; none when absent.
+    pub daily_snapshots: Option<DailySnapshotsSection>,
     pub metrics: MetricsSection,
     pub alerts: AlertsSection,
     /// Enables startup synchronization with an external signed publisher worker.
@@ -278,6 +280,15 @@ pub struct HistorySection {
 }
 
 /// Optional signed recovery caches; signer pins must come from verified attestation.
+/// Where the node writes the engine's state at the first checkpoint of each UTC day by sequenced time,
+/// which `GET /v1/archive/snapshots/{file}` serves for a replay's ranges.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DailySnapshotsSection {
+    /// The directory, apart from the log. Every day's snapshot is kept.
+    pub dir: PathBuf,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotSection {

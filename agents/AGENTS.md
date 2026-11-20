@@ -251,6 +251,17 @@ an index: load only the rule whose hint matches the current action.
   withdrawal approvals still unpaid, their latest authorizations and the roots of the checkpoints
   their proofs are at (`snapshot/payouts.rs`), and a posted log head
   under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
+  daily snapshots under `[daily_snapshots]` (`daily_snapshots/`: the engine's state at the first checkpoint of each
+  UTC day by sequenced time, encoded by the stats worker's copy once the log is synced and published by a writer
+  thread, each file then its manifest line synced, every day's kept, Warning `daily_snapshot_failed`; served
+  unsigned at `/v1/archive/snapshots/{file}`, `api/archive.rs`) and `engine replay --snapshots <dir> --jobs <n>`
+  (`sequencer/replay/ranges/`: the log split at each snapshot's checkpoint the log holds and the ranges replayed
+  at once, each from its snapshot, whose resting-order index is rebuilt from its accounts' orders
+  (`Engine::rebuild_resting`) and whose root, computed over every key, must be the checkpoint's, through the
+  checkpoint the next starts from; a pass over their results in log order resolves the typed payouts' checkpoints
+  and deferred approvals an entry names before its range, and adds up the counts, signers and activations;
+  with `--custody-config` no range starts after the vault's finalized checkpoint;
+  `sequencer/recovery_scale/daily.rs` is its dev scenario),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP, given only to a guest whose kernel times on the
@@ -604,6 +615,8 @@ an index: load only the rule whose hint matches the current action.
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
   activity length, the closed epochs it keeps (`distribution_limit`) and its close-out and profit buckets;
   unknown keys are refused. `api.operators_interval` (default 60 s) spaces the operator list's reads.
+  The optional `[daily_snapshots]` names the directory, apart from the log, where the node keeps a daily snapshot
+  of each UTC day for `engine replay --snapshots`.
   `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,
   1d unbounded by default) and its optional provider backfill (`enabled`, the venue-domain
   `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
@@ -1136,7 +1149,12 @@ Run from the repo root:
   --release <release.toml> --processor <name>` additionally verifies an attestation against
   the release manifest and requires every checkpoint signer to be the enclave address it names;
   `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
-  the first and last of each run
+  the first and last of each run; `--snapshots <dir>` replays a log directory in ranges from a directory of daily
+  snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two cores)
+- Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
+  flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
+  it replays to whole, a snapshot that lost a resting order replays the same, and one whose balance or
+  checkpoint the signed root does not vouch for is refused)
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
   certificate chain must reach a vendor root pinned in the binary, the release must launch with

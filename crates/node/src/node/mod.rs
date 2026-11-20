@@ -1,11 +1,9 @@
-//! Node wiring: open or wait for its delivered secrets (`secrets`), obtain and attest the enclave key,
-//! the config, and the API's TLS key (`keys`), wait for the vault to name the key (`registration`),
-//! recover the engine from its log and the history
-//! index, then run the sequencer, ticker, price feeds, custody, trusted time check, history index,
-//! API, rate-limit upkeep, monitor, and alert routing as supervised tasks, beside the metrics
-//! listener the process binds once (`run`). Any task stopping stops the node. On SIGTERM or ctrl-c, every task but the sequencer is stopped; the
-//! sequencer then drains what is queued and writes a final checkpoint, and the alerts already logged
-//! are delivered.
+//! Node wiring: open or wait for its delivered secrets (`secrets`), obtain and attest the enclave key, the config, and
+//! the API's TLS key (`keys`), wait for the vault to name the key (`registration`), recover the engine from its log and
+//! the history index, then run the sequencer, ticker, price feeds, custody, trusted time check, history index, API,
+//! rate-limit upkeep, monitor, and alert routing as supervised tasks, beside the metrics listener the process binds
+//! once (`run`). Any task stopping stops the node. On SIGTERM or ctrl-c, every task but the sequencer is stopped; the
+//! sequencer then drains what is queued and writes a final checkpoint, and the alerts already logged are delivered.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -225,6 +223,7 @@ async fn serve_node(
         genesis: genesis_commands(&cfg.genesis),
         close_spread_ceilings: cfg.genesis.close_spread_ceilings.clone(),
         history_sealing: None,
+        daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone()),
         checkpoint_signing: Some(signing_tx),
         registry_operator,
         // A promoted start runs only for a promotion naming the candidate of the config's admin key.
@@ -429,6 +428,7 @@ async fn serve_node(
         payouts_enabled: mock_custody || cfg.checkpoints.is_some(),
         clock: Arc::new(SystemClock),
         log_dir: cfg.node.log_dir.clone(),
+        daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone()),
         manifest: manifest_rx,
         backfills,
         limits: limits.clone(),

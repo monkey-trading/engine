@@ -353,6 +353,7 @@ impl Node {
             mock_custody: false,
             clock: Arc::new(TestClock::at(clock.now_ms())),
             log_dir: dir.clone(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),

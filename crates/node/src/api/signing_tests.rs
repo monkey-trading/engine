@@ -322,6 +322,7 @@ pub(super) fn state(node: &TestSequencer, dir: &Path, api: &crate::config::ApiSe
         payouts_enabled: true,
         clock: Arc::new(TestClock::at(NOW)),
         log_dir: dir.to_owned(),
+        daily_snapshots: None,
         manifest: node.manifest.clone(),
         backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
         limits: Arc::new(ApiLimits::with_quota(api, hourly, DefaultClock::default())),

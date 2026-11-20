@@ -43,6 +43,7 @@ pub(crate) use seals_ahead::SealsAhead;
 pub use seals_ahead::{ReplayWorkers, SealChecks};
 mod segments;
 pub(crate) use segments::segment_seq;
+mod span;
 pub use segments::{LogWriter, MANIFEST, Manifest, SegmentInfo, SegmentedLog};
 
 use std::fmt;

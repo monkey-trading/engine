@@ -475,6 +475,12 @@ max_bytes = 2147483648
 # first release, which creates the enclave key, leaves [snapshots] out (deploy-and-rollback.md).
 trusted_signers = [] # REPLACE: the enclave address the running release attests
 
+# The engine's state at the first checkpoint of each UTC day, served beside the archive at
+# /v1/archive/snapshots/, from which `engine replay --snapshots` replays the log's days in parallel.
+# About 420 MB a day at 100k accounts; every day's is kept.
+[daily_snapshots]
+dir = "/data/daily-snapshots"
+
 [history]
 dir = "/data/history"
 retention = "365d"

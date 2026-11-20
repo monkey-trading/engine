@@ -337,6 +337,7 @@ impl Scenario {
             payouts_enabled: true,
             clock: Arc::new(TestClock::at(NOW)),
             log_dir: self.dir.clone(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),

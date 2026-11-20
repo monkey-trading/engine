@@ -40,6 +40,7 @@
 
 mod bench;
 mod cache;
+mod daily;
 mod flow;
 mod handover;
 mod orders;

@@ -15,10 +15,10 @@ use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
 use engine_node::{
-    ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
+    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
     ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
-    parse_launch_digest, replay_path_with_custody, replay_path_with_trust, run_dedicated, verify_attestation_files,
-    verify_frames_file, verify_response_files,
+    parse_launch_digest, replay_path_with_custody, replay_path_with_trust, replay_ranges_with_custody, run_dedicated,
+    verify_attestation_files, verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -90,6 +90,14 @@ enum Cmd {
         /// Threads that check command seals ahead of the replay with `--every-seal`; one per core when unset.
         #[arg(long, requires = "every_seal")]
         replay_workers: Option<NonZeroUsize>,
+        /// A directory of daily snapshots, as `/v1/archive/snapshots/` serves them: the log, which must be a
+        /// directory, is replayed in ranges from the checkpoints they name, each snapshot checked against
+        /// its checkpoint's signed root, several ranges at once.
+        #[arg(long, conflicts_with = "every_seal")]
+        snapshots: Option<PathBuf>,
+        /// How many ranges replay at once with `--snapshots`; one per two cores when unset.
+        #[arg(long, requires = "snapshots")]
+        jobs: Option<NonZeroUsize>,
     },
     /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
     /// at a vault deposit id, from a published log alone, against the root of its checkpoint at
@@ -253,10 +261,13 @@ fn main() -> anyhow::Result<()> {
             root,
             every_seal,
             replay_workers,
+            snapshots,
+            jobs,
         } => {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
             let seals = if every_seal { SealChecks::Every(workers) } else { SealChecks::RunEnds };
+            let ranges = snapshots.map(|dir| (dir, jobs.unwrap_or_else(half_the_cores)));
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             anyhow::ensure!(
                 attestation.len() == release.len(),
@@ -276,24 +287,7 @@ fn main() -> anyhow::Result<()> {
                 .zip(&release)
                 .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let mut replayed = if let Some(config) = custody_config {
-                let cfg = NodeConfig::load(&config)?;
-                let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?
-                    .block_on(replay_path_with_custody(&path, &cfg, signer, seals))?
-            } else if verified.len() > 1 {
-                engine_node::replay_path_with_attested(
-                    &path,
-                    domain,
-                    verified.iter().map(|v| v.enclave_address).collect(),
-                    seals,
-                )?
-            } else {
-                let trusted = engine_node::reconcile_signer(signer, verified.first())?;
-                replay_path_with_trust(&path, domain, trusted, seals)?
-            };
+            let mut replayed = audit(&path, ranges, seals, custody_config, (signer, domain), &verified)?;
             if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;
                 for attested in &verified {
@@ -326,9 +320,11 @@ fn main() -> anyhow::Result<()> {
                 "checkpoint signers: {}",
                 replayed.checkpoint_signers.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
             );
-            let pending = replayed.unsigned.len() + replayed.deferred.len();
-            if pending > 0 {
-                println!("note: {} approved withdrawal(s) await signature release", pending);
+            if replayed.ranges > 1 {
+                println!("replayed in {} ranges from the daily snapshots", replayed.ranges);
+            }
+            if replayed.pending > 0 {
+                println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
             Ok(())
         }
@@ -415,6 +411,48 @@ fn verify(
             let options = VerifyOptions { collateral: relayed.as_ref(), ..options };
             verify_attestation_files(attestation, release, &options).await
         })
+}
+
+/// `engine replay`'s replay of the log at `path` under the trust its flags give, `custody_config` with the
+/// pinned signer, else the attestations `verified`, else the pinned signer, or none, in `domain`: in ranges
+/// from a directory of daily snapshots, so many at once, or whole, its seals checked as `seals` says.
+/// Error cases:
+/// - the custody config cannot be loaded, or names no signer, or the replay fails
+fn audit(
+    path: &std::path::Path,
+    ranges: Option<(PathBuf, NonZeroUsize)>,
+    seals: SealChecks,
+    custody_config: Option<PathBuf>,
+    (signer, domain): (Option<AccountId>, Option<CheckpointDomain>),
+    verified: &[VerifiedAttestation],
+) -> anyhow::Result<Audited> {
+    if let Some(config) = custody_config {
+        let cfg = NodeConfig::load(&config)?;
+        let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        return match ranges {
+            Some((dir, jobs)) => runtime.block_on(replay_ranges_with_custody(path, &dir, &cfg, signer, jobs)),
+            None => runtime.block_on(replay_path_with_custody(path, &cfg, signer, seals)).map(Audited::from),
+        };
+    }
+    if verified.len() > 1 {
+        let attested = verified.iter().map(|v| v.enclave_address).collect();
+        return match ranges {
+            Some((dir, jobs)) => engine_node::replay_ranges_with_attested(path, &dir, domain, attested, jobs),
+            None => engine_node::replay_path_with_attested(path, domain, attested, seals).map(Audited::from),
+        };
+    }
+    let trusted = engine_node::reconcile_signer(signer, verified.first())?;
+    match ranges {
+        Some((dir, jobs)) => engine_node::replay_ranges_with_trust(path, &dir, domain, trusted, jobs),
+        None => replay_path_with_trust(path, domain, trusted, seals).map(Audited::from),
+    }
+}
+
+/// One range at a time for every two cores this process may use, and at least one.
+fn half_the_cores() -> NonZeroUsize {
+    let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    NonZeroUsize::new(cores / 2).unwrap_or(NonZeroUsize::MIN)
 }
 
 #[cfg(test)]

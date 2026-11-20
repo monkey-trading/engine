@@ -91,6 +91,7 @@ fn config<'a>(
     SequencerConfig {
         clock,
         history_sealing: sealing,
+        daily_snapshots: None,
         access_policy: Some(engine_core::access::AccessPolicy { source: source_key(), max_age_ms: 10 * HOUR_MS }),
         checkpoints: Some(sink),
         checkpoint_every: CHECKPOINT_EVERY,
@@ -141,10 +142,24 @@ impl Node {
 
     /// A node with no paired caches that takes over `book` with an empty log in `dir`, signing with `key`.
     pub(super) fn unpaired(book: engine_core::Engine, dir: &Path, key: Arc<EnclaveKey>) -> Self {
+        Self::publishing(book, dir, key, None)
+    }
+
+    /// `unpaired`, publishing a daily snapshot into `daily` at the first checkpoint of each UTC day, as a
+    /// node with `[daily_snapshots]` does.
+    pub(super) fn publishing(
+        book: engine_core::Engine,
+        dir: &Path,
+        key: Arc<EnclaveKey>,
+        daily: Option<&Path>,
+    ) -> Self {
         let clock = Arc::new(TestClock::at(book.now() + 1_000));
         let (sink, queued) = mpsc::channel(1 << 16);
         let (published, manifest) = watch::channel(Manifest::default());
-        let cfg = config(dir, clock.clone(), sink, published, None);
+        let cfg = SequencerConfig {
+            daily_snapshots: daily.map(Path::to_owned),
+            ..config(dir, clock.clone(), sink, published, None)
+        };
         let mut seq =
             Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("an empty log");
         seq.trust(sample_around(clock.as_ref())).expect("a trusted time sample");

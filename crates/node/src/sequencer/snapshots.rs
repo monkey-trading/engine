@@ -1,7 +1,7 @@
-//! Checkpoint capture for paired recovery caches; public audit replay stays on the full log path.
-//! A capture is due every `[snapshots] interval` of sequenced time, and its engine is encoded by the
-//! stats worker's copy, so the sequencer's part is the log sync, the catalog seal and the recovery
-//! facts it already holds.
+//! Checkpoint capture for paired recovery caches, and the daily snapshots published for a replay's ranges.
+//! A capture is due every `[snapshots] interval` of sequenced time, and a daily snapshot at the first
+//! checkpoint of each UTC day; the engine of either is encoded by the stats worker's copy, so the
+//! sequencer's part is the log sync, the catalog seal and the recovery facts it already holds.
 
 mod paired_recovery;
 
@@ -10,7 +10,8 @@ use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
 use tracing::warn;
 
-use crate::log::{Checkpoint, CheckpointDomain};
+use crate::daily_snapshots::Job as DailyJob;
+use crate::log::{Checkpoint, CheckpointDomain, Offset};
 use crate::sequencer::Sequencer;
 use crate::snapshot::sealing::Encoding;
 use crate::snapshot::{self, RecoveryContext, Snapshot};
@@ -34,21 +35,67 @@ pub(super) struct Captures {
     /// Approvals mock custody has yet to sign, with their event indices: it signs them once the
     /// checkpoint covering them is written, so a capture of that checkpoint still owes them.
     unsigned: Vec<((AccountId, u64), usize)>,
+    /// The writer of daily snapshots, under `[daily_snapshots]`.
+    daily: Option<crate::daily_snapshots::Writer>,
     /// How long each capture held the sequencer's thread, from its permit to its handover, whether
     /// the history owner took it or not. For the recovery scenario.
     #[cfg(test)]
     pub(super) held: Vec<std::time::Duration>,
 }
 
+impl Captures {
+    /// No capture taken yet, and with `daily`, the directory of `[daily_snapshots]`, its writer started
+    /// on a log whose last checkpoint is at `last_checkpoint`; a writer that does not start pages Warning
+    /// `daily_snapshot_failed`, and the node runs on without one.
+    pub(super) fn publishing(daily: Option<&std::path::Path>, last_checkpoint: Option<u64>) -> Self {
+        let daily = daily.and_then(|dir| {
+            crate::daily_snapshots::Writer::start(dir, last_checkpoint)
+                .inspect_err(|e| warn!(alert = "daily_snapshot_failed", "no daily snapshots: {e:#}"))
+                .ok()
+        });
+        Self { daily, ..Self::default() }
+    }
+}
+
 impl Sequencer {
-    /// Captures a paired cache at this checkpoint when one is due, then collects retired catalog
+    /// Captures a paired cache at this checkpoint, whose entry is at `offset`, when one is due, and hands
+    /// the daily snapshot writer the engine at it when that is due, then collects retired catalog
     /// versions. Catalog collection runs here, once per checkpoint whether or not a capture was
     /// taken, instead of on every flush. A failed log sync fails closed; anything else only warns.
     /// Error cases:
     /// - the authoritative log cannot be synced
-    pub(super) fn store_snapshot(&mut self, checkpoint: Checkpoint) -> anyhow::Result<()> {
+    pub(super) fn store_snapshot(&mut self, checkpoint: Checkpoint, offset: Offset) -> anyhow::Result<()> {
+        self.daily_snapshot(&checkpoint, offset)?;
         self.capture_snapshot(checkpoint)?;
         self.maintain_catalog();
+        Ok(())
+    }
+
+    /// Hands the daily snapshot writer the engine at this checkpoint, whose entry is at `offset`, when a
+    /// snapshot is due: at the first checkpoint of a UTC day by sequenced time, once genesis has applied
+    /// in full. The log is synced first, so a snapshot never names a checkpoint a crash could lose.
+    /// Error cases:
+    /// - the authoritative log cannot be synced
+    fn daily_snapshot(&mut self, checkpoint: &Checkpoint, offset: Offset) -> anyhow::Result<()> {
+        let ts = self.engine.now();
+        let due = self.captures.daily.as_ref().is_some_and(|daily| daily.due(ts));
+        if !due || self.progress.genesis.ensure_closed().is_err() {
+            return Ok(());
+        }
+        self.sync_log(false)?;
+        let (engine, job) = match self.encoding(checkpoint.seq) {
+            Ok(encoding) => encoding,
+            Err(e) => {
+                warn!(alert = "daily_snapshot_failed", seq = checkpoint.seq, "no daily snapshot: {e:#}");
+                return Ok(());
+            }
+        };
+        if let (Some(job), Some(stats)) = (job, self.marks.stats()) {
+            stats.stage_job(job);
+        }
+        if let Some(daily) = self.captures.daily.as_mut() {
+            daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine });
+        }
         Ok(())
     }
 

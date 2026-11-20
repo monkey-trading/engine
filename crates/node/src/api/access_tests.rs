@@ -349,6 +349,7 @@ impl Node {
             payouts_enabled: mock_custody,
             clock: stamps.clone(),
             log_dir: dir.clone(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             // Buckets that refill once an hour, so no test depends on its speed.

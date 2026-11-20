@@ -45,6 +45,9 @@ pub struct SequencerConfig<'a> {
     /// into a legacy log before its activation (see `Sequencer::activate_protocol`).
     pub close_spread_ceilings: Vec<engine_core::close_spread::CloseSpreadCeiling>,
     pub(crate) history_sealing: Option<crate::snapshot::sealing::Endpoint>,
+    /// Where the node publishes a daily snapshot at the first checkpoint of each UTC day
+    /// (`[daily_snapshots]`); `None` publishes none.
+    pub(crate) daily_snapshots: Option<std::path::PathBuf>,
     /// Told whether each checkpoint attempt signed (see `Gate::signing`).
     pub(crate) checkpoint_signing: Option<watch::Sender<bool>>,
     /// The registry's operator in effect, while rotation is off, at the finalized block the
