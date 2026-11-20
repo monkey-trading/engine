@@ -180,20 +180,23 @@ fn a_groups_later_member_is_scored_at_the_nav_the_gap_starts_earlier_fills_leave
     // level 0). Closing gold gives the house its spread and puts it ahead, so oil's close pays level 0:
     // scored at the NAV gold's fill leaves, the pair restores the requirement and closes, gold before oil.
     // Scored at the NAV before the step, oil's close would pay level 2, the pair would not restore it, and
-    // Nikkei, which does, would close alone.
-    let mut h = commodity_gap_book("16600");
-    let events = at_the_gap(&mut h);
-    let closed: Vec<MarketId> =
-        fills(&events).into_iter().filter(|fill| fill.liquidation).map(|fill| fill.market).collect();
-    assert_eq!(closed, vec![GOLD, OIL], "{events:?}");
-    let spreads: Vec<i64> = fills(&events).iter().map(|fill| fill.spread_bps).collect();
-    assert!(spreads[0] > spreads[1], "gold pays level 2, oil level 0: {spreads:?}");
+    // Nikkei, which does, would close alone. From `V86` the NAV is `Engine::house_nav`'s, at the same marks.
+    for version in [V81, ProtocolVersion::V86] {
+        let mut h = commodity_gap_book(version, "16600");
+        checked(&mut h);
+        let events = at_the_gap(&mut h);
+        let closed: Vec<MarketId> =
+            fills(&events).into_iter().filter(|fill| fill.liquidation).map(|fill| fill.market).collect();
+        assert_eq!(closed, vec![GOLD, OIL], "{version:?}: {events:?}");
+        let spreads: Vec<i64> = fills(&events).iter().map(|fill| fill.spread_bps).collect();
+        assert!(spreads[0] > spreads[1], "gold pays level 2, oil level 0 at {version:?}: {spreads:?}");
+    }
 }
 
 /// A holder of the oil and gold group, $200k each way, and $1m of Nikkei, on `funds`, and a second holder
 /// whose BTC the house is behind on by about $50 once oil, gold and Nikkei have gone stale, 2 s before
-/// Friday's close.
-fn commodity_gap_book(funds: &str) -> Harness {
+/// Friday's close, on a log at `version`.
+fn commodity_gap_book(version: ProtocolVersion, funds: &str) -> Harness {
     use common::USDJPY;
     use common::house_loss::{level_two, loss};
     use common::portfolio::{group, member, params_with};
@@ -204,7 +207,7 @@ fn commodity_gap_book(funds: &str) -> Harness {
     let mut params = params_with(grid);
     let trigger = Some(StressTrigger { house_loss: Some(Fixed::ZERO), ..StressTrigger::default() });
     params.stress_levels.push(StressLevel { trigger, ..level_two() });
-    let mut h = genesis_with_params(V81, globex(vec![]), OIL_WEEKEND_BPS, OIL_WEEKEND_BPS, params);
+    let mut h = genesis_with_params(version, globex(vec![]), OIL_WEEKEND_BPS, OIL_WEEKEND_BPS, params);
     let a = client(&mut h, 1, funds);
     let b = client(&mut h, 2, "1000000");
     for (market, price) in [(OIL, "70"), (GOLD, "2000"), (USDJPY, "150"), (NIKKEI, "38000"), (BTC, "100000")] {

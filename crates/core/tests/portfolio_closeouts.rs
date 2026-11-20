@@ -5,8 +5,9 @@
 //! and closing the members that can alone while one cannot, even when every candidate worsens the
 //! slack; a failed fill ends the account's close-out mid-group; and every close-out ends within the
 //! account's position count. A log at `V81` whose parameters name no grid keeps the rule before it.
-//! The check after a command's fills is in `after_fills`, the weekend gap's start in `weekend`, and the
-//! close-out index's exactness under the portfolio requirement in `index`.
+//! The check after a command's fills is in `after_fills`, the weekend gap's start in `weekend`, the
+//! close-out index's exactness under the portfolio requirement in `index`, and from `V86` a group's later
+//! members scored at the NAV their fills read, whatever a mark's gap to its index, in `marks`.
 
 mod common;
 
@@ -15,11 +16,11 @@ use common::events::{fills, only_fill};
 use common::portfolio::{genesis_with_grid, pairs};
 use common::weekend::{GOLD, OIL, client};
 use common::{AAPL, BTC, Client, ETH, Harness, f};
-use engine_core::Fixed;
 use engine_core::event::{Event, Fill};
 use engine_core::portfolio::PortfolioGrid;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::{MarketId, Side};
+use engine_core::{CloseoutOracle, Fixed};
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
 
@@ -245,6 +246,11 @@ fn eth_capped_at_the_house_nav(
     assert_eq!(h.engine.house_nav(), eth_notional(h) + margin);
 }
 
+/// Runs `h`'s engine under the close-out oracle from now on; an engine decoded afresh runs without it.
+fn checked(h: &mut Harness) {
+    h.engine.set_closeout_oracle(CloseoutOracle { verify: true, ..CloseoutOracle::default() });
+}
+
 /// `client`'s equity and the close-out level of the requirement its close-out reads, at the marks.
 fn standing(h: &Harness, client: &Client) -> (Fixed, Fixed) {
     let acct = &h.engine.accounts()[&client.account];
@@ -278,7 +284,12 @@ fn pair_after_basis_move(grid: PortfolioGrid) -> (Harness, Client, Vec<Event>) {
 
 /// A holder of the pair and $200k of AAPL long, on $241k, under a 50% floor share.
 fn pair_and_shares() -> (Harness, Client) {
-    let mut h = genesis_with_grid(V81, pairs(5_000), 750, 0);
+    pair_and_shares_at(V81)
+}
+
+/// `pair_and_shares` on a log at `version`.
+fn pair_and_shares_at(version: ProtocolVersion) -> (Harness, Client) {
+    let mut h = genesis_with_grid(version, pairs(5_000), 750, 0);
     let a = client(&mut h, 1, "241000");
     open_pair(&mut h, &a);
     h.price(AAPL, "200");
@@ -290,5 +301,7 @@ fn pair_and_shares() -> (Harness, Client) {
 mod after_fills;
 #[path = "portfolio_closeouts/index.rs"]
 mod index;
+#[path = "portfolio_closeouts/marks.rs"]
+mod marks;
 #[path = "portfolio_closeouts/weekend.rs"]
 mod weekend;

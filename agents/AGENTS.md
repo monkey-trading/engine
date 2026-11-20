@@ -36,7 +36,9 @@ an index: load only the rule whose hint matches the current action.
   entry, a triggered order or level and a close-out never (`execution/risk.rs`, `tests/portfolio_new_risk.rs` and
   `tests/portfolio_new_risk/`), an order's preview, `Engine::preview_order`, from the same pricing and checks
   (`execution/quote.rs`), and a close-out scoring a group's later members at the tier its earlier fills leave; their
-  cost at 100k accounts is `tests/hot_path_benchmark/new_risk.rs`), the profit fee (from `V55` falling with holding time
+  cost at 100k accounts is `tests/hot_path_benchmark/new_risk.rs`; from `V86` a close-out step scores a group's later
+  members at the NAV `Engine::house_nav` reads once the earlier fills are booked, each closed position out of its
+  market's clients' PnL at the mark, `tests/portfolio_closeouts/marks.rs`), the profit fee (from `V55` falling with holding time
   along a hold curve from each position's open time, `holding_fee/`, with the open time's own leaf in
   `merkle/open_time.rs`, the base, from launch to +50%, and the curve, at or above launch at every hold,
   moved only after notice, and from `V57` an add's averaged age clamped at the launch curve's last hold

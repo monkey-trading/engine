@@ -245,11 +245,13 @@ processes. The bounds are:
   positions on one side match on the other. That requirement is never above the per-position one,
   and never below each group's floor share of its matched part's. A close-out closes, one step at a
   time, the position or group whose closing restores the account with the least value closed, a
-  group's positions together while all of them can trade. Every account that a trade, a triggered
-  order or a level fills is checked for close-out once the instruction's trades are done. The groups,
-  their members, loadings and bounds are fixed at launch. Each residual shock and floor share moves
-  only up, within its bound, after seven days' notice or by a vote, and a fast-path vote may raise a
-  floor share. The grid's shocks are the same at every time. A market given a weekend margin raises
+  group's positions together while all of them can trade. Each step is judged at the stress level and
+  volume tier its own trades pay: a group's later positions at the house's net asset value, valued at
+  the marks, and at the volume tier, each as the group's earlier trades leave it. Every account that a
+  trade, a triggered order or a level fills is checked for close-out once the instruction's trades are
+  done. The groups, their members, loadings and bounds are fixed at launch. Each residual shock and
+  floor share moves only up, within its bound, after seven days' notice or by a vote, and a fast-path
+  vote may raise a floor share. The grid's shocks are the same at every time. A market given a weekend margin raises
   only its own bands over its weekend closures, and each group keeps its credit: an account below that
   whole requirement when such a closure starts is closed out in the closing markets at their last
   prices. A market without a weekend margin has no weekend close-out. New risk and withdrawals read

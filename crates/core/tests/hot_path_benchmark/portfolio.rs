@@ -1,12 +1,12 @@
-//! Close-outs under portfolio margin from `V81` at 100k accounts (#639): a price's detection, with
-//! accounts well above their per-position level and with every account between its portfolio and
-//! per-position levels, which the close-out index cannot skip; a price closing 20% of the accounts out;
-//! the same over accounts holding a group of twenty shares; a rollover and a weekend margin's gap start,
-//! with and without close-outs; and the check after the fills of 20k resting stops. The last three are each
-//! held to twice `V79`'s command on the same book plus a guard, with #904's 500 ms bar for one command
-//! printed beside them. Detection is timed over `SAMPLES` prices on one engine. A command that closes accounts out acts once
-//! on an engine, so each of its `EXEC_SAMPLES` samples loads a fresh copy of the same fixture; a
-//! fixture's construction and loading are outside the timed region.
+//! Close-outs under portfolio margin from `V81` at 100k accounts (#639): a price's detection, with accounts well
+//! above their per-position level and with every account between its portfolio and per-position levels, which the
+//! close-out index cannot skip; a price closing 20% of the accounts out, at `V81` and at the latest version; the same
+//! over accounts holding a group of twenty shares; a rollover and a weekend margin's gap start, with and without
+//! close-outs; and the check after the fills of 20k resting stops. The last three are each held to twice `V79`'s
+//! command on the same book plus a guard, with #904's 500 ms bar for one command printed beside them. Detection is
+//! timed over `SAMPLES` prices on one engine. A command that closes accounts out acts once on an engine, so each of
+//! its `EXEC_SAMPLES` samples loads a fresh copy of the same fixture; a fixture's construction and loading are
+//! outside the timed region.
 
 use super::common::close_spread::{rest, trade};
 use super::common::events::only_fill;
@@ -70,15 +70,17 @@ fn portfolio_price_execution_latency() {
 }
 
 fn portfolio_price_execution_latency_measured() {
-    // The same book, a BTC-USD price that takes a fifth of the accounts below their portfolio level.
-    let (engine, targets) = build(&crypto(V81, 5_000), COUNT, Standing::Near(1_000));
-    let bytes = serde_json::to_vec(&engine).expect("fixture encoding");
-    drop(engine);
-    let drop_to = f("100000") - targets.gap().mul_bps(3_000);
-    let times = once("portfolio_price_execution_100k", &bytes, |engine, ts| {
-        apply_events(engine, ts, prices(BTC, &drop_to.to_string(), ts))
-    });
-    hold("portfolio_price_execution_100k", times.0, ROLLOVER_BUDGET_US);
+    // The same book, a BTC-USD price that takes a fifth of the accounts below their portfolio level, at `V81` and
+    // at the latest version, whose steps score the pair's ETH at the NAV `Engine::house_nav` reads after BTC's fill.
+    let latest = ("portfolio_price_execution_latest_100k", ProtocolVersion::LATEST);
+    for (name, version) in [("portfolio_price_execution_100k", V81), latest] {
+        let (engine, targets) = build(&crypto(version, 5_000), COUNT, Standing::Near(1_000));
+        let bytes = serde_json::to_vec(&engine).expect("fixture encoding");
+        drop(engine);
+        let drop_to = f("100000") - targets.gap().mul_bps(3_000);
+        let (p99, _) = once(name, &bytes, |engine, ts| apply_events(engine, ts, prices(BTC, &drop_to.to_string(), ts)));
+        hold(name, p99, ROLLOVER_BUDGET_US);
+    }
 }
 
 #[test]
