@@ -296,9 +296,10 @@ an index: load only the rule whose hint matches the current action.
   the registry's registered hostname and the vault's signer at the latest block each turn and after a failed
   stint, 1 s after the first and doubling to a stint, `standby/operator.rs`, into a copy with a live replica
   built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; from a
-  minute before its own turn's boundary it holds its venue connections open with their quotes held back,
-  which its start lets through to its sequencer (#1058, `node/member/warm.rs`, `node/price_feeds.rs`,
-  `feeds/venue/live.rs`); at its turn it reads
+  minute before its own turn's boundary it holds its keyless venue connections open with their quotes held
+  back, which its start lets through to its sequencer, while a connection that carries a key (`VenueConnection::warms`,
+  `warm` in config) opens only as the turn starts, the launch operators sharing one account per keyed vendor
+  (#1058, `node/member/warm.rs`, `node/price_feeds.rs`, `feeds/venue/live.rs`); at its turn it reads
   everything its start needs from the chain and takes its trusted time sample first, `node/ready.rs`,
   so nothing between the confirmation and its first command reads the chain or samples time, then
   takes only the tail past its tip, bound by range and SHA-256 inside the keys and checked against

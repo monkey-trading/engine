@@ -96,6 +96,7 @@ fn feed_on(stand_in: &CmeStandIn, tls: &TlsFront, timing: Timing, client: OAuthC
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols,
     };
     VenueFeed::new(conn, Credentials::OAuth(client), timing, tls.client.clone(), mpsc::channel(1).0)

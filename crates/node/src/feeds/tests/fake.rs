@@ -242,6 +242,7 @@ pub fn spawn_feed_into(
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: symbols.collect(),
     };
     tokio::spawn(venue::run(conn, Credentials::Public, timing, venue::tls_config().expect("tls config"), tx))

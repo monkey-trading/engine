@@ -471,8 +471,7 @@ fn start_feed_timed(node: &Node, venue: Venue, symbols: &[(MarketId, &str, Optio
             contract: contract.map(Into::into),
         })
         .collect();
-    let conn =
-        VenueConnection { venue, url, api_key_env: None, api_key_secret: None, oauth: None, key_pair: None, symbols };
+    let conn = VenueConnection::public(venue, url, symbols);
     tokio::spawn(venue::run(conn, Credentials::Public, timing, tls_config().expect("tls config"), node.tx.clone()));
 }
 

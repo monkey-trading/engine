@@ -316,6 +316,7 @@ pub(super) fn feed_with_rules(known: bool) -> (VenueFeed, mpsc::Receiver<Request
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols,
     };
     let (tx, rx) = mpsc::channel(16);

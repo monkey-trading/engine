@@ -211,6 +211,7 @@ fn spawn_alpaca(
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: vec![VenueSymbol { market: AAPL, symbol: "AAPL".into(), contract: None }],
     };
     tokio::spawn(venue::run(conn, stand_in.credentials(), timing, tls.client.clone(), tx))
@@ -229,6 +230,7 @@ async fn start_massive(node: &Node, tls: &TlsFront, prices: Prices) -> Vec<Abort
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: vec![VenueSymbol { market: AAPL, symbol: "AAPL".into(), contract: None }],
     };
     let credentials = Credentials::ApiKey(key(KEY));

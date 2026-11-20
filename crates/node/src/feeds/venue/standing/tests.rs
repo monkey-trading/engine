@@ -436,6 +436,7 @@ fn feed_into(venue: Venue, symbols: &[(MarketId, &str)], tx: mpsc::Sender<crate:
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: symbols.collect(),
     };
     VenueFeed::new(conn, Credentials::Public, fast(WAIT), tls_config().expect("tls config"), tx)

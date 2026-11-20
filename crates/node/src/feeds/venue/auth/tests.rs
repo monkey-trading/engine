@@ -205,6 +205,7 @@ async fn a_refused_message_is_excerpted_only_from_a_venue_that_holds_no_credenti
             api_key_secret: None,
             oauth: None,
             key_pair: None,
+            warm: None,
             symbols: Vec::new(),
         };
         let mut feed = VenueFeed::new(conn, credentials, fast(TIMEOUT), tls.client.clone(), mpsc::channel(1).0);
@@ -276,6 +277,7 @@ async fn a_credential_or_token_echoed_back_never_reaches_an_alert() {
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: Vec::new(),
     };
     let timing = fast(TIMEOUT);
@@ -361,6 +363,7 @@ async fn an_escaped_credential_or_token_echoed_back_never_reaches_an_alert() {
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: Vec::new(),
     };
     let mut feed =

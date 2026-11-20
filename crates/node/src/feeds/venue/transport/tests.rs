@@ -28,6 +28,7 @@ async fn a_close_frame_is_read_by_its_code_and_the_length_of_its_reason() {
         api_key_secret: None,
         oauth: None,
         key_pair: None,
+        warm: None,
         symbols: Vec::new(),
     };
     let tls = TlsFront::new();
