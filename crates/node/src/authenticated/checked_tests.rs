@@ -4,8 +4,8 @@ use anyhow::Result;
 use jmt::SimpleHasher;
 use jmt::storage::Node;
 
-use crate::authenticated::blobs::Blob;
-use crate::authenticated::reader::{Checked, Reader};
+use crate::authenticated::blobs::{self, Blob, Points};
+use crate::authenticated::reader::Checked;
 use crate::authenticated::tests::{fresh, put, raw};
 use crate::authenticated::{Hasher, Root, codec, key_hash};
 
@@ -18,12 +18,13 @@ fn an_operations_readers_share_the_nodes_it_checked_and_the_next_operation_check
     let namespace = [21; 32];
     let root = store.update(&Root::empty(namespace), vec![put(b"a", b"A"), put(b"b", b"B"), put(b"c", b"C")])?;
     let conn = raw(&dir)?;
-    let checked = Checked::default();
     let key = key_hash(&namespace, b"a")?;
-    let first = Reader::new(&conn, &root, false, &checked)?.read(key)?;
+    let read = |checked: &Checked| blobs::read(&mut Points::new(&conn, &root, checked), key);
+    let checked = Checked::default();
+    assert_eq!(read(&checked)?, Some(b"A".to_vec()));
     conn.execute("UPDATE nodes SET data = ?1", [br#""Null""#.as_slice()])?;
-    assert_eq!(Reader::new(&conn, &root, false, &checked)?.read(key)?, first, "the operation's nodes are kept");
-    assert!(Reader::new(&conn, &root, false, &Checked::default())?.read(key).is_err(), "a new operation reads afresh");
+    assert_eq!(read(&checked)?, Some(b"A".to_vec()), "the operation's nodes are kept");
+    assert!(read(&Checked::default()).is_err(), "a new operation reads afresh");
     assert!(store.read(&root, b"a").is_err(), "a store read is a new operation");
     Ok(())
 }
@@ -38,15 +39,13 @@ fn a_recorded_node_is_taken_only_under_the_hash_it_was_checked_to_have() -> Resu
     let root = store.update(&Root::empty(namespace), vec![put(b"a", b"A"), put(b"b", b"B")])?;
     let conn = raw(&dir)?;
     let (key, root_key) = (key_hash(&namespace, b"a")?, codec::root_key(root.version.expect("a version"))?);
+    let read = |checked: &Checked| blobs::read(&mut Points::new(&conn, &root, checked), key);
     let other = Checked::default();
     other.nodes().borrow_mut().insert(root_key.clone(), (Node::Null, [7; 32]));
-    assert_eq!(Reader::new(&conn, &root, false, &other)?.read(key)?, Some(b"A".to_vec()), "another hash is not taken");
+    assert_eq!(read(&other)?, Some(b"A".to_vec()), "another hash is not taken");
     let forged = Checked::default();
     forged.nodes().borrow_mut().insert(root_key, (Node::Null, root.hash));
-    assert!(
-        Reader::new(&conn, &root, false, &forged).and_then(|reader| reader.read(key)).is_err(),
-        "a forged node proves nothing"
-    );
+    assert!(read(&forged).is_err(), "a forged node proves nothing");
     Ok(())
 }
 
@@ -104,7 +103,7 @@ fn an_operation_keeps_a_bounded_number_of_checked_nodes() -> Result<()> {
     let checked = Checked::with_limit(LIMIT);
     let (mut kept, mut forgotten) = (0, false);
     for key in &keys {
-        let read = Reader::new(&conn, &root, false, &checked)?.read(key_hash(&namespace, key)?)?;
+        let read = blobs::read(&mut Points::new(&conn, &root, &checked), key_hash(&namespace, key)?)?;
         assert_eq!(read.as_deref(), Some(key.as_slice()), "{key:?}");
         let now = checked.nodes().borrow().len();
         assert!(now <= LIMIT, "the operation keeps {now}");
