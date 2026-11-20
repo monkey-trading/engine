@@ -175,7 +175,99 @@ fn a_recovery_anchors_where_the_log_lacks_the_vaults_checkpoint_with_its_roots_o
     assert_eq!((anchor, root, checkpoints), (inline_anchor, inline_root, inline_checkpoints));
 }
 
+/// Where a recovery anchors at a vault checkpoint the log lacks, it takes the tree back for the root due at
+/// the checkpoint before; a root that differs there is the earlier fault, reported ahead of the open run of
+/// seals since, whose last seal does not verify, as `engine replay`'s run-end check would report it.
+#[test]
+fn a_root_an_anchor_takes_back_is_reported_ahead_of_the_open_run_of_seals() {
+    let reference = latest_reference();
+    let unsealed = file_entries(&reference);
+    let checkpoints: Vec<&Checkpoint> = unsealed
+        .iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint),
+            _ => None,
+        })
+        .collect();
+    let at = checkpoints.len() / 2;
+    let (before, dropped) = (checkpoints[at - 1].seq, checkpoints[at].clone());
+    let parent = CheckpointParent { has_checkpoint: true, seq: dropped.seq, root: dropped.root.parse().unwrap() };
+    let kept = unsealed.iter().filter(|entry| !matches!(entry, LogEntry::Checkpoint(cp) if cp.seq == dropped.seq));
+    let mut entries = sealed(kept.cloned(), |checkpoint| {
+        if checkpoint.seq == before {
+            checkpoint.root = format!("0x{}", "1".repeat(64));
+        }
+    });
+    let last = entries.iter_mut().find_map(|entry| match entry {
+        LogEntry::Command(command) if command.sequenced.seq == dropped.seq => Some(command),
+        _ => None,
+    });
+    last.unwrap().seal = Some(EnclaveKey::test_key().seal_command(REFERENCE, B256::repeat_byte(9)));
+    let mut replay = Replay::with_recovery(Some(REFERENCE), Some(AccountId(EnclaveKey::test_key().address())), parent);
+    replay.check_run_ends();
+    replay.check_roots_ahead();
+    let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
+    let refused = format!("{:#}", replay.settled(applied).expect_err("a root that differs"));
+    assert!(refused.contains(&format!("state root mismatch at seq {before}")), "{refused}");
+}
+
+/// With its seals checked at run ends and its roots on the thread, a replay reports a root that differs at
+/// its checkpoint ahead of the run of seals opened after it, whose last seal a later change breaks: ahead of
+/// a later command's fault, which the root due and then the run precede, and at the log's end, where the
+/// read settles the root before the run.
+#[test]
+fn a_root_that_differs_is_reported_ahead_of_the_run_after_it() {
+    let reference = latest_reference();
+    let checkpoints: Vec<u64> = resealed(&reference, |_| {})
+        .iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint.seq),
+            _ => None,
+        })
+        .collect();
+    // A checkpoint after the tree moves to the thread, three commands or more before the next.
+    let at =
+        (80..checkpoints.len() - 1).find(|at| checkpoints[at + 1] - checkpoints[*at] >= 3).expect("a wide interval");
+    let seq = checkpoints[at];
+    let entries = resealed(&reference, |checkpoint| {
+        if checkpoint.seq == seq {
+            checkpoint.root = format!("0x{}", "1".repeat(64));
+        }
+    });
+    let command = |entries: &[LogEntry], at: u64| -> usize {
+        entries.iter().position(|entry| matches!(entry, LogEntry::Command(c) if c.sequenced.seq == at)).unwrap()
+    };
+    let mismatch = format!("state root mismatch at seq {seq}");
+    // A later command's events changed: the root due, then the run, come first.
+    let mut changed = entries.clone();
+    let later = command(&changed, seq + 2);
+    if let LogEntry::Command(c) = &mut changed[later] {
+        c.events = Some(vec![Event::AdminApplied]);
+    }
+    let refused = run_ends(&changed);
+    assert!(refused.contains(&mismatch), "a later command's fault: {refused}");
+    // The log cut after the run's second command, whose seal does not verify: the read settles the root first.
+    let mut cut = entries;
+    let last = command(&cut, seq + 2);
+    cut.truncate(last + 1);
+    if let LogEntry::Command(c) = &mut cut[last] {
+        c.seal = Some(EnclaveKey::test_key().seal_command(REFERENCE, B256::repeat_byte(9)));
+    }
+    let refused = run_ends(&cut);
+    assert!(refused.contains(&mismatch), "the log's end: {refused}");
+}
+
 // ── Helpers ──
+
+/// Replays `entries` under the test key in the reference deployment, its seals checked at run ends and its
+/// roots on the thread, and gives the error the settled replay fails with.
+fn run_ends(entries: &[LogEntry]) -> String {
+    let mut replay = Replay::with_trust(Some(REFERENCE), Some(AccountId(EnclaveKey::test_key().address())));
+    replay.check_run_ends();
+    replay.check_roots_ahead();
+    let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
+    format!("{:#}", replay.settled(applied).expect_err("the replay fails"))
+}
 
 /// A change to a log's entries around the entry at an index, a checkpoint.
 type Fault = fn(&mut Vec<LogEntry>, usize);

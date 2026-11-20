@@ -98,13 +98,25 @@ impl CommandSeal {
     /// - the signer or signature is invalid for this link and deployment
     pub(crate) fn verify(&self, link: B256) -> anyhow::Result<()> {
         let signature: Signature = self.signature.parse().context("command origin signature")?;
-        ensure!(
-            self.signer.0 != [0; 20]
-                && eip712::recover(&B256::from(seal_digest(self.domain, link)), &signature) == Some(self.signer),
-            "invalid command origin signature"
-        );
+        ensure!(signs(self.domain, self.signer, &signature, link), "invalid command origin signature");
         Ok(())
     }
+
+    /// This seal's signature, once its form is checked, without its cryptography: a signature of the
+    /// form `eip712::recover` reads (`eip712::well_formed`) and a signer that is not zero.
+    /// Error cases:
+    /// - the signature does not parse or is not well formed, or the signer is zero
+    pub(crate) fn well_formed(&self) -> anyhow::Result<Signature> {
+        let signature: Signature = self.signature.parse().context("command origin signature")?;
+        ensure!(self.signer.0 != [0; 20], "command origin seal names the zero signer");
+        ensure!(eip712::well_formed(&signature), "malformed command origin signature");
+        Ok(signature)
+    }
+}
+
+/// Whether `signer`, not zero, signed `link` in `domain` with `signature`: `CommandSeal::verify`'s check.
+pub(crate) fn signs(domain: CheckpointDomain, signer: AccountId, signature: &Signature, link: B256) -> bool {
+    signer.0 != [0; 20] && eip712::recover(&B256::from(seal_digest(domain, link)), signature) == Some(signer)
 }
 
 #[cfg(test)]

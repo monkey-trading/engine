@@ -187,12 +187,18 @@ an index: load only the rule whose hint matches the current action.
   of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
   byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
-  replay`, each whole replay's command seals (`engine replay`'s, recovery's, the log-head prefix pass's, the startup history
-  rebuild's, a member's replica build's and a taken copy's; not a history repair's, which runs beside the sequencer)
-  checked ahead on `node.replay_workers` threads or `--replay-workers`, one per core by default, by a second reader of
-  the log's files, the replay taking a verdict only for the seal and link it computed, applying each command once its
-  own seal is checked, and checking every later seal in place once the two reads part (`log/seals_ahead.rs`,
-  `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), and its own read on a `log-reader` thread
+  replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
+  one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
+  catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at
+  a checkpoint, another signer or domain, a command with no seal, the replay's end) and before any later fault is
+  reported (`SealChecks::RunEnds`, `sequencer/origin/seals.rs`, `Replay::check_run_ends`,
+  `sequencer/replay/run_ends_tests.rs`), or with `--every-seal` each in full; every other whole replay's command seals
+  (recovery's, the log-head prefix pass's, the startup history rebuild's, a member's replica build's and a taken copy's;
+  not a history repair's, which runs beside the sequencer) each checked in full, since they sign over the command prefix,
+  which reads each seal's bytes, ahead on `node.replay_workers` threads or `--replay-workers`, one per core by default,
+  by a second reader of the log's files, the replay taking a verdict only for the seal and link it computed, applying
+  each command once its own seal is checked, and checking every later seal in place once the two reads part
+  (`log/seals_ahead.rs`, `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), and its own read on a `log-reader` thread
   (`log/ahead.rs`: `SegmentedLog::open_ahead`, `read_file_ahead`) and its state roots on a `replay-roots` thread from
   its first checkpoint with a tree, each compared before the next checkpoint, an error of its own and its end
   (`sequencer/replay/roots.rs`, `Replay::check_ahead` and `settled`; a member's live replica computes each root in
@@ -1122,7 +1128,9 @@ Run from the repo root:
 - Verify a published log: `cargo run -p engine-node -- replay --log <path>`, where `<path>` is a
   log directory, a downloaded archive, or a single log file; `--attestation <attestation.json>
   --release <release.toml> --processor <name>` additionally verifies an attestation against
-  the release manifest and requires every checkpoint signer to be the enclave address it names
+  the release manifest and requires every checkpoint signer to be the enclave address it names;
+  `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
+  the first and last of each run
 - Verify an enclave's attestation: `cargo run -p engine-node -- verify-attestation
   --attestation <attestation.json> --release <release.toml> --processor <name>`; the quote's
   certificate chain must reach a vendor root pinned in the binary, the release must launch with
@@ -1197,12 +1205,13 @@ Run from the repo root:
   `RECOVERY_ACCOUNTS`, `RECOVERY_TRADERS`, `RECOVERY_LAUNCH_SECS`, `RECOVERY_TEN_TIMES_SECS`,
   `RECOVERY_CAPTURE_SECS`, `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and
   twenty-one minutes of flow, which the first emission period and staking epoch end in), and `RECOVERY_REPLAY_WORKERS`
-  bounds the threads that check seals ahead of each replay, the node's included (one per core)
+  bounds the threads that check seals ahead of each replay that checks every seal, the node's included (one per core)
 - The replay's cost on a kept log (#1116), for profiling: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::bench -- --ignored --nocapture --test-threads=1` writes the launch book and
   `RECOVERY_LAUNCH_SECS` (an hour) of launch flow into `<dir>` on its first run, then `replay_bench` times `engine
-  replay`'s replay of it and `apply_bench` the apply thread's parts (each command kind's apply, the roots, the reads and
-  the seal checks); run it under `nice`
+  replay`'s replay of it, in wall and CPU time, its seals checked at run ends or, with `REPLAY_BENCH_SEALS=every`, each
+  in full, and `apply_bench` the apply thread's parts (each command kind's apply, the roots, the reads and the seal
+  checks); run it under `nice`
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

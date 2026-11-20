@@ -248,7 +248,7 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
-        replay.check_ahead(dir, workers);
+        replay.check_ahead(dir, crate::log::SealChecks::Every(workers));
         let log = SegmentedLog::open_ahead(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)

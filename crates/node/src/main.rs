@@ -13,7 +13,7 @@ use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
-use engine_node::log::{CheckpointDomain, ReplayWorkers};
+use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
 use engine_node::{
     ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
     ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
@@ -48,7 +48,9 @@ enum Cmd {
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
     /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
-    /// missing log, or one with no command or no checkpoint, fails.
+    /// missing log, or one with no command or no checkpoint, fails. Every instruction's chained digest is
+    /// checked, every seal's form, and in full the first and last seal of each run of one signer's seals,
+    /// the last authenticating every instruction in the run; `--every-seal` checks every seal in full.
     Replay {
         #[arg(short, long)]
         log: PathBuf,
@@ -82,8 +84,11 @@ enum Cmd {
         /// vendor roots. Test and private chains verify against this; release chains do not need it.
         #[arg(long)]
         root: Option<PathBuf>,
-        /// Threads that check command seals ahead of the replay; one per core when unset.
+        /// Check every instruction's seal in full, as a copy of the log does, not only each run's first and last.
         #[arg(long)]
+        every_seal: bool,
+        /// Threads that check command seals ahead of the replay with `--every-seal`; one per core when unset.
+        #[arg(long, requires = "every_seal")]
         replay_workers: Option<NonZeroUsize>,
     },
     /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
@@ -246,10 +251,12 @@ fn main() -> anyhow::Result<()> {
             processor,
             kds,
             root,
+            every_seal,
             replay_workers,
         } => {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
+            let seals = if every_seal { SealChecks::Every(workers) } else { SealChecks::RunEnds };
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             anyhow::ensure!(
                 attestation.len() == release.len(),
@@ -275,17 +282,17 @@ fn main() -> anyhow::Result<()> {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()?
-                    .block_on(replay_path_with_custody(&path, &cfg, signer, workers))?
+                    .block_on(replay_path_with_custody(&path, &cfg, signer, seals))?
             } else if verified.len() > 1 {
                 engine_node::replay_path_with_attested(
                     &path,
                     domain,
                     verified.iter().map(|v| v.enclave_address).collect(),
-                    workers,
+                    seals,
                 )?
             } else {
                 let trusted = engine_node::reconcile_signer(signer, verified.first())?;
-                replay_path_with_trust(&path, domain, trusted, workers)?
+                replay_path_with_trust(&path, domain, trusted, seals)?
             };
             if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;
@@ -411,88 +418,4 @@ fn verify(
 }
 
 #[cfg(test)]
-mod replay_cli_tests {
-    use super::*;
-
-    #[test]
-    fn custody_audit_requires_independent_signer_and_owns_the_domain() {
-        assert!(
-            Cli::try_parse_from(["engine", "replay", "--log", "public", "--custody-config", "audit.toml"]).is_err()
-        );
-        let signer = "0x1111111111111111111111111111111111111111";
-        assert!(
-            Cli::try_parse_from([
-                "engine",
-                "replay",
-                "--log",
-                "public",
-                "--custody-config",
-                "audit.toml",
-                "--signer",
-                signer
-            ])
-            .is_ok()
-        );
-        assert!(
-            Cli::try_parse_from([
-                "engine",
-                "replay",
-                "--log",
-                "public",
-                "--custody-config",
-                "audit.toml",
-                "--signer",
-                signer,
-                "--chain-id",
-                "31337",
-                "--vault",
-                signer
-            ])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn strict_replay_without_custody_config_keeps_existing_arguments() {
-        let cli = Cli::try_parse_from(["engine", "replay", "--log", "public"]).unwrap();
-        assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, signer: None, .. }));
-        let signer = "0x1111111111111111111111111111111111111111";
-        let cli = Cli::try_parse_from([
-            "engine",
-            "replay",
-            "--log",
-            "public",
-            "--chain-id",
-            "31337",
-            "--vault",
-            signer,
-            "--signer",
-            signer,
-        ])
-        .unwrap();
-        assert!(matches!(cli.cmd, Cmd::Replay { custody_config: None, chain_id: Some(31337), signer: Some(_), .. }));
-    }
-
-    #[test]
-    fn exit_proof_takes_an_account_the_house_or_a_deposit_id_but_only_one() {
-        let account = "0x1111111111111111111111111111111111111111";
-        let base = ["engine", "exit-proof", "--log", "public", "--seq", "7"];
-        assert!(Cli::try_parse_from(base).is_err(), "a subject is required");
-        let cli = Cli::try_parse_from([&base[..], &["--account", account]].concat()).unwrap();
-        assert!(matches!(cli.cmd, Cmd::ExitProof { seq: 7, account: Some(_), house: false, deposit: None, .. }));
-        assert!(Cli::try_parse_from([&base[..], &["--house"]].concat()).is_ok());
-        let cli = Cli::try_parse_from([&base[..], &["--deposit", "3"]].concat()).unwrap();
-        assert!(matches!(cli.cmd, Cmd::ExitProof { account: None, house: false, deposit: Some(3), .. }));
-        assert!(Cli::try_parse_from([&base[..], &["--house", "--account", account]].concat()).is_err());
-        assert!(Cli::try_parse_from([&base[..], &["--deposit", "3", "--account", account]].concat()).is_err());
-        assert!(Cli::try_parse_from([&base[..], &["--deposit", "3", "--house"]].concat()).is_err());
-    }
-
-    #[test]
-    fn ct_watch_needs_a_config_and_takes_allow_mock_as_a_flag() {
-        assert!(Cli::try_parse_from(["engine", "ct-watch"]).is_err());
-        let cli = Cli::try_parse_from(["engine", "ct-watch", "--config", "watch.toml"]).unwrap();
-        assert!(matches!(cli.cmd, Cmd::CtWatch(_)));
-        assert!(Cli::try_parse_from(["engine", "ct-watch", "-c", "watch.toml", "--allow-mock"]).is_ok());
-    }
-}
+mod replay_cli_tests;

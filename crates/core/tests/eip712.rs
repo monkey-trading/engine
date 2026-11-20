@@ -367,3 +367,51 @@ fn recovery_accepts_exactly_what_recovery_and_a_full_verification_accept() {
     // Both outcomes were reached: a genuine signature each, and its high-S twin refused each.
     assert!(accepted >= 48 && refused >= 48, "accepted {accepted}, refused {refused}");
 }
+
+#[test]
+fn a_signature_is_well_formed_exactly_when_recovery_reads_its_form() {
+    use engine_core::eip712::B256;
+    use k256::ecdsa::Signature as EcdsaSignature;
+    use k256::elliptic_curve::PrimeField;
+    use k256::elliptic_curve::scalar::IsHigh;
+    use sha3::{Digest, Keccak256};
+
+    // The form recovery reads: an Ethereum recovery id, both scalars in range, and a low `s`.
+    let readable = |signed: &Signature| {
+        matches!(signed[64], 27 | 28)
+            && EcdsaSignature::from_slice(&signed[..64]).is_ok_and(|ecdsa| !bool::from(ecdsa.s().is_high()))
+    };
+    let (mut formed, mut malformed) = (0, 0);
+    for seed in 1..=48u8 {
+        let key = SigningKey::from_slice(&Keccak256::digest([seed])).unwrap();
+        let hash = B256::from(<[u8; 32]>::from(Keccak256::digest([seed, 1])));
+        let signed = eip712::sign(&key, &hash);
+        let low = EcdsaSignature::from_slice(&signed[..64]).unwrap();
+        let high = EcdsaSignature::from_scalars(low.r().to_repr(), (-low.s()).to_repr()).unwrap();
+        let mut variants = vec![signed];
+        for (s, v) in [(low, 55 - signed[64]), (high, signed[64]), (low, 0), (low, 29)] {
+            let mut changed = signed;
+            changed[..64].copy_from_slice(&s.to_bytes());
+            changed[64] = v;
+            variants.push(changed);
+        }
+        for offset in [0, 32] {
+            for invalid in [[0; 32], hex!("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141")] {
+                let mut bad = signed;
+                bad[offset..offset + 32].copy_from_slice(&invalid);
+                variants.push(bad);
+            }
+        }
+        let mut garbled = signed;
+        garbled[..64].copy_from_slice(&Keccak256::digest([seed, 3]).repeat(2));
+        variants.push(garbled);
+        for signed in variants {
+            assert_eq!(eip712::well_formed(&signed), readable(&signed), "seed {seed}");
+            // Whatever recovers a key is well formed.
+            assert!(eip712::recover(&hash, &signed).is_none() || eip712::well_formed(&signed), "seed {seed}");
+            if readable(&signed) { formed += 1 } else { malformed += 1 }
+        }
+    }
+    // Both outcomes were reached: a genuine signature and its id-swapped twin each, and the rest refused.
+    assert!(formed >= 96 && malformed >= 48 * 6, "formed {formed}, malformed {malformed}");
+}

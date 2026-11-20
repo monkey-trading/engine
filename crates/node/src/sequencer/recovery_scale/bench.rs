@@ -1,6 +1,8 @@
 //! The replay's cost on a log of launch flow kept between runs, for profiling: `REPLAY_BENCH_DIR` holds
-//! the book's encoding and the log, written on the first run and replayed on each, its seals checked
-//! ahead by `RECOVERY_REPLAY_WORKERS` threads (one per core).
+//! the book's encoding and the log, written on the first run and replayed on each, its seals checked at
+//! the end of each run, as `engine replay` checks them, or with `REPLAY_BENCH_SEALS=every` each in full
+//! ahead of the replay by `RECOVERY_REPLAY_WORKERS` threads (one per core). Each run prints its wall
+//! time and the CPU time the process spent on it, on every thread.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -9,12 +11,12 @@ use std::time::{Duration, Instant};
 use engine_core::types::AccountId;
 
 use crate::common::launch_book::{NamedCounts, build};
-use crate::log::ReplayWorkers;
+use crate::log::{ReplayWorkers, SealChecks};
 use crate::sequencer::recovery_scale::flow::Flow;
 use crate::sequencer::recovery_scale::orders::Traders;
 use crate::sequencer::recovery_scale::paired::{Paired, node_config};
 use crate::sequencer::recovery_scale::restart::replay;
-use crate::sequencer::recovery_scale::{ACCOUNTS, Base, TRADERS, env, mix, rates};
+use crate::sequencer::recovery_scale::{ACCOUNTS, Base, TRADERS, cpu_secs, env, mix, rates};
 use crate::tee::EnclaveKey;
 
 #[test]
@@ -31,15 +33,20 @@ fn replay_bench() {
     println!("BENCH base_read_s={:.1}", started.elapsed().as_secs_f64());
     let cores = std::thread::available_parallelism().expect("the cores this process may use");
     let workers = ReplayWorkers::from(env("RECOVERY_REPLAY_WORKERS", cores));
+    let every = std::env::var("REPLAY_BENCH_SEALS").is_ok_and(|seals| seals == "every");
+    let seals = if every { SealChecks::Every(workers) } else { SealChecks::RunEnds };
     for _ in 0..env("REPLAY_BENCH_RUNS", 1) {
-        println!("BENCH replay_start pid={}", std::process::id());
-        let replayed = replay(&base, &dir.join("log"), signer, workers);
+        println!("BENCH replay_start pid={} seals={seals:?}", std::process::id());
+        let cpu = cpu_secs();
+        let replayed = replay(&base, &dir.join("log"), signer, seals);
+        let cpu = cpu_secs() - cpu;
         println!(
-            "BENCH replay commands={} checkpoints={} s={:.1} commands_per_s={:.0}",
+            "BENCH replay commands={} checkpoints={} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1} cpu_us_per_command={:.1}",
             replayed.commands,
             replayed.checkpoints,
             replayed.took.as_secs_f64(),
-            replayed.rate()
+            replayed.rate(),
+            cpu * 1e6 / replayed.commands as f64
         );
     }
 }

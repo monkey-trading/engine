@@ -1,5 +1,7 @@
 //! Read-only origin validation shared by full replay and snapshot suffix replay.
 
+mod seals;
+
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -11,6 +13,7 @@ use engine_core::types::AccountId;
 
 use crate::log::command_seal::{checkpoint_link, command_link};
 use crate::log::{Checkpoint, CheckpointDomain, CommandEntry, ReplayWorkers, SealsAhead};
+use crate::sequencer::origin::seals::{Runs, Seals};
 
 /// Tracks tentative replay spans until independent authority covers them.
 #[derive(Default)]
@@ -30,8 +33,9 @@ pub(crate) struct Origin {
     /// A copy of another node's log: every command a checkpoint covers must carry a seal by an accepted
     /// signer, as its writer wrote it (see `copy`).
     copy: bool,
-    /// The seals of the commands still to come, checked ahead of them (`check_ahead`).
-    ahead: Option<SealsAhead>,
+    /// How seals are checked: every one in full, in place or ahead of the replay (`check_ahead`), or each
+    /// run's first and last in full (`check_run_ends`).
+    seals: Seals,
 }
 
 impl Origin {
@@ -62,37 +66,76 @@ impl Origin {
     /// ahead of them by `workers`, until `stop_checking_ahead` (`SealsAhead`): each is still checked
     /// before its command applies, with the same verdict.
     pub(crate) fn check_ahead(&mut self, path: &Path, from: u64, workers: ReplayWorkers) {
-        self.ahead = SealsAhead::start(path, from, self.link, workers);
+        self.seals = Seals::Every(SealsAhead::start(path, from, self.link, workers));
+    }
+
+    /// Checks every later seal's form, and in full only the first and last seal of each run of one signer's
+    /// seals, as `engine replay` does (see `seals`), in place of every seal in full.
+    pub(crate) fn check_run_ends(&mut self) {
+        self.seals = Seals::RunEnds(Runs::default());
     }
 
     /// Checks every later seal in place, stopping the checks ahead (`check_ahead`).
     pub(crate) fn stop_checking_ahead(&mut self) {
-        self.ahead = None;
+        if let Seals::Every(ahead) = &mut self.seals {
+            *ahead = None;
+        }
+    }
+
+    /// Ends the open run, if any, checking its last seal in full (`check_run_ends`). A replay checking run
+    /// ends calls it before it reports any later fault, after the root still due, so a run's failed seal
+    /// comes in log order, and before it finishes.
+    /// Error cases:
+    /// - the run's last seal does not verify over its link
+    pub(crate) fn end_run(&mut self) -> anyhow::Result<()> {
+        self.seals.end_run()
+    }
+
+    /// Discards the open run unchecked (`check_run_ends`): a fault the replay found before it, which it
+    /// reports, makes the run moot.
+    pub(crate) fn drop_run(&mut self) {
+        self.seals.drop_run();
+    }
+
+    /// Whether a run is open, its last seal unchecked (`check_run_ends`).
+    pub(crate) fn run_open(&self) -> bool {
+        self.seals.run_open()
     }
 
     /// How many seals' verdicts this replay took from the checks ahead (`check_ahead`).
     #[cfg(test)]
     pub(crate) fn seals_taken_ahead(&self) -> u64 {
-        self.ahead.as_ref().map_or(0, SealsAhead::taken_ahead)
+        match &self.seals {
+            Seals::Every(Some(ahead)) => ahead.taken_ahead(),
+            _ => 0,
+        }
     }
 
-    /// Checks a present seal before applying a command and retains every uncovered span.
+    /// How many seals this replay checked in full at run ends (`check_run_ends`).
+    #[cfg(test)]
+    pub(crate) fn seals_checked(&self) -> u64 {
+        self.seals.seals_checked()
+    }
+
+    /// Checks a present seal before applying a command (`seals`) and retains every uncovered span.
     /// Error cases:
-    /// - encoding, domain, events, or the present cryptographic seal is invalid
+    /// - encoding, domain, events, or the present cryptographic seal is invalid, or at run ends malformed
+    /// - at run ends, the run this command's seal, or its lack of one, ends does not verify, or the seal
+    ///   opens a run and does not verify
     pub(crate) fn command(&mut self, command: &CommandEntry, version: ProtocolVersion) -> anyhow::Result<()> {
         let link = command_link(self.link, command)?;
         let mut trusted = false;
         if let Some(seal) = &command.seal {
             ensure!(command.events.is_some(), "sealed command lacks logged events");
             ensure!(self.domain.is_none_or(|domain| domain == seal.domain), "command seal deployment mismatch");
-            match &mut self.ahead {
-                Some(ahead) => ahead.verify(command.sequenced.seq, seal, link)?,
-                None => seal.verify(link)?,
-            }
+            self.seals.check(command.sequenced.seq, seal, link)?;
             trusted = match &self.attested {
                 Some(attested) => attested.contains(&seal.signer) && self.domain == Some(seal.domain),
                 None => self.signer == Some(seal.signer) && self.domain == Some(seal.domain),
             };
+        } else {
+            // A command with no seal ends the run before it, whose last seal is then checked.
+            self.seals.end_run()?;
         }
         if !trusted && self.first_untrusted.is_none() {
             self.first_untrusted = Some(command.sequenced.seq);
@@ -127,8 +170,10 @@ impl Origin {
         Ok(())
     }
 
-    /// Advances only after every existing checkpoint authority and parent check passed.
+    /// Advances only after every existing checkpoint authority and parent check passed, ending the run
+    /// before it (`end_run`), since the chain restarts here.
     /// Error cases:
+    /// - the run before it does not verify (`end_run`)
     /// - the checkpoint root is malformed, or its authenticated deployment conflicts
     /// - in a copy, it covers a command sealed by no accepted signer
     pub(crate) fn checkpoint(
@@ -137,6 +182,7 @@ impl Origin {
         domain: CheckpointDomain,
         authenticated: bool,
     ) -> anyhow::Result<()> {
+        self.seals.end_run()?;
         self.link = checkpoint_link(checkpoint)?;
         if authenticated {
             ensure!(
@@ -256,145 +302,4 @@ impl Origin {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tee::EnclaveKey;
-    use engine_core::command::{Command, Sequenced};
-
-    fn command(seq: u64) -> CommandEntry {
-        CommandEntry {
-            sequenced: Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick },
-            events: Some(Vec::new()),
-            seal: None,
-        }
-    }
-
-    #[test]
-    fn an_unsealed_span_cannot_be_laundered_by_a_later_sealed_command() {
-        let key = EnclaveKey::test_key();
-        let signer = AccountId(key.address());
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
-        let mut origin = Origin::new(Some(domain), Some(signer));
-        origin.command(&command(0), ProtocolVersion::V2).unwrap();
-        let mut later = command(1);
-        later.seal = Some(key.seal_command(domain, command_link(origin.link, &later).unwrap()));
-        origin.command(&later, ProtocolVersion::V2).unwrap();
-        assert_eq!(
-            origin.require_recovery(domain, signer).unwrap_err().to_string(),
-            "unauthenticated command tail starts at seq 0"
-        );
-    }
-
-    #[test]
-    fn current_key_sealed_tail_is_recoverable_without_its_next_checkpoint() {
-        let key = EnclaveKey::test_key();
-        let signer = AccountId(key.address());
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
-        let mut origin = Origin::new(Some(domain), Some(signer));
-        let mut entry = command(0);
-        let expected = command_link(origin.link, &entry).unwrap();
-        entry.seal = Some(key.seal_command(domain, expected));
-        origin.command(&entry, ProtocolVersion::V2).unwrap();
-        origin.require_recovery(domain, signer).unwrap();
-        assert_eq!(origin.link, expected);
-        assert!(origin.require_recovery(domain, AccountId([1; 20])).is_err());
-        let mut audit = Origin::default();
-        audit.command(&entry, ProtocolVersion::V2).unwrap();
-        assert!(audit.require_recovery(domain, signer).is_err());
-    }
-
-    #[test]
-    fn a_different_key_seal_cannot_authorize_an_unanchored_tail() {
-        let key = EnclaveKey::test_key();
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
-        let mut origin = Origin::new(Some(domain), Some(AccountId([1; 20])));
-        let mut entry = command(0);
-        entry.seal = Some(key.seal_command(domain, command_link(origin.link, &entry).unwrap()));
-        origin.command(&entry, ProtocolVersion::V2).unwrap();
-        assert_eq!(
-            origin.require_recovery(domain, AccountId([1; 20])).unwrap_err().to_string(),
-            "unauthenticated command tail starts at seq 0"
-        );
-    }
-    #[test]
-    fn a_historical_staking_seal_needs_its_own_authorized_checkpoint_signer() {
-        let historical = EnclaveKey::test_key();
-        let current = EnclaveKey::generate();
-        let current_signer = AccountId(current.address());
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
-        let mut origin = Origin::new(Some(domain), Some(current_signer));
-        let mut entry = command(0);
-        entry.sequenced.cmd = Command::Stake {
-            account: AccountId([8; 20]),
-            amount: engine_core::emissions::TokenUnits(1),
-            block: 1,
-            chain_ref: "old-stake".into(),
-        };
-        entry.seal = Some(historical.seal_command(domain, command_link(origin.link, &entry).unwrap()));
-        origin.command(&entry, ProtocolVersion::V25).unwrap();
-        let root = [1; 32];
-        let checkpoint = Checkpoint {
-            parent: None,
-            seq: 0,
-            root: format!("0x{}", hex::encode(root)),
-            signature: historical.sign_checkpoint(domain.chain_id, &domain.vault.0, 0, &root),
-            signer: historical.address_hex(),
-            domain: Some(domain),
-            deferred_withdrawals: false,
-        };
-        origin.checkpoint(&checkpoint, domain, true).unwrap();
-        origin.require_recovery(domain, current_signer).unwrap();
-    }
-
-    /// A copy of another node's log refuses a command with no seal, or one sealed by a key it does not
-    /// accept, once a checkpoint covers it; a tail no checkpoint covers, an accepted signer's command
-    /// after it or not, is left to the caller, which `first_untrusted` names with its first sealer, and
-    /// which a handover's or a takeover's replay refuses and a follower's replica cuts back.
-    #[test]
-    fn a_copy_refuses_a_missing_or_foreign_seal_once_a_checkpoint_covers_it() {
-        let (writer, foreign) = (EnclaveKey::test_key(), EnclaveKey::generate());
-        let domain = CheckpointDomain { chain_id: 31337, vault: AccountId([7; 20]) };
-        let accepted: BTreeSet<_> = [AccountId(writer.address())].into();
-        let sealed = |origin: &Origin, seq: u64, key: Option<&EnclaveKey>| {
-            let mut entry = command(seq);
-            entry.seal = key.map(|key| key.seal_command(domain, command_link(origin.link, &entry).unwrap()));
-            entry
-        };
-        let checkpoint = Checkpoint {
-            parent: None,
-            seq: 1,
-            root: format!("0x{}", hex::encode([1; 32])),
-            signature: String::new(),
-            signer: writer.address_hex(),
-            domain: Some(domain),
-            deferred_withdrawals: false,
-        };
-        for (case, key) in [("no seal", None), ("a foreign seal", Some(&foreign))] {
-            let mut origin = Origin::copy(domain, accepted.clone());
-            origin.command(&sealed(&origin, 0, Some(&writer)), ProtocolVersion::LATEST).unwrap();
-            let second = sealed(&origin, 1, key);
-            origin
-                .command(&second, ProtocolVersion::LATEST)
-                .unwrap_or_else(|e| panic!("{case}: refused uncovered: {e:#}"));
-            let sealer = key.map(|key| AccountId(key.address()));
-            assert_eq!(origin.first_untrusted(), Some((1, sealer)), "{case}: the tail's start or its sealer");
-            // The uncovered tail opens a follower's replica, and a handover's or takeover's replay refuses it.
-            assert!(origin.require_attested(&accepted).is_err(), "{case}: an uncovered foreign tail passed");
-            let refused = origin.checkpoint(&checkpoint, domain, true).unwrap_err();
-            assert!(refused.to_string().contains("seq 1 carries no seal by an accepted signer"), "{case}: {refused:#}");
-        }
-        // A foreign seal an accepted signer's command follows is still the copy's uncovered tail.
-        let mut origin = Origin::copy(domain, accepted.clone());
-        origin.command(&sealed(&origin, 0, Some(&foreign)), ProtocolVersion::LATEST).unwrap();
-        origin.command(&sealed(&origin, 1, Some(&writer)), ProtocolVersion::LATEST).unwrap();
-        assert_eq!(origin.first_untrusted(), Some((0, Some(AccountId(foreign.address())))), "the tail's start");
-        assert!(origin.require_attested(&accepted).is_err(), "an uncovered foreign seal passed");
-        // The writer's own seals pass, covered or not.
-        let mut origin = Origin::copy(domain, accepted.clone());
-        for seq in 0..2 {
-            origin.command(&sealed(&origin, seq, Some(&writer)), ProtocolVersion::LATEST).unwrap();
-        }
-        origin.checkpoint(&checkpoint, domain, true).unwrap();
-        origin.require_attested(&accepted).unwrap();
-    }
-}
+mod tests;

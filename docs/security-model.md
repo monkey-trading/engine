@@ -404,16 +404,41 @@ against their chain, their vault and their named signer. Each new checkpoint als
 sequence number and root of its predecessor, which the vault compares atomically, so two publishers
 with one key cannot both extend the vault's chain.
 
-A replay checks the enclave's seal on each instruction on a pool of threads, one per core unless
-`node.replay_workers` or `engine replay --replay-workers` sets another number. A second reader of the
-log's files finds each sealed instruction ahead of the replay, and the threads check its seal while
-the replay applies the instructions before it. The replay applies an instruction only once its own
-seal has been checked, and in log order. It uses a thread's verdict only for the seal and the
-chained digest that it computed itself from the instruction it applies. Any other seal it checks
-itself, and once the second reader passes an instruction the replay never reaches, it checks every
-later seal itself. A host that serves different bytes to the two readers therefore changes only which
-thread checks a seal, and a seal that fails stops the replay at its instruction with the same error. A
-log that cannot be read a second time, such as a pipe, is checked entirely by the replay's own thread.
+The enclave seals each instruction: it signs a chained digest of the instruction, its stamp and its
+events, chained to the digest before it back to the last checkpoint, whose sequence number and root
+start the chain. `engine replay` computes every instruction's chained digest, and checks that every
+seal is well formed: a 65-byte signature with an Ethereum recovery id, both scalars in range and a
+low `s`, a signer that is not zero, the log's deployment once the replay knows it, and logged
+events. It checks a seal's signature in full only at the first and last instruction of each run. A
+run is the longest stretch of consecutive instructions in one checkpoint interval whose seals name
+the same signer and deployment. A run ends at a checkpoint, at a seal that names another signer or
+deployment, at an instruction with no seal, and at the end of the log, so a run never spans a change
+of the signer its seals name. The run's last seal signs a digest that chains every instruction,
+stamp and event set since the checkpoint, so when it verifies, its signer chained exactly those
+instructions in that order, barring a keccak-256 collision. An instruction altered, inserted,
+dropped or reordered after it was sealed therefore fails the replay at a seal of its run or of the
+next run in the interval, and the error names that seal and its run. A run whose seals were
+relabelled to name the signer of the run after it, so the two merge, fails at its first seal, and
+one relabelled to name the signer of the run before it fails at its last. The replay checks the open
+run before it reports any later fault, so the run's failure comes in log order. It applies a run's
+instructions before the seal that authenticates them is checked, which changes only where a fault is
+reported, since an audit acts on nothing. `engine replay --every-seal` checks every seal in full, as
+below.
+
+A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
+replica build and a taken copy's replay check every seal in full, since each goes on to sign over,
+or hold as its own, the running digest of every instruction that log heads carry (below), which
+reads each seal's bytes. A replay that checks every seal checks them on a pool of threads, one per
+core unless `node.replay_workers` or `engine replay --replay-workers` sets another number. A second
+reader of the log's files finds each sealed instruction ahead of the replay, and the threads check
+its seal while the replay applies the instructions before it. The replay applies an instruction only
+once its own seal has been checked, and in log order. It uses a thread's verdict only for the seal
+and the chained digest that it computed itself from the instruction it applies. Any other seal it
+checks itself, and once the second reader passes an instruction the replay never reaches, it checks
+every later seal itself. A host that serves different bytes to the two readers therefore changes
+only which thread checks a seal, and a seal that fails stops the replay at its instruction with the
+same error. A log that cannot be read a second time, such as a pipe, is checked entirely by the
+replay's own thread.
 
 A replay of a whole log, as `engine replay`, a recovery and a taken copy's replay read one, also
 makes its own read, which checks and parses the log, on a thread of its own, and applies each
@@ -458,6 +483,13 @@ sequence number it retains, freezes sequencing.
 
 Known limits:
 
+- `engine replay` checks the seals between a run's first and last only for their form, since the
+  chained digest leaves seals out. A log whose signatures there were altered, their signer and
+  deployment kept, replays to the same state, events and roots, but its running digest, which reads
+  each seal's bytes, differs from its writer's and from any posted log head that covers it. So does
+  a log in which the seals of a block of instructions between two runs of one signer were relabelled
+  to name that signer, although that signer's last seal chains them. `engine replay --every-seal`
+  refuses both, as every replay that checks every seal does.
 - These checks reach only as far as the vault's checkpoints and the posted heads. Within that reach,
   whoever runs the trading server can choose after the fact whether its own recent instructions
   happened, by holding a sync or by cutting the log back, as the items below describe.
