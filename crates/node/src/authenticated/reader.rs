@@ -12,7 +12,7 @@ use crate::authenticated::codec;
 use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
 /// The most nodes an operation keeps checked: a writing reader's node budget.
-pub(super) const CHECKED_NODES: usize = 1 + PHYSICAL_UPDATES * 64 * 16;
+pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
 
 /// The nodes one operation has checked against an authenticated parent, each with the hash it was
 /// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed once
@@ -21,6 +21,22 @@ pub(super) const CHECKED_NODES: usize = 1 + PHYSICAL_UPDATES * 64 * 16;
 pub(super) struct Checked {
     nodes: RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>,
     limit: usize,
+}
+
+pub(super) struct Reader<'a> {
+    conn: &'a Connection,
+    root: Root,
+    cache: RefCell<BTreeMap<NodeKey, Node>>,
+    /// The parents whose children this reader has loaded and checked.
+    prepared: RefCell<BTreeSet<NodeKey>>,
+    checked: &'a Checked,
+    reads_left: Cell<usize>,
+    bytes_left: Cell<usize>,
+}
+
+/// The nodes a reader of `keys` point paths may load: the root and each path's 64 levels of 16 children.
+const fn node_budget(keys: usize) -> usize {
+    1 + keys * 64 * 16
 }
 
 impl Default for Checked {
@@ -43,17 +59,6 @@ impl Checked {
     }
 }
 
-pub(super) struct Reader<'a> {
-    conn: &'a Connection,
-    root: Root,
-    cache: RefCell<BTreeMap<NodeKey, Node>>,
-    /// The parents whose children this reader has loaded and checked.
-    prepared: RefCell<BTreeSet<NodeKey>>,
-    checked: &'a Checked,
-    reads_left: Cell<usize>,
-    bytes_left: Cell<usize>,
-}
-
 impl<'a> Reader<'a> {
     /// Creates bounded per-operation state, authenticating the root before it can be traversed, with
     /// the nodes the operation has checked so far.
@@ -62,7 +67,7 @@ impl<'a> Reader<'a> {
     pub(super) fn new(conn: &'a Connection, root: &Root, writing: bool, checked: &'a Checked) -> Result<Self> {
         root.validate()?;
         let keys = if writing { PHYSICAL_UPDATES } else { 1 };
-        let nodes = 1 + keys * 64 * 16;
+        let nodes = node_budget(keys);
         let reader = Self {
             conn,
             root: root.clone(),

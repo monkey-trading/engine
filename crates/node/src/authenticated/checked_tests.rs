@@ -74,6 +74,22 @@ fn a_session_reads_as_a_lease_does_and_proves_every_value() -> Result<()> {
     Ok(())
 }
 
+/// A session checks the schema at its first read and refuses that read on a schema the host changed; a
+/// session whose first read was refused checks it afresh at its next.
+#[test]
+fn a_session_checks_the_schema_at_its_first_read() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let root = store.update(&Root::empty([25; 32]), vec![put(b"a", b"A")])?;
+    let lease = store.lease(&root)?;
+    let conn = raw(&dir)?;
+    conn.execute_batch("CREATE TRIGGER injected AFTER INSERT ON value_rows BEGIN DELETE FROM nodes; END;")?;
+    let mut session = lease.session();
+    assert!(session.read(b"a").is_err(), "a changed schema is refused at the first read");
+    conn.execute_batch("DROP TRIGGER injected")?;
+    assert_eq!(session.read(b"a")?, Some(b"A".to_vec()), "the next read checks the schema afresh");
+    Ok(())
+}
+
 /// An operation keeps at most its limit of nodes checked, however many it reads: past it it forgets
 /// what it recorded and checks nodes afresh, and every read still gives its value.
 #[test]
