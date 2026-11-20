@@ -132,11 +132,12 @@ pub(super) fn conclude(
         secs as f64 / DAY_SECS as f64,
         bar_commands * per_command
     );
-    // A projection, whatever the log's length: the calendars' commands at the measured rate.
-    for (name, rate) in [("engine_replay", replayed.rate()), ("node_recovery", recovered.rate())] {
-        let full = Duration::from_secs_f64(bar_commands / rate);
+    // A projection, whatever the log's length: the calendars' commands at the rate measured over the log's
+    // launch flow, up to the launch leg's last command, where the whole log's rate mixes in ten times it.
+    for (name, replay) in [("engine_replay", replayed), ("node_recovery", recovered)] {
+        let (full, rate) = (projected(bar_commands, replay), replay.launch_rate());
         println!(
-            "RECOVERY bar full_replay_{BAR_DAYS}d {name} projected_s={:.0} bar_s={} {}",
+            "RECOVERY bar full_replay_{BAR_DAYS}d {name} launch_commands_per_s={rate:.0} projected_s={:.0} bar_s={} {}",
             full.as_secs_f64(),
             FULL_REPLAY_BAR.as_secs(),
             verdict(full, FULL_REPLAY_BAR)
@@ -181,6 +182,11 @@ pub(super) fn conclude(
         tail_room(),
         ring / peak
     );
+}
+
+/// The time `bar_commands` of launch flow take to replay at `replayed`'s rate over its launch leg.
+pub(super) fn projected(bar_commands: f64, replayed: &Replayed) -> Duration {
+    Duration::from_secs_f64(bar_commands / replayed.launch_rate())
 }
 
 /// The largest tail whose switch, with `start`, the member's start from its replica, fits

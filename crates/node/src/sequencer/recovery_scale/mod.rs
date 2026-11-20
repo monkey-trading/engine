@@ -30,12 +30,13 @@
 //! first command is seq 0, as a log's whose history and catalog start there, each replay starts from
 //! the book where a whole log's starts from an empty engine (`Replay::seeded`), and a recovery "from
 //! genesis" is a recovery that replays every command of the log. The 30-day full replay is projected
-//! from the commands the markets' calendars give 30 days of launch flow and the replay's rate. The
-//! environment sizes the run: `RECOVERY_ACCOUNTS` (100,000), `RECOVERY_TRADERS` (2,000),
-//! `RECOVERY_START_SECS` (how long after the book's clock, Monday 15:00 UTC, the flow starts: 0),
-//! `RECOVERY_LAUNCH_SECS` (30 days), `RECOVERY_TEN_TIMES_SECS` (3 days), `RECOVERY_CAPTURE_SECS` (300),
-//! `RECOVERY_SUFFIX_SECS` (300), `RECOVERY_TAILS` (bytes, comma-separated) and `RECOVERY_REPLAY_WORKERS`
-//! (the threads that check command seals ahead of each replay, the node's included: one per core).
+//! from the commands the markets' calendars give 30 days of launch flow and the replay's rate over the
+//! launch leg, to its last command. The environment sizes the run: `RECOVERY_ACCOUNTS` (100,000),
+//! `RECOVERY_TRADERS` (2,000), `RECOVERY_START_SECS` (how long after the book's clock, Monday 15:00 UTC,
+//! the flow starts: 0), `RECOVERY_LAUNCH_SECS` (30 days), `RECOVERY_TEN_TIMES_SECS` (3 days),
+//! `RECOVERY_CAPTURE_SECS` (300), `RECOVERY_SUFFIX_SECS` (300), `RECOVERY_TAILS` (bytes, comma-separated)
+//! and `RECOVERY_REPLAY_WORKERS` (the threads that check command seals ahead of each replay, the node's
+//! included: one per core).
 
 mod bench;
 mod cache;
@@ -45,6 +46,8 @@ mod orders;
 mod paired;
 mod report;
 mod restart;
+#[cfg(test)]
+mod tests;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -210,7 +213,10 @@ async fn run() {
     println!("RECOVERY log seq={} bytes={log_total} rss_mib={}", last.seq, rss_mib());
 
     // `engine replay`'s replay, then the restart from the cache.
-    let replayed = replay(&base, &log, signer, SealChecks::RunEnds);
+    // Each replay is also timed up to the launch leg's last command, the commands the 30-day projection
+    // counts being launch flow's alone.
+    let launch_last = days.iter().rfind(|day| day.multiple == 1.0).map_or(0, |day| day.seq);
+    let replayed = replay(&base, &log, signer, SealChecks::RunEnds, launch_last);
     print_replay("engine_replay", &replayed);
     let restarted = cache::restart(&cfg, key.clone(), (interval, end_ts), &run.join("restart"))
         .await
@@ -220,7 +226,7 @@ async fn run() {
     assert_eq!(restarted.last_checkpoint, last.seq, "the takeover cut reads the log's last checkpoint");
 
     // A node's recovery by full replay, to its first command, which then holds the log.
-    let recovered = recover(&base, &log, &run, key.clone(), workers).expect("the node recovers the log");
+    let recovered = recover(&base, &log, &run, key.clone(), workers, launch_last).expect("the node recovers the log");
     print_replay("node_recovery", &recovered.replayed);
     println!(
         "RECOVERY node_recovery start_s={:.2} first_command_s={:.1} rss_mib={}",
@@ -286,7 +292,7 @@ fn write_log(node: &mut Node, flow: &mut Flow, log: &std::path::Path) -> Vec<Day
     for (secs, multiple) in legs {
         flow.run(node, Duration::from_secs(secs), multiple, |node, sequenced, took| {
             let (seq, bytes) = (node.seq.last_seq().unwrap_or(0), log_bytes(log));
-            let day = Day { multiple, commands: seq - seq_at, bytes: bytes - bytes_at, sequenced };
+            let day = Day { multiple, seq, commands: seq - seq_at, bytes: bytes - bytes_at, sequenced };
             (seq_at, bytes_at) = (seq, bytes);
             println!(
                 "RECOVERY day={} flow={multiple}x secs={} commands={} bytes={} prices={} requests={} fills={} rejected={} \
@@ -312,9 +318,11 @@ fn write_log(node: &mut Node, flow: &mut Flow, log: &std::path::Path) -> Vec<Day
     days
 }
 
-/// One day of the log: its flow, the commands and bytes it wrote, and what it sequenced.
+/// One day of the log: its flow, where it ended, the commands and bytes it wrote, and what it sequenced.
 struct Day {
     multiple: f64,
+    /// The log's last seq at the day's end.
+    seq: u64,
     commands: u64,
     bytes: u64,
     sequenced: Sequenced,

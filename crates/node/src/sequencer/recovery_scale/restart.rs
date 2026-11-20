@@ -24,7 +24,7 @@ use crate::node::marks::recovery_sink;
 use crate::sequencer::Sequencer;
 use crate::sequencer::recovery_scale::Base;
 use crate::sequencer::recovery_scale::flow::Node;
-use crate::sequencer::replay::replay_path_from;
+use crate::sequencer::replay::replay_path_from_observing;
 use crate::tee::EnclaveKey;
 use crate::test_support::{dev_config, stats};
 
@@ -36,12 +36,51 @@ pub(super) struct Replayed {
     pub commands: u64,
     pub checkpoints: u64,
     pub took: Duration,
+    /// The commands and wall time up to the launch leg's last command, when the replay timed them.
+    pub launch: Option<(u64, Duration)>,
 }
 
 impl Replayed {
     /// Commands a second.
     pub(super) fn rate(&self) -> f64 {
         self.commands as f64 / self.took.as_secs_f64()
+    }
+
+    /// Commands a second over the log up to the launch leg's last command, the ten-times leg and the
+    /// suffix left out, which the 30-day projection of launch flow's commands is divided by.
+    pub(super) fn launch_rate(&self) -> f64 {
+        let (commands, took) = self.launch.expect("the replay timed the launch leg");
+        commands as f64 / took.as_secs_f64()
+    }
+}
+
+/// A replay's progress at the launch leg's last command, `through`: the commands applied before the
+/// first one past it, and the wall time then.
+pub(super) struct Through {
+    seq: u64,
+    commands: u64,
+    started: Instant,
+    reached: Option<(u64, Duration)>,
+}
+
+impl Through {
+    /// Timing from now, up to the command at `seq`.
+    pub(super) fn new(seq: u64) -> Self {
+        Through { seq, commands: 0, started: Instant::now(), reached: None }
+    }
+
+    /// Sees `entry`, about to be applied.
+    pub(super) fn observe(&mut self, entry: &LogEntry) {
+        let LogEntry::Command(command) = entry else { return };
+        if self.reached.is_none() && command.sequenced.seq > self.seq {
+            self.reached = Some((self.commands, self.started.elapsed()));
+        }
+        self.commands += 1;
+    }
+
+    /// The commands and time through `seq`, as of the replay's end `took` if no command came after it.
+    pub(super) fn finish(self, took: Duration) -> (u64, Duration) {
+        self.reached.unwrap_or((self.commands, took))
     }
 }
 
@@ -58,11 +97,15 @@ pub(super) struct Recovered {
 
 /// `engine replay`'s replay of the log in `dir` from the book: every command's events, every
 /// checkpoint's root and signature, and the command seals, under `signer`, checked as `seals` says.
-pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId, seals: SealChecks) -> Replayed {
+pub(super) fn replay(base: &Base, dir: &Path, signer: AccountId, seals: SealChecks, launch_last: u64) -> Replayed {
     let engine = base.engine();
+    let mut through = Through::new(launch_last);
     let started = Instant::now();
-    let replayed = replay_path_from(engine, dir, signer, seals).expect("the log replays to its roots from the book");
-    Replayed { commands: replayed.commands, checkpoints: replayed.checkpoints, took: started.elapsed() }
+    let replayed = replay_path_from_observing(engine, dir, signer, seals, |entry| through.observe(entry))
+        .expect("the log replays to its roots from the book");
+    let took = started.elapsed();
+    let launch = Some(through.finish(took));
+    Replayed { commands: replayed.commands, checkpoints: replayed.checkpoints, took, launch }
 }
 
 /// A node's recovery of the log in `dir` by full replay, as `node::recovery` reads a log with no cache:
@@ -78,19 +121,25 @@ pub(super) fn recover(
     run: &Path,
     key: Arc<EnclaveKey>,
     workers: ReplayWorkers,
+    launch_last: u64,
 ) -> anyhow::Result<Recovered> {
     let history = HistorySection { dir: run.join("history"), ..dev_config().history };
     let marks = Rc::new(RefCell::new(Store::open_in(&run.join("marks"), Retentions::defaults(), key.marks_key())?));
     let (sink, failed, _) = recovery_sink(&marks);
     let mut check = HistoryCheck::open(&history)?;
     let engine = base.engine();
+    let mut through = Through::new(launch_last);
     let started = Instant::now();
     let signer = AccountId(key.address());
-    let observe = |entry: &LogEntry| check.observe(entry);
+    let observe = |entry: &LogEntry| {
+        through.observe(entry);
+        check.observe(entry)
+    };
     let log = Sequencer::read_log_from(engine, dir, (DOMAIN, signer), Some(sink), Some(stats()), observe, workers)?;
     ensure!(!failed.get(), "seeding the marks cache from the log failed");
-    let replayed =
-        Replayed { commands: log.replayed.commands, checkpoints: log.replayed.checkpoints, took: started.elapsed() };
+    let took = started.elapsed();
+    let launch = Some(through.finish(took));
+    let replayed = Replayed { commands: log.replayed.commands, checkpoints: log.replayed.checkpoints, took, launch };
     let history = check.finish()?;
     let starting = Instant::now();
     let mut node = Node::recovered(log, dir, key, None)?;

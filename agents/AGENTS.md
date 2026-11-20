@@ -929,7 +929,7 @@ an index: load only the rule whose hint matches the current action.
   minute, and fails a flow that closes no period or epoch, a day of flow that priced or filled nothing or rejected over
   1% of its requests, and
   prints each figure against #904's recovery bar, the 30-day replay projected from the markets' calendars and the
-  replay's rate, and the largest tail whose switch fits the daily rotation's 1 s;
+  replay's rate over the launch leg, and the largest tail whose switch fits the daily rotation's 1 s;
   `dev-loss-trigger.sh`, the house loss
   trigger's dev scenario from `V62` against the same stand-ins (`feeds/tests/loss_trigger.rs`, production's zero threshold
   and a 30 s cooldown): BTC at level 2 on the move that puts the house behind on the day, and back down after the cooldown

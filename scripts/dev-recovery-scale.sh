@@ -11,8 +11,8 @@
 # tail handovers grown under launch flow to about 1 MiB, 64 MiB and 1 MiB under the handover's bound,
 # each ending with the member's start from its replica. It prints each day's commands and bytes; each
 # capture's hold on the sequencer against one command's 500 ms; the 30-day full replay projected from
-# the markets' calendars and the replay's rate, against 30 minutes; the restart from the cache against
-# 2 minutes, with its parts and the start's reads of the log outside the cache; each switch against
+# the markets' calendars and the replay's rate over the launch flow, against 30 minutes; the restart from
+# the cache against 2 minutes, with its parts and the start's reads of the log outside the cache; each switch against
 # the daily rotation's 1 s, with whether a predecessor would admit its tail; and the largest tail whose
 # switch fits. It fails if a day of flow priced or filled nothing or rejected over 1% of its requests,
 # the flow closes no MONKEY emission period or staking epoch, a replay does not reach the log's roots,
