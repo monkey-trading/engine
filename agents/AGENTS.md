@@ -1163,7 +1163,9 @@ Run from the repo root:
   `LOAD_SOURCE_DELAY_MS` (the screening source's answer time, 200 ms) size the run (CI's job sets 10,000
   accounts, 200 traders and 16 subscribers); a measured leg that breaks the bar runs once
   more on the same node and fails only if the second run breaks it too, as does each 100k-account latency benchmark
-  that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures
+  that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures; with
+  `ENGINE_BENCH_SCALE_TO_RUNNER=1`, which only CI's job sets, each of those bars is scaled by 1 to 2.5 times a fixed
+  reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
   `RECOVERY_LAUNCH_SECS` set to the days that fit, and read the 30-day replay's projection);

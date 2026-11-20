@@ -19,6 +19,7 @@ use tokio::sync::{broadcast, mpsc};
 use super::{BAR_US, BEFORE, GUARD, PRICES, SPACING, roll_to, sequencer, stream_market};
 use crate::clock::test_clock::TestClock;
 use crate::common::launch_book::{Book, Mix, NamedCounts, build, price_command};
+use crate::common::rerun::{hold, verdict};
 use crate::sequencer::wait_bench::{StampClock, report};
 use crate::sequencer::{Request, StreamBody};
 
@@ -194,17 +195,9 @@ pub(super) fn run() {
     report("mass_rollover_root_prices_after_rollover_done", after_done);
     println!("WAIT mass_rollover_root_account_proofs empty_answers={empty}");
     report("mass_rollover_root_account_proof_reads", std::mem::take(&mut reads));
-    let verdict = |us: u128| if us <= BAR_US { "within" } else { "OVER" };
-    println!(
-        "WAIT bar mass_rollover_root longest_wait_us={longest_window} bar_us={BAR_US} {}",
-        verdict(longest_window)
-    );
-    println!(
-        "WAIT bar mass_rollover_root_after_done longest_wait_us={longest_after_done} bar_us={BAR_US} {}",
-        verdict(longest_after_done)
-    );
+    verdict("mass_rollover_root_longest_wait", longest_window, BAR_US);
     assert!(first.is_some(), "a checkpoint follows the rollover");
     assert!(longest_window < GUARD.as_micros(), "a price waited {longest_window}us after the rollover");
     // The rollover command's own time is #912's and #933's; the root work after it is this case's.
-    assert!(longest_after_done <= BAR_US, "a price waited {longest_after_done}us behind the rollover's root work");
+    hold("mass_rollover_root_after_done_longest_wait", longest_after_done, BAR_US);
 }

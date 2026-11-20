@@ -13,7 +13,7 @@
 use super::common::close_spread::trade;
 use super::common::session_keys::funded_at;
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold, hold_at, rerun_once, scaled};
 use engine_core::event::Event;
 use engine_core::toxicity::GRID_MS;
 
@@ -78,7 +78,7 @@ fn toxicity_fill_latency_measured() {
         h.price(BTC, "100000");
         let scored = began.elapsed().as_micros();
         println!("LATENCY toxicity_scoring_{version:?} markouts={} us={scored}", QUEUED + 2 * SAMPLES);
-        assert!(scored <= 50_000, "scoring the due markouts took {scored}us");
+        hold("toxicity_scoring", scored, 50_000);
         let began = Instant::now();
         h.engine.state_root();
         let root = began.elapsed().as_micros();
@@ -87,7 +87,7 @@ fn toxicity_fill_latency_measured() {
             "LATENCY toxicity_scored_root_{version:?} markouts={} markets={markets} us={root}",
             QUEUED + 2 * SAMPLES
         );
-        assert!(root <= SCORED_ROOT_BUDGET_US, "the {version:?} root after scoring took {root}us");
+        hold(&format!("toxicity_scored_root_{version:?}"), root, SCORED_ROOT_BUDGET_US);
     }
 }
 
@@ -114,7 +114,7 @@ fn toxicity_trigger_latency_measured() {
         println!("LATENCY toxicity_trigger_{version:?} fills={fills} us={}", took[took.len() - 1]);
     }
     // Twice `V52`'s, and 10 ms over: a quadratic match takes seconds here.
-    assert!(took[1] <= 2 * took[0] + 10_000, "V54's triggered fills took {}us against V52's {}us", took[1], took[0]);
+    hold_at("toxicity_trigger_against_v52", took[1], 2 * took[0] + scaled(10_000));
 }
 
 /// `funded_at(version)` with `count` more accounts, each a copy of the client, scored an hour before

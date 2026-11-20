@@ -28,7 +28,7 @@
 //! is printed, not held.
 
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold, rerun_once};
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::volume_tier::{DAY_MS, day_of};
@@ -72,7 +72,7 @@ fn levels_price_latency_measured() {
              added_p50_us={added} (budgets: 200us p99, price_wait_budget 1000us median)",
             with[49], with[98], without[49], without[98]
         );
-        assert!(with[98] <= 200, "{name} p99 {}us exceeds 200us", with[98]);
+        hold(name, with[98], 200);
     }
 }
 

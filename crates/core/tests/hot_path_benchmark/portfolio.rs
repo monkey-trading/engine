@@ -13,7 +13,7 @@ use super::common::events::only_fill;
 use super::common::portfolio::{genesis_with_grid, group, member, pairs};
 use super::common::weekend::{GOLD, OIL, OIL_WEEKEND_BPS, chicago, client};
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold, hold_at, rerun_once, scaled, verdict};
 use engine_core::Fixed;
 use engine_core::account::Position;
 use engine_core::event::Event;
@@ -59,7 +59,7 @@ fn portfolio_price_detection_latency_measured() {
         let unkeyed = COUNT as u64 - engine.closeout_coverage().keys;
         let (p50, p99) = detect(&mut engine, BTC, "100000", "100001");
         println!("LATENCY {name}_100k accounts={COUNT} unkeyed={unkeyed} samples={SAMPLES} p50_us={p50} p99_us={p99}");
-        assert!(p99 <= PRICE_BUDGET_US, "{name} p99 {p99}us exceeds {PRICE_BUDGET_US}us");
+        hold(&format!("{name}_100k"), p99, PRICE_BUDGET_US);
     }
 }
 
@@ -78,7 +78,7 @@ fn portfolio_price_execution_latency_measured() {
     let times = once("portfolio_price_execution_100k", &bytes, |engine, ts| {
         apply_events(engine, ts, prices(BTC, &drop_to.to_string(), ts))
     });
-    assert!(times.0 <= ROLLOVER_BUDGET_US, "executing took {}us", times.0);
+    hold("portfolio_price_execution_100k", times.0, ROLLOVER_BUDGET_US);
 }
 
 #[test]
@@ -100,9 +100,8 @@ fn portfolio_large_group_latency_measured() {
         println!(
             "LATENCY {name} accounts={SHARE_ACCOUNTS} unkeyed={unkeyed} samples={SAMPLES} p50_us={p50} p99_us={p99}"
         );
-        let verdict = if p99 <= PRICE_BUDGET_US { "within" } else { "OVER" };
-        println!("LATENCY bar {name} p99_us={p99} bar_us={PRICE_BUDGET_US} {verdict}");
-        assert!(p99 <= SHARES_GUARD_US, "{name} p99 {p99}us exceeds {SHARES_GUARD_US}us");
+        verdict(&format!("{name}_bar"), p99, PRICE_BUDGET_US);
+        hold(name, p99, SHARES_GUARD_US);
     }
     let (engine, targets) = build(&spec, SHARE_ACCOUNTS, Standing::Near(1_000));
     let bytes = serde_json::to_vec(&engine).expect("fixture encoding");
@@ -114,9 +113,8 @@ fn portfolio_large_group_latency_measured() {
     });
     // Closing twenty positions of each of 20k accounts is 400k fills, so the 500 ms bar for one command
     // is printed, as `hold_fill` prints its bar, and only a regression past `SHARES_GUARD_US` fails.
-    let verdict = if p99 <= ROLLOVER_BUDGET_US { "within" } else { "OVER" };
-    println!("LATENCY bar portfolio_shares_execution p99_us={p99} bar_us={ROLLOVER_BUDGET_US} {verdict}");
-    assert!(p99 <= SHARES_GUARD_US, "executing took {p99}us");
+    verdict("portfolio_shares_execution_bar", p99, ROLLOVER_BUDGET_US);
+    hold("portfolio_shares_execution", p99, SHARES_GUARD_US);
 }
 
 #[test]
@@ -138,7 +136,7 @@ fn portfolio_rollover_latency_measured() {
     let (_, p99) = rollovers("portfolio_rollover_100k", &mut engine, &spec);
     drop(engine);
     bar("portfolio_rollover_100k", p99, ROLLOVER_BUDGET_US);
-    assert!(p99 <= 2 * reference + ADDED_GUARD_US, "V81's rollover p99 {p99}us against V79's {reference}us");
+    hold_at("portfolio_rollover_against_v79", p99, 2 * reference + scaled(ADDED_GUARD_US));
     let (engine, _) = build(&spec, COUNT, Standing::NearDollars(f("0.5")));
     let bytes = serde_json::to_vec(&engine).expect("fixture encoding");
     drop(engine);
@@ -149,7 +147,7 @@ fn portfolio_rollover_latency_measured() {
     });
     assert!(closed > 0, "the financing takes accounts below their level");
     bar("portfolio_rollover_closing_100k", p99, ROLLOVER_BUDGET_US);
-    assert!(p99 <= 2 * reference + CLOSING_GUARD_US, "the closing rollover took {p99}us against V79's {reference}us");
+    hold_at("portfolio_rollover_closing_against_v79", p99, 2 * reference + scaled(CLOSING_GUARD_US));
 }
 
 #[test]
@@ -183,7 +181,7 @@ fn portfolio_weekend_latency_measured() {
         }
         bar(&format!("{name}_100k"), p99, ROLLOVER_BUDGET_US);
         let guard = if closed > 0 { CLOSING_GUARD_US } else { ADDED_GUARD_US };
-        assert!(p99 <= 2 * reference + guard, "{name} took {p99}us against V79's {reference}us");
+        hold_at(&format!("{name}_against_v79"), p99, 2 * reference + scaled(guard));
     }
 }
 
@@ -212,8 +210,8 @@ fn portfolio_stops_latency_measured() {
     }
     println!("LATENCY portfolio_stops_added_v81 us={}", took[1] as i128 - took[0] as i128);
     bar("portfolio_stops_v81_closing", took[2], ROLLOVER_BUDGET_US);
-    assert!(took[1] <= 2 * took[0] + 50_000, "V81's stops took {}us against V79's {}us", took[1], took[0]);
-    assert!(took[2] <= 2 * took[0] + CLOSING_GUARD_US, "V81's stops with close-outs took {}us", took[2]);
+    hold_at("portfolio_stops_v81_against_v79", took[1], 2 * took[0] + scaled(50_000));
+    hold_at("portfolio_stops_v81_closing_against_v79", took[2], 2 * took[0] + scaled(CLOSING_GUARD_US));
 }
 
 /// How an account stands against its two levels at the marks, by its index.
@@ -451,8 +449,7 @@ fn rollovers(name: &str, engine: &mut Engine, spec: &Spec) -> (u128, u128) {
 
 /// Prints `name`'s `p99` against #904's bar for one command, `bar_us`.
 fn bar(name: &str, p99: u128, bar_us: u128) {
-    let verdict = if p99 <= bar_us { "within" } else { "OVER" };
-    println!("LATENCY bar {name} p99_us={p99} bar_us={bar_us} {verdict}");
+    verdict(name, p99, bar_us);
 }
 
 /// `(p50, p99)` of `times`, sorted.

@@ -53,7 +53,7 @@ mod toxicity;
 #[path = "hot_path_benchmark/volume.rs"]
 mod volume;
 
-use common::rerun::rerun_once;
+use common::rerun::{hold, hold_at, rerun_once, scaled, verdict};
 use std::time::Instant;
 
 use chrono::NaiveDateTime;
@@ -93,11 +93,10 @@ const ADDED_P50_US: u128 = 200;
 /// can miss on unchanged code, and holds its p50 to `P50_GUARD_US` and, given the earlier version's p50
 /// from the same process, to twice that and `ADDED_P50_US`.
 fn hold_fill(name: &str, p50: u128, p99: u128, earlier_p50: Option<u128>) {
-    let verdict = if p99 <= BATCH_BUDGET_US { "within" } else { "OVER" };
-    println!("LATENCY bar {name} p99_us={p99} bar_us={BATCH_BUDGET_US} {verdict}");
-    assert!(p50 <= P50_GUARD_US, "{name}'s p50 {p50}us exceeds {P50_GUARD_US}us");
+    verdict(&format!("{name}_p99"), p99, BATCH_BUDGET_US);
+    hold(&format!("{name}_p50"), p50, P50_GUARD_US);
     if let Some(earlier) = earlier_p50 {
-        assert!(p50 <= 2 * earlier + ADDED_P50_US, "{name}'s p50 {p50}us against the earlier version's {earlier}us");
+        hold_at(&format!("{name}_p50_against_earlier"), p50, 2 * earlier + scaled(ADDED_P50_US));
     }
 }
 
@@ -149,7 +148,7 @@ fn command_latency_measured() {
             "rollover_100k" => 500_000,
             _ => 200,
         };
-        assert!(times[98] <= budget_us, "{name} p99 {}us exceeds {budget_us}us", times[98]);
+        hold(&format!("{name}_p99"), times[98], budget_us);
         if rollover {
             assert!(
                 engine.accounts().values().next().unwrap().balance < balance_before,
@@ -191,7 +190,7 @@ fn period_finalisation_latency_measured() {
     apply(&mut engine, end, Command::Tick);
     let elapsed = began.elapsed().as_micros();
     println!("LATENCY period_finalisation accounts={count} us={elapsed}");
-    assert!(elapsed <= 500_000, "finalising {count} accounts took {elapsed}us");
+    hold("period_finalisation", elapsed, 500_000);
     assert!(engine.period_results().is_empty());
     let emissions = engine.emissions().unwrap();
     assert_eq!(emissions.entitled.0 + emissions.cancelled.0, emissions.schedule.budget(0));
@@ -215,7 +214,7 @@ fn first_command_after_a_long_gap_latency_measured() {
     apply(&mut h.engine, ny(2027, 10, 19, 10, 29), Command::Tick);
     let elapsed = began.elapsed().as_micros();
     println!("LATENCY first_command_after_long_gap us={elapsed}");
-    assert!(elapsed <= 5_000, "the first command after a year-long gap took {elapsed}us");
+    hold("first_command_after_long_gap", elapsed, 5_000);
     assert_eq!(h.engine.markets()[&HALTED].quotes.len(), 2);
 }
 
@@ -234,7 +233,7 @@ fn first_command_after_a_far_past_stamp_latency_measured() {
     apply(&mut h.engine, MAX_STAMP_MS, Command::Tick);
     let elapsed = began.elapsed().as_micros();
     println!("LATENCY first_command_after_far_past_stamp us={elapsed}");
-    assert!(elapsed <= 5_000, "the first command at the last accepted stamp took {elapsed}us");
+    hold("first_command_after_far_past_stamp", elapsed, 5_000);
     assert!(h.engine.next_rollover().is_some_and(|due| due < MAX_STAMP_MS && due > start));
 }
 

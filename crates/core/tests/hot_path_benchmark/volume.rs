@@ -9,7 +9,7 @@
 use super::common::close_spread::trade;
 use super::toxicity::scored_fixture;
 use super::*;
-use crate::common::rerun::rerun_once;
+use crate::common::rerun::{hold_at, rerun_once, scaled};
 use engine_core::Fixed;
 use engine_core::event::Event;
 use engine_core::volume_tier::{
@@ -107,12 +107,7 @@ fn trigger_latency(name: &str, versions: [ProtocolVersion; 2]) {
     let per_fill = (took[1] as i128 - took[0] as i128) as f64 / (TRIGGERED + 1) as f64;
     println!("LATENCY {name}_trigger_added_per_fill us={per_fill:.2}");
     let [earlier, later] = versions;
-    assert!(
-        took[1] <= 2 * took[0] + 10_000,
-        "{later:?}'s triggered fills took {}us against {earlier:?}'s {}us",
-        took[1],
-        took[0]
-    );
+    hold_at(&format!("{name}_trigger_{later:?}_against_{earlier:?}"), took[1], 2 * took[0] + scaled(10_000));
 }
 
 /// Gives each account in `accounts` a book from `V59`: $1M counted on each of the 30 days of the

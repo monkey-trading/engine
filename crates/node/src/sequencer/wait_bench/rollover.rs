@@ -2,7 +2,7 @@
 //! (#933): a weekday rollover, which finances every position on the core's launch book, and the close
 //! of an emission period every account lost in, each through the real `run` loop with prices 2 ms
 //! apart, as `mass` runs #907's close-outs. Each prints the time the command held the thread and the
-//! longest wait behind it against #904's 500 ms bar (`WAIT bar ...`), and `rollover_parts` prints the
+//! longest wait behind it against #904's 500 ms bar (`LATENCY bar ...`), and `rollover_parts` prints the
 //! rollover's apply and each part of its log entry (`PARTS ...`). Run in a quiet CPU window:
 //! `cargo test -p engine-node --lib sequencer::wait_bench::rollover -- --ignored --nocapture --test-threads=1`.
 
