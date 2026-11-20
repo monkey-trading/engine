@@ -1,11 +1,13 @@
 //! Nodes one operation's readers share once checked, and reads of a root over one session.
 
 use anyhow::Result;
+use jmt::SimpleHasher;
 use jmt::storage::Node;
 
-use crate::authenticated::reader::{CHECKED_NODES, Checked, Reader};
+use crate::authenticated::blobs::Blob;
+use crate::authenticated::reader::{Checked, Reader};
 use crate::authenticated::tests::{fresh, put, raw};
-use crate::authenticated::{Root, codec, key_hash};
+use crate::authenticated::{Hasher, Root, codec, key_hash};
 
 /// A node one reader of an operation checked is taken by the operation's other readers without being
 /// read again, while a new operation reads and checks it afresh: nodes the host damages after the
@@ -37,10 +39,10 @@ fn a_recorded_node_is_taken_only_under_the_hash_it_was_checked_to_have() -> Resu
     let conn = raw(&dir)?;
     let (key, root_key) = (key_hash(&namespace, b"a")?, codec::root_key(root.version.expect("a version"))?);
     let other = Checked::default();
-    other.borrow_mut().insert(root_key.clone(), (Node::Null, [7; 32]));
+    other.nodes().borrow_mut().insert(root_key.clone(), (Node::Null, [7; 32]));
     assert_eq!(Reader::new(&conn, &root, false, &other)?.read(key)?, Some(b"A".to_vec()), "another hash is not taken");
     let forged = Checked::default();
-    forged.borrow_mut().insert(root_key, (Node::Null, root.hash));
+    forged.nodes().borrow_mut().insert(root_key, (Node::Null, root.hash));
     assert!(
         Reader::new(&conn, &root, false, &forged).and_then(|reader| reader.read(key)).is_err(),
         "a forged node proves nothing"
@@ -62,28 +64,36 @@ fn a_session_reads_as_a_lease_does_and_proves_every_value() -> Result<()> {
         assert_eq!(session.read(key)?, lease.read(key)?, "{key:?}");
     }
     drop(session);
+    // A well-formed descriptor of the empty value, which only the value's proof refuses.
+    let forged = serde_json::to_vec(&Blob { length: 0, digest: <Hasher as SimpleHasher>::new().finalize() })?;
     let damaged = key_hash(&namespace, b"b")?;
-    raw(&dir)?.execute("UPDATE value_rows SET data = ?1 WHERE key = ?2", (b"forged".as_slice(), &damaged.0[..]))?;
+    raw(&dir)?.execute("UPDATE value_rows SET data = ?1 WHERE key = ?2", (forged, &damaged.0[..]))?;
     let mut session = lease.session();
     assert_eq!(session.read(b"a")?, Some(b"A".to_vec()), "an undamaged value reads");
     assert!(session.read(b"b").is_err(), "the session's later read refuses the damaged value");
     Ok(())
 }
 
-/// An operation keeps at most `CHECKED_NODES` checked, however many it reads: past them it forgets
+/// An operation keeps at most its limit of nodes checked, however many it reads: past it it forgets
 /// what it recorded and checks nodes afresh, and every read still gives its value.
 #[test]
 fn an_operation_keeps_a_bounded_number_of_checked_nodes() -> Result<()> {
+    const LIMIT: usize = 64;
     let (dir, store) = fresh()?;
     let namespace = [24; 32];
     let keys: Vec<Vec<u8>> = (0..200u32).map(|n| n.to_be_bytes().to_vec()).collect();
     let root = store.update(&Root::empty(namespace), keys.iter().map(|key| put(key, key)).collect())?;
     let conn = raw(&dir)?;
-    let checked = Checked::default();
+    let checked = Checked::with_limit(LIMIT);
+    let (mut kept, mut forgotten) = (0, false);
     for key in &keys {
         let read = Reader::new(&conn, &root, false, &checked)?.read(key_hash(&namespace, key)?)?;
         assert_eq!(read.as_deref(), Some(key.as_slice()), "{key:?}");
-        assert!(checked.borrow().len() <= CHECKED_NODES, "the operation keeps {}", checked.borrow().len());
+        let now = checked.nodes().borrow().len();
+        assert!(now <= LIMIT, "the operation keeps {now}");
+        forgotten |= now < kept;
+        kept = now;
     }
+    assert!(forgotten, "the reads never passed the limit");
     Ok(())
 }

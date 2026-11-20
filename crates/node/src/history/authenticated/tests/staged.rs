@@ -4,7 +4,7 @@ use super::*;
 
 use crate::history::KINDS;
 use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
-use crate::history::authenticated::staging::STAGED_KEYS;
+use crate::history::authenticated::staging::{STAGED_BYTES, STAGED_KEYS};
 use crate::history::authenticated::state::{STATE_KEY, State};
 
 /// Mixes accounts and kinds while preserving non-account gaps in the original cursor indices.
@@ -46,7 +46,7 @@ fn thousand_event_command_uses_bounded_private_batches_and_publishes_only_comple
             assert_eq!(visible.head(), before, "head() cannot acknowledge partial fanout");
             assert_eq!(visible.page(query(A)).expect("old public view"), Page { events: vec![], next: None });
             assert!(info.keys <= STAGED_KEYS + 16);
-            assert!(info.buffered_bytes <= (STAGED_KEYS + 16) * PAYLOAD_CHUNK_BYTES * 4);
+            assert!(info.buffered_bytes <= STAGED_BYTES + 2 * PAYLOAD_CHUNK_BYTES);
             let bytes = visible.store.read(root, STATE_KEY)?.expect("private state");
             let state: State = serde_json::from_slice(&bytes)?;
             assert!(!state.complete);

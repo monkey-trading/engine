@@ -3,7 +3,7 @@
 use super::*;
 
 use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
-use crate::history::authenticated::staging::STAGED_KEYS;
+use crate::history::authenticated::staging::{STAGED_BYTES, STAGED_KEYS};
 use crate::history::authenticated::state::STATE_KEY;
 
 #[test]
@@ -140,6 +140,28 @@ fn complete_expiry_removes_every_large_payload_piece_while_an_old_reader_keeps_e
     }
     assert_eq!(old.head(), old_head);
     assert_eq!(old.page(query(A)).expect("old complete payload"), expected(&[initial], &query(A), 1));
+}
+
+/// A stage holds no more than `STAGED_BYTES` of a large event's chunks, with one chunk past them and its
+/// small headers, whether it writes them or proves them old to expire them, however many keys it may take.
+#[test]
+fn a_stage_holds_a_large_events_chunks_to_its_byte_bound_written_or_expired() {
+    let (mut index, _) = fixture("payload-stage-bytes", 1);
+    let length = (STAGED_KEYS + 16) * PAYLOAD_CHUNK_BYTES + 123;
+    let bound = STAGED_BYTES + 2 * PAYLOAD_CHUNK_BYTES;
+    let legs = [command(0, 0, Some(vec![large_event(A, length)])), command(1, 2, None)];
+    let mut stages = [0; 2];
+    for (leg, entry) in legs.into_iter().enumerate() {
+        index
+            .ingest_observed(entry, |_, _, info| {
+                stages[leg] += 1;
+                assert!(info.buffered_bytes <= bound, "a stage held {} bytes", info.buffered_bytes);
+                Ok(())
+            })
+            .expect("large event written, then expired");
+    }
+    assert!(stages.iter().all(|count| *count > 2), "{stages:?} stages");
+    assert_eq!((index.head().queue_lo, index.head().queue_hi), (1, 1), "the event expired");
 }
 
 #[test]

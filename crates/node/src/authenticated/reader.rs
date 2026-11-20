@@ -11,13 +11,37 @@ use rusqlite::{Connection, params};
 use crate::authenticated::codec;
 use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
-/// The most nodes an operation keeps checked: a writing reader's node budget. Tests keep a few.
-pub(super) const CHECKED_NODES: usize = if cfg!(test) { 64 } else { 1 + PHYSICAL_UPDATES * 64 * 16 };
+/// The most nodes an operation keeps checked: a writing reader's node budget.
+pub(super) const CHECKED_NODES: usize = 1 + PHYSICAL_UPDATES * 64 * 16;
 
 /// The nodes one operation has checked against an authenticated parent, each with the hash it was
-/// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed
-/// once per operation, and a reader takes it only where its own checked parent names that hash.
-pub(super) type Checked = RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>;
+/// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed once
+/// per operation until the operation has checked its limit of nodes and forgotten them, and a reader
+/// takes it only where its own checked parent names that hash.
+pub(super) struct Checked {
+    nodes: RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>,
+    limit: usize,
+}
+
+impl Default for Checked {
+    /// An operation's checked nodes, at most `CHECKED_NODES` at a time.
+    fn default() -> Self {
+        Self { nodes: RefCell::default(), limit: CHECKED_NODES }
+    }
+}
+
+#[cfg(test)]
+impl Checked {
+    /// An operation's checked nodes, at most `limit` at a time.
+    pub(super) fn with_limit(limit: usize) -> Self {
+        Self { nodes: RefCell::default(), limit }
+    }
+
+    /// The nodes recorded, for a test to inspect or forge.
+    pub(super) fn nodes(&self) -> &RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>> {
+        &self.nodes
+    }
+}
 
 pub(super) struct Reader<'a> {
     conn: &'a Connection,
@@ -177,19 +201,19 @@ impl<'a> Reader<'a> {
 
     /// The node at `key` the operation has checked to hash to `hash`, if it has.
     fn recorded(&self, key: &NodeKey, hash: [u8; 32]) -> Option<Node> {
-        self.checked.borrow().get(key).filter(|(_, checked)| *checked == hash).map(|(node, _)| node.clone())
+        self.checked.nodes.borrow().get(key).filter(|(_, checked)| *checked == hash).map(|(node, _)| node.clone())
     }
 
     /// Fetches the node at `key`, checks that it hashes to `hash`, its authenticated parent's for it, and
-    /// records it for the operation's other reads, forgetting every recorded node first once
-    /// `CHECKED_NODES` are, so an operation of any size holds no more than one writing reader may.
+    /// records it for the operation's other reads, forgetting every recorded node first once the operation
+    /// holds its limit of them, so an operation of any size holds no more than one writing reader may.
     /// Error cases:
     /// - the node is unavailable or malformed, or hashes otherwise (a `what` hash mismatch)
     fn check(&self, key: &NodeKey, hash: [u8; 32], what: &str) -> Result<Node> {
         let node = self.fetch(key)?;
         ensure!(codec::hash(&node) == hash, "{what} hash mismatch");
-        let mut checked = self.checked.borrow_mut();
-        if checked.len() >= CHECKED_NODES {
+        let mut checked = self.checked.nodes.borrow_mut();
+        if checked.len() >= self.checked.limit {
             checked.clear();
         }
         checked.insert(key.clone(), (node.clone(), hash));

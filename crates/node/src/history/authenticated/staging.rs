@@ -11,8 +11,8 @@ use crate::history::authenticated::state::{STATE_KEY, State};
 /// keys one update of launch flow's commands writes, so such an update commits about once.
 pub(super) const STAGED_KEYS: usize = 128;
 
-/// The value bytes a stage holds before it commits, whatever its keys: 32 payload chunks, which large
-/// events' chunks reach well before `STAGED_KEYS`.
+/// The value bytes a stage holds before it commits, proved old values and staged ones, whatever its keys:
+/// 32 payload chunks, which a large event's chunks, written or expired, reach well before `STAGED_KEYS`.
 pub(super) const STAGED_BYTES: usize = 32 * PAYLOAD_CHUNK_BYTES;
 
 #[cfg(test)]
@@ -47,7 +47,7 @@ impl Staged {
     /// Error cases:
     /// - any exact update proof, durable commit, lease, or observer failure
     pub fn flush_if_full(&mut self, observe: &mut impl FnMut(&Root, StageInfo) -> Result<()>) -> Result<()> {
-        if self.overlay.len() >= STAGED_KEYS || self.overlay.written_bytes() >= STAGED_BYTES {
+        if self.overlay.len() >= STAGED_KEYS || self.overlay.held_bytes() >= STAGED_BYTES {
             self.flush(observe)?;
         }
         Ok(())

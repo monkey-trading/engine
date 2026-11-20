@@ -15,8 +15,8 @@ pub(super) struct Overlay {
     session: Option<Session>,
     reads: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
-    /// Bytes of every value staged so far, rewrites included.
-    written: usize,
+    /// Bytes of every value held so far, proved old values and staged ones, rewrites included.
+    held: usize,
 }
 
 impl Overlay {
@@ -28,7 +28,7 @@ impl Overlay {
             session: None,
             reads: BTreeMap::new(),
             writes: BTreeMap::new(),
-            written: 0,
+            held: 0,
         }
     }
 
@@ -68,7 +68,7 @@ impl Overlay {
     /// - old-value proof fails
     pub fn put_bytes(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.prove_old(&key)?;
-        self.written = self.written.saturating_add(value.len());
+        self.held = self.held.saturating_add(value.len());
         self.writes.insert(key, Some(value));
         Ok(())
     }
@@ -87,9 +87,10 @@ impl Overlay {
         self.writes.len()
     }
 
-    /// Counts the bytes of the values staged, rewrites included, for staging's memory bound.
-    pub fn written_bytes(&self) -> usize {
-        self.written
+    /// Counts the bytes of the values held, proved old values and staged ones, rewrites included, for
+    /// staging's memory bound.
+    pub fn held_bytes(&self) -> usize {
+        self.held
     }
 
     /// Counts buffered key/value bytes for the source-level bounded-staging regression.
@@ -117,6 +118,7 @@ impl Overlay {
                 None => self.store.read(&self.root, key),
             };
             let value = value.context("proving old history value")?;
+            self.held = self.held.saturating_add(value.as_ref().map_or(0, Vec::len));
             self.reads.insert(key.to_vec(), value);
         }
         Ok(())
