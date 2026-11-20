@@ -160,8 +160,7 @@ impl Sequencer {
     /// Reads the log in `dir` a segment at a time and replays it as it goes, handing each entry to
     /// `observe` as well, so that a check of the log before recovery sees exactly what it replays.
     /// Error cases:
-    /// - the log cannot be read, or fails its manifest check (see `SegmentedLog::open`) or replay
-    ///   (see `Replay`)
+    /// - the log cannot be read, or fails its manifest check (`SegmentedLog::open`) or replay (`Replay`)
     pub fn read_log(dir: &Path, mut observe: impl FnMut(&LogEntry)) -> anyhow::Result<ReplayedLog> {
         Self::read_log_in_domain(dir, None, &mut observe)
     }
