@@ -95,6 +95,92 @@ fn an_entry_the_caller_refuses_ends_the_read_with_the_error_an_in_place_read_giv
     }
 }
 
+/// A listed segment that no longer matches its listing ends a segmented read with the error an
+/// in-place read gives, once the caller has taken every entry of the segments before it.
+#[test]
+fn a_segment_the_read_refuses_ends_it_with_the_in_place_error_after_every_earlier_entry() {
+    let dir = scratch_dir("ahead-altered-segment");
+    write_log(&dir, COMMANDS);
+    let segments = list_segments(&dir).unwrap();
+    let (first_seq, altered) = &segments[segments.len() / 2];
+    let mut bytes = std::fs::read(altered).unwrap();
+    let at = bytes.iter().position(|byte| *byte == b'1').expect("a digit to change");
+    bytes[at] = b'2';
+    std::fs::write(altered, bytes).unwrap();
+    let (mut in_place, mut ahead) = (Vec::new(), Vec::new());
+    let read = SegmentedLog::open(&dir, |entry| {
+        in_place.push(seq_of(&entry));
+        Ok(())
+    });
+    let Err(in_place_error) = read else { panic!("an altered segment") };
+    let read = SegmentedLog::open_ahead(&dir, |entry| {
+        ahead.push(seq_of(&entry));
+        Ok(())
+    });
+    let Err(ahead_error) = read else { panic!("an altered segment") };
+    assert_eq!(format!("{ahead_error:#}"), format!("{in_place_error:#}"));
+    assert_eq!(ahead, in_place);
+    assert_eq!(ahead, (0..*first_seq).collect::<Vec<_>>(), "every entry before the altered segment");
+}
+
+/// A read that panics raises its panic in the caller once the caller has taken every entry it sent
+/// before it, as a read in place panics there.
+#[test]
+fn a_read_that_panics_raises_its_panic_after_every_earlier_entry() {
+    let read: Read<()> = Box::new(|each| {
+        for seq in 0..3 {
+            each(0, tick(seq))?;
+        }
+        panic!("the read's own panic")
+    });
+    let mut taken = Vec::new();
+    let raised = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+        ahead(
+            read,
+            |entry| {
+                taken.push(seq_of(&entry));
+                Ok(())
+            },
+            |_| String::new(),
+        )
+    }));
+    let payload = raised.expect_err("the read panicked");
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"the read's own panic"));
+    assert_eq!(taken, [0, 1, 2]);
+}
+
+/// An entry the caller refuses returns its error at once while the reader waits on a pipe whose writer
+/// holds it open, as a read in place returns it before it reads again.
+#[test]
+fn an_entry_the_caller_refuses_returns_while_the_reader_waits_on_its_input() {
+    let dir = scratch_dir("ahead-pipe");
+    std::fs::create_dir_all(&dir).unwrap();
+    let pipe = dir.join("log.pipe");
+    let made = std::process::Command::new("mkfifo").arg(&pipe).status().expect("mkfifo runs");
+    assert!(made.success(), "a named pipe");
+    let (done, open) = std::sync::mpsc::channel::<()>();
+    let writer = {
+        let pipe = pipe.clone();
+        std::thread::spawn(move || {
+            let mut file = std::fs::OpenOptions::new().write(true).open(&pipe).expect("the pipe opens");
+            let line = format!("{}\n", serde_json::to_string(&tick(0)).unwrap());
+            std::io::Write::write_all(&mut file, line.as_bytes()).expect("the line is written");
+            // Holds the pipe open, with nothing more on it, until the test is done.
+            let _ = open.recv();
+        })
+    };
+    let (outcome, returned) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let read = read_file_ahead(&pipe, |entry| anyhow::bail!("refused {}", seq_of(&entry)));
+        let _ = outcome.send(read.map_err(|error| format!("{error:#}")));
+    });
+    let read =
+        returned.recv_timeout(std::time::Duration::from_secs(30)).expect("the refusal returns while the pipe is open");
+    drop(done);
+    writer.join().unwrap();
+    assert!(read.is_err_and(|error| error.ends_with("refused 0")));
+}
+
 /// An entry the read refuses ends it with the error an in-place read gives, once the caller has taken
 /// every entry before it.
 #[test]
@@ -139,14 +225,19 @@ fn seq_of(entry: &LogEntry) -> u64 {
     command.sequenced.seq
 }
 
+/// A tick at `seq`, as its log entry.
+fn tick(seq: u64) -> LogEntry {
+    let sequenced = Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick };
+    LogEntry::Command(CommandEntry { sequenced, events: Some(Vec::new()), seal: None })
+}
+
 /// A log of `count` ticks in `dir`, `SEGMENT` commands a segment.
 fn write_log(dir: &Path, count: u64) {
     std::fs::create_dir_all(dir).unwrap();
     let log = SegmentedLog::open(dir, |_| Ok(())).unwrap();
     let mut writer = log.into_writer(SEGMENT, tokio::sync::watch::channel(Default::default()).0).unwrap();
     for seq in 0..count {
-        let sequenced = Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick };
-        writer.append(&LogEntry::Command(CommandEntry { sequenced, events: Some(Vec::new()), seal: None })).unwrap();
+        writer.append(&tick(seq)).unwrap();
     }
     writer.flush().unwrap();
 }

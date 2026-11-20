@@ -93,6 +93,43 @@ fn a_root_that_differs_fails_with_an_inline_roots_error_ahead_of_later_faults() 
     assert!(later >= 2, "a command followed the altered checkpoint");
 }
 
+/// A root that differs is reported ahead of a later fault of the read itself, a line that is no entry,
+/// as a replay whose engine computes its roots reports it.
+#[test]
+fn a_root_that_differs_is_reported_ahead_of_a_later_fault_of_the_read() {
+    let reference = latest_reference();
+    let seq = resealed(&reference, |_| {})
+        .iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some(checkpoint.seq),
+            _ => None,
+        })
+        .nth(80)
+        .expect("a checkpoint after the tree moves to the thread");
+    let entries = resealed(&reference, |checkpoint| {
+        if checkpoint.seq == seq {
+            checkpoint.root = format!("0x{}", "1".repeat(64));
+        }
+    });
+    let at = entries.iter().position(|entry| matches!(entry, LogEntry::Checkpoint(cp) if cp.seq == seq)).unwrap();
+    let mut lines: Vec<String> = entries.iter().map(|entry| serde_json::to_string(entry).unwrap()).collect();
+    lines.insert(at + 2, "{not an entry".into());
+    let dir = crate::test_support::scratch_dir("roots-ahead-read-fault");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("log.jsonl");
+    std::fs::write(&file, lines.join("\n") + "\n").unwrap();
+    let signer = Some(AccountId(EnclaveKey::test_key().address()));
+    let mut inline = Replay::with_trust(Some(REFERENCE), signer);
+    let inline = crate::log::read_file(&file, |entry| inline.apply(&entry)).expect_err("a root that differs");
+    let mut ahead = Replay::with_trust(Some(REFERENCE), signer);
+    ahead.check_roots_ahead();
+    let read = crate::log::read_file_ahead(&file, |entry| ahead.apply(&entry));
+    let ahead = ahead.settled(read).expect_err("a root that differs");
+    let mismatch = format!("state root mismatch at seq {seq}");
+    assert!(format!("{inline:#}").contains(&mismatch), "{inline:#}");
+    assert!(format!("{ahead:#}").contains(&mismatch), "{ahead:#}");
+}
+
 /// A recovery anchored at a checkpoint the vault accepted but the log holds no entry for anchors at
 /// the replay's own state there, as an engine computing its roots anchors, while its roots are on the
 /// thread: the anchor takes the tree back for its root, and the next checkpoint hands it on again.
@@ -126,7 +163,7 @@ fn a_recovery_anchors_where_the_log_lacks_the_vaults_checkpoint_with_its_roots_o
             }
             replay.apply(entry).unwrap();
         }
-        replay.settle().unwrap();
+        replay.settled(Ok(())).unwrap();
         let mut replayed = replay.finish();
         let anchored = replayed.recovery_anchor_work.as_ref().map(|work| work.checkpoint.root.clone());
         (on_thread_before, anchored, hex::encode(replayed.engine.state_root()), replayed.checkpoints)
@@ -163,7 +200,7 @@ fn replay(entries: &[LogEntry], ahead: bool) -> Reached {
         on_thread += usize::from(replay.roots.on_thread());
         anyhow::Ok(())
     });
-    let outcome = applied.and_then(|()| replay.settle()).map_err(|e| format!("{e:#}")).map(|()| {
+    let outcome = replay.settled(applied).map_err(|e| format!("{e:#}")).map(|()| {
         let mut replayed = replay.finish();
         (hex::encode(replayed.engine.state_root()), replayed.checkpoints)
     });

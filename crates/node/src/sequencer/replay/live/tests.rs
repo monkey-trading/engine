@@ -270,7 +270,7 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
                 replay.check_roots_ahead();
             }
             copy.iter().for_each(|entry| replay.apply(entry).unwrap());
-            replay.settle().unwrap();
+            replay.settled(Ok(())).unwrap();
             replay.finish()
         };
         let replayed = recovered(root);

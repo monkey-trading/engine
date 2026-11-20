@@ -36,8 +36,8 @@ pub fn replay_with_signer(
 ) -> anyhow::Result<Replayed> {
     let mut replay = Replay::with_trust(Some(domain), Some(signer));
     replay.check_roots_ahead();
-    entries.iter().try_for_each(|entry| replay.apply(entry))?;
-    replay.settle()?;
+    let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
+    replay.settled(applied)?;
     let replayed = replay.finish();
     replayed.origin.require_audit(signer)?;
     ensure!(
@@ -78,12 +78,12 @@ pub fn replay_path_with_trust(
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut replay = Replay::with_trust(domain, signer);
     replay.check_ahead(path, workers);
-    if found.is_dir() {
-        SegmentedLog::open_ahead(path, |entry| replay.apply(&entry))?;
+    let read = if found.is_dir() {
+        SegmentedLog::open_ahead(path, |entry| replay.apply(&entry)).map(drop)
     } else {
-        log::read_file_ahead(path, |entry| replay.apply(&entry))?;
-    }
-    replay.settle()?;
+        log::read_file_ahead(path, |entry| replay.apply(&entry))
+    };
+    replay.settled(read)?;
     let replayed = replay.finish();
     if let Some(signer) = signer {
         replayed.origin.require_audit(signer)?;
@@ -112,8 +112,8 @@ pub(crate) fn replay_path_from(
 ) -> anyhow::Result<Replayed> {
     let mut replay = Replay::seeded(engine, None, signer);
     replay.check_ahead(path, workers);
-    SegmentedLog::open_ahead(path, |entry| replay.apply(&entry))?;
-    replay.settle()?;
+    let read = SegmentedLog::open_ahead(path, |entry| replay.apply(&entry));
+    replay.settled(read)?;
     let replayed = replay.finish();
     replayed.origin.require_audit(signer)?;
     ensure!(
@@ -169,12 +169,12 @@ fn replay_attested(
 ) -> anyhow::Result<Replayed> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     replay.check_ahead(path, workers);
-    if found.is_dir() {
-        SegmentedLog::open_ahead(path, |entry| replay.apply(&entry))?;
+    let read = if found.is_dir() {
+        SegmentedLog::open_ahead(path, |entry| replay.apply(&entry)).map(drop)
     } else {
-        log::read_file_ahead(path, |entry| replay.apply(&entry))?;
-    }
-    replay.settle()?;
+        log::read_file_ahead(path, |entry| replay.apply(&entry))
+    };
+    replay.settled(read)?;
     let replayed = replay.finish();
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
@@ -214,12 +214,12 @@ pub(crate) fn replay_path_with_authorities(
         }
         replay.apply(&entry)
     };
-    if found.is_dir() {
-        SegmentedLog::open_ahead(path, &mut visit)?;
+    let read = if found.is_dir() {
+        SegmentedLog::open_ahead(path, &mut visit).map(drop)
     } else {
-        log::read_file_ahead(path, &mut visit)?;
-    }
-    replay.settle()?;
+        log::read_file_ahead(path, &mut visit)
+    };
+    replay.settled(read)?;
     ensure!(anchored, "public log is shorter than or omits the finalized vault anchor");
     replay.ensure_superseded_continued()?;
     let replayed = replay.finish();

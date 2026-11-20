@@ -253,8 +253,8 @@ impl Sequencer {
         let log = SegmentedLog::open_ahead(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)
-        })?;
-        replay.settle().and_then(|()| replay.ensure_superseded_continued())?;
+        });
+        let log = replay.settled(log).and_then(|log| replay.ensure_superseded_continued().map(|()| log))?;
         Ok(ReplayedLog {
             log: log.into(),
             replayed: replay.finish(),

@@ -1,18 +1,19 @@
 //! A replay's state roots, computed on a thread of their own when the replay asks (`check_roots_ahead`).
-//! The engine computes its roots until it holds a tree under `V9`; at the next checkpoint the replay
-//! hands that tree to the thread (`Engine::detach_tree`), as the sequencer hands it to its root worker,
-//! and from then on sends it each checkpoint's leaf writes (`Engine::commit_inputs`), and each tree
+//! The engine computes its roots until it holds a tree under `V9`; the checkpoint whose root first gives
+//! it one hands that tree to the thread once its root is checked (`Engine::detach_tree`), as the
+//! sequencer hands it to its root worker, and from then on the replay sends it each checkpoint's leaf
+//! writes (`Engine::commit_inputs`), and each tree
 //! event an activation gives, in log order. The thread commits each root and releases its version at
 //! once, as an engine computing its own roots does, so its roots are the engine's own.
 //!
 //! The replay applies the next checkpoint's commands while the thread computes a root, and compares the
-//! root when the next checkpoint comes, or when it settles: before it reports an error of its own, so a
-//! root that differs is reported at its checkpoint, ahead of any later entry's error, and before it
-//! finishes, when it takes the tree back into its engine (`Engine::attach_tree`). At most one root is
-//! computed at a time.
+//! root when the next checkpoint comes, or when it settles (`settled`): before it reports an error of
+//! its own or of its read, so a root that differs is reported at its checkpoint, ahead of any later
+//! entry's fault, and before it finishes, when it takes the tree back into its engine
+//! (`Engine::attach_tree`). At most one root is computed at a time.
 
 use std::panic;
-use std::sync::mpsc::{Receiver, SyncSender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 use std::thread::{self, JoinHandle};
 
 use anyhow::bail;
@@ -190,8 +191,8 @@ impl Thread {
 }
 
 impl Replay {
-    /// Has this replay's state roots computed on a thread of their own from the first checkpoint after
-    /// its engine holds a tree (`Roots`). The caller settles the replay before it finishes it.
+    /// Has this replay's state roots computed on a thread of their own from the first checkpoint at which
+    /// its engine holds a tree (`Roots`). The caller settles its read (`settled`) before it finishes it.
     pub(in crate::sequencer) fn check_roots_ahead(&mut self) {
         if matches!(self.roots, Roots::Inline) {
             self.roots = Roots::Ahead(None);
@@ -200,7 +201,7 @@ impl Replay {
 
     /// Has this replay check the seals of the log at `path` ahead of it on `workers` (`check_seals_ahead`)
     /// and compute its roots on a thread of their own (`check_roots_ahead`), as a whole replay does. The
-    /// caller settles the replay before it finishes it.
+    /// caller settles its read (`settled`) before it finishes it.
     pub(in crate::sequencer) fn check_ahead(&mut self, path: &std::path::Path, workers: crate::log::ReplayWorkers) {
         self.check_seals_ahead(path, workers);
         self.check_roots_ahead();
@@ -214,13 +215,18 @@ impl Replay {
         self.apply_entry(entry).map_err(|failed| self.roots.check_due().err().unwrap_or(failed))
     }
 
-    /// Checks the last root still due and takes the tree back into the engine, so `finish` hands on an
-    /// engine that computes its own roots. A replay that checks roots ahead calls it after its last
-    /// entry.
+    /// What `read`, this replay's read of a log, gives, with its roots settled: an error the read gives,
+    /// from an entry the replay or the caller refused or from the read itself, after any root still due
+    /// that differs from the log's, the earlier fault; and once the read succeeds, the last root checked
+    /// and the tree taken back into the engine, so `finish` hands on an engine that computes its own
+    /// roots. A replay that checks roots ahead settles its read with it.
     /// Error cases:
-    /// - the root still due differs from the log's, or the root thread has stopped
-    pub(in crate::sequencer) fn settle(&mut self) -> anyhow::Result<()> {
-        self.roots.take_back(&mut self.engine)
+    /// - the read fails, or a root still due differs from the log's, or the root thread has stopped
+    pub(in crate::sequencer) fn settled<T>(&mut self, read: anyhow::Result<T>) -> anyhow::Result<T> {
+        match read {
+            Err(failed) => Err(self.roots.check_due().err().unwrap_or(failed)),
+            Ok(read) => self.roots.take_back(&mut self.engine).map(|()| read),
+        }
     }
 }
 
@@ -237,7 +243,7 @@ fn check(seq: u64, logged: &str, root: B256) -> anyhow::Result<()> {
 
 /// The thread: applies each job to `tree` in order, answering each commit with its root, until the
 /// replay closes `jobs`, and returns the tree.
-fn run(mut tree: StateTree, jobs: Receiver<Job>, roots: std::sync::mpsc::Sender<B256>) -> StateTree {
+fn run(mut tree: StateTree, jobs: Receiver<Job>, roots: Sender<B256>) -> StateTree {
     for job in jobs {
         match job {
             Job::Commit(seq, inputs) => {

@@ -69,23 +69,26 @@ pub(crate) fn rebuild_history_view(
     replay.check_ahead(dir, workers);
     let mut fingerprint = crate::history::rebuild::Fingerprinter::new();
     let mut batch = Vec::with_capacity(REBUILD_BATCH);
-    while let Some((_, entry)) = reader.next_entry()? {
-        replay.apply(&entry)?;
-        fingerprint.observe(&entry)?;
-        if let LogEntry::Command(command) = entry {
-            let derived = replay.derived_at(command.sequenced.seq);
-            if let Some(derived) = &derived {
-                rows.keep(command.sequenced.seq, command.sequenced.ts, derived);
-            }
-            batch.push(Taken { command, derived });
-            if batch.len() == REBUILD_BATCH {
-                index.ingest_taken(&batch)?;
-                batch.clear();
+    let mut read = || {
+        while let Some((_, entry)) = reader.next_entry()? {
+            replay.apply(&entry)?;
+            fingerprint.observe(&entry)?;
+            if let LogEntry::Command(command) = entry {
+                let derived = replay.derived_at(command.sequenced.seq);
+                if let Some(derived) = &derived {
+                    rows.keep(command.sequenced.seq, command.sequenced.ts, derived);
+                }
+                batch.push(Taken { command, derived });
+                if batch.len() == REBUILD_BATCH {
+                    index.ingest_taken(&batch)?;
+                    batch.clear();
+                }
             }
         }
-    }
-    index.ingest_taken(&batch)?;
-    replay.settle()?;
+        index.ingest_taken(&batch)
+    };
+    let read = read();
+    replay.settled(read)?;
     expected.verify(&fingerprint.finish())
 }
 

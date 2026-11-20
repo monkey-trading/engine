@@ -1,10 +1,10 @@
 //! A log read on a thread of its own, ahead of the caller that takes its entries: the thread reads,
 //! checks and parses the log exactly as an in-place read does, and the caller's `visit` takes each
 //! entry in log order, on the caller's thread. An entry `visit` refuses ends the read with `visit`'s
-//! error, in the context an in-place read gives it (the segment or file the entry is in), and an entry
-//! the read refuses ends it with the read's error once `visit` has taken every entry before it, so
-//! either error is the one an in-place read gives, at the same entry. At most `AHEAD` entries wait
-//! between the two threads.
+//! error, in the context an in-place read gives it (the segment or file the entry is in), at once,
+//! whatever the thread is doing; and an entry the read refuses ends it with the read's error, or its
+//! panic, once `visit` has taken every entry before it. Either is what an in-place read gives, at the
+//! same entry. At most `AHEAD` entries wait between the two threads.
 
 use std::panic;
 use std::path::Path;
@@ -56,8 +56,9 @@ pub(super) fn by_entry<R>(mut visit: impl FnMut(LogEntry) -> R) -> impl FnMut(us
 
 /// Runs `read` on a thread of its own, handing its entries to `visit` here in order, and returns what
 /// `read` returns, or `visit`'s error in the context `place` gives the file of its entry, which comes
-/// at an earlier entry than any error `read` gives after it. Reads in place when the thread cannot
-/// start.
+/// at an earlier entry than any error `read` gives after it, or any panic. A read `visit` refused is
+/// not waited for: it ends at its next send, or with its input, which a pipe's writer may hold open.
+/// Reads in place when the thread cannot start.
 /// Error cases:
 /// - `visit` refuses an entry, or `read` fails
 fn ahead<T: Send + 'static>(
@@ -81,11 +82,10 @@ fn ahead<T: Send + 'static>(
         }
     };
     start.send(read).expect("the reader waits for its read");
-    let visited = taken.iter().try_for_each(|(at, entry)| visit(entry).with_context(|| place(at)));
-    // The reader's next send fails once the caller stops taking entries, and its read ends there.
-    drop(taken);
+    // An entry refused returns at once; dropping `taken` fails the reader's next send, and its read ends.
+    taken.iter().try_for_each(|(at, entry)| visit(entry).with_context(|| place(at)))?;
+    // The channel closed: the read ended, or panicked, after the last entry it sent.
     let read = reader.join().unwrap_or_else(|panicked| panic::resume_unwind(panicked));
-    visited?;
     read.expect("the reader read once it held the read")
 }
 

@@ -193,7 +193,7 @@ an index: load only the rule whose hint matches the current action.
   `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), and its own read on a `log-reader` thread
   (`log/ahead.rs`: `SegmentedLog::open_ahead`, `read_file_ahead`) and its state roots on a `replay-roots` thread from
   its first checkpoint with a tree, each compared before the next checkpoint, an error of its own and its end
-  (`sequencer/replay/roots.rs`, `Replay::check_roots_ahead` and `settle`; a member's live replica computes each root in
+  (`sequencer/replay/roots.rs`, `Replay::check_ahead` and `settled`; a member's live replica computes each root in
   place), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
   log, or with `--deposit` the refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin

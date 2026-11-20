@@ -382,7 +382,7 @@ impl Replay {
     /// What the entries applied so far replay to.
     pub(super) fn finish(mut self) -> Replayed {
         self.origin.stop_checking_ahead();
-        // A replay checking roots ahead settles (`settle`) before it finishes, taking its tree back.
+        // A replay checking roots ahead settles its read (`settled`) before it finishes, taking its tree back.
         assert!(!self.roots.on_thread(), "a replay finishes with its engine holding its tree");
         self.anchor_unheld().expect("an engine holding its tree computes its root in place");
         let recovery_base = match self.recovery_origin {
@@ -451,8 +451,8 @@ pub use paths::{
 pub fn replay(entries: &[LogEntry]) -> anyhow::Result<Replayed> {
     let mut replay = Replay::default();
     replay.check_roots_ahead();
-    entries.iter().try_for_each(|entry| replay.apply(entry))?;
-    replay.settle()?;
+    let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
+    replay.settled(applied)?;
     Ok(replay.finish())
 }
 

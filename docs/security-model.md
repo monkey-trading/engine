@@ -405,11 +405,11 @@ the same error as a read on one thread would. It computes its state roots on a t
 engine holds its state tree. At each checkpoint it reads that root's leaf writes from its own state
 and hands them to that thread, then applies the next instructions while the thread hashes them. It
 compares each root with its checkpoint's before the next checkpoint, before it reports an error of
-its own and before it finishes, so a root that differs fails the replay at its checkpoint with the
-same error, ahead of any later fault. By then the replay may have applied up to one checkpoint's
-instructions past it, and a recovery may have seeded its marks cache and dashboard record from them;
-it serves nothing, and its next start seeds both afresh. A member's replica, which answers for each
-checkpoint it verified as it passes it, compares each root at its checkpoint.
+its own or of its read, and before it finishes, so a root that differs fails the replay at its
+checkpoint with the same error, ahead of any later fault. By then the replay may have applied up to
+one checkpoint's instructions past it, and a recovery may have seeded its marks cache and dashboard
+record from them; it serves nothing, and its next start seeds both afresh. A member's replica, which
+answers for each checkpoint it verified as it passes it, compares each root at its checkpoint.
 
 With `[log_heads]` configured, the enclave also signs log heads. A log head states the sequence
 number of the newest instruction the trading server has released, and a running digest of every
