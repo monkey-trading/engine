@@ -95,6 +95,26 @@ async fn a_tail_extends_the_copy_and_the_replica_after_the_tip() {
     assert!(crate::standby::rollback_of(&err).is_some(), "{err:#}");
 }
 
+/// Each command of a tail a follower takes reaches its stats worker, so the start that follows the take
+/// finds the worker at the replica's last command.
+#[tokio::test]
+async fn a_tail_reaches_the_followers_stats_worker() {
+    let operator = scratch_dir("replica-stats-operator");
+    crate::standby::tests::ticks(&operator, 4).await;
+    let dir = scratch_dir("replica-stats-copy");
+    crate::standby::tests::copy_log(&operator, &dir);
+    crate::standby::tests::ticks(&operator, 3).await;
+    let stats = crate::test_support::stats();
+    let records = Some(stats.clone());
+    let mut follower =
+        Follower::open(&dir, SEGMENT_COMMANDS, DOMAIN, signer(), [signer()].into(), records, |_| {}).unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    follower.take_tail(Offset::start_of(tip), &lines_after(&operator, tip)).unwrap();
+    let last = follower.replica().last_seq();
+    assert!(last > Some(tip), "the tail extended the replica");
+    assert_eq!(crate::stats::tests::worker_seq(&stats), last, "the worker is not at the replica's last command");
+}
+
 /// A tail taken in pages goes on from the copy's last entry, even one past its tip's command, as a gap
 /// fetch's next page does when the last ended among the entries that follow a command: it extends the
 /// copy exactly as one page would.

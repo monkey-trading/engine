@@ -52,3 +52,29 @@ async fn a_stint_syncs_its_copy_once_a_burst_not_once_an_entry() {
     drop(writer);
     assert_eq!(entries(&dir), log_entries(&operator), "the copy lacks entries the stint took");
 }
+
+/// A member's replica keeps its dashboard record's stats worker in step as it follows: each command a
+/// stint applies reaches the worker, so a start from the replica takes the worker on with its copy of the
+/// state at the replica's last command, and makes no copy of its own.
+#[tokio::test]
+async fn a_stint_hands_the_stats_worker_each_command_it_applies() {
+    let operator = scratch_dir("standby-stats-operator");
+    ticks(&operator, 2).await;
+    let dir = scratch_dir("standby-stats-copy");
+    copy_log(&operator, &dir);
+    ticks(&operator, 3).await;
+    let stats = crate::test_support::stats();
+    let mut follower =
+        Follower::open(&dir, 1024, DOMAIN, enclave(), [enclave()].into(), Some(stats.clone()), |_| {}).unwrap();
+    let (tip, _) = follower.tip().unwrap();
+    let frames = log_messages(&operator, Offset::start_of(tip)).into_iter().map(|message| (By::Operator, message));
+    let (port, server, _) = operator_stream(frames.collect()).await;
+    let followed = Followed::from_standby(&standby_section(port));
+    follower.stint(&config(), &followed, Duration::from_secs(2)).await.unwrap();
+    server.abort();
+    let (last, _) = follower.tip().unwrap();
+    assert!(last > tip, "the stint took the operator's later commands");
+    // A copy made at the start would be of this other state.
+    stats.scan_in_background(&engine_core::Engine::default());
+    assert_eq!(crate::stats::tests::worker_seq(&stats), Some(last), "the worker is not at the replica's last command");
+}

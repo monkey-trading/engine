@@ -197,8 +197,10 @@ impl Follower {
                     .context("the copy does not replay")?
             }
         };
-        // The stream's entries are applied one at a time, each seal checked as it arrives.
+        // The stream's entries are applied one at a time, each seal checked as it arrives, and each command
+        // reaches the stats worker, copied once here, as the replica applies it.
         replica.stop_checking_seals_ahead();
+        replica.warm_stats();
         // The stream may carry commands a recorded signer sealed that no checkpoint the copy holds names,
         // as a promoted epoch's before its first, which a cut, now or at an earlier open, dropped: the
         // stream's refill takes them, as a tail does.

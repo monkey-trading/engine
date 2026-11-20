@@ -1,7 +1,8 @@
 //! The scan of every account off the sequencer's thread. A worker thread holds a copy of the engine
 //! and applies every command the sequencer applies, in order, so when the command that makes a
 //! scan due has been applied there, the worker's engine is the sequencer's at that seq and the scan
-//! reads exactly it. The sequencer pays one command clone per command, and a scan request; nothing
+//! reads exactly it. A member's replica keeps the worker in step the same way while it follows, so
+//! the sequencer it starts takes the worker on and copies nothing. The sequencer pays one command clone per command, and a scan request; nothing
 //! walks the accounts on its thread. The result is installed by the next command or read that finds
 //! it, with the seq and time of the command it was due at.
 //!

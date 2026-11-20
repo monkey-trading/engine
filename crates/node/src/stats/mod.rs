@@ -179,8 +179,12 @@ impl Stats {
 
     /// Moves the scans to a worker over a copy of `engine`, which `follow` then keeps in step. Call
     /// it once, after recovery, before the sequencer applies its first command. A copy that cannot
-    /// be made leaves the scans on the sequencer's thread, with an alert.
+    /// be made leaves the scans on the sequencer's thread, with an alert. A worker already running,
+    /// one a member's replica kept in step with `engine` as it followed, is kept: no copy is made.
     pub(crate) fn scan_in_background(&self, engine: &Engine) {
+        if self.lock().background.is_some() {
+            return;
+        }
         match background::Background::start(engine) {
             Ok(worker) => self.lock().background = Some(worker),
             Err(error) => background::stopped(&format!("{error:#}")),
@@ -271,7 +275,9 @@ impl Stats {
 
     /// Ends a recovery: takes the totals the first command would have, when no command was replayed,
     /// and a full scan for the answers that read one, without recording it in a series, so a
-    /// restart's series stay those the log gives.
+    /// restart's series stay those the log gives. With a worker running, as a member's replica keeps
+    /// one, the scan is the worker's, delivered with the first durable batch, so the start does not
+    /// wait for it.
     pub(crate) fn finish_recovery(&self, engine: &Engine) {
         let mut inner = self.lock();
         inner.recovering = false;
@@ -279,11 +285,16 @@ impl Stats {
             inner.refresh_queue(engine);
             inner.refresh_stakers(engine);
         }
-        if inner.full.is_none()
-            && let Some(seq) = engine.last_seq()
-        {
-            let snapshot = snapshot::scan(engine, seq, engine.now(), self.settings.layout, true);
-            inner.serve(snapshot);
+        let Some(seq) = engine.last_seq().filter(|_| inner.full.is_none()) else { return };
+        match inner.background.as_mut() {
+            Some(worker) => {
+                let job = worker.scan_job(seq, engine.now(), self.settings.layout, true);
+                inner.staged.push(job);
+            }
+            None => {
+                let snapshot = snapshot::scan(engine, seq, engine.now(), self.settings.layout, true);
+                inner.serve(snapshot);
+            }
         }
     }
 }

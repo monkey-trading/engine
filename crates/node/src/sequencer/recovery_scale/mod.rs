@@ -236,7 +236,7 @@ async fn run() {
     let rows = Arc::new(RowsStore::new(&history_dir, retention));
     let member_history =
         HistorySection { dir: run.join("member-history"), ..crate::test_support::dev_config().history };
-    let (mut follower, built) = build_replica(&base, &copy, (signer, workers), (rows.clone(), &member_history));
+    let (mut follower, stats, built) = build_replica(&base, &copy, (signer, workers), (rows.clone(), &member_history));
     // The copy and the index hold the log from its first command to the recovered node's first.
     let held = holder.seq.last_seq().unwrap_or(0) + 1 - first_seq(&log);
     println!("RECOVERY replica_build commands={held} s={:.1} rss_mib={}", built.as_secs_f64(), rss_mib());
@@ -256,7 +256,7 @@ async fn run() {
             break;
         }
     }
-    let (_member, start) = handover::start_from_replica(follower, &copy, key.clone());
+    let (_member, start) = handover::start_from_replica(follower, stats, &copy, key.clone());
     switches.iter().for_each(|switch| print_switch(switch, start));
 
     conclude(&days, (bar_commands, peak), (&replayed, &recovery), &restarted, (&switches, start));

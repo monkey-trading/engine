@@ -1,8 +1,9 @@
 //! What a round of statuses rests on: the vault's signer before any exemption, the set whose members'
-//! confirmations count, the last read when reads fail, and a set's members read within an interval.
+//! confirmations count, the last read when reads fail, and a view and a set's members read within an
+//! interval.
 
 use super::*;
-use crate::liveness::chain::members;
+use crate::liveness::chain::{members, view};
 
 /// A vault naming another key ends the run and keeps the fence closed whatever exemption the same read
 /// would give: a replaced operator whose reads resume never reopens.
@@ -131,6 +132,20 @@ async fn a_full_set_reads_well_within_an_interval() {
     let candidates: Vec<Address> = read.iter().map(|member| Address::from(member.candidate.0)).collect();
     assert_eq!(candidates, listed.iter().map(|(candidate, ..)| *candidate).collect::<Vec<_>>(), "in the set's order");
     assert_eq!(read[7].endpoint, "member:7");
+}
+
+/// A view's calls at one block go out together, but for the head's, which is under the signer epoch:
+/// each call taking 250 ms, the view reads in two round trips, not the nine its calls one after another
+/// took, which a new operator's first commands waited behind.
+#[tokio::test(start_paused = true)]
+async fn a_view_reads_in_two_round_trips() {
+    let latency = Duration::from_millis(250);
+    let chain = FakeChain::new(ChainState { latency, head: (12, 0, 0), ..Default::default() });
+    let block = chain.latest().await.unwrap();
+    let started = tokio::time::Instant::now();
+    let read = view(&block, &DOMAIN).await.unwrap();
+    assert_eq!(started.elapsed(), 2 * latency);
+    assert_eq!((read.epoch, read.head.seq, read.due_at), (1, 12, 1_800_000_300), "the view is the chain's");
 }
 
 /// The guardian's retirement names no other key: the run does not end, and the fence, which a

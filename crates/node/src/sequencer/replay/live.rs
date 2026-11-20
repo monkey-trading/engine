@@ -118,6 +118,12 @@ impl LiveReplay {
         self.replay.record_stats_with(stats);
     }
 
+    /// Keeps the stats worker in step with the replica from here, if it records stats, so a start from
+    /// it makes no copy of the state (see `Replay::warm_stats`).
+    pub(crate) fn warm_stats(&self) {
+        self.replay.warm_stats();
+    }
+
     /// Has the replica hand each market's mark, as it changes, to `sink`, as recovery's replay
     /// seeds the marks cache.
     pub(crate) fn sample_marks_with(&mut self, sink: crate::history::marks::MarkSink) {

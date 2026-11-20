@@ -6,7 +6,8 @@
 //! checkpoint; the holder reads the tail past the member's tip from its log (`read_tail`), and the
 //! member takes it through the real successor path (`take_tail`) from a stand-in predecessor serving
 //! those bytes with the keys, applying it to its replica, sealing the keys and confirming. Its node
-//! then starts from the replica, with no replay, and stamps its first command.
+//! then starts from the replica, with no replay, taking on the dashboard record and the stats worker the
+//! replica kept in step, as a member's node does, and stamps its first command.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -33,6 +34,7 @@ use crate::sequencer::recovery_scale::Base;
 use crate::sequencer::recovery_scale::flow::{Flow, Node, SEGMENT_COMMANDS};
 use crate::sequencer::recovery_scale::restart::DOMAIN;
 use crate::standby::Follower;
+use crate::stats::Stats;
 use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::MockSealer;
 use crate::tee::{EnclaveKey, MockAttestor};
@@ -85,22 +87,24 @@ pub(super) fn copy_log(from: &Path, to: &Path) -> anyhow::Result<()> {
 }
 
 /// The member's replica of its copy in `dir`, built by one replay from the book as a member builds
-/// it, with the time it took: recording every command into a dashboard record, folding every mark,
-/// recording the checkpoints it verifies, writing each rollover's rows to `rows`, checking the history
-/// index in `history` against every entry, and with the command seals checked ahead by `workers`.
+/// it, with its dashboard record and the time it took: recording every command into that record, whose
+/// stats worker it then keeps in step, folding every mark, recording the checkpoints it verifies,
+/// writing each rollover's rows to `rows`, checking the history index in `history` against every entry,
+/// and with the command seals checked ahead by `workers`.
 pub(super) fn build_replica(
     base: &Base,
     dir: &Path,
     (signer, workers): (AccountId, ReplayWorkers),
     (rows, history): (Arc<RowsStore>, &HistorySection),
-) -> (Follower, Duration) {
+) -> (Follower, Stats, Duration) {
     // Decoded before the clock starts, as the other replays' books are: a member's own build starts
     // from an empty engine. A retried build decodes it again.
     let decoded = std::cell::Cell::new(Some(base.engine()));
     let fresh = || decoded.take().unwrap_or_else(|| base.engine());
     let started = Instant::now();
     let marks = Rc::new(RefCell::new(MarkFold::new(Retentions::defaults())));
-    let records = (Some(crate::test_support::stats()), Some(marks), Some(CheckedHeads::default()), Some(rows));
+    let stats = crate::test_support::stats();
+    let records = (Some(stats.clone()), Some(marks), Some(CheckedHeads::default()), Some(rows));
     let mut plan = HistoryPlan::for_member(history).expect("the member's history plan");
     let observe = |entry: &LogEntry| {
         plan.observe(entry);
@@ -109,7 +113,7 @@ pub(super) fn build_replica(
     let copy = (dir, SEGMENT_COMMANDS, workers);
     let follower = Follower::open_seeded(copy, (DOMAIN, signer, [signer].into()), records, fresh, observe)
         .expect("the copy replays from the book");
-    (follower, started.elapsed())
+    (follower, stats, started.elapsed())
 }
 
 /// The member's node config: the sealing directory under `run`, in the log's deployment.
@@ -211,11 +215,18 @@ fn unconfirmed(take: Duration, error: &anyhow::Error, at_head: bool) -> bool {
 }
 
 /// The member's node started from `follower`'s replica, with no replay, on its copy in `dir`, signing
-/// with `key`, and the time to its first command.
-pub(super) fn start_from_replica(follower: Follower, dir: &Path, key: Arc<EnclaveKey>) -> (Node, Duration) {
+/// with `key`, taking on the replica's dashboard record `stats` as a member's node does, and the time to
+/// its first command.
+pub(super) fn start_from_replica(
+    follower: Follower,
+    stats: Stats,
+    dir: &Path,
+    key: Arc<EnclaveKey>,
+) -> (Node, Duration) {
     let started = Instant::now();
     let log = follower.into_log(None, AccountId(key.address()), None).expect("the replica finishes as a log");
     let mut node = Node::recovered(log, dir, key, None).expect("the member's node starts from its replica");
+    node.seq.track_stats(stats);
     node.first_command().expect("the member's first command");
     (node, started.elapsed())
 }
