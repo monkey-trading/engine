@@ -207,8 +207,9 @@ CT_WATCH_ALERTS_CRITICAL_URL="http://127.0.0.1:$hook_port/hooks/$secret" \
   "$engine" ct-watch --config "$work/watch.toml" --allow-mock > "$work/watch.log" 2>&1 &
 watch_pid=$!
 wait_for_pages 1
-curl -sf --max-time 2 "http://127.0.0.1:$watch_metrics_port/metrics" | grep -q '^engine_alert_' \
-  || fail "the watcher's metrics listener does not serve the alert counters"
+metrics="$(curl -sf --max-time 2 "http://127.0.0.1:$watch_metrics_port/metrics")" \
+  || fail "the watcher's metrics listener does not answer"
+grep -q '^engine_alert_' <<<"$metrics" || fail "the watcher's metrics listener does not serve the alert counters"
 sleep 3
 [[ "$(pages)" == 1 ]] || fail "expected one page, got $(pages): $(cat "$work/pages.jsonl")"
 foreign_hash="$(sha256_of_pubkey "$work/foreign.pub")"
