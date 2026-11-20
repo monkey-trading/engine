@@ -88,7 +88,7 @@ fn a_malformed_seal_fails_at_its_own_command() {
         bytes[64] = 55 - bytes[64];
         format!("0x{}", hex::encode(bytes))
     };
-    let cases: [(&str, fn(&mut crate::log::CommandSeal), &str); 4] = [
+    let cases: [(&str, Reseal, &str); 4] = [
         ("an Ethereum recovery id", |seal| seal.signature.replace_range(130..132, "00"), "malformed"),
         ("a zero r", |seal| seal.signature.replace_range(2..66, &"0".repeat(64)), "malformed"),
         ("a signer", |seal| seal.signer = AccountId([0; 20]), "zero signer"),
@@ -157,6 +157,9 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
 }
 
 // ── Helpers ──
+
+/// A change to a command's seal.
+type Reseal = fn(&mut crate::log::CommandSeal);
 
 /// A log of `commands` ticks, each stamped at its seq, each sealed by the key and in the domain `sealer`
 /// gives it, if any, with a checkpoint the test key signs in `DOMAIN` after each seq in `checkpoints`.
