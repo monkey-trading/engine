@@ -29,8 +29,10 @@ if [[ "${1:-}" == "--ramp" ]]; then
 fi
 test=load_scenario::dev_scenario_load
 cargo_test=(cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib "$test" -- --ignored --exact)
-# A renamed or moved test would otherwise pass by running nothing.
-CARGO_INCREMENTAL=0 "${cargo_test[@]}" --list | grep -qx "$test: test" || {
+# A renamed or moved test would otherwise pass by running nothing. The whole list is read before it is
+# matched: `grep -q` closing the pipe at its first match fails the list's writer under pipefail.
+listed="$(CARGO_INCREMENTAL=0 "${cargo_test[@]}" --list)"
+grep -qx "$test: test" <<<"$listed" || {
   echo "the dev scenario test $test was not found" >&2
   exit 1
 }
