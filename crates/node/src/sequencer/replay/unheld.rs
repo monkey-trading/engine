@@ -59,39 +59,47 @@ impl Replay {
 
     /// What the replay notes before it applies `entry`: at a command, the anchor at the vault's
     /// checkpoint the log holds no entry for, at the last command's state, and the command's sealer.
-    pub(super) fn before(&mut self, entry: &LogEntry) {
+    /// Error cases:
+    /// - the anchor's root cannot be computed (`anchor_unheld`)
+    pub(super) fn before(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
         if let LogEntry::Command(command) = entry {
-            self.anchor_unheld();
+            self.anchor_unheld()?;
             let sealer = command.seal.as_ref().map(|seal| seal.signer);
             if sealer.is_some_and(|sealer| self.unheld.superseded.is_some_and(|(_, signer)| signer != sealer)) {
                 self.unheld.superseded = None;
             }
             self.unheld.last_sealer = sealer.or(self.unheld.last_sealer);
         }
+        Ok(())
     }
 
     /// Anchors a recovery at the vault's finalized checkpoint when the log holds no entry for it: once
     /// the replay stands at its seq with nothing anchored and its state root is the vault's, the anchor
     /// is this state, under the signer the vault's history names for it or, without that history, the
-    /// signer of the last command's seal.
-    pub(super) fn anchor_unheld(&mut self) {
-        let Some(origin) = self.recovery_origin.filter(|origin| origin.has_checkpoint) else { return };
+    /// signer of the last command's seal. A tree on the replay's root thread comes back to the engine
+    /// first.
+    /// Error cases:
+    /// - a root still due on the root thread differs from the log's, or the thread has stopped
+    pub(super) fn anchor_unheld(&mut self) -> anyhow::Result<()> {
+        let Some(origin) = self.recovery_origin.filter(|origin| origin.has_checkpoint) else { return Ok(()) };
         if self.recovery_anchor.is_some() || self.engine.last_seq() != Some(origin.seq) {
-            return;
+            return Ok(());
         }
         let Some(signer) =
             self.authorities.get(&origin.seq).map(|accepted| accepted.signer).or(self.unheld.last_sealer)
         else {
-            return;
+            return Ok(());
         };
+        self.roots.take_back(&mut self.engine)?;
         if B256::from(self.engine.state_root()) != origin.root {
-            return;
+            return Ok(());
         }
         let checkpoint = unheld(origin.seq, origin.root, signer, self.domain);
         self.recovery_anchor_ts = Some(self.engine.now());
         self.recovery_anchor_work =
             Some(crate::checkpoints::Work::capture(checkpoint.clone(), self.accounting, &self.engine));
         self.recovery_anchor = Some(checkpoint);
+        Ok(())
     }
 
     /// The signer of the last command's seal.

@@ -21,7 +21,7 @@ use crate::log::catalog_head::CatalogDomain;
 use crate::log::catalog_owner::CatalogOwner;
 use crate::log::checked::{self, CheckedChunks};
 use crate::log::writer::seal::SealWork;
-use crate::log::{ActivePrefix, LogEntry, Offset, ReadAuthority, offset_of, parse_line, read_lines};
+use crate::log::{ActivePrefix, LogEntry, Offset, ReadAuthority, by_entry, offset_of, parse_line, read_lines};
 
 pub const MANIFEST: &str = "manifest.jsonl";
 
@@ -187,7 +187,7 @@ impl SegmentedLog {
     ///   not named for the next seq
     /// - `visit` fails
     pub fn open(dir: &Path, visit: impl FnMut(LogEntry) -> anyhow::Result<()>) -> anyhow::Result<Self> {
-        Self::open_listed(dir, list_segments(dir)?, false, visit)
+        Self::open_listed(dir, list_segments(dir)?, false, by_entry(visit))
     }
 
     /// As `open`, while a writer appends and rotates, for history repair. Rotation lists a segment
@@ -196,18 +196,18 @@ impl SegmentedLog {
     /// Error cases:
     /// - as `open`
     pub fn open_while_writing(dir: &Path, visit: impl FnMut(LogEntry) -> anyhow::Result<()>) -> anyhow::Result<Self> {
-        Self::open_listed(dir, list_segments(dir)?, true, visit)
+        Self::open_listed(dir, list_segments(dir)?, true, by_entry(visit))
     }
 
-    /// As `open`, over segment files listed before the manifest is read; `writing` drops manifest
-    /// entries beyond those files.
+    /// As `open`, over segment files listed before the manifest is read, handing `visit` each entry with
+    /// the index in `files` of the segment it is in; `writing` drops manifest entries beyond those files.
     /// Error cases:
     /// - as `open`
     pub(super) fn open_listed(
         dir: &Path,
         files: Vec<(u64, PathBuf)>,
         writing: bool,
-        mut visit: impl FnMut(LogEntry) -> anyhow::Result<()>,
+        mut visit: impl FnMut(usize, LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let (mut manifest, manifest_len) = Manifest::read(dir)?;
         if writing && manifest.segments.len() > files.len() {
@@ -226,7 +226,7 @@ impl SegmentedLog {
             if listed.is_none() && i + 1 < files.len() {
                 bail!("{} is followed by another segment but is not in {MANIFEST}", path.display());
             }
-            let segment = Segment::read(*first_seq, path, listed, &mut last, &mut visit)
+            let segment = Segment::read(*first_seq, path, listed, &mut last, &mut |entry| visit(i, entry))
                 .with_context(|| format!("segment {}", path.display()))?;
             match listed {
                 Some(listed) => ensure!(

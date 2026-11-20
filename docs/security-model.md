@@ -398,6 +398,19 @@ later seal itself. A host that serves different bytes to the two readers therefo
 thread checks a seal, and a seal that fails stops the replay at its instruction with the same error. A
 log that cannot be read a second time, such as a pipe, is checked entirely by the replay's own thread.
 
+A replay of a whole log, as `engine replay`, a recovery and a taken copy's replay read one, also
+makes its own read, which checks and parses the log, on a thread of its own, and applies each
+instruction on another in log order, so a fault in the log stops the replay at the same entry with
+the same error as a read on one thread would. It computes its state roots on a third thread once the
+engine holds its state tree. At each checkpoint it reads that root's leaf writes from its own state
+and hands them to that thread, then applies the next instructions while the thread hashes them. It
+compares each root with its checkpoint's before the next checkpoint, before it reports an error of
+its own or of its read, and before it finishes, so a root that differs fails the replay at its
+checkpoint with the same error, ahead of any later fault. By then the replay may have applied up to
+one checkpoint's instructions past it, and a recovery may have seeded its marks cache and dashboard
+record from them; it serves nothing, and its next start seeds both afresh. A member's replica, which
+answers for each checkpoint it verified as it passes it, compares each root at its checkpoint.
+
 With `[log_heads]` configured, the enclave also signs log heads. A log head states the sequence
 number of the newest instruction the trading server has released, and a running digest of every
 instruction up to it. Checkpoints do not reset the digest, so a posted head commits to the whole

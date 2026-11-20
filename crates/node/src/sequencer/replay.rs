@@ -88,6 +88,8 @@ pub(super) struct Replay {
     prefix_ring: crate::log::PrefixRing,
     /// The newest commands' derived rows, which the sequencer keeps from where the replay ends.
     derived: crate::history::derived::DerivedRows,
+    /// Where the state roots are computed: in the engine, or on a thread of their own.
+    roots: roots::Roots,
 }
 
 impl Replay {
@@ -157,7 +159,7 @@ impl Replay {
         self.origin.check_ahead(path, from, workers);
     }
 
-    /// Applies the log's next entry.
+    /// Applies the log's next entry, the work of `apply`.
     /// Error cases:
     /// - a command out of sequence, with time running backwards, or stamped past the range the
     ///   engine accepts
@@ -168,8 +170,8 @@ impl Replay {
     ///   the next command or checkpoint
     /// - a checkpoint for a seq other than the last applied
     /// - a checkpoint root that differs from the replayed state
-    pub(super) fn apply(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
-        self.before(entry);
+    fn apply_entry(&mut self, entry: &LogEntry) -> anyhow::Result<()> {
+        self.before(entry)?;
         let engine = &mut self.engine;
         self.last_offset = log::offset_of(self.last_offset, entry).ok();
         match entry {
@@ -183,6 +185,7 @@ impl Replay {
                 self.origin.command(c, version)?;
                 crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
+                self.roots.after_command(engine)?;
                 self.genesis.command(&c.sequenced, &events);
                 if crate::sequencer::house::applied_set_params(&c.sequenced.cmd, &events) {
                     self.params_seq = Some(seq);
@@ -323,10 +326,7 @@ impl Replay {
                 if engine.last_seq() != Some(cp.seq) {
                     bail!("checkpoint for seq {} found after seq {:?}", cp.seq, engine.last_seq());
                 }
-                let root = format!("0x{}", hex::encode(engine.state_root()));
-                if root != cp.root {
-                    bail!("state root mismatch at seq {}: log says {}, replay gives {root}", cp.seq, cp.root);
-                }
+                self.roots.checkpoint(engine, cp.seq, &cp.root)?;
                 let checkpoint_domain = crate::checkpoints::signature::verify_with_domain(cp, engine, self.domain)?;
                 self.requires_checkpoint_gate |= cp.parent.is_some();
                 self.payout_checkpoints.insert(cp.seq, cp.root.parse()?);
@@ -382,7 +382,9 @@ impl Replay {
     /// What the entries applied so far replay to.
     pub(super) fn finish(mut self) -> Replayed {
         self.origin.stop_checking_ahead();
-        self.anchor_unheld();
+        // A replay checking roots ahead settles its read (`settled`) before it finishes, taking its tree back.
+        assert!(!self.roots.on_thread(), "a replay finishes with its engine holding its tree");
+        self.anchor_unheld().expect("an engine holding its tree computes its root in place");
         let recovery_base = match self.recovery_origin {
             None => Some(RecoveryBase::Ungated),
             Some(parent) if !parent.has_checkpoint => Some(RecoveryBase::Genesis),
@@ -448,7 +450,9 @@ pub use paths::{
 /// - an entry fails replay (see `Replay::apply`)
 pub fn replay(entries: &[LogEntry]) -> anyhow::Result<Replayed> {
     let mut replay = Replay::default();
-    entries.iter().try_for_each(|entry| replay.apply(entry))?;
+    replay.check_roots_ahead();
+    let applied = entries.iter().try_for_each(|entry| replay.apply(entry));
+    replay.settled(applied)?;
     Ok(replay.finish())
 }
 
@@ -467,6 +471,7 @@ mod replayed;
 pub use replayed::Replayed;
 mod replayed_log;
 pub use replayed_log::ReplayedLog;
+mod roots;
 mod signed;
 mod snapshot;
 mod stats;

@@ -249,12 +249,12 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
-        replay.check_seals_ahead(dir, workers);
-        let log = SegmentedLog::open(dir, |entry| {
+        replay.check_ahead(dir, workers);
+        let log = SegmentedLog::open_ahead(dir, |entry| {
             observe(&entry);
             replay.apply(&entry)
-        })?;
-        replay.ensure_superseded_continued()?;
+        });
+        let log = replay.settled(log).and_then(|log| replay.ensure_superseded_continued().map(|()| log))?;
         Ok(ReplayedLog {
             log: log.into(),
             replayed: replay.finish(),

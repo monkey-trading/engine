@@ -121,7 +121,7 @@ an index: load only the rule whose hint matches the current action.
   own deposit records match, and receipt-backed held deposits in the same form, `tests/exit/credits.rs`; the tree in
   versions over a copy-on-write arena in `merkle/tree/`, which an engine keeps one version of inline, or hands to a node
   (`Engine::detach_tree`) to feed in parts, `take_root_delta` and `commit_inputs`, with the same roots and proofs,
-  `tests/root_deltas.rs`). It does no IO and uses no clocks,
+  and takes back (`Engine::attach_tree`), `tests/root_deltas.rs`). It does no IO and uses no clocks,
   randomness, or floats. `impl Engine` is split by area (`engine/mod.rs` for state and dispatch
   with house NAV and exposure caps in `engine/house.rs`, per-market state in `engine/market.rs`, `marks.rs`, `execution/`,
   `markouts.rs`, `closeout.rs` with, from any version, the derived close-out index in `closeout_index/` (a check site
@@ -190,7 +190,11 @@ an index: load only the rule whose hint matches the current action.
   checked ahead on `node.replay_workers` threads or `--replay-workers`, one per core by default, by a second reader of
   the log's files, the replay taking a verdict only for the seal and link it computed, applying each command once its
   own seal is checked, and checking every later seal in place once the two reads part (`log/seals_ahead.rs`,
-  `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
+  `Origin::check_ahead`, `sequencer/replay/ahead_tests.rs`), and its own read on a `log-reader` thread
+  (`log/ahead.rs`: `SegmentedLog::open_ahead`, `read_file_ahead`) and its state roots on a `replay-roots` thread from
+  its first checkpoint with a tree, each compared before the next checkpoint, an error of its own and its end
+  (`sequencer/replay/roots.rs`, `Replay::check_ahead` and `settled`; a member's live replica computes each root in
+  place), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
   log, or with `--deposit` the refund of the vault's deposit at an id through the receipt the root holds there),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
@@ -1180,6 +1184,11 @@ Run from the repo root:
   `RECOVERY_CAPTURE_SECS`, `RECOVERY_SUFFIX_SECS` and `RECOVERY_TAILS` size the run (CI's job sets 10,000 accounts and
   twenty-one minutes of flow, which the first emission period and staking epoch end in), and `RECOVERY_REPLAY_WORKERS`
   bounds the threads that check seals ahead of each replay, the node's included (one per core)
+- The replay's cost on a kept log (#1116), for profiling: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
+  sequencer::recovery_scale::bench -- --ignored --nocapture --test-threads=1` writes the launch book and
+  `RECOVERY_LAUNCH_SECS` (an hour) of launch flow into `<dir>` on its first run, then `replay_bench` times `engine
+  replay`'s replay of it and `apply_bench` the apply thread's parts (each command kind's apply, the roots, the reads and
+  the seal checks); run it under `nice`
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

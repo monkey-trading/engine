@@ -8,6 +8,9 @@
 //! file before segments existed continues as the first segment once moved to
 //! `<log_dir>/00000000000000000000.jsonl`.
 
+mod ahead;
+use ahead::by_entry;
+pub use ahead::read_file_ahead;
 mod append_integrity;
 pub(crate) mod command_seal;
 pub use command_seal::CommandSeal;

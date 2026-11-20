@@ -84,14 +84,15 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
-        replay.check_seals_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
+        replay.check_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
         let mut fingerprint = Fingerprinter::new();
-        let log = SegmentedLog::open(&cfg.node.log_dir, |entry| {
+        let log = SegmentedLog::open_ahead(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;
             fingerprint.observe(&entry)?;
             observe(&entry);
             Ok(())
-        })?;
+        });
+        let log = replay.settled(log)?;
         let replayed = replay.finish();
         let plan =
             plan(cfg, snapshots, domain, signer, Source::Rebuild { prefix: fingerprint.finish() }, Catalog::Rebuild);
@@ -188,18 +189,18 @@ fn candidate(
         Arc::new(catalog_store.clone()),
         Arc::new(move |root| probe.ensure_current(root)),
     ));
-    replay.check_seals_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
-    let mut log =
-        SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
-            replay.apply(&entry)?;
-            if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)
-                && Some(command.sequenced.seq) == h_seq
-            {
-                replay.verify_history_head(&history_h.head)?;
-                matched_h = true;
-            }
-            Ok(())
-        })?;
+    replay.check_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
+    let suffix = SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
+        replay.apply(&entry)?;
+        if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)
+            && Some(command.sequenced.seq) == h_seq
+        {
+            replay.verify_history_head(&history_h.head)?;
+            matched_h = true;
+        }
+        Ok(())
+    });
+    let mut log = replay.settled(suffix)?;
     let mut replayed = replay.finish();
     replayed.ts_at = replayed.ts_at.or(posted_ts);
     replayed.anchor_ts = replayed.anchor_ts.or(anchor_ts);
