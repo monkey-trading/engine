@@ -196,6 +196,36 @@ fn a_refresh_racing_an_expiry_never_attaches_the_expired_decision() {
     assert!(decisions.hit(a, x, T0 + REFRESH + 1_000 + USABLE + 1).is_none());
 }
 
+#[test]
+fn a_refresh_landing_after_the_old_decision_expired_keeps_the_pair_active() {
+    let decisions = decisions(8);
+    let (a, x) = (account(1), peer(1));
+    assert!(decisions.store(a, x, &decision(a, T0), &domain(), T0, true));
+    assert_eq!(decisions.due(T0 + REFRESH, 8), vec![(a, x)]);
+    assert!(decisions.hit(a, x, T0 + 26_500).is_some());
+    // The refresh returns a decision observed after the old one's attachment deadline.
+    let landed = T0 + 27_500;
+    assert!(decisions.store(a, x, &decision(a, landed), &domain(), landed, false));
+    decisions.refreshed((a, x), landed);
+    assert!(decisions.lock().lapsed.is_empty(), "the lapsed activity is dropped once the refresh ends");
+    // Its refresh time is 16.5 s after the pair's last request, so it is refreshed with no request between.
+    let next = landed + USABLE - 2 * (2_000 + TURN);
+    assert_eq!(decisions.due(next, 8), vec![(a, x)]);
+}
+
+#[test]
+fn a_refresh_that_fails_after_the_decision_expired_leaves_no_activity_behind() {
+    let decisions = decisions(8);
+    let (a, x) = (account(1), peer(1));
+    assert!(decisions.store(a, x, &decision(a, T0), &domain(), T0, true));
+    assert_eq!(decisions.due(T0 + REFRESH, 8), vec![(a, x)]);
+    let expired = T0 + USABLE + 1;
+    assert!(decisions.due(expired, 8).is_empty());
+    assert_eq!(decisions.lock().lapsed.len(), 1, "kept while the refresh is in flight");
+    decisions.refreshed((a, x), expired);
+    assert!(decisions.lock().lapsed.is_empty());
+}
+
 // ── Helpers ──
 
 /// Decisions checked against `source()` and a 30 s bound, keeping at most `capacity` pairs.

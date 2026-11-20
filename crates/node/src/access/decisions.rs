@@ -63,6 +63,9 @@ struct Held {
     expiring: BTreeSet<(Millis, Pair)>,
     /// Each entry waiting for a refresh, by when it is due one.
     scheduled: BTreeSet<(Millis, Pair)>,
+    /// The last request of each pair whose decision ran out with a refresh in flight, until that refresh
+    /// ends, so the decision it lands keeps the pair active. At most one per refresh in flight.
+    lapsed: HashMap<Pair, Millis>,
 }
 
 /// One pair's decision.
@@ -139,7 +142,8 @@ impl Decisions {
         let pair = (account, peer);
         let mut held = self.lock();
         held.purge(now);
-        let last_request = if request { now } else { Millis::MIN };
+        let lapsed = held.lapsed.remove(&pair).unwrap_or(Millis::MIN);
+        let last_request = if request { now.max(lapsed) } else { lapsed };
         let full = held.entries.len() >= self.capacity;
         let (last_request, refreshing) = match held.entries.get_mut(&pair) {
             Some(kept) if kept.screening.observed_at > screening.observed_at => {
@@ -189,6 +193,7 @@ impl Decisions {
     /// one that did not tries again on the next turn, while its decision lasts.
     pub(crate) fn refreshed(&self, pair: Pair, now: Millis) {
         let mut held = self.lock();
+        held.lapsed.remove(&pair);
         let Some(entry) = held.entries.get_mut(&pair) else { return };
         entry.refreshing = false;
         let due = self.refresh_at(entry).max(now.saturating_add(self.turn));
@@ -250,10 +255,12 @@ impl Held {
     fn purge(&mut self, now: Millis) {
         while let Some(&(until, pair)) = self.expiring.first().filter(|(until, _)| *until < now) {
             self.expiring.remove(&(until, pair));
-            if let Some(entry) = self.entries.remove(&pair)
-                && let Some(due_at) = entry.due_at
-            {
+            let Some(entry) = self.entries.remove(&pair) else { continue };
+            if let Some(due_at) = entry.due_at {
                 self.scheduled.remove(&(due_at, pair));
+            }
+            if entry.refreshing {
+                self.lapsed.insert(pair, entry.last_request);
             }
         }
     }
