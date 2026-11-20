@@ -129,7 +129,7 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
         .iter()
         .map(|version| Ok((receipts::receipt_key(&root.namespace, *version)?, None)))
         .collect::<Result<Vec<_>>>()?;
-    // Each read keeps nodes of its own: the checks after the deletions below must read the heads afresh.
+    // Each of collection's reads keeps nodes of its own: collection deletes node rows in this transaction.
     let prepared = batch::prepare(conn, root, changes, queue.clone(), true, &Checked::default())?;
     batch::persist(conn, &prepared, &Checked::default())?;
     for row in &retired {

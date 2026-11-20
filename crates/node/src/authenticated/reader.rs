@@ -11,6 +11,9 @@ use rusqlite::{Connection, params};
 use crate::authenticated::codec;
 use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
+/// The most nodes an operation keeps checked: a writing reader's node budget. Tests keep a few.
+pub(super) const CHECKED_NODES: usize = if cfg!(test) { 64 } else { 1 + PHYSICAL_UPDATES * 64 * 16 };
+
 /// The nodes one operation has checked against an authenticated parent, each with the hash it was
 /// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed
 /// once per operation, and a reader takes it only where its own checked parent names that hash.
@@ -48,7 +51,7 @@ impl<'a> Reader<'a> {
         if let Some(version) = root.version {
             let key = codec::root_key(version)?;
             let node =
-                reader.checked(&key, root.hash).map_or_else(|| reader.check(&key, root.hash, "root node"), Ok)?;
+                reader.recorded(&key, root.hash).map_or_else(|| reader.check(&key, root.hash, "root node"), Ok)?;
             reader.cache.borrow_mut().insert(key, node);
         }
         Ok(reader)
@@ -150,7 +153,7 @@ impl<'a> Reader<'a> {
         }
         for (nibble, child) in internal.children_sorted() {
             let child_key = codec::child_key(key, u8::from(nibble), child.version)?;
-            let loaded = match self.checked(&child_key, child.hash) {
+            let loaded = match self.recorded(&child_key, child.hash) {
                 Some(node) => node,
                 None => self.check(&child_key, child.hash, "child")?,
             };
@@ -173,18 +176,23 @@ impl<'a> Reader<'a> {
     }
 
     /// The node at `key` the operation has checked to hash to `hash`, if it has.
-    fn checked(&self, key: &NodeKey, hash: [u8; 32]) -> Option<Node> {
+    fn recorded(&self, key: &NodeKey, hash: [u8; 32]) -> Option<Node> {
         self.checked.borrow().get(key).filter(|(_, checked)| *checked == hash).map(|(node, _)| node.clone())
     }
 
     /// Fetches the node at `key`, checks that it hashes to `hash`, its authenticated parent's for it, and
-    /// records it for the operation's other reads.
+    /// records it for the operation's other reads, forgetting every recorded node first once
+    /// `CHECKED_NODES` are, so an operation of any size holds no more than one writing reader may.
     /// Error cases:
     /// - the node is unavailable or malformed, or hashes otherwise (a `what` hash mismatch)
     fn check(&self, key: &NodeKey, hash: [u8; 32], what: &str) -> Result<Node> {
         let node = self.fetch(key)?;
         ensure!(codec::hash(&node) == hash, "{what} hash mismatch");
-        self.checked.borrow_mut().insert(key.clone(), (node.clone(), hash));
+        let mut checked = self.checked.borrow_mut();
+        if checked.len() >= CHECKED_NODES {
+            checked.clear();
+        }
+        checked.insert(key.clone(), (node.clone(), hash));
         Ok(node)
     }
 

@@ -1,7 +1,9 @@
 //! The index's ingest rate on a recorded log's commands, run by hand: `HISTORY_BENCH_LOG` names a log
 //! directory whose first command is seq 0, and `HISTORY_BENCH_COMMANDS` how many of its commands to
 //! take (20,000), each update of `HISTORY_BENCH_BATCH` commands (128, the history owner's), collecting
-//! retired versions every 1,024 commands as the owner does.
+//! retired versions every 1,024 commands as the owner does. It derives no rows: a rollover's financing
+//! rows, which the owner indexes beside its events, are left out, so a log spanning a rollover reads
+//! faster here than the owner indexes it.
 
 use std::time::Instant;
 

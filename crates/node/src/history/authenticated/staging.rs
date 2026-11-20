@@ -3,12 +3,17 @@
 use anyhow::Result;
 
 use crate::authenticated::{Lease, Root, Store};
+use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
 use crate::history::authenticated::overlay::Overlay;
 use crate::history::authenticated::state::{STATE_KEY, State};
 
 /// A physical staging preference, not a bound on commands, payloads, accounts, or expiry: about the
 /// keys one update of launch flow's commands writes, so such an update commits about once.
 pub(super) const STAGED_KEYS: usize = 128;
+
+/// The value bytes a stage holds before it commits, whatever its keys: 32 payload chunks, which large
+/// events' chunks reach well before `STAGED_KEYS`.
+pub(super) const STAGED_BYTES: usize = 32 * PAYLOAD_CHUNK_BYTES;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug)]
@@ -42,7 +47,7 @@ impl Staged {
     /// Error cases:
     /// - any exact update proof, durable commit, lease, or observer failure
     pub fn flush_if_full(&mut self, observe: &mut impl FnMut(&Root, StageInfo) -> Result<()>) -> Result<()> {
-        if self.overlay.len() >= STAGED_KEYS {
+        if self.overlay.len() >= STAGED_KEYS || self.overlay.written_bytes() >= STAGED_BYTES {
             self.flush(observe)?;
         }
         Ok(())

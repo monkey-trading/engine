@@ -15,6 +15,8 @@ pub(super) struct Overlay {
     session: Option<Session>,
     reads: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     writes: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
+    /// Bytes of every value staged so far, rewrites included.
+    written: usize,
 }
 
 impl Overlay {
@@ -26,6 +28,7 @@ impl Overlay {
             session: None,
             reads: BTreeMap::new(),
             writes: BTreeMap::new(),
+            written: 0,
         }
     }
 
@@ -65,6 +68,7 @@ impl Overlay {
     /// - old-value proof fails
     pub fn put_bytes(&mut self, key: Vec<u8>, value: Vec<u8>) -> Result<()> {
         self.prove_old(&key)?;
+        self.written = self.written.saturating_add(value.len());
         self.writes.insert(key, Some(value));
         Ok(())
     }
@@ -81,6 +85,11 @@ impl Overlay {
     /// Counts locally distinct writes for staging, never as a retention/event policy limit.
     pub fn len(&self) -> usize {
         self.writes.len()
+    }
+
+    /// Counts the bytes of the values staged, rewrites included, for staging's memory bound.
+    pub fn written_bytes(&self) -> usize {
+        self.written
     }
 
     /// Counts buffered key/value bytes for the source-level bounded-staging regression.

@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
+use crate::history::authenticated::staging::STAGED_KEYS;
 use crate::history::authenticated::state::STATE_KEY;
 
 #[test]
@@ -144,7 +145,9 @@ fn complete_expiry_removes_every_large_payload_piece_while_an_old_reader_keeps_e
 #[test]
 fn a_touched_missing_expiry_piece_blocks_publication_and_requires_verified_rebuild() {
     let (mut index, path) = fixture("payload-expiry-missing", 1);
-    index.ingest(command(0, 0, Some(vec![large_event(A, 3 * 1024 * 1024 + 123)]))).expect("initial");
+    // Enough pieces that expiring them commits a private stage before the missing last one.
+    let length = (STAGED_KEYS + 16) * PAYLOAD_CHUNK_BYTES + 123;
+    index.ingest(command(0, 0, Some(vec![large_event(A, length)]))).expect("initial");
     let list = meta(&index, A, None);
     let row = stored_row(&index, list.position(0));
     let last = row.payload.chunks - 1;
