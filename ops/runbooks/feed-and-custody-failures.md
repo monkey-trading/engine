@@ -669,9 +669,8 @@ Check each limit on the provider's page before relying on it, because they chang
 **What to raise.** Raise the plan of at least two of the three providers to a paid tier that carries
 about 100 million compute units a day, or lower the load:
 
-- the liveness rule's 1 s poll (`liveness/operator.rs`) and the 5 s of the fallback fixer and the
-  liveness caller (`liveness/fallback.rs`, `liveness/caller.rs`) are constants, so a longer interval is
-  a code change;
+- the liveness rule's 1 s poll (`liveness/operator.rs`) and the 5 s `POLL` that the fallback fixer and
+  the liveness caller share (`liveness/caller.rs`) are constants, so a longer interval is a code change;
 - `checkpoints.retry_interval` sets the cadence of both the relayer balance read and the log-head
   read-back. While a turn names the operator, the log-head reads tighten to a sixth of the heartbeat
   interval if that is shorter (`log_heads/mod.rs`), so raising it saves the most only outside a turn;
