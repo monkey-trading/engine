@@ -120,6 +120,17 @@ fn a_log_that_cannot_be_read_twice_starts_no_checks() {
     }
 }
 
+/// A directory is read twice wherever it is, as with `TMPDIR=/dev/shm`, since the reader opens each segment
+/// afresh and requires it to be a regular file; a refusal says which log and why.
+#[test]
+fn a_directory_under_dev_is_read_twice_and_a_refusal_is_logged() {
+    assert!(readable_twice(Path::new("/dev")), "a directory under /dev");
+    let (logs, _guard) = crate::trusted_time::tests::logs::Logs::capture();
+    let missing = scratch_dir("seals-ahead-refused").join("missing");
+    assert!(SealsAhead::start(&missing, 0, B256::default(), workers(1)).is_none());
+    assert_eq!(logs.count(&missing.display().to_string()), 1, "the refusal names the path");
+}
+
 /// A segment that is not a regular file, such as a pipe no writer opens, ends the reader's read before
 /// it opens it, rather than leaving the reader waiting on it while the replay waits to join it.
 #[test]
