@@ -85,6 +85,7 @@ fn a_session_checks_the_schema_at_its_first_read() -> Result<()> {
     conn.execute_batch("CREATE TRIGGER injected AFTER INSERT ON value_rows BEGIN DELETE FROM nodes; END;")?;
     let mut session = lease.session();
     assert!(session.read(b"a").is_err(), "a changed schema is refused at the first read");
+    assert!(session.read(b"a").is_err(), "a refused first read leaves the schema to check at the next");
     conn.execute_batch("DROP TRIGGER injected")?;
     assert_eq!(session.read(b"a")?, Some(b"A".to_vec()), "the next read checks the schema afresh");
     Ok(())

@@ -34,11 +34,6 @@ pub(super) struct Reader<'a> {
     bytes_left: Cell<usize>,
 }
 
-/// The nodes a reader of `keys` point paths may load: the root and each path's 64 levels of 16 children.
-const fn node_budget(keys: usize) -> usize {
-    1 + keys * 64 * 16
-}
-
 impl Default for Checked {
     /// An operation's checked nodes, at most `CHECKED_NODES` at a time.
     fn default() -> Self {
@@ -303,4 +298,9 @@ impl TreeReader for Reader<'_> {
     fn get_rightmost_leaf(&self) -> Result<Option<(NodeKey, LeafNode)>> {
         bail!("rightmost-leaf scans are unsupported")
     }
+}
+
+/// The nodes a reader of `keys` point paths may load: the root and each path's 64 levels of 16 children.
+const fn node_budget(keys: usize) -> usize {
+    1 + keys * 64 * 16
 }
