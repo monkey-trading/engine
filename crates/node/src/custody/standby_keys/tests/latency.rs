@@ -61,7 +61,9 @@ impl VaultReader for Lagged {
     async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
         tokio::time::sleep(self.latency).await;
         let hash = AgreedBlock::hash(&&*self.block);
-        Ok((from..=to).map(|number| BlockLink { number, hash, parent_hash: B256::ZERO, timestamp: TIME }).collect())
+        Ok((from..=to)
+            .map(|number| BlockLink { number, hash, parent_hash: B256::ZERO, timestamp: TIME, staking_logs: false })
+            .collect())
     }
 
     async fn deposits(&self, _from: u64, _to: u64) -> anyhow::Result<Vec<VaultDeposit>> {

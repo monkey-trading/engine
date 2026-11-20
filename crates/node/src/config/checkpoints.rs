@@ -51,6 +51,27 @@ fn default_log_heads_interval() -> Duration {
     Duration::from_secs(3600)
 }
 
+/// The poster's default read-back cadence outside a turn: a post lands at most once an hour there, so a
+/// read a minute confirms each well before the next and finds another copy's head within a minute.
+fn default_log_heads_read_interval() -> Duration {
+    Duration::from_secs(60)
+}
+
+/// The liveness reads' default cadence: four a 60-second heartbeat interval.
+pub(crate) fn default_liveness_read_interval() -> Duration {
+    Duration::from_secs(15)
+}
+
+/// The fallback fixer's default cadence while no fix is under way: a turn is drawn up to a whole turn
+/// after its draw deadline, so a fallback fixed five minutes after it still leaves the draw its day.
+fn default_fallback_interval() -> Duration {
+    Duration::from_secs(300)
+}
+
+/// The longest `[liveness] fallback_interval` a production build allows: a day-long draw window still
+/// leaves the turn many hours to be drawn after a fix that comes this late.
+const PRODUCTION_FALLBACK_INTERVAL: Duration = Duration::from_secs(3600);
+
 /// On-chain log-head commitments: the node posts its newest released `(seq, link)` at most every
 /// `interval` and refuses to start on a log that lacks the posted head (#541).
 #[derive(Debug, Deserialize)]
@@ -64,6 +85,10 @@ pub struct LogHeadsSection {
     /// How often the poster reposts the newest released head; a post lands only when the head moved.
     #[serde(with = "humantime_serde", default = "default_log_heads_interval")]
     pub interval: Duration,
+    /// How often the poster reads the posted head back, and at least every `interval`: with rotation on
+    /// at least every 30 s, and while a turn names the operator every sixth of its heartbeat interval.
+    #[serde(with = "humantime_serde", default = "default_log_heads_read_interval")]
+    pub read_interval: Duration,
 }
 
 /// A rotation-set member's liveness caller (#595): the account the checkpoint endpoint signs its
@@ -76,6 +101,14 @@ pub struct LivenessSection {
     /// The balance below which `liveness_caller_unfunded` fires, in ether, e.g. `"0.01"`.
     #[serde(deserialize_with = "ether")]
     pub min_balance: U256,
+    /// How often the caller reads the chain, and the operator's rule reads it while it asks the members
+    /// every second; each reads at least four times a heartbeat interval whatever this says.
+    #[serde(with = "humantime_serde", default = "default_liveness_read_interval")]
+    pub read_interval: Duration,
+    /// How often the fallback fixer reads the seed receiver while no fix is under way; once one is, every
+    /// 5 s until its block's hash is recorded.
+    #[serde(with = "humantime_serde", default = "default_fallback_interval")]
+    pub fallback_interval: Duration,
 }
 
 impl NodeConfig {
@@ -111,7 +144,9 @@ impl NodeConfig {
     /// Error cases:
     /// - `operator.rotation_enabled` is set without `[log_heads]`
     /// - `[log_heads]` is set without `[checkpoints]`, names the zero contract or relayer, reuses
-    ///   the checkpoint relayer, or sets a zero interval
+    ///   the checkpoint relayer, or sets a zero interval or read interval
+    /// - `[liveness]` names the zero caller or one a relayer uses, a zero minimum balance, or a zero
+    ///   read or fallback interval
     pub(super) fn validate_log_heads(&self) -> anyhow::Result<()> {
         let Some(cfg) = &self.log_heads else {
             // A successor checks the tail's head against the latest posted one at each handover.
@@ -127,6 +162,7 @@ impl NodeConfig {
         ensure!(!cfg.relayer.is_zero(), "log_heads.relayer must be non-zero");
         ensure!(cfg.relayer != checkpoints.relayer, "log_heads.relayer must differ from the checkpoint relayer");
         ensure!(!cfg.interval.is_zero(), "log_heads.interval must be non-zero");
+        ensure!(!cfg.read_interval.is_zero(), "log_heads.read_interval must be non-zero");
         let Some(liveness) = &self.liveness else { return Ok(()) };
         ensure!(!liveness.caller.is_zero(), "liveness.caller must be non-zero");
         let seed_relayer = self.seed_relay.as_ref().map(|seed| seed.relayer);
@@ -135,6 +171,24 @@ impl NodeConfig {
             "liveness.caller must differ from the checkpoint, log-head and seed relayers"
         );
         ensure!(!liveness.min_balance.is_zero(), "liveness.min_balance must be non-zero");
+        ensure!(
+            !liveness.read_interval.is_zero() && !liveness.fallback_interval.is_zero(),
+            "liveness.read_interval and liveness.fallback_interval must be non-zero"
+        );
+        Ok(())
+    }
+
+    /// Refuses a fallback fixer slower than the production value when `production` is set.
+    /// Error cases:
+    /// - `production` is set and `liveness.fallback_interval` is above `PRODUCTION_FALLBACK_INTERVAL`
+    pub(super) fn refuse_slow_fallback_fixer(&self, production: bool) -> anyhow::Result<()> {
+        let Some(liveness) = self.liveness.as_ref().filter(|_| production) else { return Ok(()) };
+        ensure!(
+            liveness.fallback_interval <= PRODUCTION_FALLBACK_INTERVAL,
+            "a production build allows liveness.fallback_interval at most {PRODUCTION_FALLBACK_INTERVAL:?}, and the \
+             config sets {:?}",
+            liveness.fallback_interval
+        );
         Ok(())
     }
 
@@ -187,5 +241,29 @@ mod tests {
         assert!(err.to_string().contains("min_balance must be non-zero"), "{err:#}");
         cfg.checkpoints.as_mut().unwrap().relayer_gas.as_mut().unwrap().min_balance = parse_ether("0.01").unwrap();
         cfg.validate_checkpoints().unwrap();
+    }
+
+    #[test]
+    fn read_intervals_default_to_their_cadences_and_a_production_build_bounds_the_fixer() {
+        let liveness: LivenessSection =
+            toml::from_str("caller = '0x1111111111111111111111111111111111111111'\nmin_balance = '0.01'").unwrap();
+        assert_eq!(
+            (liveness.read_interval, liveness.fallback_interval),
+            (Duration::from_secs(15), Duration::from_secs(300))
+        );
+        let heads: LogHeadsSection = toml::from_str(
+            "contract = '0x1111111111111111111111111111111111111111'\n\
+             relayer = '0x2222222222222222222222222222222222222222'",
+        )
+        .unwrap();
+        assert_eq!((heads.interval, heads.read_interval), (Duration::from_secs(3600), Duration::from_secs(60)));
+
+        let mut cfg = NodeConfig::load(Path::new(ANVIL_CONFIG)).unwrap();
+        cfg.liveness = Some(LivenessSection { fallback_interval: PRODUCTION_FALLBACK_INTERVAL, ..liveness });
+        cfg.refuse_slow_fallback_fixer(true).unwrap();
+        cfg.liveness.as_mut().unwrap().fallback_interval += Duration::from_secs(1);
+        let err = cfg.refuse_slow_fallback_fixer(true).unwrap_err();
+        assert!(err.to_string().contains("liveness.fallback_interval"), "{err:#}");
+        cfg.refuse_slow_fallback_fixer(false).unwrap();
     }
 }

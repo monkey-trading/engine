@@ -998,7 +998,14 @@ With `[liveness]`, the trading server also does all of these from the caller acc
   thirds of an interval.
 - For the trading server's whole life, whether following or holding a turn, it fixes the fallback of
   a turn whose draw deadline passed with no relayed seed. The fix is `SeedReceiver.fixFallback`,
-  sent as two calls a poll apart, and lets the turn be drawn for the rest of its window.
+  sent as two calls 5 seconds apart, and lets the turn be drawn for the rest of its window.
+
+The caller reads the chain every `liveness.read_interval`, 15 seconds by default, and at least four
+times a heartbeat interval whatever that says. The operator's trading server reads the chain for the
+liveness rule at the same cadence, and asks the members for their copies every second. The fallback
+fixer reads the seed receiver every `liveness.fallback_interval`, 5 minutes by default and at most an
+hour in a production build. The RPC budget in
+[feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads cost.
 
 1. Add the section to the configuration:
 
@@ -1006,6 +1013,8 @@ With `[liveness]`, the trading server also does all of these from the caller acc
    [liveness]
    caller = "0x..."        # an account the checkpoint endpoint signs for, apart from every relayer
    min_balance = "0.01"
+   read_interval = "15s"     # optional; the default
+   fallback_interval = "5m"  # optional; the default
    ```
 
    `caller` is an account that the checkpoint endpoint signs for. It must differ from the checkpoint

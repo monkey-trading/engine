@@ -318,6 +318,7 @@ impl<R: CheckpointChain> Poster<R> {
         let mut unconfirmed = false;
         let mut timer = interval(self.retry);
         timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut gas_read: Option<tokio::time::Instant> = None;
         loop {
             tokio::select! {
                 work = rx.recv(), if queued.len() < 64 => match work {
@@ -325,7 +326,10 @@ impl<R: CheckpointChain> Poster<R> {
                     None => return Ok(()),
                 },
                 _ = timer.tick() => {
-                    self.check_relayer_gas().await;
+                    if gas_read.is_none_or(|at| at.elapsed() >= relayer_gas::READ_EVERY) {
+                        gas_read = Some(tokio::time::Instant::now());
+                        self.check_relayer_gas().await;
+                    }
                     let work = queued.front().or(latest.as_ref());
                     let Some(work) = work else { continue };
                     let registered = self.registry.as_ref().map(|registry| registry.lock()

@@ -146,6 +146,7 @@ impl VaultReader for Provider {
                 hash: if number == FINAL { final_block().hash } else { B256::repeat_byte(0x11) },
                 parent_hash: B256::ZERO,
                 timestamp: if number == FINAL { FINAL_TIME } else { 0 },
+                staking_logs: false,
             })
             .collect())
     }

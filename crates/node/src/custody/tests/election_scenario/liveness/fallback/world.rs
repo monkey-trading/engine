@@ -139,7 +139,12 @@ impl World {
             .iter()
             .enumerate()
             .flat_map(|(i, member)| {
-                let liveness = LivenessSection { caller: chain.accounts[6 + i], min_balance: U256::from(1) };
+                let liveness = LivenessSection {
+                    caller: chain.accounts[6 + i],
+                    min_balance: U256::from(1),
+                    read_interval: crate::config::default_liveness_read_interval(),
+                    fallback_interval: crate::liveness::caller::FOLLOW_UP,
+                };
                 let endpoint = || Endpoint::new(cfg.checkpoints.as_ref().unwrap(), &liveness, cfg.custody.chain_id);
                 let reader = |name| crate::custody::StandbyReader::connect_named(&cfg.custody, log_heads, name);
                 let sends = Arc::new(crate::liveness::fallback::Sends::default());
@@ -149,7 +154,7 @@ impl World {
                     domain,
                     copy: member.copy.clone(),
                     min_balance: U256::from(1),
-                    poll: crate::liveness::caller::POLL,
+                    poll: crate::config::default_liveness_read_interval(),
                     clock: clock.clone(),
                     sends: sends.clone(),
                 };
@@ -158,7 +163,9 @@ impl World {
                     sending: endpoint().unwrap(),
                     chain_id: cfg.custody.chain_id,
                     vault: chain.vault,
-                    poll: crate::liveness::caller::POLL,
+                    // At the follow-up cadence while idle too, so the scenario runs in minutes.
+                    idle: crate::liveness::caller::FOLLOW_UP,
+                    poll: crate::liveness::caller::FOLLOW_UP,
                     min_balance: U256::from(1),
                     sends,
                 };

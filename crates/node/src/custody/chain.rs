@@ -2,13 +2,21 @@
 //! anchors was read and each named the one below it as its parent, up to the tagged block's hash.
 //! Block hashes are commitments, so the proof holds however the endpoint routes its reads. Only
 //! sparse anchors are kept, plus every hash of the next read window, so memory grows with the
-//! backlog over the block range, not with it. Headers read by a proof that has not yet reached its
-//! end are a separate, unproven run, which only a later attempt at the same proof reads.
+//! backlog over the block range, not with it. A confirmation proof also keeps every hash of the newest
+//! `RECENT` blocks it linked, so the release and staking windows below the head are proven again from
+//! memory, without reading their headers a second time. Headers read by a proof that has not yet reached
+//! its end are a separate, unproven run, which only a later attempt at the same proof reads.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy::primitives::B256;
 use anyhow::bail;
+
+/// How many of the newest blocks a confirmation proof keeps every hash of. Arbitrum One's finalized tag
+/// trails its head by about 4,800 blocks (20 minutes at 4 a second), so 16,384 keep the release and
+/// staking windows in memory through a finality lag of over an hour; past that they read their headers
+/// again, as the sparse anchors require. They take about 1 MB.
+const RECENT: usize = 16_384;
 
 /// A block's hash and its parent's, and its time, as a header reports them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +26,17 @@ pub struct BlockLink {
     pub parent_hash: B256,
     /// The block's timestamp, in seconds since the epoch.
     pub timestamp: u64,
+    /// Whether the header's logs bloom admits an event the staking mirror reads. `false` shows the block
+    /// holds none: a bloom has no false negatives.
+    pub staking_logs: bool,
+}
+
+/// A proven run of blocks: each hash, and the blocks whose header's logs bloom admits an event the
+/// staking mirror reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProvenWindow {
+    pub hashes: BTreeMap<u64, B256>,
+    pub staking_logs: BTreeSet<u64>,
 }
 
 /// Proven hashes at sparse heights, the top being the tagged block last proven, and every hash
@@ -26,6 +45,11 @@ pub struct BlockLink {
 pub(super) struct ProvenChain {
     anchors: BTreeMap<u64, B256>,
     window: BTreeMap<u64, B256>,
+    /// The window's blocks whose header's logs bloom admits an event the staking mirror reads.
+    window_logs: BTreeSet<u64>,
+    /// Every hash of the newest `RECENT` blocks a recording proof linked, and whether each block's
+    /// bloom admits a staking event.
+    recent: BTreeMap<u64, (B256, bool)>,
     /// The run of an interrupted proof, kept so the next attempt resumes after it.
     interrupted: Option<LinkedRun>,
     #[cfg(test)]
@@ -41,6 +65,9 @@ pub(super) struct LinkedRun {
     last: Option<(u64, B256)>,
     anchors: BTreeMap<u64, B256>,
     window: BTreeMap<u64, B256>,
+    window_logs: BTreeSet<u64>,
+    /// Every hash of the newest `RECENT` blocks linked, for a recording run.
+    recent: Option<BTreeMap<u64, (B256, bool)>>,
 }
 
 impl ProvenChain {
@@ -85,6 +112,11 @@ impl ProvenChain {
     pub(super) fn keep(&mut self, run: LinkedRun) {
         self.anchors.extend(run.anchors);
         self.window.extend(run.window);
+        self.window_logs.extend(run.window_logs);
+        self.recent.extend(run.recent.into_iter().flatten());
+        while self.recent.len() > RECENT {
+            self.recent.pop_first();
+        }
         #[cfg(test)]
         {
             self.window_peak = self.window_peak.max(self.window.len());
@@ -94,6 +126,7 @@ impl ProvenChain {
     /// Discards consumed full headers, preserving canonical anchors and interrupted proofs.
     pub(super) fn clear_window(&mut self) {
         self.window.clear();
+        self.window_logs.clear();
     }
 
     /// The largest retained full-header window during this proof.
@@ -108,6 +141,26 @@ impl ProvenChain {
         (hashes.len() as u64 == to - from + 1).then_some(hashes)
     }
 
+    /// The window's blocks in `from..=to` whose bloom admits a staking event.
+    pub(super) fn window_logs(&self, from: u64, to: u64) -> BTreeSet<u64> {
+        self.window_logs.range(from..=to).copied().collect()
+    }
+
+    /// Blocks `from..=to` from the recent hashes, when they hold every one of them.
+    pub(super) fn recent(&self, from: u64, to: u64) -> Option<ProvenWindow> {
+        if from > to {
+            return None;
+        }
+        let window = self.recent.range(from..=to);
+        if window.clone().count() as u64 != to - from + 1 {
+            return None;
+        }
+        Some(ProvenWindow {
+            hashes: window.clone().map(|(number, (hash, _))| (*number, *hash)).collect(),
+            staking_logs: window.filter(|(_, (_, logs))| *logs).map(|(number, _)| *number).collect(),
+        })
+    }
+
     /// Bounds a hierarchical cache, retaining the nearest upcoming proof anchors.
     pub(super) fn cap_anchors(&mut self, limit: usize) {
         while self.anchors.len() > limit {
@@ -119,6 +172,8 @@ impl ProvenChain {
     pub(super) fn prune_below(&mut self, number: u64) {
         self.anchors = self.anchors.split_off(&number);
         self.window = self.window.split_off(&number);
+        self.window_logs = self.window_logs.split_off(&number);
+        self.recent = self.recent.split_off(&number);
     }
 
     /// Forgets everything above `number`, or everything for `None`, and any interrupted run.
@@ -128,10 +183,14 @@ impl ProvenChain {
             Some(number) => {
                 self.anchors.split_off(&(number + 1));
                 self.window.split_off(&(number + 1));
+                self.window_logs.split_off(&(number + 1));
+                self.recent.split_off(&(number + 1));
             }
             None => {
                 self.anchors.clear();
                 self.window.clear();
+                self.window_logs.clear();
+                self.recent.clear();
             }
         }
     }
@@ -140,7 +199,19 @@ impl ProvenChain {
 impl LinkedRun {
     /// A run whose first header is block `first`, a child of `below` when that is known.
     pub(super) fn new(below: Option<(u64, B256)>, first: u64) -> Self {
-        LinkedRun { start: (below, first), last: None, anchors: BTreeMap::new(), window: BTreeMap::new() }
+        LinkedRun {
+            start: (below, first),
+            last: None,
+            anchors: BTreeMap::new(),
+            window: BTreeMap::new(),
+            window_logs: BTreeSet::new(),
+            recent: None,
+        }
+    }
+
+    /// `new`, keeping every hash of the newest `RECENT` blocks it links as well.
+    pub(super) fn recording(below: Option<(u64, B256)>, first: u64) -> Self {
+        LinkedRun { recent: Some(BTreeMap::new()), ..Self::new(below, first) }
     }
 
     /// The last block linked, or the block below the run before any is.
@@ -171,6 +242,15 @@ impl LinkedRun {
             }
             if window(l.number) {
                 self.window.insert(l.number, l.hash);
+                if l.staking_logs {
+                    self.window_logs.insert(l.number);
+                }
+            }
+            if let Some(recent) = &mut self.recent {
+                recent.insert(l.number, (l.hash, l.staking_logs));
+                if recent.len() > RECENT {
+                    recent.pop_first();
+                }
             }
         }
         Ok(())
@@ -179,6 +259,11 @@ impl LinkedRun {
     /// The run's window hashes for blocks `from..=to`.
     pub(super) fn window(&self, from: u64, to: u64) -> BTreeMap<u64, B256> {
         self.window.range(from..=to).map(|(number, hash)| (*number, *hash)).collect()
+    }
+
+    /// The run's window blocks in `from..=to` whose bloom admits a staking event.
+    pub(super) fn window_logs(&self, from: u64, to: u64) -> BTreeSet<u64> {
+        self.window_logs.range(from..=to).copied().collect()
     }
 }
 

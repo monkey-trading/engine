@@ -244,14 +244,19 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
                 chain: crate::custody::StandbyReader::connect_named(&cfg.custody, log_heads, "caller").unwrap(),
                 sending: Endpoint::new(
                     cfg.checkpoints.as_ref().unwrap(),
-                    &LivenessSection { caller: chain.accounts[6 + i], min_balance: U256::from(1) },
+                    &LivenessSection {
+                        caller: chain.accounts[6 + i],
+                        min_balance: U256::from(1),
+                        read_interval: crate::config::default_liveness_read_interval(),
+                        fallback_interval: crate::liveness::caller::FOLLOW_UP,
+                    },
                     cfg.custody.chain_id,
                 )
                 .unwrap(),
                 domain,
                 copy: member.copy.clone(),
                 min_balance: U256::from(1),
-                poll: crate::liveness::caller::POLL,
+                poll: crate::config::default_liveness_read_interval(),
                 clock: clock.clone(),
                 sends: Arc::default(),
             };

@@ -2,6 +2,7 @@
 //! checkpoints go stale, refuse deposits.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, U256};
@@ -9,6 +10,11 @@ use tracing::{debug, info, warn};
 
 use crate::checkpoints::{CheckpointChain, Poster};
 use crate::metrics::FloatGauge;
+
+/// How often the worker reads the relayer's balance, on its retry ticks. The minimum is set at several
+/// days of posts (`[checkpoints.relayer_gas]`), so a read every five minutes warns days before posts
+/// stop, at six custody calls a read.
+pub(super) const READ_EVERY: Duration = Duration::from_secs(300);
 
 /// What the poster needs to judge the relayer's balance.
 pub(crate) struct RelayerGas {
@@ -24,7 +30,8 @@ pub(crate) struct RelayerGas {
 
 impl<R: CheckpointChain> Poster<R> {
     /// Reads the relayer's balance, exports it, and warns while it is below the configured
-    /// minimum. A read that fails changes nothing: the custody providers alert their own loss.
+    /// minimum. A read that fails changes nothing: the custody providers alert their own loss. The
+    /// worker calls it every `READ_EVERY`.
     pub(super) async fn check_relayer_gas(&self) {
         let Some(gas) = &self.relayer_gas else { return };
         let balance = match self.chain.relayer_balance().await {

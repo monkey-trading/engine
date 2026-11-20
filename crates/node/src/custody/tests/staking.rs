@@ -1,7 +1,7 @@
 //! Mirroring staking events through `staking::mirror`: ordering against `InitStaking`, once-only
 //! credit under the engine's references, and refusal to trust an event on an unproven block.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,52 +16,11 @@ use engine_core::staking::StakingConfig;
 use engine_core::types::AccountId;
 
 use crate::config::EvmCustodySection;
-use crate::custody::chain::BlockLink;
+use crate::custody::chain::{BlockLink, ProvenWindow};
 use crate::custody::evm::DepositWatcher;
 use crate::custody::evm::{BlockRef, Finality, StakingEvent, StakingEventKind, VaultReader};
 use crate::custody::quorum::Quorum;
 use crate::custody::staking::{StakingCursor, mirror, monkey_units};
-
-/// A reader answering only `staking_events`, from a fixed event list.
-struct StubReader(Vec<StakingEvent>);
-
-impl VaultReader for StubReader {
-    async fn identity(&self) -> anyhow::Result<VaultIdentity> {
-        Ok(VaultIdentity { chain_id: CHAIN_ID, token: None })
-    }
-
-    async fn finality(&self) -> anyhow::Result<Finality> {
-        Ok(Finality { head: 0, head_time: 0, tagged: None, head_support: None })
-    }
-
-    async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
-        Ok((from..=to)
-            .map(|number| BlockLink {
-                number,
-                hash: canonical_hash(number),
-                parent_hash: B256::ZERO,
-                timestamp: number * 12,
-            })
-            .collect())
-    }
-
-    async fn deposits(&self, from: u64, to: u64) -> anyhow::Result<Vec<VaultDeposit>> {
-        let _ = (from, to);
-        Ok(Vec::new())
-    }
-
-    async fn deposit_count(&self, at: BlockRef) -> anyhow::Result<u64> {
-        let _ = at;
-        Ok(0)
-    }
-
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let from = blocks.first().unwrap().number;
-        let to = *blocks.last().unwrap();
-        anyhow::ensure!(to.hash == canonical_hash(to.number), "staking endpoint is not canonical");
-        Ok(self.0.iter().filter(|e| (from..=to.number).contains(&e.block)).cloned().collect())
-    }
-}
 
 fn staked(block: u64, tx: u8, account: AccountId, amount: u64) -> StakingEvent {
     event(block, tx, StakingEventKind::Staked { account, amount: u128::from(amount) })
@@ -75,8 +34,12 @@ fn event(block: u64, tx: u8, kind: StakingEventKind) -> StakingEvent {
     StakingEvent { block, block_hash: canonical_hash(block), tx_hash: B256::repeat_byte(tx), log_index: 0, kind }
 }
 
-fn hashes_through(to: u64) -> BTreeMap<u64, B256> {
-    (0..=to).map(|number| (number, canonical_hash(number))).collect()
+/// Blocks `0..=to` proven, with no header's bloom admitting a staking event.
+fn hashes_through(to: u64) -> ProvenWindow {
+    ProvenWindow {
+        hashes: (0..=to).map(|number| (number, canonical_hash(number))).collect(),
+        staking_logs: BTreeSet::new(),
+    }
 }
 
 fn cursor_at(start: u64) -> StakingCursor {
@@ -493,6 +456,10 @@ async fn staking_hierarchy_survives_cancellation_and_rejects_changed_cached_anch
 }
 
 mod anchor;
+mod blooms;
+mod stub;
+use stub::StubReader;
 mod faults;
 mod registry;
+mod rpc_budget;
 mod vote;

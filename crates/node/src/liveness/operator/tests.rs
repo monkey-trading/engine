@@ -409,6 +409,7 @@ impl Rig {
             sequencer: sequencer.downgrade(),
             vault_signer: watch::channel(None).0,
             poll: TEST_POLL,
+            read_every: TEST_POLL,
             floor,
             platform,
             kept: Default::default(),

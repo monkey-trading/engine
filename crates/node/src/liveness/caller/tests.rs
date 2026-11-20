@@ -117,8 +117,12 @@ async fn only_a_revert_in_an_estimate_is_the_chain_refusing_the_call() {
         let section =
             format!("rpc_url = '{url}'\nrelayer = '{}'\nretry_interval = '1s'\nrpc_timeout = '2s'", Address::ZERO);
         let checkpoints: crate::config::CheckpointSection = toml::from_str(&section).unwrap();
-        let liveness =
-            crate::config::LivenessSection { caller: Address::repeat_byte(0x22), min_balance: U256::from(1) };
+        let liveness = crate::config::LivenessSection {
+            caller: Address::repeat_byte(0x22),
+            min_balance: U256::from(1),
+            read_interval: TEST_POLL,
+            fallback_interval: TEST_POLL,
+        };
         Endpoint::new(&checkpoints, &liveness, 31_337).unwrap()
     };
     let reverting =

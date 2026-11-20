@@ -20,8 +20,7 @@ use alloy::sol;
 use alloy::sol_types::{SolCall, SolEvent};
 use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
-use anyhow::{Context, anyhow, bail, ensure};
-use futures_util::{StreamExt, TryStreamExt, stream};
+use anyhow::{Context, anyhow, bail};
 use tokio::time::timeout;
 use tracing::debug;
 
@@ -55,6 +54,7 @@ sol! {
 
 mod decode;
 pub(super) use decode::decode_count;
+mod staking;
 
 /// Historical vault events cannot authenticate a trader's funding address.
 pub(super) mod legacy {
@@ -106,7 +106,13 @@ pub(super) fn decode_header(header: Option<Header>, number: u64) -> anyhow::Resu
         return Err(anyhow::Error::new(InvalidRpcResponse)
             .context(format!("asked for block {number}, got block {}", header.number)));
     }
-    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash, timestamp: header.timestamp })
+    Ok(BlockLink {
+        number,
+        hash: header.hash,
+        parent_hash: header.parent_hash,
+        timestamp: header.timestamp,
+        staking_logs: false,
+    })
 }
 
 impl VaultReader for VaultRpc {
@@ -137,10 +143,12 @@ impl VaultReader for VaultRpc {
         self.read_finality(self.withdrawal_finality_tag).await
     }
 
-    /// The headers of blocks `from..=to`, read in one JSON-RPC batch.
+    /// The headers of blocks `from..=to`, read in one JSON-RPC batch, each with whether its logs bloom
+    /// admits an event the staking mirror reads.
     /// Error cases:
     /// - the batch fails or times out, or a block is missing or answers for another height
     async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
+        let mirrored = self.mirror_filter();
         let mut batch = self.client.new_batch();
         let waiters = (from..=to)
             .map(|number| {
@@ -152,7 +160,11 @@ impl VaultReader for VaultRpc {
         let mut links = Vec::with_capacity(waiters.len());
         for (number, waiter) in (from..=to).zip(waiters) {
             let header = self.deadline("eth_getBlockByNumber", waiter).await?;
-            links.push(decode_header(header, number)?);
+            let staking_logs = header
+                .as_ref()
+                .zip(mirrored.as_ref())
+                .is_some_and(|(header, filter)| filter.matches_bloom(header.logs_bloom));
+            links.push(BlockLink { staking_logs, ..decode_header(header, number)? });
         }
         Ok(links)
     }
@@ -292,66 +304,14 @@ impl VaultReader for VaultRpc {
         Ok((header.number, header.hash))
     }
 
-    /// Both mirrorable staking events from the configured contract, the operator registry's
-    /// rotation switches and elections, its schedule's rotation sets and turns, the vote contract's
-    /// passed proposals, and the fault proof contract's proven faults, sorted by block and log index.
-    /// Without a staking contract the answer is empty.
-    /// Error cases:
-    /// - the request fails or times out
-    /// - a log is removed, lacks its position, does not decode as a staking or registry event, or
-    ///   carries an amount past `u128`, or a returned log differs from its requested proven block
+    /// Every event the staking mirror reads over the window's block range, in one log read (`staking`).
     async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        ensure!(!blocks.is_empty(), "staking range is empty");
-        ensure!(
-            blocks.windows(2).all(|pair| pair[0].number.checked_add(1) == Some(pair[1].number)),
-            "staking range is not contiguous"
-        );
-        let mut events = Vec::new();
-        if let Some(staking) = self.staking {
-            let owned_blocks = blocks.to_vec();
-            let addresses: Vec<Address> = [Some(staking), self.registry, self.schedule, self.vote, self.fault_proof]
-                .into_iter()
-                .flatten()
-                .collect();
-            let mut signatures = vec![Staked::SIGNATURE_HASH, UnstakeCompleted::SIGNATURE_HASH];
-            if self.registry.is_some() {
-                signatures.extend(crate::custody::registry::SIGNATURES);
-            }
-            if self.schedule.is_some() {
-                signatures.extend(crate::custody::registry::SCHEDULE_SIGNATURES);
-            }
-            if self.vote.is_some() {
-                signatures.extend(crate::custody::registry::VOTE_SIGNATURES);
-            }
-            if self.fault_proof.is_some() {
-                signatures.extend(crate::custody::registry::FAULT_SIGNATURES);
-            }
-            let batches = stream::iter(owned_blocks.into_iter().map(|block| {
-                let (addresses, signatures) = (addresses.clone(), signatures.clone());
-                async move {
-                    let filter = Filter::new().address(addresses).event_signature(signatures).at_block_hash(block.hash);
-                    let logs = self
-                        .deadline("eth_getLogs", self.client.request::<_, Vec<Log>>("eth_getLogs", (filter,)))
-                        .await?;
-                    let mut events = Vec::new();
-                    for log in &logs {
-                        let event = self.decode_staking(log)?;
-                        ensure!(
-                            event.block == block.number && event.block_hash == block.hash,
-                            "staking log differs from its requested proven block"
-                        );
-                        events.push(event);
-                    }
-                    Ok::<_, anyhow::Error>(events)
-                }
-            }))
-            .buffered(8)
-            .try_collect::<Vec<_>>()
-            .await?;
-            events.extend(batches.into_iter().flatten());
-        }
-        events.sort_by_key(|event| (event.block, event.log_index));
-        Ok(events)
+        self.ranged_staking_events(blocks).await
+    }
+
+    /// Every event the staking mirror reads, at each block by its hash (`staking`).
+    async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+        self.hash_pinned_staking_events(blocks).await
     }
 }
 

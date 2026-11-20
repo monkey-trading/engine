@@ -141,6 +141,7 @@ impl Rig {
             sequencer: sequencer.downgrade(),
             vault_signer: watch::channel(None).0,
             poll: crate::liveness::operator::POLL,
+            read_every: crate::config::default_liveness_read_interval(),
             floor: 0,
             platform: None,
             kept: Default::default(),

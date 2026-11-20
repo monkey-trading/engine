@@ -15,7 +15,7 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use crate::api::Signing;
-use crate::config::{CustodyProvider, NodeConfig};
+use crate::config::{CustodyProvider, NodeConfig, default_liveness_read_interval};
 use crate::custody::StandbyReader;
 use crate::liveness::link::Tcp;
 use crate::liveness::operator::{Operator, Signing as Signable};
@@ -206,6 +206,7 @@ fn spawn(
     let chain = StandbyReader::connect_named(&cfg.custody, log_heads, "liveness")?;
     let (chain_id, vault) = (cfg.custody.chain_id, Address::from(cfg.custody.vault.parse::<AccountId>()?.0));
     let (tick, sequencer, admin) = (cfg.node.tick, sequencer.downgrade(), cfg.operator()?.address);
+    let read_every = cfg.liveness.as_ref().map_or_else(default_liveness_read_interval, |l| l.read_interval);
     tasks.spawn(async move {
         let operator = Operator {
             chain,
@@ -223,6 +224,7 @@ fn spawn(
             sequencer,
             vault_signer: wiring.vault_signer,
             poll: crate::liveness::operator::POLL,
+            read_every,
             floor,
             platform,
             kept: Default::default(),

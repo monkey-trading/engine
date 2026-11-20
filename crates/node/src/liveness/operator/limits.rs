@@ -4,7 +4,8 @@
 use std::time::Duration;
 
 use crate::liveness::chain::Rule;
-use crate::liveness::{DELTA, HEAD_ROUND_TRIP, Released, Signable};
+use crate::liveness::{DELTA, HEAD_ROUND_TRIP, Released, Signable, read_every};
+use crate::seed_relay::schedule::next_boundary;
 
 /// The earliest a promotion can pass after a read showing no turn naming the operator, or no schedule,
 /// where `turnable` is the first boundary a drawn turn could start at (`chain::first_turnable`): no
@@ -39,4 +40,41 @@ pub(super) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
         return Some("the ticker interval is above half the heartbeat interval");
     }
     None
+}
+
+/// Whether the chain is due a read, `since` after the last one and with `reached` trusted time's lower
+/// bound in milliseconds: before the first, `read_every` after the last (the `configured` read interval
+/// or a quarter of the last read's heartbeat interval), or once trusted time reaches the turn boundary
+/// after the last read's block, from which another set may apply. `last` is that read's block time and
+/// heartbeat interval, in seconds.
+pub(super) fn read_due(
+    configured: Duration,
+    since: Option<Duration>,
+    last: Option<(u64, u64)>,
+    reached: Option<u64>,
+) -> bool {
+    let (Some(since), Some((time, interval))) = (since, last) else { return true };
+    let boundary = next_boundary(time).saturating_mul(1000);
+    since >= read_every(configured, interval) || reached.is_some_and(|now| now >= boundary)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rule_reads_at_its_interval_four_times_a_slot_and_at_a_turn_boundary() {
+        let every = Duration::from_secs(15);
+        let (time, ms) = (1_800_000_000, 1_800_000_000_000);
+        let boundary = next_boundary(time) * 1000;
+        let secs = |s| Some(Duration::from_secs(s));
+        assert!(read_due(every, None, None, None), "the first read is due at once");
+        assert!(!read_due(every, secs(14), Some((time, 60)), Some(ms)));
+        assert!(read_due(every, secs(15), Some((time, 60)), Some(ms)), "60 s slots: the configured 15 s");
+        assert!(!read_due(every, secs(4), Some((time, 20)), Some(ms)));
+        assert!(read_due(every, secs(5), Some((time, 20)), Some(ms)), "20 s slots: four reads a slot");
+        assert!(!read_due(every, secs(14), Some((time, 0)), None), "no schedule: the configured interval");
+        assert!(!read_due(every, secs(1), Some((time, 60)), Some(boundary - 1)));
+        assert!(read_due(every, secs(1), Some((time, 60)), Some(boundary)), "at the turn boundary, at once");
+    }
 }

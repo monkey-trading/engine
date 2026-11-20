@@ -6,6 +6,7 @@
 //! advance the engine's authenticated mirrored-through frontier, so a host cursor cannot skip an
 //! event and a restart that re-reads a range mirrors nothing twice.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use alloy::primitives::{B256, U256};
@@ -24,6 +25,7 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 use tracing::{debug, info, info_span};
 
+use crate::custody::chain::ProvenWindow;
 use crate::custody::credit::{query, submit, sync};
 use crate::custody::evm::VaultReader;
 use crate::custody::sizing::AdaptiveSize;
@@ -212,8 +214,12 @@ impl StakingCursor {
 /// have no reversal, so blocks above it wait for finality. Events hold, with the cursor, until
 /// `InitStaking` has applied: a mirror the engine would refuse as premature is never sequenced,
 /// and a cursor that has not moved only makes the next poll read the same blocks again. The
-/// caller proves the range's blocks before calling, and passes their hashes. The event response
-/// must match the proven endpoint even when empty; an event on an unproven block also stalls.
+/// caller proves the range's blocks before calling, and passes their hashes and which of them have a
+/// header whose logs bloom admits a mirrored event. The events come from one read over the range, which
+/// must match the proven endpoint even when empty; an event on an unproven block also stalls. Each block
+/// whose bloom admits an event is read again by its hash, so log backends that hold another fork, or lag,
+/// cannot drop an event by answering the range from it: pinned reads that differ from the range read in
+/// those blocks stall, as do pinned reads that fail.
 /// `bound` is whether the poll has verified the configured registry as the staking contract's
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
@@ -236,7 +242,7 @@ pub(super) async fn mirror<V: VaultReader>(
     cursor_path: &Path,
     range: &mut AdaptiveSize,
     window: std::ops::RangeInclusive<u64>,
-    hashes: &std::collections::BTreeMap<u64, B256>,
+    proven: &ProvenWindow,
     (bound, schedule_bound, vote_bound, fault_bound): (bool, bool, bool, bool),
     turns: Option<alloy::primitives::Address>,
 ) -> Result<(), PollError> {
@@ -249,6 +255,7 @@ pub(super) async fn mirror<V: VaultReader>(
         debug!(from, to, "staking is not initialised; holding mirrors until InitStaking applies");
         return Ok(());
     }
+    let hashes = &proven.hashes;
     let block_hash = *hashes
         .get(&to)
         .ok_or_else(|| PollError::unsettled(anyhow::anyhow!("staking progress lacks its proven endpoint")))?;
@@ -279,6 +286,7 @@ pub(super) async fn mirror<V: VaultReader>(
             )));
         }
     }
+    confirm_blooms(reader, &blocks, &proven.staking_logs, &events).await?;
     if !bound && !events.is_empty() {
         return Err(PollError::inconsistent(anyhow!(
             "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"
@@ -334,6 +342,36 @@ pub(super) async fn mirror<V: VaultReader>(
         .map_err(PollError::Fatal)?;
     range.succeeded();
     debug!(from, to, "staking blocks mirrored");
+    Ok(())
+}
+
+/// Reads again, each by its hash, the blocks in `blocks` whose proven header's bloom admits a mirrored
+/// event, and requires the same events there as `events`, the range read, holds: a bloom's false positive
+/// reads empty both ways.
+/// Error cases:
+/// - stalled: a pinned read fails, or its events differ from the range read's in those blocks
+async fn confirm_blooms<V: VaultReader>(
+    reader: &V,
+    blocks: &[crate::custody::evm::BlockRef],
+    staking_logs: &BTreeSet<u64>,
+    events: &[StakingEvent],
+) -> Result<(), PollError> {
+    let admitted: Vec<_> = blocks.iter().filter(|block| staking_logs.contains(&block.number)).copied().collect();
+    if admitted.is_empty() {
+        return Ok(());
+    }
+    let pinned = reader.pinned_staking_events(&admitted).await.map_err(PollError::rpc)?;
+    let ranged: Vec<_> = events.iter().filter(|event| staking_logs.contains(&event.block)).cloned().collect();
+    if pinned != ranged {
+        return Err(PollError::unsettled(anyhow!(
+            "the range read returns {} staking events in the {} blocks whose blooms admit one, but reads by their \
+             hashes return {}",
+            ranged.len(),
+            admitted.len(),
+            pinned.len()
+        )));
+    }
+    debug!(blocks = admitted.len(), events = pinned.len(), "staking events confirmed by block hash");
     Ok(())
 }
 

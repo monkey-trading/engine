@@ -183,7 +183,7 @@ impl AgreedBlock for FakeBlock<'_> {
 /// The fake chain's answer to the call of `data` to `to`.
 /// Error cases:
 /// - a call the fake does not answer, or one that does not decode
-fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8>> {
     fn is<C: SolCall>(data: &[u8]) -> bool {
         data.starts_with(&C::SELECTOR)
     }

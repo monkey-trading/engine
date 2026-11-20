@@ -184,6 +184,10 @@ min_balance = "0.01" # REPLACE
 contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads deployment for this vault
 relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
 interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
+# Reads the posted head back every minute: a post lands at most once an hour outside a turn. With
+# rotation on it reads at least every 30 s, and while a turn names the operator every sixth of the
+# heartbeat interval, whatever this says.
+read_interval = "60s"
 
 [liveness]
 # This member's liveness caller: it witnesses missed heartbeat slots, promotes the next member once
@@ -192,6 +196,12 @@ interval = "1h" # OWNER: the truncation window is the interval plus chain inclus
 # by the checkpoint endpoint, must differ from the checkpoint, log-head and seed relayers.
 caller = "0xcccccccccccccccccccccccccccccccccccccccc" # REPLACE: funded by the checkpoint endpoint
 min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
+# The caller's chain reads, and the operator's liveness rule's: four a 60-second heartbeat interval. Each
+# reads at least four times a heartbeat interval whatever this says.
+read_interval = "15s"
+# The fallback fixer's reads while no fix is under way; a turn can still be drawn for a whole turn
+# after its draw deadline. A production build allows at most 1h.
+fallback_interval = "5m"
 
 [seed_relay]
 # Proves each daily operator turn's RANDAO seed on Ethereum and relays it to the receiver on

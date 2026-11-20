@@ -1,10 +1,13 @@
-//! Hash-pinned log reads must fail closed when a log backend lacks the proven fork.
+//! The staking mirror's log reads: one read over a window's range, whose logs must sit on the window's
+//! proven blocks; hash-pinned reads that fail closed when a log backend lacks the proven fork; and each
+//! header's flag for a bloom that admits a mirrored event.
 use super::*;
+use alloy::primitives::{Bloom, BloomInput};
 use axum::{Json, Router, extract::State, routing::post};
 use serde_json::{Value, json};
 
 #[tokio::test]
-async fn staking_logs_require_every_proven_hash_even_when_headers_are_canonical() {
+async fn pinned_staking_logs_require_every_proven_hash_even_when_headers_are_canonical() {
     for (missing, partial) in [(false, false), (false, true), (true, false), (true, true)] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -30,7 +33,7 @@ async fn staking_logs_require_every_proven_hash_even_when_headers_are_canonical(
             headers.iter().map(|header| header.hash).collect::<Vec<_>>(),
             blocks.iter().map(|block| block.hash).collect::<Vec<_>>()
         );
-        let result = rpc.staking_events(&blocks).await;
+        let result = rpc.pinned_staking_events(&blocks).await;
         assert_eq!(result.is_err(), missing);
         assert_eq!(seen.load(Ordering::Relaxed), 2, "every proven block is explicitly requested");
         if !missing {
@@ -40,6 +43,103 @@ async fn staking_logs_require_every_proven_hash_even_when_headers_are_canonical(
         }
         server.abort();
     }
+}
+
+#[tokio::test]
+async fn a_staking_window_is_one_log_read_over_its_range_on_its_proven_blocks() {
+    for off_fork in [false, true] {
+        let (rpc, filters, server) = serve(off_fork).await;
+        let blocks =
+            [BlockRef { number: 6, hash: B256::repeat_byte(6) }, BlockRef { number: 7, hash: B256::repeat_byte(7) }];
+        let result = rpc.staking_events(&blocks).await;
+        let filters = filters.lock().unwrap().clone();
+        assert_eq!(filters.len(), 1, "one read covers the window");
+        assert_eq!((filters[0]["fromBlock"].as_str(), filters[0]["toBlock"].as_str()), (Some("0x6"), Some("0x7")));
+        assert!(filters[0].get("blockHash").is_none());
+        if off_fork {
+            let error = result.unwrap_err();
+            assert!(format!("{error:#}").contains("not on its proven block"), "{error:#}");
+        } else {
+            let events = result.unwrap();
+            assert_eq!(events.iter().map(|event| event.log_index).collect::<Vec<_>>(), [1, 2]);
+        }
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn a_header_flags_a_bloom_that_admits_a_mirrored_event() {
+    let (rpc, _, server) = serve(false).await;
+    // Block 6's bloom holds the staking contract and `Staked`, 7's the contract alone, 8's nothing.
+    let links = rpc.headers(6, 8).await.unwrap();
+    assert_eq!(links.iter().map(|link| link.staking_logs).collect::<Vec<_>>(), [true, false, false]);
+    server.abort();
+}
+
+/// An endpoint answering headers with the blooms of `a_header_flags_a_bloom_that_admits_a_mirrored_event`
+/// and range log reads with two `Staked` logs in block 6, off its proven hash when `off_fork`, recording
+/// each log filter.
+async fn serve(off_fork: bool) -> (VaultRpc, Arc<std::sync::Mutex<Vec<Value>>>, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let filters = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let app = Router::new().route("/", post(ranged)).with_state((off_fork, filters.clone()));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let toml = evm_toml(&std::env::temp_dir(), 1_000)
+        .replace("rpc_url = \"http://127.0.0.1:1\"", &format!("rpc_url = \"{url}\""));
+    let mut cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    cfg.staking = Some(
+        toml::from_str(&format!(
+            "contract = \"{VAULT}\"\ncursor_path = \"unused-staking-cursor\"\n[registry]\ncontract = \"{}\"",
+            Address::repeat_byte(0x6b)
+        ))
+        .unwrap(),
+    );
+    (VaultRpc::new(&cfg, &cfg.providers[0].rpc_url, VAULT).unwrap(), filters, server)
+}
+
+async fn ranged(
+    State((off_fork, filters)): State<(bool, Arc<std::sync::Mutex<Vec<Value>>>)>,
+    Json(request): Json<Value>,
+) -> Json<Value> {
+    let respond = |request: &Value| {
+        let id = request["id"].clone();
+        if request["method"] == "eth_getBlockByNumber" {
+            let number =
+                u64::from_str_radix(request["params"][0].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+            let mut block = alloy::rpc::types::Block::<alloy::rpc::types::Transaction>::default();
+            block.header.number = number;
+            block.header.hash = B256::repeat_byte(number as u8);
+            let mut bloom = Bloom::default();
+            if number <= 7 {
+                bloom.accrue(BloomInput::Raw(VAULT.as_slice()));
+            }
+            if number == 6 {
+                bloom.accrue(BloomInput::Raw(crate::custody::rpc::Staked::SIGNATURE_HASH.as_slice()));
+            }
+            block.header.inner.logs_bloom = bloom;
+            return json!({"jsonrpc":"2.0","id":id,"result":block});
+        }
+        assert_eq!(request["method"], "eth_getLogs");
+        filters.lock().unwrap().push(request["params"][0].clone());
+        let logs: Vec<_> = [2, 1]
+            .into_iter()
+            .map(|index| {
+                let mut event =
+                    log(crate::custody::rpc::Staked { account: Address::repeat_byte(1), amount: U256::from(index) }
+                        .encode_log_data());
+                event.block_number = Some(6);
+                event.block_hash = Some(B256::repeat_byte(if off_fork { 0xee } else { 6 }));
+                event.log_index = Some(index);
+                event
+            })
+            .collect();
+        json!({"jsonrpc":"2.0","id":id,"result":logs})
+    };
+    Json(match request.as_array() {
+        Some(batch) => Value::Array(batch.iter().map(respond).collect()),
+        None => respond(&request),
+    })
 }
 
 async fn answer(

@@ -97,10 +97,11 @@ impl<V: VaultReader> DepositWatcher<V> {
             Some(end) if end <= to => end,
             _ => to.min(from.saturating_add(self.staking_range.get() - 1)),
         };
-        let Some(hashes) = self.staking_window(from, to).await? else {
+        let Some(proven) = self.staking_window(from, to).await? else {
             info!(from, to, "staking mirror is proving a bounded catch-up window");
             return Ok(());
         };
+        let hashes = &proven.hashes;
         // The registry whose elections mirror must be the one that deployed the staking contract.
         // A window ending before the contract's deployment has no code to read and nothing that
         // could name another registry, so the binding is checked again at the end of a later
@@ -222,7 +223,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             path,
             &mut self.staking_range,
             window,
-            &hashes,
+            &proven,
             (bound, schedule_bound, vote_bound, fault_bound),
             turns,
         )

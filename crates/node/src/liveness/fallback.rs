@@ -1,6 +1,7 @@
 //! A member's fallback fixer, for the node process's whole life, while it follows and while it holds a
 //! turn: from the liveness caller's account (`[liveness] caller`, signed by the `[checkpoints]`
-//! endpoint), each `POLL` it fixes the fallback of the turn whose draw deadline last passed when no seed
+//! endpoint), every `[liveness] fallback_interval`, and every `FOLLOW_UP` while a fix is under way, it
+//! fixes the fallback of the turn whose draw deadline last passed when no seed
 //! was relayed for it (`SeedReceiver.fixFallback`), while the registry's rotation switch is on, or, once
 //! anyone has fixed its block, whatever the switch, since the switch may come back on before the turn's
 //! boundary. One
@@ -26,17 +27,22 @@ use alloy::sol_types::SolCall;
 use anyhow::Context as _;
 use engine_core::types::AccountId;
 use futures_util::future::BoxFuture;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{MissedTickBehavior, interval, interval_at};
 use tracing::{debug, info, warn};
 
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
-use crate::liveness::caller::{Endpoint, POLL, Sending, check_balance};
+use crate::liveness::caller::{Endpoint, FOLLOW_UP, Sending, check_balance};
 use crate::liveness::chain::{PendingFallback, fixFallbackCall, pending_fallback};
+use crate::seed_relay::schedule::TURN_SECS;
 use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain};
 
 /// How many blocks back `ArbSys.arbBlockHash` answers: past it a fixed block's hash is never recorded.
 const BLOCK_HASH_REACH: u64 = 256;
+/// The fewest reads a turn the fixer makes while idle: a turn with no relayed seed can be drawn until its
+/// boundary, a turn after its draw deadline, so even the development build's five-minute turns leave
+/// it time to fix the fallback.
+const IDLE_READS_PER_TURN: u64 = 8;
 
 /// The liveness caller's account, which the member's liveness caller and its fixer both send from.
 #[derive(Debug, Default)]
@@ -61,6 +67,10 @@ pub(crate) struct Fixer<C, S> {
     /// The custody chain and its vault, whose registry and schedule it reads at each block.
     pub chain_id: u64,
     pub vault: Address,
+    /// How often it reads while no fix is under way: `[liveness] fallback_interval`, and at least
+    /// `IDLE_READS_PER_TURN` times a turn.
+    pub idle: Duration,
+    /// How soon it reads again once a fix is under way: `FOLLOW_UP`.
     pub poll: Duration,
     /// Below this many wei, `liveness_caller_unfunded` fires.
     pub min_balance: U256,
@@ -85,7 +95,8 @@ impl Fixer<StandbyReader, Endpoint> {
             sending: Endpoint::new(checkpoints, liveness, cfg.custody.chain_id)?,
             chain_id: cfg.custody.chain_id,
             vault: Address::from(cfg.custody.vault.parse::<AccountId>().context("custody.vault")?.0),
-            poll: POLL,
+            idle: liveness.fallback_interval,
+            poll: FOLLOW_UP,
             min_balance: liveness.min_balance,
             sends,
         }))
@@ -97,7 +108,8 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
     /// Error cases:
     /// - none: failed reads and sends are retried on the next poll
     pub(crate) async fn run(self) -> anyhow::Result<()> {
-        let mut poll = interval(self.poll);
+        let idle = self.idle.min(Duration::from_secs(TURN_SECS / IDLE_READS_PER_TURN));
+        let mut poll = interval(idle);
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         // The lapsed turn, if any, as of the last read; `None` before the first.
         let (mut failed, mut lapsed) = (false, None);
@@ -121,6 +133,14 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
                     "the fallback fixer reads the seed receiver and the caller's balance and sends its fixes again"
                 ),
                 _ => {}
+            }
+            // A fix sent, or a fixed block whose hash is yet to be recorded, wants the next call soon.
+            let under_way = matches!(&fixed, Ok(Some((pending, Some(sent)))) if pending.fixed_in != 0
+                || matches!(sent, Ok(Some(_))));
+            let every = if under_way { self.poll } else { idle };
+            if poll.period() != every {
+                poll = interval_at(tokio::time::Instant::now() + every, every);
+                poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
             }
             if let Ok(fixed) = fixed {
                 report(fixed, &mut lapsed);

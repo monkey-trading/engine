@@ -1162,6 +1162,10 @@ Run from the repo root:
   `cargo test -p engine-node --lib sequencer::resting_bench -- --ignored --nocapture --test-threads=1`
 - A signed checkpoint's cost after a hold, at 100k changed accounts:
   `cargo test -p engine-node --lib held_checkpoint_cost -- --ignored --nocapture`
+- The custody providers' RPC budget (the deposit watcher's calls per poll at Arbitrum One's block rate,
+  one read of each fixed-interval reader, and the day's total for one operator and two members, which
+  the runbook's RPC budget holds):
+  `cargo test -p engine-node --lib rpc_budget -- --ignored --nocapture --test-threads=1`
 - Proxy protocol dev scenario: `./scripts/dev-proxy-protocol.sh` (needs `python3`, `curl`, and `jq`; a
   loopback forwarder prepends PROXY v2 (and LOCAL) headers to a dev node with a synthetic access source, on private
   temporary data and public Roughtime servers)

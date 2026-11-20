@@ -238,7 +238,7 @@ impl Standby {
                 domain: LivenessDomain { standby: self.domain, log_heads: log_heads.contract },
                 copy: self.copy.clone(),
                 min_balance: liveness.min_balance,
-                poll: crate::liveness::caller::POLL,
+                poll: liveness.read_interval,
                 clock: Arc::new(Reached(TrustedClock::new(
                     Arc::new(crate::clock::SystemClock),
                     samples,

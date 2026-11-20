@@ -173,7 +173,6 @@ pub(crate) async fn read_heads(cfg: &NodeConfig, signer: AccountId) -> anyhow::R
 pub(crate) fn pending(cfg: &NodeConfig, key: &Arc<EnclaveKey>, heads: StartupHeads) -> anyhow::Result<Pending> {
     let chain = heads_chain(cfg)?.context("the posted heads were read without [log_heads]")?;
     let log_heads = cfg.log_heads.as_ref().context("[log_heads] is set")?;
-    let checkpoints = cfg.checkpoints.as_ref().context("[log_heads] requires [checkpoints]")?;
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let freeze = super::FreezeLatch::default();
     let poster = Poster {
@@ -181,7 +180,7 @@ pub(crate) fn pending(cfg: &NodeConfig, key: &Arc<EnclaveKey>, heads: StartupHea
         key: key.clone(),
         domain,
         interval: log_heads.interval,
-        retry: checkpoints.retry_interval,
+        retry: log_heads.read_interval.min(log_heads.interval),
         freeze: freeze.clone(),
         confirmed: None,
         anchored: None,
