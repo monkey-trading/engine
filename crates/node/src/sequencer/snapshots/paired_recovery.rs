@@ -14,12 +14,21 @@ use crate::history::authenticated::Index;
 use crate::history::rebuild::Fingerprinter;
 use crate::history::startup::{Catalog, Plan, Resume, Source};
 use crate::log::catalog_access::{CatalogRead, StoreCatalogRead};
-use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, SegmentedLog};
+use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SegmentedLog};
 use crate::sequencer::replay::Replay;
 use crate::sequencer::{ReplayedLog, Sequencer};
 use crate::snapshot::head::{HeadStatement, StoreId};
 use crate::snapshot::paired::PrefixId;
 use crate::snapshot::{self, RecoveryBase, head};
+
+/// The signed parent chain from a cache's base to the vault's finalized anchor at or past it, which a
+/// start from the cache checks over the suffix it replays, as a full start's signer history checks it
+/// over the whole log: each signed checkpoint up to the anchor names the one before it, from the base
+/// on, and the last of them is the anchor.
+struct AnchorChain {
+    anchor: CheckpointParent,
+    tip: CheckpointParent,
+}
 
 impl Sequencer {
     /// Plans paired recovery or a strict log-derived migration without any persisted mutation:
@@ -130,14 +139,52 @@ impl Sequencer {
     }
 }
 
+impl AnchorChain {
+    /// The chain from a signed `base` to `anchor`, when `anchor` is a checkpoint at or past it.
+    /// Error cases:
+    /// - the base's root is not a hash
+    fn new(base: &Checkpoint, anchor: Option<CheckpointParent>) -> Result<Option<Self>> {
+        let anchor = anchor.filter(|anchor| anchor.has_checkpoint && anchor.seq >= base.seq && base.parent.is_some());
+        anchor.map(|anchor| Ok(Self { anchor, tip: link(base)? })).transpose()
+    }
+
+    /// Takes the suffix's next entry.
+    /// Error cases:
+    /// - a signed checkpoint up to the anchor names another parent, or its root is not a hash
+    fn take(&mut self, entry: &LogEntry) -> Result<()> {
+        if let LogEntry::Checkpoint(checkpoint) = entry
+            && checkpoint.parent.is_some()
+            && checkpoint.seq <= self.anchor.seq
+        {
+            ensure!(
+                checkpoint.parent == Some(self.tip),
+                "checkpoint at seq {} breaks the signed parent chain",
+                checkpoint.seq
+            );
+            self.tip = link(checkpoint)?;
+        }
+        Ok(())
+    }
+
+    /// Error cases:
+    /// - the suffix's chain does not end at the anchor
+    fn finish(self) -> Result<()> {
+        ensure!(self.tip == self.anchor, "signed parent chain does not end at the finalized vault anchor");
+        Ok(())
+    }
+}
+
 /// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
 /// A posted head at or under C is bound to C's history by the commands since it before the
 /// snapshot is accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather
 /// than falling back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and
-/// no head posted, a pass over the on-disk prefix stamps a vault-finalized checkpoint under C.
+/// no head posted, a pass over the on-disk prefix stamps a vault-finalized checkpoint under C. With a
+/// finalized checkpoint at or past C, the suffix's signed parent chain from C to it is checked
+/// (`AnchorChain`).
 /// Error cases:
 /// - certificate, fixed metadata, prefix extension, boundary bytes, replay, the posted-head prefix
-///   check or the anchor-stamping pass, or availability fails
+///   check, the parent chain to the finalized checkpoint, or the anchor-stamping pass, or availability
+///   fails
 #[allow(clippy::too_many_arguments)]
 fn candidate(
     cfg: &NodeConfig,
@@ -200,6 +247,7 @@ fn candidate(
     };
     let h_seq = history_h.as_ref().and_then(|(history_h, _)| history_h.head.last_seq());
     let boundary = pair.catalog.clone();
+    let mut chain = AnchorChain::new(&snapshot.checkpoint, parent)?;
     let mut replay = Replay::from_snapshot(engine, snapshot, domain, signer, parent)?;
     if let Some(posted) = capture {
         replay.capture_link_at(posted.seq);
@@ -219,6 +267,7 @@ fn candidate(
     replay.check_ahead(&cfg.node.log_dir, cfg.node.replay_workers);
     let suffix = SegmentedLog::open_suffix(&cfg.node.log_dir, read.clone(), &boundary, catalog_tip.as_ref(), |entry| {
         replay.apply(&entry)?;
+        chain.as_mut().map(|chain| chain.take(&entry)).transpose()?;
         if let (LogEntry::Command(command), Some((history_h, _))) = (&entry, &history_h)
             && Some(command.sequenced.seq) == h_seq
         {
@@ -228,6 +277,7 @@ fn candidate(
         Ok(())
     });
     let mut log = replay.settled(suffix)?;
+    chain.map(AnchorChain::finish).transpose()?;
     let mut replayed = replay.finish();
     replayed.ts_at = replayed.ts_at.or(posted_ts);
     replayed.anchor_ts = replayed.anchor_ts.or(anchor_ts);
@@ -344,4 +394,11 @@ fn plan(
         catalog,
         workers: cfg.node.replay_workers,
     }
+}
+
+/// The parent link a checkpoint's child names.
+/// Error cases:
+/// - its root is not a hash
+fn link(checkpoint: &Checkpoint) -> Result<CheckpointParent> {
+    Ok(CheckpointParent { has_checkpoint: true, seq: checkpoint.seq, root: checkpoint.root.parse()? })
 }

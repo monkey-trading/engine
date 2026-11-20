@@ -1,5 +1,6 @@
 //! The log's last checkpoint, read from its newest segment back: the one a whole read finds, reading
-//! no segment before the newest that holds a checkpoint, each it reads checked as a whole read checks it.
+//! no segment before the newest that holds a checkpoint and the manifest only back from its end, each
+//! segment it reads checked as a whole read checks it.
 
 use super::*;
 
@@ -41,8 +42,8 @@ fn no_segment_before_the_newest_checkpoint_is_read() {
     assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected));
 }
 
-/// The open segment's torn last line is left out, as a whole read leaves it out; a listed segment the
-/// read reaches that differs from its listing is refused, as is an unlisted one before the last.
+/// The open segment's torn last line is left out, as a whole read leaves it out, and a listed segment
+/// the read reaches that differs from its listing is refused.
 #[test]
 fn each_segment_read_is_checked_as_a_whole_read_checks_it() {
     let dir = scratch_dir("last-checkpoint-torn");
@@ -51,12 +52,54 @@ fn each_segment_read_is_checked_as_a_whole_read_checks_it() {
     let LogEntry::Checkpoint(expected) = checkpoint(0) else { unreachable!("a checkpoint entry") };
     assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected), "the torn line is left out");
 
-    let dir = scratch_dir("last-checkpoint-unlisted");
+    let dir = scratch_dir("last-checkpoint-differs");
     write(&dir, 2, &[cmd(0), checkpoint(0), cmd(1), cmd(2)]);
     append(&dir.join(SEG_0), b"\n");
     let error = last_checkpoint(&dir).expect_err("a segment that differs from its listing");
     assert!(format!("{error:#}").contains(SEG_0), "{error:#}");
-    fs::remove_file(dir.join(MANIFEST)).unwrap();
-    let error = last_checkpoint(&dir).expect_err("an unlisted segment before the last");
-    assert!(format!("{error:#}").contains("is not in"), "{error:#}");
+}
+
+/// The manifest is read from its end, a window at a time: a listing far from its end that no longer
+/// reads, which a whole read refuses, leaves the newest checkpoint's read as it was, and a checkpoint
+/// only the first segment holds is found by growing the window back to the manifest's start.
+#[test]
+fn the_manifest_is_read_back_from_its_end_only_as_far_as_the_checkpoint() {
+    let commands: u64 = 1_000;
+    let dir = scratch_dir("last-checkpoint-manifest-end");
+    let mut entries: Vec<_> = (0..commands).map(cmd).collect();
+    entries.insert(entries.len() - 1, checkpoint(commands - 2));
+    write(&dir, 1, &entries);
+    let manifest = fs::read(dir.join(MANIFEST)).unwrap();
+    assert!(manifest.len() > 64 * 1024, "the manifest outgrows the first window");
+    let first = manifest.iter().position(|b| *b == b'\n').unwrap();
+    fs::write(dir.join(MANIFEST), [b"not a listing".as_slice(), &manifest[first..]].concat()).unwrap();
+    assert!(SegmentedLog::open(&dir, |_| Ok(())).is_err(), "a whole read refuses the manifest's first line");
+    let LogEntry::Checkpoint(expected) = checkpoint(commands - 2) else { unreachable!("a checkpoint entry") };
+    assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected));
+
+    let dir = scratch_dir("last-checkpoint-first-segment");
+    let mut entries: Vec<_> = (0..commands).map(cmd).collect();
+    entries.insert(1, checkpoint(0));
+    write(&dir, 1, &entries);
+    let LogEntry::Checkpoint(expected) = checkpoint(0) else { unreachable!("a checkpoint entry") };
+    assert_eq!(last_checkpoint(&dir).unwrap(), Some(expected));
+}
+
+/// A manifest's last listing a crash cut short, before the writer linked the next segment, is left
+/// out, as a whole read leaves it out: the segment it was listing is read as the one not listed yet.
+#[test]
+fn a_listing_a_crash_cut_short_is_left_out() {
+    let dir = scratch_dir("last-checkpoint-torn-listing");
+    write(&dir, 2, &[cmd(0), cmd(1), cmd(2), checkpoint(2), cmd(3)]);
+    append(&dir.join(MANIFEST), br#"{"file":"0000000000000"#);
+    let mut whole = None;
+    SegmentedLog::open(&dir, |entry| {
+        if let LogEntry::Checkpoint(checkpoint) = entry {
+            whole = Some(checkpoint);
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(whole.is_some(), "a whole read finds the checkpoint");
+    assert_eq!(last_checkpoint(&dir).unwrap(), whole);
 }

@@ -69,6 +69,48 @@ async fn paired_recovery_hands_the_finalized_checkpoint_to_the_preflight_whereve
     assert_eq!(files(&root), before, "the refusal changed no byte");
 }
 
+/// A cache serves a start only while the suffix it replays carries the signed parent chain from the
+/// cache's checkpoint to the vault's finalized one, as a full start's signer history requires over the
+/// whole log: the finalized checkpoint repeated right after itself, in the segment the writer has not
+/// listed yet, which the suffix's replay alone accepts, serves no cache.
+#[tokio::test]
+async fn a_suffix_breaking_the_parent_chain_to_the_finalized_checkpoint_serves_no_cache() {
+    let (cfg, _, _) = gated_log("paired-chain").await;
+    let copy = copy_of(&cfg, "chain-repeated");
+    let dir = &copy.node.log_dir;
+    let newest = newest_segment(dir);
+    let listed = Manifest::load(dir).unwrap().segments.iter().any(|listed| dir.join(&listed.file) == newest);
+    assert!(!listed, "the newest segment is not listed yet");
+    let text = fs::read_to_string(&newest).unwrap();
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let (at, finalized) = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(at, line)| match serde_json::from_str::<LogEntry>(line) {
+            Ok(LogEntry::Checkpoint(checkpoint)) => Some((at, checkpoint)),
+            _ => None,
+        })
+        .next_back()
+        .expect("the newest segment holds a checkpoint");
+    let cached = |cfg: NodeConfig, finalized: Checkpoint| async move {
+        let parent =
+            CheckpointParent { has_checkpoint: true, seq: finalized.seq, root: finalized.root.parse().unwrap() };
+        read_log_and_history_observe(&cfg, Some(parent), |_| {}).await.unwrap().0.snapshot_sequence()
+    };
+    let whole = copy_of(&cfg, "chain-whole");
+    assert!(cached(whole, finalized.clone()).await.is_some(), "an unbroken chain serves the cache");
+    let repeated = [&lines[..=at], &lines[at..]].concat().concat();
+    fs::write(&newest, repeated).unwrap();
+    assert_eq!(cached(copy, finalized).await, None, "a repeated finalized checkpoint serves no cache");
+}
+
+/// The newest segment file in `dir`.
+fn newest_segment(dir: &Path) -> PathBuf {
+    let names = fs::read_dir(dir).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap());
+    let newest = names.filter(|name| crate::log::segment_seq(name).is_some()).max().expect("a segment");
+    dir.join(newest)
+}
+
 /// A gated paired node's log in a directory named for `label`: the chain finalizes its first
 /// checkpoint, every later one stays outstanding work, and history catches up after each command so
 /// every checkpoint is captured. Returns the stopped node's config, every checkpoint in log order,
