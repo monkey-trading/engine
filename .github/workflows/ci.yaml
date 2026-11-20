@@ -1022,6 +1022,7 @@ jobs:
           LOAD_ACCOUNTS: "10000"
           LOAD_TRADERS: "200"
           LOAD_SUBSCRIBERS: "16"
+          ENGINE_BENCH_SCALE_TO_RUNNER: "1"
         run: ./scripts/dev-load.sh
 
   # The recovery scenario at a tenth of the launch book and its traders, on half an hour of launch flow
