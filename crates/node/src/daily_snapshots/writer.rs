@@ -7,7 +7,7 @@
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::thread::{self, JoinHandle};
 
@@ -211,7 +211,7 @@ fn write_manifest(dir: &Path, listed: &[Listed]) -> anyhow::Result<()> {
 /// Error cases:
 /// - `path` exists or cannot be created, or `write`, the flush or the sync fails
 fn write_synced(
-    path: &PathBuf,
+    path: &Path,
     write: impl FnOnce(&mut Hashed<BufWriter<File>>) -> anyhow::Result<()>,
 ) -> anyhow::Result<([u8; 32], u64)> {
     let written = (|| {
