@@ -114,8 +114,16 @@ pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Re
         let listed = daily_snapshots::read_manifest(&dir)?.into_iter().find(|listed| listed.file == file);
         let Some(listed) = listed else { return Ok(None) };
         let path = dir.join(&listed.file);
-        let mut hash = Sha256::new();
-        let bytes = io::copy(&mut std::fs::File::open(&path)?, &mut hash)?;
+        let (mut file, mut chunk, mut hash, mut bytes) =
+            (std::fs::File::open(&path)?, vec![0; ARCHIVE_CHUNK_BYTES], Sha256::new(), 0u64);
+        loop {
+            let read = file.read(&mut chunk)?;
+            if read == 0 {
+                break;
+            }
+            hash.update(&chunk[..read]);
+            bytes += read as u64;
+        }
         anyhow::ensure!(
             bytes == listed.bytes && hex::encode(hash.finalize()) == listed.sha256,
             "daily snapshot {file} differs from its listing"

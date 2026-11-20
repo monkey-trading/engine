@@ -190,7 +190,7 @@ pub(crate) fn replay_ranges_from(
             starts.push((offset, file));
         }
     }
-    let ends = starts.iter().map(|(offset, _)| Some(*offset)).chain([None]);
+    let ends: Vec<Option<Offset>> = starts.iter().map(|(offset, _)| Some(*offset)).chain([None]).collect();
     let ranges: Vec<Range> = [None]
         .into_iter()
         .chain(starts.into_iter().map(Some))
