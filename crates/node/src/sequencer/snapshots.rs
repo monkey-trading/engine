@@ -13,6 +13,8 @@ use tracing::warn;
 use crate::daily_snapshots::Job as DailyJob;
 use crate::log::{Checkpoint, CheckpointDomain, Offset};
 use crate::sequencer::Sequencer;
+#[cfg(test)]
+use crate::snapshot::sealing::CaptureStage;
 use crate::snapshot::sealing::Encoding;
 use crate::snapshot::{self, RecoveryContext, Snapshot};
 use crate::stats::background::Job;
@@ -162,8 +164,8 @@ impl Sequencer {
     }
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
-    /// status may have moved on since; with a capture in flight or the history owner's queue full, keeps it for
-    /// shutdown instead, and the capture stays due. No command has been applied since the checkpoint, and no withdrawal
+    /// status may have moved on since; with a capture in flight, the history owner's queue full, or a step failing,
+    /// keeps it for shutdown instead, and the capture stays due. No command has been applied since the checkpoint, and no withdrawal
     /// entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
@@ -191,11 +193,30 @@ impl Sequencer {
                 return Ok(());
             }
         };
-        let Deferred { checkpoint, progress, context } = deferred;
-        self.sync_log(false)?;
+        // A failure from here on leaves the checkpoint uncaptured, as a refusal does: shutdown, or the
+        // next due capture, takes it.
+        #[cfg(test)]
+        let synced = self.fault(&endpoint, CaptureStage::Sync).and_then(|()| self.sync_log(false));
+        #[cfg(not(test))]
+        let synced = self.sync_log(false);
+        if let Err(reason) = synced {
+            self.captures.uncaptured = Some(deferred);
+            return Err(reason);
+        }
         let prepared = (|| -> anyhow::Result<()> {
+            #[cfg(test)]
+            self.fault(&endpoint, CaptureStage::Seal)?;
             let (catalog, catalog_pin) = self.log.seal_catalog_boundary_unpublished()?;
-            let snapshot = self.snapshot_fields(checkpoint, progress, context, catalog.checkpoint.offset)?;
+            #[cfg(test)]
+            self.fault(&endpoint, CaptureStage::Fields)?;
+            let snapshot = self.snapshot_fields(
+                deferred.checkpoint.clone(),
+                deferred.progress.clone(),
+                deferred.context.clone(),
+                catalog.checkpoint.offset,
+            )?;
+            #[cfg(test)]
+            self.fault(&endpoint, CaptureStage::Encode)?;
             let (engine, job) = self.encoding(snapshot.checkpoint.seq)?;
             slot.submit(crate::snapshot::sealing::Capture {
                 snapshot,
@@ -217,10 +238,20 @@ impl Sequencer {
         self.captures.held.push(started.elapsed());
         match prepared {
             Ok(()) => self.captures.due = Some(self.engine.now().saturating_add(endpoint.interval_ms)),
-            Err(reason) => endpoint
-                .write_alert
-                .failed(|| warn!(alert = "snapshot_write_failed", "checkpoint remains in log: {reason:#}")),
+            Err(reason) => {
+                endpoint
+                    .write_alert
+                    .failed(|| warn!(alert = "snapshot_write_failed", "checkpoint remains in log: {reason:#}"));
+                self.captures.uncaptured = Some(deferred);
+            }
         }
+        Ok(())
+    }
+
+    /// Fails `stage` of this capture when a test asked its endpoint to.
+    #[cfg(test)]
+    fn fault(&self, endpoint: &crate::snapshot::sealing::Endpoint, stage: CaptureStage) -> anyhow::Result<()> {
+        anyhow::ensure!(!endpoint.take_fault(stage), "injected {stage:?} failure");
         Ok(())
     }
 
@@ -366,6 +397,8 @@ impl Sequencer {
     }
 }
 
+#[cfg(test)]
+mod capture_failure_tests;
 #[cfg(test)]
 mod context_tests;
 #[cfg(test)]

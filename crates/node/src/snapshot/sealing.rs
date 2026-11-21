@@ -42,6 +42,19 @@ pub(crate) struct Endpoint {
     #[cfg(test)]
     pub(crate) waiting: Arc<std::sync::atomic::AtomicUsize>,
     pub catalog_store: StoreId,
+    /// The step of the next capture that fails, once, for tests.
+    #[cfg(test)]
+    fail: Arc<Mutex<Option<CaptureStage>>>,
+}
+
+/// A step of a capture after its queue slot is reserved, which a test can fail.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaptureStage {
+    Sync,
+    Seal,
+    Fields,
+    Encode,
 }
 
 /// Counts one live `idle` call for tests: `Drop` decrements exactly once however the wait ends, so
@@ -122,7 +135,22 @@ impl Endpoint {
             #[cfg(test)]
             waiting: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             catalog_store,
+            #[cfg(test)]
+            fail: Arc::default(),
         }
+    }
+
+    /// Fails `stage` of the next capture, once.
+    #[cfg(test)]
+    pub(crate) fn fail_next(&self, stage: CaptureStage) {
+        *self.fail.lock().unwrap_or_else(PoisonError::into_inner) = Some(stage);
+    }
+
+    /// Whether `stage` is the step to fail, which then works again.
+    #[cfg(test)]
+    pub(crate) fn take_fault(&self, stage: CaptureStage) -> bool {
+        let mut fail = self.fail.lock().unwrap_or_else(PoisonError::into_inner);
+        (*fail == Some(stage)).then(|| *fail = None).is_some()
     }
 
     /// Whether the history owner has stopped taking input.
