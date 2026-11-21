@@ -265,8 +265,9 @@ an index: load only the rule whose hint matches the current action.
   typed payouts' checkpoints, deferred approvals and custody finality activations' legacy credits an entry names
   before its range, and adds up the counts, signers and activations; only the last range keeps its engine, a snapshot
   past the log's last checkpoint, or of a checkpoint the log does not hold, starts no range, and with
-  `--custody-config` none starts after the vault's finalized checkpoint; `sequencer/recovery_scale/daily.rs` is its
-  dev scenario),
+  `--custody-config` none starts after the vault's finalized checkpoint, whose checkpoints to ask the vault about come
+  from a scan of the log's segments at once that parses only what are not commands (`log/scan.rs`);
+  `sequencer/recovery_scale/daily.rs` is its dev scenario),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP, given only to a guest whose kernel times on the
@@ -1157,7 +1158,8 @@ Run from the repo root:
   the release manifest and requires every checkpoint signer to be the enclave address it names;
   `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
   the first and last of each run; `--snapshots <dir>` replays a log directory in ranges from a directory of daily
-  snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two cores)
+  snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two physical cores,
+  `default_jobs`)
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
   flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
   it replays to whole, under a pinned and an attested signer, a snapshot past the log's last checkpoint, or of a
