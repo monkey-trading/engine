@@ -196,6 +196,36 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     assert!(refused.contains("the seal at seq 0 by") && refused.contains("ends the run"), "a repeated seq: {refused}");
 }
 
+/// A read that fails on a line that is no entry, after a run whose last seal does not verify, reports that
+/// seal, with its run and seq, as the read of the log on disk settles the run before it reports the failure
+/// (`Replay::settled`); the same log with a valid seal reports the line.
+#[test]
+fn a_read_that_fails_after_a_run_reports_the_runs_failed_seal_first() {
+    let key = EnclaveKey::test_key();
+    let signer = Some(AccountId(key.address()));
+    for (sealed_wrong, expected) in [(true, "the seal at seq 3 by"), (false, "log line")] {
+        // The run since the checkpoint holds seqs 2 and 3, the second sealed over another link.
+        let mut entries = ticks(4, &[1], |_| Some((&key, DOMAIN)));
+        if sealed_wrong {
+            command(&mut entries, 3).seal = Some(key.seal_command(DOMAIN, B256::repeat_byte(9)));
+        }
+        let dir = written(&format!("run-ends-read-fault-{sealed_wrong}"), &entries);
+        // Four commands fit one segment, so the log is the one file, which holds the last entry.
+        let segment = dir.join("00000000000000000000.jsonl");
+        let mut text = std::fs::read(&segment).unwrap();
+        text.extend_from_slice(b"not a log entry\n");
+        std::fs::write(&segment, text).unwrap();
+        let refused = replay_path_with_trust(&dir, Some(DOMAIN), signer, SealChecks::RunEnds).err().expect("refused");
+        let refused = format!("{refused:#}");
+        assert!(refused.contains(expected), "{refused}");
+        if sealed_wrong {
+            assert!(refused.contains("the run from seq 2") && !refused.contains("log line"), "{refused}");
+        } else {
+            assert!(!refused.contains("the seal at"), "{refused}");
+        }
+    }
+}
+
 // ── Helpers ──
 
 /// A change to a command's seal.
