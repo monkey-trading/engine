@@ -1,7 +1,10 @@
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
+
 use engine_core::types::Side;
 
 use super::*;
-use crate::stats::background::{Background, Job};
+use crate::stats::background::{Background, Job, Point, ReadJob, Reader};
 
 fn json(value: impl serde::Serialize) -> serde_json::Value {
     serde_json::to_value(value).unwrap()
@@ -173,6 +176,106 @@ fn a_read_never_waits_behind_an_encode() {
     let read: crate::stats::background::ReadJob = Box::new(move |engine| sent.send(engine.last_seq()).unwrap());
     assert!(reader.read(read).is_ok(), "reads go to the worker once the encode is done");
     assert_eq!(received.recv().unwrap(), Some(seq));
+}
+
+/// The admission lock is what keeps a read from queueing behind an encode counted between its check of the
+/// pending encodes and its enqueue: a read holds it from its check to its queueing, and an encode is
+/// counted under it.
+#[test]
+fn admission_is_held_from_a_reads_check_to_its_queueing_and_while_an_encode_is_counted() {
+    let rig = Rig::new();
+    let worker = Background::start(&rig.engine).unwrap();
+    let reader = worker.reader();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = seen.clone();
+    *reader.probe.lock().unwrap() = Some(Arc::new(move |point, held| log.lock().unwrap().push((point, held))));
+    assert!(reader.read(Box::new(|_| {})).is_ok());
+    let (reply, encoded) = std::sync::mpsc::sync_channel(1);
+    let (seq, ts) = (rig.engine.last_seq().unwrap(), rig.engine.now());
+    assert!(reader.send(Job::Encode { seq, ts, reply }));
+    encoded.recv().unwrap().unwrap();
+    assert_eq!(*seen.lock().unwrap(), [(Point::Checked, true), (Point::Counted, true)]);
+}
+
+/// Holds the first thread of `reader` to reach `wanted` there until the returned sender is used, and says
+/// when it has.
+fn hold_at(reader: &Reader, wanted: Point) -> (Receiver<()>, Sender<()>) {
+    let (reached, held) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    *reader.probe.lock().unwrap() = Some(Arc::new(move |point, _| {
+        if point == wanted {
+            reached.send(()).unwrap();
+            released.lock().unwrap().recv().unwrap();
+        }
+    }));
+    (held, release)
+}
+
+/// A read held between its check of the pending encodes and its enqueue queues ahead of an encode
+/// delivered meanwhile, which waits for the read to queue.
+#[test]
+fn an_encode_delivered_while_a_read_is_between_its_check_and_its_queueing_queues_behind_it() {
+    let rig = Rig::new();
+    let worker = Background::start(&rig.engine).unwrap();
+    let reader = worker.reader();
+    let (seq, ts) = (rig.engine.last_seq().unwrap(), rig.engine.now());
+    let (held, release) = hold_at(&reader, Point::Checked);
+    let (reply, encoded) = std::sync::mpsc::sync_channel(1);
+    // Whether the encode's reply was sent by the time the read ran on the worker.
+    let (ran, behind) = std::sync::mpsc::channel();
+    let read: ReadJob = Box::new(move |_| ran.send(encoded.try_recv().is_ok()).unwrap());
+    let reading = std::thread::spawn({
+        let reader = reader.clone();
+        move || reader.read(read).is_ok()
+    });
+    held.recv().unwrap();
+    let sending = std::thread::spawn({
+        let reader = reader.clone();
+        move || reader.send(Job::Encode { seq, ts, reply })
+    });
+    release.send(()).unwrap();
+    assert!(reading.join().unwrap(), "the read found no encode pending and queued");
+    assert!(sending.join().unwrap());
+    assert!(!behind.recv().unwrap(), "the read ran behind the encode");
+}
+
+/// A read arriving once an encode is counted and before it queues is handed back, for the sequencer to
+/// run, whatever the worker has done since.
+#[test]
+fn a_read_arriving_while_an_encode_is_counted_and_not_queued_is_handed_back() {
+    let rig = Rig::new();
+    let worker = Background::start(&rig.engine).unwrap();
+    let reader = worker.reader();
+    let (seq, ts) = (rig.engine.last_seq().unwrap(), rig.engine.now());
+    // The worker stays in a read, so the encode cannot finish and uncount itself.
+    let (free, worker_held) = std::sync::mpsc::channel::<()>();
+    let (entered, started) = std::sync::mpsc::channel();
+    assert!(
+        reader
+            .read(Box::new(move |_| {
+                entered.send(()).unwrap();
+                worker_held.recv().unwrap();
+            }))
+            .is_ok()
+    );
+    started.recv().unwrap();
+    let (held, release) = hold_at(&reader, Point::Counted);
+    let (reply, encoded) = std::sync::mpsc::sync_channel(1);
+    let sending = std::thread::spawn({
+        let reader = reader.clone();
+        move || reader.send(Job::Encode { seq, ts, reply })
+    });
+    held.recv().unwrap();
+    let reading = std::thread::spawn({
+        let reader = reader.clone();
+        move || reader.read(Box::new(|_| {})).is_err()
+    });
+    release.send(()).unwrap();
+    assert!(sending.join().unwrap());
+    assert!(reading.join().unwrap(), "the read was handed back");
+    free.send(()).unwrap();
+    encoded.recv().unwrap().unwrap();
 }
 
 /// A start whose record already runs a worker, as a member's replica keeps one in step as it follows,
