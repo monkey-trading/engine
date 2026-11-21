@@ -14,6 +14,8 @@ use rusqlite::{Connection, OpenFlags};
 use crate::authenticated::{Inner, MAX_STORED_VALUE, Runtime, Store, WriteFiles, geometry};
 
 const APPLICATION_ID: i64 = 0x45414a31;
+/// A writer connection's page cache: 32 MiB, as SQLite's negative `cache_size` in KiB.
+const WRITER_CACHE_KIB: i64 = -32768;
 const FORMAT_VERSION: i64 = 3;
 const NODES: &str = "CREATE TABLE nodes (
     namespace BLOB NOT NULL CHECK(typeof(namespace) = 'blob' AND length(namespace) = 32),
@@ -130,7 +132,7 @@ impl Store {
                 path,
                 crash_image: AtomicBool::new(crash_image),
                 files: Mutex::new(files),
-                writer: Mutex::new(()),
+                writer: Mutex::new(None),
                 runtime: Mutex::new(Runtime::default()),
                 #[cfg(test)]
                 syncs: Default::default(),
@@ -242,7 +244,8 @@ fn open_sql(path: &Path, mode: Mode) -> Result<Connection> {
     conn.pragma_update(None, "cell_size_check", true)?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "mmap_size", 0)?;
-    conn.pragma_update(None, "cache_size", -2048)?;
+    // A writer's connection stays open between writes, so its larger cache holds the tree's upper nodes.
+    conn.pragma_update(None, "cache_size", if writable { WRITER_CACHE_KIB } else { -2048 })?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(conn)
 }

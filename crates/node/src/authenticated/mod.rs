@@ -92,7 +92,10 @@ struct Inner {
     /// journal, until `enable_writes` rolls the journal back.
     crash_image: AtomicBool,
     files: Mutex<Option<WriteFiles>>,
-    writer: Mutex<()>,
+    /// Serializes writes, and keeps the writer's connection between them, so its page cache stays warm:
+    /// SQLite clears it at a transaction's start when another connection has committed since. A write
+    /// that does not end cleanly drops it.
+    writer: Mutex<Option<rusqlite::Connection>>,
     runtime: Mutex<Runtime>,
     /// The syncs this store has made, for a test that counts them.
     #[cfg(test)]

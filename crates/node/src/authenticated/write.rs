@@ -143,12 +143,15 @@ impl Store {
         durability: Durability,
     ) -> Result<Root> {
         root.validate()?;
-        let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
+        let mut writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
         self.writable()?;
         let _lease = self.lease(root)?;
         let old_floor = self.check_head(root)?;
         geometry::check(&self.inner.path)?;
-        let mut conn = db::connect(&self.inner.path, true)?;
+        let mut conn = match writer.take() {
+            Some(conn) => conn,
+            None => db::connect(&self.inner.path, true)?,
+        };
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
         let written = match work(&tx).and_then(|written| {
@@ -161,6 +164,7 @@ impl Store {
                     self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
                     return Err(error.context(format!("authenticated transaction rollback failed: {rollback}")));
                 }
+                *writer = Some(conn);
                 if let Some(namespace) = self
                     .inner
                     .runtime
@@ -181,6 +185,7 @@ impl Store {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);
         }
+        *writer = Some(conn);
         self.publish(&written)?;
         Ok(written)
     }
@@ -194,11 +199,14 @@ impl Store {
     /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {
         root.validate()?;
-        let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
+        let mut writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
         self.writable()?;
         self.check_head(root)?;
         geometry::check(&self.inner.path)?;
-        let mut conn = db::connect(&self.inner.path, true)?;
+        let mut conn = match writer.take() {
+            Some(conn) => conn,
+            None => db::connect(&self.inner.path, true)?,
+        };
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
         let after = root.version.map_or(Ok(-1), i64::try_from)?;
@@ -209,6 +217,7 @@ impl Store {
         )?;
         if !later {
             tx.rollback()?;
+            *writer = Some(conn);
             return self.publish(root);
         }
         tx.execute(
@@ -223,6 +232,7 @@ impl Store {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);
         }
+        *writer = Some(conn);
         self.publish(root)
     }
 
