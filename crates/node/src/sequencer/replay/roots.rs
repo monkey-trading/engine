@@ -267,13 +267,29 @@ impl Replay {
     }
 }
 
+/// A replay's root at the checkpoint at `seq` that differs from the log's.
+#[derive(Debug)]
+pub(in crate::sequencer) struct RootMismatch {
+    pub(in crate::sequencer) seq: u64,
+    logged: String,
+    replayed: String,
+}
+
+impl std::fmt::Display for RootMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "state root mismatch at seq {}: log says {}, replay gives {}", self.seq, self.logged, self.replayed)
+    }
+}
+
+impl std::error::Error for RootMismatch {}
+
 /// Checks `root`, the replay's root at the checkpoint at `seq`, against `logged`, the log's.
 /// Error cases:
-/// - they differ
+/// - they differ (`RootMismatch`)
 fn check(seq: u64, logged: &str, root: B256) -> anyhow::Result<()> {
     let root = format!("0x{}", hex::encode(root));
     if root != logged {
-        bail!("state root mismatch at seq {seq}: log says {logged}, replay gives {root}");
+        return Err(RootMismatch { seq, logged: logged.to_owned(), replayed: root }.into());
     }
     Ok(())
 }

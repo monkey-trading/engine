@@ -63,6 +63,25 @@ fn a_payout_naming_a_checkpoint_no_earlier_range_holds_is_refused() {
     }
 }
 
+/// A snapshot whose checkpoint the log holds but whose state its root does not vouch for fails the range
+/// that starts from it naming the snapshot file, not as a fault of the log, which a whole replay verifies.
+#[test]
+fn a_snapshot_whose_state_fails_its_checkpoints_root_is_named() {
+    let ranged = Ranged::new("ranges-damaged-snapshot", false);
+    let signer = AccountId(ranged.key.address());
+    let trust = || Trust::Pinned { domain: Some(ranged.domain), signer: Some(signer) };
+    crate::sequencer::replay_path_with_trust(&ranged.dir, Some(ranged.domain), Some(signer), seals())
+        .expect("the whole log replays under its signer");
+    let (offset, file) = crate::daily_snapshots::list(&ranged.snapshots).unwrap().remove(0);
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+    let account = snapshot["engine"]["accounts"].as_object_mut().unwrap().values_mut().next().unwrap();
+    account["balance"] = serde_json::json!("1");
+    std::fs::write(&file, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    let error = format!("{:#}", replay_ranges(&ranged.dir, &ranged.snapshots, trust(), jobs()).err().expect("refused"));
+    assert!(error.contains(&format!("daily snapshot {}'s state does not match the root", file.display())), "{error}");
+    assert!(error.contains(&format!("state root mismatch at seq {}", offset.seq)), "{error}");
+}
+
 // ── Helpers ──
 
 /// A log directory, under one key: a withdrawal approved under `V21` and the checkpoint that defers it, one
