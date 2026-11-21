@@ -14,7 +14,10 @@
 //! recorded or its block past the reach, each interval counted from the last read's start, failed reads
 //! included. Anyone may make a turn's first fix, a draw
 //! included, and the schedule's governance may replace the seed receiver at any time, so a read must
-//! always come well within the 256 blocks (64 s on Arbitrum One) after any first fix.
+//! always come well within the 256 blocks (64 s on Arbitrum One) after any first fix. A first fix just
+//! after a read samples the chain waits the interval, then a read and a send, so when a poll is slow the
+//! interval shrinks to leave room for two like it inside the reach (`REACH`), down to reading again at
+//! once, however slow every custody read is.
 //!
 //! It reads through a custody reader of its own, which holds a read session for each pinned block, so
 //! no other read waits on it or delays it, and it sends one call at a time with the member's liveness
@@ -43,6 +46,8 @@ use crate::standby_key::chain::{AgreedBlock, StandbyChain, StandbyDomain};
 
 /// How many blocks back `ArbSys.arbBlockHash` answers: past it a fixed block's hash is never recorded.
 const BLOCK_HASH_REACH: u64 = 256;
+/// How long the 256 blocks `ArbSys` answers for take at Arbitrum One's fastest, four blocks a second.
+const REACH: Duration = Duration::from_millis(BLOCK_HASH_REACH * 250);
 /// How soon the fixer reads again once a fix is under way, so the second call lands well within the
 /// 256 blocks (64 s on Arbitrum One) for which the first call's block hash can be recorded.
 pub(crate) const FOLLOW_UP: Duration = Duration::from_secs(5);
@@ -149,7 +154,10 @@ impl<C: StandbyChain, S: Sending> Fixer<C, S> {
                     if pending.fixed_in != 0 || !matches!(sent, Ok(None)));
                 report(fallback, &mut lapsed);
             }
-            tokio::time::sleep_until(started + if under_way { self.poll } else { self.idle }).await;
+            // A fix landing just after this poll's read waits the gap, then a read and a send, each taking
+            // as long as this poll did: the gap leaves room for them inside the reach.
+            let gap = if under_way { self.poll } else { self.idle };
+            tokio::time::sleep_until(started + gap.min(REACH.saturating_sub(started.elapsed() * 2))).await;
         }
     }
 
