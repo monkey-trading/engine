@@ -17,7 +17,8 @@ use crate::checkpoints::{
     APPROVAL_PAGE_SIZE, AcceptedCheckpoint, ApprovalId, CheckpointChain, LifecycleEvidence, Observation, SignerHistory,
     VaultState, View,
 };
-use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, CommandEntry, LogEntry};
+use crate::log::command_seal::{checkpoint_link, command_link};
+use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, CommandEntry, LogEntry, SealChecks};
 use crate::sequencer::SignedWithdrawal;
 use crate::tee::EnclaveKey;
 use crate::test_support::{TRADER, deposit, scratch_dir, withdraw};
@@ -170,6 +171,8 @@ impl Fixture {
             ]))),
             epoch_pages: Default::default(),
         };
+        // The retired key sealed the commands up to its checkpoint, and the current one those after it.
+        seal(&mut entries, domain, |seq| if seq <= first.seq { &old } else { &current });
         let dir = scratch_dir(name);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("public.jsonl");
@@ -201,6 +204,28 @@ impl Fixture {
         SignerHistory {
             checkpoints: self.chain.accepted.lock().unwrap().values().cloned().collect(),
             epochs: self.chain.epochs.lock().unwrap().clone(),
+        }
+    }
+}
+
+/// The ways a replay checks command seals: every seal, as the default does, and run ends, as
+/// `engine replay` does.
+pub(super) fn seal_modes() -> [SealChecks; 2] {
+    [SealChecks::default(), SealChecks::RunEnds]
+}
+
+/// Seals each command of `entries` with the key `key_of` gives for its seq, over the link that chains
+/// the commands since the last checkpoint, which restarts it, as a node seals them.
+fn seal<'k>(entries: &mut [LogEntry], domain: CheckpointDomain, key_of: impl Fn(u64) -> &'k EnclaveKey) {
+    let mut link = B256::ZERO;
+    for entry in entries {
+        match entry {
+            LogEntry::Command(command) => {
+                link = command_link(link, command).unwrap();
+                command.seal = Some(key_of(command.sequenced.seq).seal_command(domain, link));
+            }
+            LogEntry::Checkpoint(checkpoint) => link = checkpoint_link(checkpoint).unwrap(),
+            LogEntry::Withdrawal(_) => {}
         }
     }
 }
