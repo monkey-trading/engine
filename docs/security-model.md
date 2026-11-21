@@ -466,10 +466,10 @@ to share among them, and ranges that slow each other lengthen it: at 10,000 acco
 flow replayed whole in 78 seconds and in eight ranges on seven jobs in 32, on a shared machine. Each
 range holds an engine of its own: seven at 10,000 accounts peaked at 0.9 GB together, so a range at
 100,000 accounts holds about 1.3 GB, and memory bounds `--jobs` as cores do. With `--custody-config`
-the replay first scans the log for the checkpoints to ask the vault about, reading every segment at
-once and parsing only what are not instructions: at 10,000 accounts it took 0.2 seconds where a
-whole read took 18, and at 100,000 accounts it reads about 390 GB from disk, a few minutes at a fast
-disk's speed.
+the replay first scans the log for the checkpoints to ask the vault about, reading its segments one
+per core at a time and parsing only what are not instructions: at 10,000 accounts it took 0.2
+seconds where a whole read took 18, and at 100,000 accounts it reads about 390 GB from disk, a few
+minutes at a fast disk's speed.
 
 A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
 replica build and a taken copy's replay check every seal in full, since each goes on to sign over,

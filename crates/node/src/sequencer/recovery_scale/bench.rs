@@ -91,10 +91,10 @@ fn ranges_bench() {
     );
     drop(start);
     // What a replay with `--custody-config` adds before its ranges: a scan of the log for its checkpoints, its
-    // segments at once (`log::uncommanded`), beside a whole read on one thread for scale.
+    // segments one per core at a time (`log::uncommanded`), beside a whole read on one thread for scale.
     let cores = std::thread::available_parallelism().expect("the cores this process may use");
     let started = Instant::now();
-    let found = crate::log::uncommanded(&dir.join("log"), cores).expect("the log scans").len();
+    let found = crate::log::uncommanded(&dir.join("log"), cores, Some).expect("the log scans").len();
     println!("BENCH custody_scan entries={found} threads={cores} s={:.1}", started.elapsed().as_secs_f64());
     let started = Instant::now();
     crate::log::SegmentedLog::open(&dir.join("log"), &mut |_| Ok(())).expect("the log reads");

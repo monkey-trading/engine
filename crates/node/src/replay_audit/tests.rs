@@ -445,3 +445,23 @@ async fn absent_or_inconsistent_canonical_metadata_never_grants_historical_trust
         assert!(fixture.chain.pages.lock().unwrap().is_empty());
     }
 }
+
+/// A log directory's candidates and signer epochs, which the scan of its segments finds, are the ones a read
+/// of the same entries as one file finds, with segments of every size.
+#[test]
+fn a_scanned_directory_gives_the_candidates_and_epochs_a_whole_read_gives() {
+    let fixture = Fixture::new("audit-scan-source");
+    let mut whole_epochs = BTreeSet::new();
+    let whole = checkpoint_candidates(&fixture.path, fixture.parent(), &mut whole_epochs).unwrap();
+    assert_eq!(whole_epochs.len(), 2, "both payouts' epochs");
+    for segment_commands in [1, 2, 100] {
+        let dir = scratch_dir(&format!("audit-scan-{segment_commands}"));
+        let segmented = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
+        let mut writer = segmented.into_writer(segment_commands, watch::channel(Manifest::default()).0).unwrap();
+        fixture.entries.iter().for_each(|entry| writer.append(entry).unwrap());
+        writer.sync().unwrap();
+        let mut epochs = BTreeSet::new();
+        let scanned = checkpoint_candidates(&dir, fixture.parent(), &mut epochs).unwrap();
+        assert_eq!((scanned, epochs), (whole.clone(), whole_epochs.clone()), "{segment_commands} a segment");
+    }
+}

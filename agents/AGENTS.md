@@ -266,7 +266,7 @@ an index: load only the rule whose hint matches the current action.
   before its range, and adds up the counts, signers and activations; only the last range keeps its engine, a snapshot
   past the log's last checkpoint, or of a checkpoint the log does not hold, starts no range, and with
   `--custody-config` none starts after the vault's finalized checkpoint, whose checkpoints to ask the vault about come
-  from a scan of the log's segments at once that parses only what are not commands (`log/scan.rs`);
+  from a scan of the log's segments, one per core at a time, that parses only what are not commands (`log/scan.rs`);
   `sequencer/recovery_scale/daily.rs` is its dev scenario),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
