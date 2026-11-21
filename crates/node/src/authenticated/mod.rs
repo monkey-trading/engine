@@ -222,3 +222,5 @@ mod recovery_tests;
 mod tamper_tests;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod update_tests;

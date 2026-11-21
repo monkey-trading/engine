@@ -85,40 +85,60 @@ impl<'a> Reader<'a> {
     /// Error cases:
     /// - bounded storage traversal or upstream membership/nonmembership verification fails
     pub(super) fn read(&self, key: KeyHash) -> Result<Option<Vec<u8>>> {
-        self.prepare_paths(&[key], false)?;
+        self.prepare_proof(key)?;
         let tree = JellyfishMerkleTree::<_, Hasher>::new(self);
         let (value, proof) = tree.get_with_proof(key, self.root.version.unwrap_or(0))?;
         proof.verify(RootHash(self.root.hash), key, value.as_deref())?;
         Ok(value)
     }
 
-    /// Fetches every requested old-tree path and all one-hop children before JMT updates them.
+    /// Fetches the old-tree path of every requested key and, at each internal node on them, the children
+    /// `update_children` names for the keys passing through it, before JMT updates them.
     /// Error cases:
     /// - an unavailable/malformed node, child inconsistency, or exhausted finite resource budget
     pub(super) fn prepare(&self, keys: &[KeyHash]) -> Result<()> {
-        self.prepare_paths(keys, true)
+        let Some(version) = self.root.version else { return Ok(()) };
+        let mut keys = keys.to_vec();
+        keys.sort_unstable();
+        keys.dedup();
+        self.prepare_update(&codec::root_key(version)?, 0, &keys)
     }
 
-    /// Fetches every requested old-tree path and, at each internal node on it, every child or, for a
-    /// proof, the children `proof_children` names, before JMT's infallible sibling reads.
+    /// Prepares the subtree at `key`, at `depth`, for an update of the sorted `keys` that pass through it.
+    /// Error cases:
+    /// - as `prepare`
+    fn prepare_update(&self, key: &NodeKey, depth: usize, keys: &[KeyHash]) -> Result<()> {
+        let node = self.cache.borrow().get(key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
+        let Node::Internal(internal) = &node else { return Ok(()) };
+        ensure!(depth < 64, "terminal internal node");
+        let touched = keys.iter().fold(0u16, |bits, query| bits | (1 << nibble(query, depth)));
+        self.prepare_children(key, &node, update_children(internal.generate_bitmaps().0, touched))?;
+        for group in keys.chunk_by(|a, b| nibble(a, depth) == nibble(b, depth)) {
+            let at = nibble(&group[0], depth);
+            if let Some((_, child)) = internal.children_sorted().find(|(n, _)| u8::from(*n) == at) {
+                self.prepare_update(&codec::child_key(key, at, child.version)?, depth + 1, group)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Fetches the old-tree path of `query` and, at each internal node on it, the children `proof_children`
+    /// names, before JMT's infallible sibling reads.
     /// Error cases:
     /// - an unavailable/malformed node, child inconsistency, or exhausted finite resource budget
-    fn prepare_paths(&self, keys: &[KeyHash], every_child: bool) -> Result<()> {
+    fn prepare_proof(&self, query: KeyHash) -> Result<()> {
         let Some(version) = self.root.version else { return Ok(()) };
-        for query in keys {
-            let mut key = codec::root_key(version)?;
-            for depth in 0..=64 {
-                let node =
-                    self.cache.borrow().get(&key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
-                let Node::Internal(internal) = &node else { break };
-                ensure!(depth < 64, "terminal internal node");
-                let nibble = query.0[depth / 2] >> if depth % 2 == 0 { 4 } else { 0 } & 15;
-                let wanted = if every_child { u16::MAX } else { proof_children(internal.generate_bitmaps().0, nibble) };
-                self.prepare_children(&key, &node, wanted)?;
-                let child = internal.children_sorted().find(|(n, _)| u8::from(*n) == nibble);
-                let Some((_, child)) = child else { break };
-                key = codec::child_key(&key, nibble, child.version)?;
-            }
+        let mut key = codec::root_key(version)?;
+        for depth in 0..=64 {
+            let node =
+                self.cache.borrow().get(&key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
+            let Node::Internal(internal) = &node else { break };
+            ensure!(depth < 64, "terminal internal node");
+            let at = nibble(&query, depth);
+            self.prepare_children(&key, &node, proof_children(internal.generate_bitmaps().0, at))?;
+            let child = internal.children_sorted().find(|(n, _)| u8::from(*n) == at);
+            let Some((_, child)) = child else { break };
+            key = codec::child_key(&key, at, child.version)?;
         }
         Ok(())
     }
@@ -178,7 +198,8 @@ impl<'a> Reader<'a> {
     }
 
     /// Materializes the one-hop children in the `wanted` bitmap before JMT can reach its infallible
-    /// sibling reader, each checked against its authenticated parent once per reader.
+    /// sibling reader, each checked against its authenticated parent once per reader; a node all of whose
+    /// children are loaded is not visited again.
     /// Error cases:
     /// - a direct child is unavailable, malformed, or inconsistent with its authenticated parent
     fn prepare_children(&self, key: &NodeKey, node: &Node, wanted: u16) -> Result<()> {
@@ -212,7 +233,7 @@ impl<'a> Reader<'a> {
             ensure!(count == child.leaf_count(), "child leaf count mismatch");
             self.cache.borrow_mut().insert(child_key, loaded);
         }
-        if wanted == u16::MAX {
+        if internal.generate_bitmaps().0 & !wanted == 0 {
             self.prepared.borrow_mut().insert(key.clone());
         }
         Ok(())
@@ -324,21 +345,49 @@ const fn node_budget(keys: usize) -> usize {
     1 + keys * 64 * 16
 }
 
+/// The nibble of `key` at `depth`.
+fn nibble(key: &KeyHash, depth: usize) -> u8 {
+    key.0[depth / 2] >> if depth % 2 == 0 { 4 } else { 0 } & 15
+}
+
+/// The nibbles, as a bitmap, of the range of `1 << height` children starting at `start`.
+fn range(height: u8, start: u8) -> u16 {
+    (((1u32 << (1u32 << height)) - 1) << start) as u16
+}
+
+/// The child range holding `nibble` and its sibling range at each of an internal node's four heights.
+fn ranges(nibble: u8) -> impl Iterator<Item = u16> {
+    (0..4u8).flat_map(move |height| {
+        let start = (nibble >> height) << height;
+        [range(height, start), range(height, start ^ (1 << height))]
+    })
+}
+
 /// The children, as a bitmap of nibbles, a proof of the path through `nibble` of an internal node with
 /// the `existing` children can read: the child at `nibble`, and at each of the node's four heights the
 /// child alone in the range holding `nibble` or in its sibling range. Upstream reads a sibling only when
 /// it is alone in its range, and descends into a child other than `nibble`'s only when that child is
 /// alone in `nibble`'s range, so this is a superset of what its infallible reads can ask for.
 pub(super) fn proof_children(existing: u16, nibble: u8) -> u16 {
-    let mut wanted = existing & (1 << nibble);
-    for height in 0..4u8 {
-        let start = (nibble >> height) << height;
-        for start in [start, start ^ (1 << height)] {
-            let range = existing & ((((1u32 << (1u32 << height)) - 1) << start) as u16);
-            if range.count_ones() == 1 {
-                wanted |= range;
-            }
-        }
-    }
-    wanted
+    ranges(nibble)
+        .map(|range| existing & range)
+        .filter(|lone| lone.count_ones() == 1)
+        .fold(existing & (1 << nibble), |wanted, lone| wanted | lone)
+}
+
+/// The children, as a bitmap of nibbles, an update of keys through the `touched` nibbles of an internal
+/// node with the `existing` children can read from the old tree: every touched child, and every untouched
+/// child alone among the untouched ones in the whole node, or in a range holding a touched nibble or in
+/// that range's sibling at any of the node's four heights. The update reads an old child only where it
+/// descends, where it takes a sibling alone in its range, where it descends to the child alone in an
+/// absent child's range, and where one child is left to coalesce with. A touched child may be rewritten
+/// or removed before then, but an untouched one is still there, so a range holding one old child then
+/// holds no other untouched child.
+pub(super) fn update_children(existing: u16, touched: u16) -> u16 {
+    let untouched = existing & !touched;
+    let lone = |within: u16| Some(untouched & within).filter(|lone| lone.count_ones() == 1).unwrap_or(0);
+    (0..16u8)
+        .filter(|nibble| touched & (1 << nibble) != 0)
+        .flat_map(ranges)
+        .fold((existing & touched) | lone(u16::MAX), |wanted, within| wanted | lone(within))
 }
