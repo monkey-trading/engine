@@ -72,6 +72,18 @@ Use this procedure before any deployment or upgrade. None of its steps touches a
    longer than 10 seconds while connections are dropped. **If the soak fails, stop. The commit is
    not fit to release.**
 
+   Then run the node soak, eight hours at ten times launch flow on the launch book with each feed
+   fault in turn and a restart from the newest cache every two hours, in a quiet window, where
+   `<dir>` is a directory on a disk with room for its log:
+
+   ```shell
+   SOAK_DIR=<dir> nice scripts/dev-soak.sh 2>&1 | tee soak-report.txt
+   ```
+
+   The soak passes when every interval's report ends `verdict PASS` and the run ends with
+   `test result: ok`. **If it fails, stop. The commit is not fit to release.** Keep the report for the
+   release notes, and delete `<dir>` once it is saved.
+
 2. Tag the commit `v<version>`, where `<version>` is the release's version number.
 
 3. Take `vmlinuz`, `initramfs.cpio.gz`, `OVMF.fd`, `measurement.json` and `SHA256SUMS` from the

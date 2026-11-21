@@ -121,6 +121,7 @@ async fn run(plan: Plan) {
             recorder: Recorder::default(),
             screening_bound: Duration::from_millis(plan.screening_bound_ms),
             slow_until: None,
+            connect_within: Duration::from_secs(plan.connect_secs),
         })
         .collect();
     let mut registering = JoinSet::new();
@@ -204,7 +205,8 @@ async fn run(plan: Plan) {
     'legs: for leg in plan.steps() {
         loop {
             report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
-            let figures = scheduler.drive(&leg, plan.windows).await;
+            let windows = if leg.windows == 0 { plan.windows } else { leg.windows };
+            let figures = scheduler.drive(&leg, windows).await;
             report(&Line::End { leg: leg.name.clone(), multiple: leg.multiple, figures: figures.figures() });
             match stdin.next() {
                 Some(Ok(answer)) if answer.trim() == "again" => {}

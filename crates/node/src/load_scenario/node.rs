@@ -3,14 +3,18 @@
 //! the stats worker the API's reads go to; every feed connection the production template opens, to
 //! the loopback stand-ins; trusted time, the ticker and the price monitor; and the API over TLS
 //! behind its trusted PROXY protocol peer, under the template's `[api]` limits and screening slots.
-//! The history index and the marks cache, which follow the stream off the sequencer's thread, do not
-//! run, and nothing posts checkpoints to a chain: the sequencer writes one every 1,000 commands, as
-//! the template sets, its root taken on the root worker.
+//! The marks cache, which follows the stream off the sequencer's thread, does not run, and nothing
+//! posts checkpoints to a chain: the sequencer writes one every 1,000 commands, as the template sets,
+//! its root taken on the root worker. With a `Durable` the node also runs as one with `[snapshots]`
+//! does (`durable`): its history owner publishes the paired recovery caches, each checkpoint is
+//! reported final at once as a chain that keeps up would, and a stopped node starts again from its
+//! newest cache.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -19,7 +23,7 @@ use engine_core::auth::ClientAuth;
 use engine_core::command::Command;
 use engine_core::types::{AccountId, MarketId};
 use tokio::net::TcpListener;
-use tokio::sync::{Semaphore, broadcast, mpsc, watch};
+use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::AbortHandle;
 use tokio::time::{interval, timeout};
 
@@ -30,11 +34,13 @@ use crate::common::{CHAIN_ID, VAULT, operator};
 use crate::config::{ApiSection, ProxyProtocolSection};
 use crate::history::Reader;
 use crate::limits::ApiLimits;
+use crate::load_scenario::durable::{self, Durable, Owner};
 use crate::load_scenario::venues::{Venues, template};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
 use crate::sequencer::{Request, Sequencer, SequencerConfig};
 use crate::sequencer_thread::Worker;
+use crate::stats::Stats;
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{sequencer_config, trusted_now};
 use crate::tls::TlsIdentity;
@@ -52,15 +58,27 @@ const CHANNEL_CAPACITY: usize = 65_536;
 /// How long the sequencer has to drain and write its final checkpoint.
 const DRAIN: Duration = Duration::from_secs(120);
 
+/// How a node begins: by taking over the launch book, or by recovering the log a node of the same run
+/// wrote.
+pub(super) enum Boot {
+    Book(Box<Engine>),
+    Recover,
+}
+
 /// The running node.
 pub(super) struct Node {
     pub tx: mpsc::Sender<Request>,
     pub metrics: Arc<Metrics>,
+    /// The dashboard record the stats worker keeps.
+    pub stats: Stats,
     /// The enclave key's address, which signs every checkpoint.
     pub signer: AccountId,
     pub log_dir: PathBuf,
     pub api: ApiSection,
+    /// While set, trusted time takes no sample, as when the node's Roughtime servers are out.
+    pub time_out: Arc<AtomicBool>,
     sequencer: Worker,
+    history: Option<Owner>,
     tasks: Vec<AbortHandle>,
 }
 
@@ -76,42 +94,76 @@ pub(super) fn api_section() -> ApiSection {
 }
 
 impl Node {
-    /// Starts the node on `engine`, its log in `dir`, its API on `listener`, its feeds reading
-    /// `venues`' stand-ins.
-    pub(super) async fn start(engine: Engine, dir: &Path, listener: TcpListener, venues: &mut Venues) -> Self {
+    /// Starts the node as `boot` says, its log in `dir`, its API on `listener`, its feeds reading
+    /// `venues`' stand-ins, with the paired caches and checkpoint reports of `durable` when it is given.
+    pub(super) async fn start(
+        boot: Boot,
+        dir: &Path,
+        listener: TcpListener,
+        venues: &Venues,
+        durable: Option<&Durable>,
+    ) -> Self {
         std::fs::create_dir_all(dir).expect("the node's directory");
         let metrics = Arc::new(Metrics::new());
-        let key = Arc::new(EnclaveKey::generate());
+        let key = durable.map_or_else(|| Arc::new(EnclaveKey::generate()), |durable| durable.key.clone());
         let auth = ClientAuth::Eip712 { chain_id: CHAIN_ID, vault: VAULT };
         let (stream, _) = broadcast::channel(CHANNEL_CAPACITY);
         let (withdrawals, _signed) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let access = Arc::new(AccessClient::new(&venues.access).expect("the screening client"));
-        let cfg = SequencerConfig {
-            access_policy: Some(venues.access.policy()),
-            checkpoint_every: CHECKPOINT_EVERY,
-            segment_commands: SEGMENT_COMMANDS,
-            chain_id: CHAIN_ID,
-            vault: VAULT,
-            client_auth: auth.clone(),
-            operator: operator(),
-            metrics: metrics.clone(),
-            genesis: Vec::new(),
-            ..sequencer_config(dir, manifest_tx)
+        let (cfg, reports) = match durable {
+            // As `recovery_scale`'s node, the config a recovery checks against the book.
+            Some(_) => {
+                let (cfg, reports) = Durable::sequencer(dir, manifest_tx);
+                (SequencerConfig { metrics: metrics.clone(), ..cfg }, Some(reports))
+            }
+            None => {
+                let cfg = SequencerConfig {
+                    access_policy: Some(venues.access.policy()),
+                    checkpoint_every: CHECKPOINT_EVERY,
+                    segment_commands: SEGMENT_COMMANDS,
+                    chain_id: CHAIN_ID,
+                    vault: VAULT,
+                    client_auth: auth.clone(),
+                    operator: operator(),
+                    metrics: metrics.clone(),
+                    genesis: Vec::new(),
+                    ..sequencer_config(dir, manifest_tx)
+                };
+                (cfg, None)
+            }
         };
-        let mut seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals).expect("an empty log");
         let stats = crate::test_support::stats();
+        let recovering = matches!(boot, Boot::Recover);
+        let (mut seq, history) = match durable {
+            None => {
+                let seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals).expect("an empty log");
+                (seq, None)
+            }
+            Some(durable) => {
+                let (seq, history) = durable::open(durable, cfg, (&stats, recovering), &stream, withdrawals)
+                    .expect("the paired log opens");
+                (seq, Some(history))
+            }
+        };
         seq.trust(trusted_now()).expect("a trusted time sample");
-        seq.take_over_checkpointed(engine).expect("the book's first checkpoint");
+        if let Boot::Book(engine) = boot {
+            seq.take_over_checkpointed(*engine).expect("the book's first checkpoint");
+        }
         seq.track_stats(stats.clone());
         seq.pipeline_log_syncs().expect("the log sync thread");
+        let history = history.map(|history| history.run(&seq, dir, &manifest));
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let sequencer = Worker::start(seq.run(rx), None).expect("the sequencer's thread");
+        if let Some(reports) = reports {
+            durable::report_final(reports, tx.downgrade());
+        }
 
+        let time_out = Arc::new(AtomicBool::new(false));
         let (samples_tx, samples) = watch::channel(Some(trusted_now()));
-        let mut tasks = vec![keep_time(tx.clone(), samples_tx), tick(tx.clone())];
+        let mut tasks = vec![keep_time(tx.clone(), samples_tx, time_out.clone()), tick(tx.clone())];
         let mut sources: BTreeMap<MarketId, BTreeSet<String>> = BTreeMap::new();
-        for (conn, credentials, tls, timing) in std::mem::take(&mut venues.connections) {
+        for (conn, credentials, tls, timing) in venues.connections.clone() {
             for symbol in &conn.symbols {
                 sources.entry(symbol.market).or_default().insert(conn.venue.name().to_owned());
             }
@@ -153,7 +205,7 @@ impl Node {
             limits: limits.clone(),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
             marks: crate::test_support::marks_reader(),
-            stats,
+            stats: stats.clone(),
             emission_budget: None,
             staking_terms: None,
             status: Default::default(),
@@ -167,29 +219,76 @@ impl Node {
         tasks.push(tokio::spawn(serving).abort_handle());
         tasks.push(tokio::spawn(crate::limits::run_retain(limits)).abort_handle());
         let signer = AccountId(key.address());
-        Node { tx, metrics, signer, log_dir: dir.to_owned(), api, sequencer, tasks }
+        Node { tx, metrics, stats, signer, log_dir: dir.to_owned(), api, time_out, sequencer, history, tasks }
     }
 
     /// Stops every task, then lets the sequencer drain its queue and write its final checkpoint.
     /// Error cases:
     /// - the sequencer failed, or did not drain within `DRAIN`
-    pub(super) async fn stop(self) -> anyhow::Result<()> {
-        let Node { tx, sequencer, tasks, .. } = self;
+    /// - the history owner failed, or with `publishes` did not take the final cache in time: a stop that
+    ///   nothing starts after leaves the owner to end its turn
+    pub(super) async fn stop(self, publishes: bool) -> anyhow::Result<()> {
+        let Node { tx, sequencer, tasks, history, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
         // Every sender but this one went with the tasks; the sequencer drains once it goes.
         drop(tx);
         let mut sequencer = sequencer;
         let outcome = timeout(DRAIN, &mut sequencer.outcome).await.context("the sequencer did not drain in time")?;
-        outcome.context("the sequencer's thread ended")?
+        outcome.context("the sequencer's thread ended")??;
+        match history {
+            Some(history) if publishes => history.stop().await,
+            Some(history) => history.abort().await,
+            None => Ok(()),
+        }
+    }
+
+    /// How many commands the history index is behind the log, when the owner answers.
+    pub(super) async fn history_behind(&self) -> Option<u64> {
+        self.history.as_ref()?.behind().await
+    }
+
+    /// Whether the history owner runs, which publishes the recovery caches.
+    pub(super) fn history_runs(&self) -> bool {
+        self.history.as_ref().is_some_and(Owner::takes_captures)
+    }
+
+    /// Drops the node as a crash does: the sequencer's thread is cancelled where it stands, with no
+    /// drain, no final checkpoint and no shutdown cache, and the history owner stopped as it is, so the
+    /// newest cache is the last capture and a start replays the log past it.
+    /// Error cases:
+    /// - the sequencer's thread did not end within `DRAIN`
+    pub(super) async fn kill(self) -> anyhow::Result<()> {
+        let Node { tx, mut sequencer, tasks, history, .. } = self;
+        tasks.iter().for_each(AbortHandle::abort);
+        let outcome = std::mem::replace(&mut sequencer.outcome, oneshot::channel().1);
+        // Dropping the worker cancels the sequencer at its next async boundary, before `tx` can drain it.
+        drop(sequencer);
+        drop(tx);
+        let ended = timeout(DRAIN, outcome).await.context("the cancelled sequencer did not end in time")?;
+        // Only the worker's own cancellation: any other error is the sequencer failing before the kill.
+        let cancelled = matches!(&ended, Ok(Err(error)) if format!("{error:#}").contains("cancelled after supervisor"));
+        anyhow::ensure!(cancelled, "the sequencer did not end by cancellation: {ended:?}");
+        match history {
+            Some(history) => history.abort().await,
+            None => Ok(()),
+        }
     }
 }
 
-/// Gives the sequencer, and the API's signing, a trusted time sample every `SAMPLE_EVERY`.
-fn keep_time(tx: mpsc::Sender<Request>, samples: watch::Sender<Option<crate::trusted_time::Sample>>) -> AbortHandle {
+/// Gives the sequencer, and the API's signing, a trusted time sample every `SAMPLE_EVERY`, but while
+/// `out` is set.
+fn keep_time(
+    tx: mpsc::Sender<Request>,
+    samples: watch::Sender<Option<crate::trusted_time::Sample>>,
+    out: Arc<AtomicBool>,
+) -> AbortHandle {
     tokio::spawn(async move {
         let mut every = interval(SAMPLE_EVERY);
         loop {
             every.tick().await;
+            if out.load(Ordering::Relaxed) {
+                continue;
+            }
             let sample = trusted_now();
             samples.send_replace(Some(sample));
             if tx.send(Request::TimeSample(sample)).await.is_err() {

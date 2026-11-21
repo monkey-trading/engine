@@ -54,6 +54,9 @@ pub(super) struct Plan {
     /// The node's screening bound (`access.max_age`): a trader that sent a screened request within it
     /// has a fresh decision, which the node keeps fresh while the trader is active.
     pub screening_bound_ms: u64,
+    /// How long a client keeps trying to reach the node before the generator gives up: a node that
+    /// restarts is gone this long.
+    pub connect_secs: u64,
 }
 
 /// One leg: a multiple of launch flow for a time.
@@ -62,6 +65,9 @@ pub(super) struct Leg {
     pub name: String,
     pub multiple: f64,
     pub secs: u64,
+    /// The windows the leg reports, in place of the plan's when it is not 0.
+    #[serde(default)]
+    pub windows: u32,
 }
 
 /// A ramp: legs from `from` times launch flow, each `factor` times the last, of `step_secs` each,
@@ -163,7 +169,7 @@ impl Plan {
             let mut multiple = ramp.from;
             while multiple <= ramp.max {
                 let secs = ramp.step_secs;
-                steps.push(Leg { name: format!("ramp_{multiple}x"), multiple, secs });
+                steps.push(Leg { name: format!("ramp_{multiple}x"), multiple, secs, windows: 0 });
                 multiple *= ramp.factor;
             }
         }

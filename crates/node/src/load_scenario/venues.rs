@@ -11,8 +11,8 @@
 //! ones (`common::launch_book`). A connection sequences a price each time its mid moves, so a
 //! market's price commands a second are its connections' moves a second.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::extract::State;
@@ -38,6 +38,7 @@ use crate::config::{AccessSection, Venue, VenueConnection, VenuesSection};
 use crate::feeds::tests::alpaca_support::AlpacaStandIn;
 use crate::feeds::tests::cme_support::{CmeStandIn, key};
 use crate::feeds::tests::fake::{coinbase_exchange_book, coinbase_levels, kraken_book, listen};
+use crate::feeds::tests::link::FaultyLink;
 use crate::feeds::tests::rwa_support::TlsFront;
 use crate::feeds::tests::vendors::{KEY, Prices, serve_massive, serve_tradermade};
 use crate::feeds::venue::{self, Credentials, Timing};
@@ -71,11 +72,36 @@ pub(super) struct Moves {
 /// TLS config and timings.
 pub(super) type Connection = (VenueConnection, Credentials, Arc<ClientConfig>, Timing);
 
+/// The markets the crypto stand-ins send no book for, which the soak sets to make a product quiet.
+#[derive(Clone, Default)]
+pub(super) struct Quiet(Arc<Mutex<BTreeSet<MarketId>>>);
+
+impl Quiet {
+    /// Makes `market` quiet, or streaming again.
+    pub(super) fn set(&self, market: MarketId, quiet: bool) {
+        let mut quiet_markets = self.0.lock().expect("the quiet markets");
+        if quiet {
+            quiet_markets.insert(market);
+        } else {
+            quiet_markets.remove(&market);
+        }
+    }
+
+    fn is(&self, market: MarketId) -> bool {
+        self.0.lock().expect("the quiet markets").contains(&market)
+    }
+}
+
 /// The stand-ins, and the feed connections to them.
 pub(super) struct Venues {
+    /// The template's connections; a node's start opens its own copy of each.
     pub connections: Vec<Connection>,
     /// The screening source's `[access]`.
     pub access: AccessSection,
+    /// A link in front of each crypto stand-in, shared by that venue's connections, when the run
+    /// injects faults.
+    pub links: Arc<BTreeMap<Venue, FaultyLink>>,
+    pub quiet: Quiet,
     tasks: Vec<AbortHandle>,
     cme: CmeStandIn,
     _alpaca: AlpacaStandIn,
@@ -121,8 +147,9 @@ fn book(market: MarketId, per_second: f64, ts: Millis) -> (Fixed, Fixed) {
 /// Starts every stand-in and the screening source, and points each of the template's connections at
 /// its stand-in, at the template's feed timings. The RWA stand-ins read nothing once they stream, so
 /// they answer no ping: their connections send none, as the RWA scenarios' do, and only the crypto
-/// connections hold their streams to the template's delay bound.
-pub(super) async fn start(moves: Moves, source_delay: Duration) -> Venues {
+/// connections hold their streams to the template's delay bound. With `faulty`, each crypto stand-in
+/// is reached through a link that injects the network's faults (`links`).
+pub(super) async fn start(moves: Moves, source_delay: Duration, faulty: bool) -> Venues {
     let venues = template_venues();
     let timing = Timing::for_venues(&venues);
     let tls = TlsFront::new();
@@ -142,12 +169,19 @@ pub(super) async fn start(moves: Moves, source_delay: Duration) -> Venues {
         Arc::new(move |symbol: &str, ts: Millis| Some(book(*quoted.get(symbol)?, rwa, ts)))
     };
     let mut urls: BTreeMap<Venue, String> = BTreeMap::new();
+    let (mut links, quiet) = (BTreeMap::new(), Quiet::default());
     for venue in [Venue::Coinbase, Venue::CoinbaseExchange, Venue::Kraken] {
         let (listener, url) = listen().await;
         let quoted = symbols.get(&venue).cloned().unwrap_or_default();
         let quoted = quoted.into_iter().map(|(symbol, market)| (symbol, (market, moves.crypto[&market]))).collect();
-        tasks.push(tokio::spawn(serve_crypto(listener, venue, quoted)).abort_handle());
-        urls.insert(venue, url);
+        tasks.push(tokio::spawn(serve_crypto(listener, venue, quoted, quiet.clone())).abort_handle());
+        if faulty {
+            let link = FaultyLink::start(&url).await;
+            urls.insert(venue, link.url.clone());
+            links.insert(venue, link);
+        } else {
+            urls.insert(venue, url);
+        }
     }
     let (massive, massive_url) = listen().await;
     tasks.push(serve_massive(massive, prices(Venue::Massive)).abort_handle());
@@ -195,17 +229,18 @@ pub(super) async fn start(moves: Moves, source_delay: Duration) -> Venues {
         .collect();
     let (access, source) = start_access(source_delay).await;
     tasks.push(source);
-    Venues { connections, access, tasks, cme, _alpaca: alpaca }
+    Venues { connections, access, links: Arc::new(links), quiet, tasks, cme, _alpaca: alpaca }
 }
 
 /// Serves `venue`'s books of `symbols`, each with its market and its moves a second, to every
 /// connection a feed opens, each until it closes: every symbol's whole book `CRYPTO_UPDATES` times a
-/// second, or twice as often as the fastest mid moves if that is more, so each move is sent.
-async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<String, (MarketId, f64)>) {
+/// second, or twice as often as the fastest mid moves if that is more, so each move is sent. A symbol
+/// whose market is `quiet` is not sent.
+async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<String, (MarketId, f64)>, quiet: Quiet) {
     let fastest = symbols.values().map(|(_, moves)| *moves).fold(0.0, f64::max);
     let every = Duration::from_secs_f64(1.0 / CRYPTO_UPDATES.max(2.0 * fastest));
     while let Ok((tcp, _)) = listener.accept().await {
-        let symbols = symbols.clone();
+        let (symbols, quiet) = (symbols.clone(), quiet.clone());
         tokio::spawn(async move {
             let Ok(mut ws) = accept_async(tcp).await else { return };
             let mut ticks = interval(every);
@@ -217,7 +252,7 @@ async fn serve_crypto(listener: TcpListener, venue: Venue, symbols: BTreeMap<Str
                     read = ws.next() => if !matches!(read, Some(Ok(_))) { return },
                     _ = ticks.tick() => {
                         let ts = now_ms();
-                        for (symbol, (market, moves)) in &symbols {
+                        for (symbol, (market, moves)) in symbols.iter().filter(|(_, (market, _))| !quiet.is(*market)) {
                             let (bid, ask) = book(*market, *moves, ts);
                             let (bid, ask) = (bid.to_string(), ask.to_string());
                             let text = match venue {

@@ -30,7 +30,8 @@ use crate::load_scenario::generator::record::Recorder;
 
 /// How long a signed request, and a session key, stay valid.
 const REQUEST_LIFE_MS: Millis = 60_000;
-const SESSION_LIFE_MS: Millis = 6 * 60 * 60 * 1_000;
+/// Under `session_keys::MAX_SESSION_KEY_EXPIRY_MS`, and over any soak.
+pub(crate) const SESSION_LIFE_MS: Millis = 12 * 60 * 60 * 1_000;
 /// Where a limit order rests, away from the mark of 100 so no price reaches it.
 pub(crate) const LIMIT_BUY: i64 = 90;
 pub(crate) const LIMIT_SELL: i64 = 110;
@@ -46,7 +47,6 @@ const REFRESH_SLACK: Duration = Duration::from_secs(10);
 /// How long a request may wait for its reply, and a client for its connection, before it counts as
 /// failed and the client gives up.
 const REPLY_WITHIN: Duration = Duration::from_secs(30);
-const CONNECT_WITHIN: Duration = Duration::from_secs(60);
 
 /// A request kind of the mix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -353,11 +353,13 @@ pub(super) struct Client {
     /// When the client's last screened request from a trader with no fresh decision, which may have
     /// waited for the source, was answered.
     pub slow_until: Option<Instant>,
+    /// How long the client keeps trying to reach the node (`plan::Plan::connect_secs`).
+    pub connect_within: Duration,
 }
 
 impl Client {
     /// Opens the client's connection, retrying until the node takes it.
-    /// Panics if the node takes none within `CONNECT_WITHIN`, which ends the generator.
+    /// Panics if the node takes none within `connect_within`, which ends the generator.
     async fn connect(&self) -> Http {
         let started = Instant::now();
         loop {
@@ -366,7 +368,7 @@ impl Client {
                 Ok(Err(e)) => format!("{e:#}"),
                 Err(_) => "the handshake timed out".to_owned(),
             };
-            assert!(started.elapsed() < CONNECT_WITHIN, "client {} cannot connect: {failure}", self.address);
+            assert!(started.elapsed() < self.connect_within, "client {} cannot connect: {failure}", self.address);
             sleep(Duration::from_millis(100)).await;
         }
     }

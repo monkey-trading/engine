@@ -81,9 +81,9 @@ pub(super) struct Pairing {
 
 /// What a node's sequencer is configured with: the book's deployment, operator and screening source,
 /// the template's cadences, and `sealing`, where its captures go, when its log pairs caches.
-fn config<'a>(
+pub(crate) fn config<'a>(
     dir: &'a Path,
-    clock: Arc<TestClock>,
+    clock: Arc<dyn Clock>,
     sink: mpsc::Sender<Work>,
     manifest: watch::Sender<Manifest>,
     sealing: Option<Endpoint>,
