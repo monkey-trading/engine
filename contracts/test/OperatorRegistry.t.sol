@@ -373,12 +373,19 @@ contract OperatorRegistryTest is RegistryTest {
         vm.prank(alice);
         registry.register(_registration(_key(alice), MIN_BOND, 1), _authorization(alice));
         _delegate(alice, alice);
-        // Approving the same release for another candidate does not make this one eligible.
+        // Approving the same release for another candidate does not make this one eligible, and makes
+        // the release that candidate's: alice is eligible only on a release of her own.
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (bob, _digest(1), CONFIG, true)));
         assertFalse(registry.isEligible(alice));
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, bob));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(1), CONFIG, true);
         _govern(
-            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, true))
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(3), CONFIG, true))
         );
+        assertFalse(registry.isEligible(alice));
+        vm.prank(alice);
+        registry.setRelease(_digest(3), CONFIG);
         assertTrue(registry.isEligible(alice));
 
         // Below the eligibility share of total stake: 10k of 210k is under 5%, 10.6k of 210.6k is not.
@@ -395,7 +402,7 @@ contract OperatorRegistryTest is RegistryTest {
         assertFalse(registry.isEligible(alice));
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setParameters, (_parameters())));
         _govern(
-            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(1), CONFIG, false))
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (alice, _digest(3), CONFIG, false))
         );
         assertFalse(registry.isEligible(alice));
         assertFalse(registry.isEligible(carol));
@@ -729,7 +736,7 @@ contract OperatorRegistryTest is RegistryTest {
         assertEq(_inEffect(), bob);
         // Once bob is in effect, a close elects alice; the snapshot now names bob, with bob's
         // own release, as the incumbent alice's successor hands over from.
-        uint64 secondEffectiveAt = _electWith(alice, 30_000e18);
+        uint64 secondEffectiveAt = _electWith(alice, 30_000e18, 3);
         assertGt(secondEffectiveAt, 0);
         OperatorRegistry.HandoverSource memory source = registry.handoverSource();
         assertEq(source.candidate, bob);
@@ -762,7 +769,7 @@ contract OperatorRegistryTest is RegistryTest {
     function testFuzz_TheChallengerIsElectedExactlyWhenItLeads(uint256 incumbentStake, uint256 challengerStake) public {
         incumbentStake = bound(incumbentStake, MIN_BOND, 1e27);
         challengerStake = bound(challengerStake, MIN_BOND, 1e27);
-        uint64 effectiveAt = _electWith(bob, incumbentStake);
+        uint64 effectiveAt = _electWith(bob, incumbentStake, 2);
         vm.warp(effectiveAt);
         _candidate(alice, challengerStake, 1);
         _delegate(alice, alice);
@@ -777,11 +784,12 @@ contract OperatorRegistryTest is RegistryTest {
 
     /// @dev Elects `candidate`, staking and self-delegating 20k for it, at the next close.
     function _elect(address candidate) internal returns (uint64) {
-        return _electWith(candidate, 20_000e18);
+        return _electWith(candidate, 20_000e18, 2);
     }
 
-    function _electWith(address candidate, uint256 stake) internal returns (uint64) {
-        _candidate(candidate, stake, 2);
+    /// @dev Registers `candidate` on release `seed`, its own, and elects it with `stake`.
+    function _electWith(address candidate, uint256 stake, uint256 seed) internal returns (uint64) {
+        _candidate(candidate, stake, seed);
         _delegate(candidate, candidate);
         if (!registry.rotationEnabled()) _setRotation(true);
         _closeNext();

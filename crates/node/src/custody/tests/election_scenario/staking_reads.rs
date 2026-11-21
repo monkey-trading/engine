@@ -66,9 +66,9 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
     })
     .await;
 
-    // 2. The cap rises to 100, forty candidates stake and register, the timelock approves the first
-    //    thirty-five, and every candidate delegates: the approved ones spread their stake over each
-    //    other, the five unapproved all to the first.
+    // 2. The cap rises to 100, forty candidates stake and register, each on a release of its own, the
+    //    timelock approves the first thirty-five, and every candidate delegates: the approved ones
+    //    spread their stake over each other, the five unapproved all to the first.
     let (parameters, ..) = dev_parameters();
     let lifted = super::chain::Parameters { maxCandidates: 100, ..parameters };
     chain.govern(vec![setParametersCall { parameters: lifted }.abi_encode()]).await;
@@ -77,10 +77,14 @@ async fn dev_scenario_the_operator_list_and_distribution_history_are_signed_read
         let account = chain.impersonated(&format!("candidate-{index}")).await;
         let admin = SigningKey::from_slice(&[0x60 + u8::try_from(index).unwrap(); 32]).unwrap();
         chain.stake(account, monkey(STAKE)).await;
-        chain.register(account, &admin, monkey(BOND), DIGEST_A).await;
+        chain.register(account, &admin, monkey(BOND), digest_of(index)).await;
         candidates.push((account, address(&admin)));
     }
-    let approvals = candidates[..APPROVED].iter().map(|(account, _)| chain.approval(*account, DIGEST_A)).collect();
+    let approvals = candidates[..APPROVED]
+        .iter()
+        .enumerate()
+        .map(|(index, (account, _))| chain.approval(*account, digest_of(index)))
+        .collect();
     chain.govern(approvals).await;
     for (index, (account, _)) in candidates.iter().enumerate() {
         let to = if index < APPROVED { candidates[(index * 3) % APPROVED].0 } else { candidates[0].0 };
@@ -241,6 +245,13 @@ impl Node {
         }
         serde_json::from_slice(&body).unwrap()
     }
+}
+
+/// Candidate `index`'s launch measurement: a release belongs to one candidate, so each runs its own.
+fn digest_of(index: usize) -> [u8; 48] {
+    let mut digest = DIGEST_A;
+    digest[47] = u8::try_from(index).unwrap();
+    digest
 }
 
 /// Reads `/v1/operators` until `done` holds, verifying every answer it takes.

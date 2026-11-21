@@ -15,7 +15,8 @@ use crate::log::Checkpoint;
 /// The release the vault names as holding the enclave's keys, and the generation it named it in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CurrentRelease {
-    /// `keccak256` of the launch measurement and the config hash; zero before governance names one.
+    /// `keccak256` of the launch measurement and the config hash; zero before governance names one, and
+    /// once an installation ends the drawn turns, until governance names one.
     pub id: [u8; 32],
     /// Raised by every change of the current release.
     pub generation: u64,

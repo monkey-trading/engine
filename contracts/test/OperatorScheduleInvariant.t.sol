@@ -242,7 +242,7 @@ contract ScheduleHandler is Test {
         try registry.installOperator(
             candidate,
             vm.addr(uint256(keccak256(abi.encode("installed", actorSeed)))),
-            _digest(500 + actorSeed % 3),
+            _digest(500 + actorSeed % actors.length),
             CONFIG
         ) {}
             catch {}
@@ -360,7 +360,8 @@ contract ScheduleHandler is Test {
         if (last < highestDrawn) lastDrawnFell++;
         else highestDrawn = last;
         bytes32 release = vault.currentRelease();
-        if (vault.syncedRelease() != release) return;
+        // A zero release names no holding: no release hashes to it.
+        if (release == 0 || vault.syncedRelease() != release) return;
         uint64 generation = vault.releaseGeneration();
         bytes32 seen = releaseOf[generation];
         if (seen == 0) releaseOf[generation] = release;

@@ -514,9 +514,13 @@ an index: load only the rule whose hint matches the current action.
   key, API hostname, handover endpoint and release — the registration carrying the admin key's
   EIP-712 authorization of the candidate, so a key is registered only for a candidate it
   authorized — and move to another release the timelock approved for them (`setRelease`, how the
-  operator in effect upgrades while rotation is on), the timelock approves releases, switches rotation
+  operator in effect upgrades while rotation is on), the timelock approves releases, each release
+  belonging for good to the first candidate it is approved for or installed on, or the deployment's
+  operator, and refused for any other (`releaseOwner`, `ReleaseTaken`), switches rotation
   (off at deployment, the deployer in effect), installs a new operator in effect while rotation is
-  off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone) and moves parameters within deployment bounds, and
+  off (`installOperator`, the timelock-only fallback for a failed operator whose key is gone, which
+  the runbook batches with the vault's `setCurrentRelease` after it, `test/ReleaseChange.t.sol` and
+  `test/OperatorSchedule.t.sol`) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
   seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
   (`setSchedule`), adopting a rotation set in it instead: anyone then draws each daily turn from the
@@ -525,8 +529,11 @@ an index: load only the rule whose hint matches the current action.
   drawn turns stand after rotation turns off until `installOperator`. Deployment gives that
   timelock its multisig proposer. The timelock manages signer rotation, the current release that
   alone holds the signer's key (`setCurrentRelease`: the keccak of a launch measurement and config
-  hash, in a new `releaseGeneration` each time), and independent deposit/withdrawal pauses; the
-  guardian, the same multisig acting without the delay, may only pause withdrawals for seven days
+  hash, in a new `releaseGeneration` each time; while the registry's `rotationEnabled()` is false,
+  the vault names the release it last folded, which only `setCurrentRelease` changes, or none once
+  an installation has ended the drawn turns, and `syncRelease` folds nothing), and independent
+  deposit/withdrawal pauses; the guardian, the same multisig acting without the delay, may only
+  pause withdrawals for seven days
   (counted, renewed or lifted by the timelock) and retire the signer until the timelock installs
   one. Deposits are refused once checkpoints are stale; once none
   has been posted for the exit period, anyone starts the permanent exit against the last posted
@@ -995,7 +1002,8 @@ an index: load only the rule whose hint matches the current action.
   checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
   `unattested_certificate` alert, operator candidates and standbys, and the seed relay. `alerts.md` lists every alert
   the code raises with its level and where to go (a new alert gets a row there in the same change),
-  `reference.md` holds the shared variables and checks, and `production-node.toml` is the production
+  `reference.md` holds the shared variables, checks and timelock call patterns (one call, or a batch
+  of calls in one transaction), and `production-node.toml` is the production
   node config without `[genesis]`, assembled with `config/benchmark-publishers.toml` and
   `config/production-genesis.toml`, each placeholder or open decision marked `OWNER` or `REPLACE`,
   with a test that it loads. `production-deployment.toml` holds the launch deployment's one-time

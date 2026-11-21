@@ -115,24 +115,121 @@ contract ReleaseChangeTest is RegistryTest {
     function test_OnlyAReleaseTheTimelockApprovedForTheCandidateMoves() public {
         uint64 effectiveAt = _elect(bob, 2);
         vm.warp(effectiveAt);
-        // Approved for another candidate, not for bob.
+        // Approved for another candidate, not for bob, and the release is that candidate's alone.
         _approve(alice, 3);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, _release(3)));
         vm.prank(bob);
         registry.setRelease(_digest(3), CONFIG);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, alice));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(bob, _digest(3), CONFIG, true);
         // Approved, then withdrawn.
-        _approve(bob, 3);
+        _approve(bob, 4);
         _govern(
-            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (bob, _digest(3), CONFIG, false))
+            address(registry), abi.encodeCall(OperatorRegistry.setReleaseApproval, (bob, _digest(4), CONFIG, false))
         );
-        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, _release(3)));
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, _release(4)));
         vm.prank(bob);
-        registry.setRelease(_digest(3), CONFIG);
+        registry.setRelease(_digest(4), CONFIG);
         vm.expectRevert(OperatorRegistry.InvalidLaunchDigest.selector);
         vm.prank(bob);
         registry.setRelease(hex"01", CONFIG);
         assertEq(registry.candidateOf(bob).release, _release(2));
         assertEq(vault.currentRelease(), _release(2));
+    }
+
+    /// A release belongs to the first candidate the timelock approves it for or installs on it, and the
+    /// deployment's to its operator, for good: no other candidate is approved for it or installed on it,
+    /// after its owner's approval is withdrawn or its owner leaves too, while its owner is approved again.
+    function test_AReleaseBelongsToOneCandidateForGood() public {
+        assertEq(registry.releaseOwner(_release(0)), deployerKey, "the deployment's release");
+        _refusedApproval(alice, 0, deployerKey);
+        _candidate(alice, 30_000e18, 1);
+        assertEq(registry.releaseOwner(_release(1)), alice);
+        _refusedApproval(bob, 1, alice);
+        _withdraw(alice, 1);
+        _refusedApproval(bob, 1, alice);
+        _approve(alice, 1);
+        assertTrue(_approved(alice, 1), "approved for its owner again");
+        vm.prank(alice);
+        registry.deregister();
+        _refusedApproval(bob, 1, alice);
+
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, alice));
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(1), CONFIG);
+        vm.prank(address(governance));
+        registry.installOperator(carol, _key(carol), _digest(5), CONFIG);
+        assertEq(registry.releaseOwner(_release(5)), carol, "an installation's release");
+        _refusedApproval(bob, 5, carol);
+        _approve(carol, 5);
+        assertTrue(_approved(carol, 5));
+        assertEq(registry.releaseOwner(_release(6)), address(0), "a release never approved or installed");
+    }
+
+    /// While rotation is off only the timelock names the vault's release. Turning rotation off after an
+    /// election took effect leaves the vault naming the elected release its keys moved to, not the one it
+    /// named before rotation turned on nor a move the vault never folded; a sync then folds nothing, and the
+    /// timelock's naming moves it.
+    function test_TurningRotationOffLeavesTheReleaseTheKeysAreOnUntilTheTimelockNamesAnother() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        vm.warp(_elect(bob, 2));
+        vault.syncRelease();
+        uint64 generation = vault.releaseGeneration();
+        _approve(bob, 3);
+        vm.prank(bob);
+        registry.setRelease(_digest(3), CONFIG);
+        assertEq(vault.currentRelease(), _release(3), "the operator's move, not yet folded");
+        assertEq(vault.syncedRelease(), _release(2));
+        _setRotation(false);
+        assertEq(vault.currentRelease(), _release(2), "rotation off moved the vault's release");
+        assertEq(vault.syncedRelease(), _release(2));
+        vault.syncRelease();
+        assertEq(vault.releaseGeneration(), generation, "a sync folded a release while rotation is off");
+        vm.prank(address(governance));
+        vault.setCurrentRelease(_digest(9), CONFIG);
+        assertEq(vault.currentRelease(), _release(9));
+        assertGt(vault.releaseGeneration(), generation);
+    }
+
+    /// With no drawn turn, one timelock batch may also turn rotation off before the installation and the
+    /// naming. The vault then moves from the elected operator's release to the fallback's in one
+    /// transaction.
+    function test_TheFallbackTurnsRotationOffInstallsAndNamesItsReleaseInOneBatch() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        vm.warp(_elect(bob, 2));
+        vault.syncRelease();
+        assertEq(vault.currentRelease(), _release(2));
+
+        (address[] memory targets, bytes[] memory payloads) = _fallbackBatch(carol, 9, true);
+        bytes32 salt = _scheduleBatch(targets, payloads);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
+        assertEq(vault.currentRelease(), _release(2), "the elected operator's release until the batch");
+        _executeBatch(targets, payloads, salt);
+        assertFalse(registry.rotationEnabled());
+        assertEq(registry.operatorInEffect().candidate, carol);
+        assertEq(vault.currentRelease(), _release(9), "the fallback's release");
+        assertEq(vault.syncedRelease(), _release(9), "folded by the naming, with nothing left to sync");
+    }
+
+    /// The governance fallback with rotation already off, as at deployment: the batch is the installation
+    /// and the naming alone, since one that turns rotation off again reverts as a whole and changes nothing.
+    function test_TheFallbackLeavesAnAlreadyOffSwitchOutOfItsBatch() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        (address[] memory switching, bytes[] memory switchingPayloads) = _fallbackBatch(carol, 9, true);
+        (address[] memory targets, bytes[] memory payloads) = _fallbackBatch(carol, 9, false);
+        bytes32 switchingSalt = _scheduleBatch(switching, switchingPayloads);
+        bytes32 salt = _scheduleBatch(targets, payloads);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.RotationUnchanged.selector, false));
+        _executeBatch(switching, switchingPayloads, switchingSalt);
+        assertEq(registry.operatorInEffect().candidate, deployerKey, "a reverted batch installs no one");
+        assertEq(vault.currentRelease(), _release(0));
+
+        _executeBatch(targets, payloads, salt);
+        assertEq(registry.operatorInEffect().candidate, carol);
+        assertEq(vault.currentRelease(), _release(9), "the fallback's release");
+        assertEq(vault.syncedRelease(), _release(9));
     }
 
     function test_OnlyARegisteredCandidateMoves() public {
@@ -142,10 +239,10 @@ contract ReleaseChangeTest is RegistryTest {
         vm.expectRevert(OperatorRegistry.NotRegistered.selector);
         vm.prank(alice);
         registry.setRelease(_digest(3), CONFIG);
-        _approve(deployerKey, 3);
+        _approve(deployerKey, 4);
         vm.expectRevert(OperatorRegistry.NotRegistered.selector);
         vm.prank(deployerKey);
-        registry.setRelease(_digest(3), CONFIG);
+        registry.setRelease(_digest(4), CONFIG);
         assertEq(registry.operatorInEffect().release, _release(0));
     }
 
@@ -492,6 +589,13 @@ contract ReleaseChangeTest is RegistryTest {
             address(registry),
             abi.encodeCall(OperatorRegistry.setReleaseApproval, (candidate, _digest(seed), CONFIG, true))
         );
+    }
+
+    /// @dev Asserts the timelock's approval of release `seed` for `candidate` reverts, naming `owner`.
+    function _refusedApproval(address candidate, uint256 seed, address owner) internal {
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, owner));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(candidate, _digest(seed), CONFIG, true);
     }
 
     function _withdraw(address candidate, uint256 seed) internal {

@@ -158,6 +158,28 @@ abstract contract RegistryTest is GovernanceTest {
         return vm.addr(_adminKey(candidate));
     }
 
+    /// @dev A timelock batch that installs `candidate` on release `seed` and then names that release in
+    /// the vault, as the governance fallback does. The naming reverts while a drawn turn names the
+    /// operator, which lasts until the installation. With `rotationOff`, the batch turns rotation off
+    /// first; the runbook turns it off on its own instead, since a later draw would move the turns' end.
+    function _fallbackBatch(address candidate, uint256 seed, bool rotationOff)
+        internal
+        view
+        returns (address[] memory targets, bytes[] memory payloads)
+    {
+        uint256 first = rotationOff ? 1 : 0;
+        (targets, payloads) = (new address[](first + 2), new bytes[](first + 2));
+        if (rotationOff) {
+            targets[0] = address(registry);
+            payloads[0] = abi.encodeCall(OperatorRegistry.setRotation, (false));
+        }
+        targets[first] = address(registry);
+        payloads[first] =
+            abi.encodeCall(OperatorRegistry.installOperator, (candidate, _key(candidate), _digest(seed), CONFIG));
+        targets[first + 1] = address(vault);
+        payloads[first + 1] = abi.encodeCall(Vault.setCurrentRelease, (_digest(seed), CONFIG));
+    }
+
     function _setRotation(bool enabled) internal {
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setRotation, (enabled)));
     }

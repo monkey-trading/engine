@@ -777,12 +777,13 @@ contract UntakenTurnTest is SkipTest {
         assertEq(vault.checkpointSigner(), key);
     }
 
-    /// @dev Moves `member` to another approved release, which voids its standby key.
+    /// @dev Moves `member` to another release approved for it, its own, which voids its standby key.
     function _voidStandby(address member) internal {
+        bytes memory digest = _digest(uint160(member));
         vm.prank(address(governance));
-        registry.setReleaseApproval(member, _digest(77), CONFIG, true);
+        registry.setReleaseApproval(member, digest, CONFIG, true);
         vm.prank(member);
-        registry.setRelease(_digest(77), CONFIG);
+        registry.setRelease(digest, CONFIG);
         assertEq(schedule.promotable(member), address(0));
     }
 

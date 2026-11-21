@@ -11,6 +11,7 @@ server a node.
 - [Health in one minute](#health-in-one-minute)
 - [Read the vault and the registry](#read-the-vault-and-the-registry)
 - [Calling a contract through the timelock](#calling-a-contract-through-the-timelock)
+- [Calling several contracts in one timelock batch](#calling-several-contracts-in-one-timelock-batch)
 - [Chain finality](#chain-finality)
 - [Deadlines that run while the trading server is down](#deadlines-that-run-while-the-trading-server-is-down)
 - [Download the public log and verify it](#download-the-public-log-and-verify-it)
@@ -222,6 +223,68 @@ and data, and this procedure gives the steps.
    `finalized`.
 
 To withdraw a scheduled call before it runs, the proposer cancels it.
+
+**Changes the live system.** The owner must approve the cancellation.
+
+```shell
+cast send $TIMELOCK 'cancel(bytes32)' $OP --rpc-url $RPC --account <proposer>
+```
+
+## Calling several contracts in one timelock batch
+
+Some runbooks need calls that take effect together, in one transaction and in a fixed order. The
+timelock's batch runs the calls in the order listed. If any call reverts, the whole batch reverts
+and nothing changes, and the batch stays ready to run again. The steps follow
+[Calling a contract through the timelock](#calling-a-contract-through-the-timelock).
+
+1. Prepare the calls, in the order that the runbook gives:
+
+   ```shell
+   TARGETS="[<first target>,<second target>]"
+   VALUES="[0,0]"
+   PAYLOADS="[$(cast calldata '<first signature>' <arguments>),$(cast calldata '<second signature>' <arguments>)]"
+   ZERO=0x0000000000000000000000000000000000000000000000000000000000000000
+   SALT=$(cast keccak "<label>")
+   DELAY=$(cast call $TIMELOCK 'getMinDelay()(uint256)' --rpc-url $RPC)
+   ```
+
+   `VALUES` holds one `0` for each call. The runbook gives each call's target, such as `$VAULT` or
+   `$REGISTRY`, and its signature and arguments.
+
+2. Have the proposer schedule the batch.
+
+   **Changes the live system.** The owner must approve the batch, and the multisig must sign it.
+
+   ```shell
+   cast send $TIMELOCK 'scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)' "$TARGETS" "$VALUES" "$PAYLOADS" $ZERO $SALT $DELAY --rpc-url $RPC --account <proposer>
+   ```
+
+3. After the delay, check that the batch is ready:
+
+   ```shell
+   OP=$(cast call $TIMELOCK 'hashOperationBatch(address[],uint256[],bytes[],bytes32,bytes32)(bytes32)' "$TARGETS" "$VALUES" "$PAYLOADS" $ZERO $SALT --rpc-url $RPC)
+   cast call $TIMELOCK 'isOperationReady(bytes32)(bool)' $OP --rpc-url $RPC
+   ```
+
+   The second command prints `true`.
+
+4. Have the executor run the batch once the runbook's condition for it holds.
+
+   **Changes the live system.** The owner must approve the execution.
+
+   ```shell
+   cast send $TIMELOCK 'executeBatch(address[],uint256[],bytes[],bytes32,bytes32)' "$TARGETS" "$VALUES" "$PAYLOADS" $ZERO $SALT --rpc-url $RPC --account <executor>
+   ```
+
+   If a call reverts, `cast` prints its error, and the runbook lists the errors to expect.
+
+5. Confirm that the batch has run, as step 5 of
+   [Calling a contract through the timelock](#calling-a-contract-through-the-timelock) does with
+   this `OP`, and read each call's effect with the reads that the runbook names.
+
+A batch that reverts, or that a runbook replaces with another, stays ready, and anyone with the
+executor role can run it later. Have the proposer cancel a batch that will not run, with its `OP`
+from step 3, before scheduling its replacement.
 
 **Changes the live system.** The owner must approve the cancellation.
 

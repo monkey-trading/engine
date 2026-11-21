@@ -35,6 +35,9 @@ interface IVault {
 /// current release to the standby at once; the standby's registered enclave address is the only one
 /// the vault's timelock-gated `setSigner` installs while rotation is on.
 /// @notice Releases: a candidate moves its candidacy to a release the timelock approved for it.
+/// Each release belongs to one candidate (`releaseOwner`): the first the timelock approves it for or
+/// installs on it, or the deployment's operator for its own. The timelock approves or installs it for
+/// no other.
 /// The named operator's move is how it upgrades while rotation is on: the vault names the new
 /// release at once, and the running release hands it the keys and the log.
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
@@ -204,6 +207,14 @@ contract OperatorRegistry {
     /// @notice Releases the timelock approved, keyed by `keccak256(abi.encode(candidate, release))`.
     mapping(bytes32 approval => bool approved) public releaseApproved;
 
+    /// @notice The candidate each release belongs to, for good: the first the timelock approved it for
+    /// or installed on it, or the deployment's operator for its own; zero for a release it never
+    /// approved or installed. Every candidate the schedule records for a release (`releaseCandidate`,
+    /// which the key holder lookup reads) was approved for it, installed on it or is the deployment's
+    /// operator, so it is this one. A registration binds nothing, so registering a release first holds
+    /// no one else off it, and a candidate registered on another's release is never approved for it.
+    mapping(bytes32 release => address candidate) public releaseOwner;
+
     /// @dev A rotation set a close is choosing: its first `count` members, their admin keys and weights.
     struct Chosen {
         address[] members;
@@ -275,6 +286,7 @@ contract OperatorRegistry {
     error ReleaseNotApproved(bytes32 release);
     error CandidateCapReached(uint256 cap);
     error AdminKeyTaken(address candidate);
+    error ReleaseTaken(address candidate);
     error BondBelowMinimum(uint256 bond, uint256 minimum);
     error OperatorCannotLeave();
     error UnauthorizedAdminKey();
@@ -328,12 +340,9 @@ contract OperatorRegistry {
         parameters = parameters_;
         governance = governance_;
         staking = new Staking(monkey_, cooldownSeconds_, epochSeconds_);
-        current = Operator(
-            initial.adminKey,
-            initial.adminKey,
-            _release(initial.launchDigest, initial.configHash),
-            uint64(block.timestamp)
-        );
+        bytes32 release = _release(initial.launchDigest, initial.configHash);
+        current = Operator(initial.adminKey, initial.adminKey, release, uint64(block.timestamp));
+        releaseOwner[release] = initial.adminKey;
         openEpochStart = uint64(block.timestamp);
     }
 
@@ -529,15 +538,17 @@ contract OperatorRegistry {
     /// measurement `launchDigest` and config SHA-256 `configHash`. Approving a registered candidate's
     /// release adds it to `candidateList` under the candidate cap; withdrawing approval removes it from
     /// the list while it stays registered. Approving another release lets the candidate move to it
-    /// (`setRelease`); withdrawing it once the candidate has moved on stops a move back.
+    /// (`setRelease`); withdrawing it once the candidate has moved on stops a move back. An approval
+    /// reverts `ReleaseTaken` for a release that belongs to another candidate (`releaseOwner`).
     function setReleaseApproval(address candidate, bytes calldata launchDigest, bytes32 configHash, bool approved)
         external
         onlyGovernance
     {
         bytes32 release = _release(launchDigest, configHash);
+        if (approved) _own(candidate, release);
         releaseApproved[keccak256(abi.encode(candidate, release))] = approved;
         emit ReleaseApprovalChanged(candidate, release, approved);
-        Candidate memory registered = candidates[candidate];
+        Candidate storage registered = candidates[candidate];
         // Listing follows the release the candidate holds, registered or moved to, not any other
         // release the timelock names for it.
         if (registered.adminKey == address(0) || registered.release != release) return;
@@ -645,7 +656,8 @@ contract OperatorRegistry {
     /// naming. The installed operator takes effect at once; the engine
     /// mirrors this with its seven-day log notice before its key signs. No candidacy changes: the
     /// replaced operator keeps its release, approvals and listing, and the installed candidate,
-    /// when registered, keeps its own and moves with `setRelease` like any operator in effect.
+    /// when registered, keeps its own and moves with `setRelease` like any operator in effect. Reverts
+    /// `ReleaseTaken` for a release that belongs to another candidate (`releaseOwner`).
     /// @dev The replaced operator's later moves change only its candidacy, never the vault's release.
     function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash)
         external
@@ -658,6 +670,7 @@ contract OperatorRegistry {
         }
         if (candidate == address(0) || adminKey == address(0)) revert ZeroAddress();
         bytes32 release = _release(launchDigest, configHash);
+        _own(candidate, release);
         current = Operator(candidate, adminKey, release, uint64(block.timestamp));
         emit OperatorInstalled(candidate, adminKey, release);
     }
@@ -1033,6 +1046,13 @@ contract OperatorRegistry {
         if (left == release || !releaseApproved[key]) return;
         delete releaseApproved[key];
         emit ReleaseApprovalChanged(candidate, left, false);
+    }
+
+    /// @dev Makes `release` belong to `candidate`, reverting when it belongs to another.
+    function _own(address candidate, bytes32 release) private {
+        address owner = releaseOwner[release];
+        if (owner != address(0) && owner != candidate) revert ReleaseTaken(owner);
+        releaseOwner[release] = candidate;
     }
 
     /// @dev Removes `candidate` from `candidateList`, keeping it registered.
