@@ -1,7 +1,8 @@
 //! The node's writer of daily snapshots. The sequencer hands it each one with the engine's encoding, which
 //! the stats worker gives only once the checkpoint's batch is durable, or encoded on the sequencer's thread
-//! after a sync of the log, and a thread of its own publishes it: the file under its name, then its line in
-//! the manifest, each synced before the next, so a crash leaves a listed snapshot whole, or an unlisted file
+//! after a sync of the log, with the enclave key that signed its checkpoint, and a thread of its own signs it
+//! over the encoding's SHA-256 (`Signing`) and publishes it: the file under its name, then its line in the manifest, each synced before
+//! the next, so a crash leaves a listed snapshot whole, or an unlisted file
 //! the next start removes. A day whose snapshot the thread cannot take, or fails to write, pages Warning
 //! `daily_snapshot_failed` and has none, which merges two of an audit's ranges; the log stays the authority.
 //! The node keeps every day's snapshot.
@@ -21,7 +22,7 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-use crate::daily_snapshots::{Listed, MANIFEST, SCHEMA, Written, day, offset_named, read_manifest};
+use crate::daily_snapshots::{Listed, MANIFEST, SCHEMA, Signing, Written, day, offset_named, read_manifest};
 use crate::log::{Checkpoint, Offset};
 use crate::snapshot::sealing::{ENCODE_WAIT, Encoding};
 
@@ -32,6 +33,8 @@ pub(crate) struct Job {
     /// The checkpoint's sequenced time.
     pub ts: Millis,
     pub engine: Encoding,
+    /// The key that signed the checkpoint, which signs the snapshot.
+    pub signing: Signing,
 }
 
 /// The longest a writer's drop waits for its thread to finish the snapshot it holds, so a slow write never
@@ -206,16 +209,27 @@ pub(crate) fn publish_now(dir: &Path, job: Job) -> anyhow::Result<Listed> {
     publish(dir, &mut listed, job)
 }
 
-/// Writes `job`'s snapshot in `dir` under its name, synced, then lists it in the manifest.
+/// Writes `job`'s snapshot in `dir` under its name, signed with its key over the SHA-256 of the engine's
+/// encoding as written, which is its state digest (`state_digest`), synced, then lists it in the manifest.
 /// Error cases:
-/// - the engine's encoding failed or did not come within `ENCODE_WAIT`, or the file or the manifest cannot be
-///   written or synced
+/// - the engine's encoding failed or did not come within `ENCODE_WAIT`, or the checkpoint's root does not
+///   parse, or the file or the manifest cannot be written or synced
 fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Listed> {
     // Bounded, so a job a failing sequencer never delivered cannot hold the writer's drop.
     let engine = RawValue::from_string(job.engine.wait(ENCODE_WAIT)?).context("the engine's encoding is not JSON")?;
+    let state: [u8; 32] = Sha256::digest(engine.get().as_bytes()).into();
+    let root = job.checkpoint.root.parse().context("the snapshot's checkpoint root")?;
+    let (state, signature) = (hex::encode(state), job.signing.sign(job.offset, root, state));
     let file = crate::snapshot::name(job.offset);
     let staged = dir.join(format!("{file}.tmp"));
-    let written = Written { schema: SCHEMA, offset: job.offset, checkpoint: &job.checkpoint, engine: &engine };
+    let written = Written {
+        schema: SCHEMA,
+        offset: job.offset,
+        checkpoint: &job.checkpoint,
+        engine: &engine,
+        state: &state,
+        signature: &signature,
+    };
     let (hash, bytes) = write_synced(&staged, |out| serde_json::to_writer(out, &written).map_err(Into::into))?;
     publish_staged(&staged, &dir.join(&file)).with_context(|| format!("publishing {file}"))?;
     sync_dir(dir)?;
@@ -236,7 +250,7 @@ fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Lis
 /// Writes `listed` as the manifest in `dir`, replacing it whole.
 /// Error cases:
 /// - the manifest cannot be written, synced or renamed into place
-fn write_manifest(dir: &Path, listed: &[Listed]) -> anyhow::Result<()> {
+pub(super) fn write_manifest(dir: &Path, listed: &[Listed]) -> anyhow::Result<()> {
     let staged = dir.join(format!("{MANIFEST}.tmp"));
     write_synced(&staged, |out| {
         listed.iter().try_for_each(|listing| {
@@ -282,6 +296,6 @@ fn write_synced(
 /// Syncs `dir`, so the renames in it survive a crash.
 /// Error cases:
 /// - the directory cannot be opened or synced
-fn sync_dir(dir: &Path) -> anyhow::Result<()> {
+pub(super) fn sync_dir(dir: &Path) -> anyhow::Result<()> {
     File::open(dir).and_then(|dir| dir.sync_all()).with_context(|| format!("syncing {}", dir.display()))
 }

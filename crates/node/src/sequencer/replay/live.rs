@@ -4,7 +4,11 @@
 //! checkpoint gate at the vault's finalized checkpoint, and the latest commands' cumulative prefixes,
 //! the evidence that the replica holds a posted log head or a predecessor's tip.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+mod before;
+pub(crate) use before::Before;
+mod retained;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
@@ -14,6 +18,7 @@ use engine_core::types::{AccountId, Millis};
 use crate::checkpoints::Work;
 use crate::history::derived::RowsStore;
 use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, LogWriter};
+use crate::sequencer::replay::live::retained::Retained;
 use crate::sequencer::replay::{Replay, ReplayedLog};
 use crate::stats::Stats;
 
@@ -39,17 +44,10 @@ pub(crate) struct LiveReplay {
     checkpoints: BTreeMap<u64, (Work, Millis)>,
     /// Whether every checkpoint since the log's start is retained.
     complete: bool,
-    /// The latest commands' links, oldest first, at consecutive seqs ending at the last command.
-    links: VecDeque<Link>,
-    /// The newest posted log head the replica held when it passed, kept past `links`.
-    pinned: Option<Link>,
+    /// The latest commands' links, the pinned posted head, and the links and checkpoints kept past them.
+    retained: Retained,
     /// Where a member's replica records each checkpoint it verifies, for its log check answers.
     checked: Option<crate::log_check::answer::CheckedHeads>,
-    /// The seqs whose command link and checkpoint the replica keeps past `links` and `checkpoints`
-    /// as it passes them (a promotion's fixed head and checkpoint), with what it kept.
-    keeping: BTreeSet<u64>,
-    kept: BTreeMap<u64, Link>,
-    kept_checkpoints: BTreeMap<u64, Checkpoint>,
     /// Where each command's derived rows are written as the replica applies it (`store_rows_in`).
     rows: Option<Arc<RowsStore>>,
 }
@@ -61,16 +59,18 @@ impl LiveReplay {
     /// must carry a seal by one of them (`Replay::copy`); a follower cuts back a tail no checkpoint covers
     /// that holds another seal or none (`Follower::open_pinned`).
     pub(crate) fn new(domain: CheckpointDomain, attested: BTreeSet<AccountId>) -> Self {
+        Self::wrapping(Replay::copy(domain, attested), true)
+    }
+
+    /// A replica whose replay is `replay`, retaining no checkpoint's work yet: every one since the log's start
+    /// when `complete`, or, for a replay that goes on from a state it did not apply the log to, from its own.
+    fn wrapping(replay: Replay, complete: bool) -> Self {
         Self {
-            replay: Replay::copy(domain, attested),
+            replay,
             checkpoints: BTreeMap::new(),
-            complete: true,
-            links: VecDeque::new(),
-            pinned: None,
+            complete,
+            retained: Retained::default(),
             checked: None,
-            keeping: BTreeSet::new(),
-            kept: BTreeMap::new(),
-            kept_checkpoints: BTreeMap::new(),
             rows: None,
         }
     }
@@ -102,15 +102,15 @@ impl LiveReplay {
 
     /// Keeps the command link and the checkpoint at `seq` past the retention windows, once replayed.
     pub(crate) fn keep(&mut self, seq: u64) {
-        self.keeping.insert(seq);
+        self.retained.keeping.insert(seq);
     }
 
     /// Drops every retained link and checkpoint, as a replay long past them leaves the windows.
     #[cfg(test)]
     pub(crate) fn forget_retained(&mut self) {
-        self.links.clear();
+        self.retained.links.clear();
         self.checkpoints.clear();
-        self.pinned = None;
+        self.retained.pinned = None;
     }
 
     /// Has the replica record every command it applies into `stats`, which starts over.
@@ -161,24 +161,15 @@ impl LiveReplay {
                 {
                     store.keep(command.sequenced.seq, command.sequenced.ts, &rows);
                 }
-                let link = Link {
+                self.retained.command(Link {
                     seq: command.sequenced.seq,
                     link: B256::from(self.replay.command_prefix),
                     ts: command.sequenced.ts,
                     sealer: command.seal.as_ref().map(|seal| seal.signer),
-                };
-                self.links.push_back(link);
-                if self.keeping.contains(&link.seq) {
-                    self.kept.insert(link.seq, link);
-                }
-                if self.links.len() > RETAINED_LINKS {
-                    self.links.pop_front();
-                }
+                });
             }
             LogEntry::Checkpoint(checkpoint) => {
-                if self.keeping.contains(&checkpoint.seq) {
-                    self.kept_checkpoints.entry(checkpoint.seq).or_insert_with(|| checkpoint.clone());
-                }
+                self.retained.checkpoint(checkpoint);
                 let engine = &self.replay.engine;
                 let work = Work::capture(checkpoint.clone(), self.replay.accounting, engine);
                 // A second checkpoint at one seq extends no outstanding chain in recovery's replay
@@ -259,9 +250,7 @@ impl LiveReplay {
         let root = B256::from(self.replay.engine.state_root());
         let checkpoint = crate::sequencer::replay::unheld::unheld(seq, root, signer, self.replay.domain);
         let engine = &self.replay.engine;
-        if self.keeping.contains(&seq) {
-            self.kept_checkpoints.entry(seq).or_insert_with(|| checkpoint.clone());
-        }
+        self.retained.checkpoint(&checkpoint);
         let work = Work::capture(checkpoint, self.replay.accounting, engine);
         self.checkpoints.insert(seq, (work, engine.now()));
         if self.checkpoints.len() > RETAINED_CHECKPOINTS {
@@ -272,15 +261,14 @@ impl LiveReplay {
 
     /// The retained, or kept, checkpoint at `seq`.
     pub(crate) fn checkpoint_at(&self, seq: u64) -> Option<&Checkpoint> {
-        self.checkpoints.get(&seq).map(|(work, _)| &work.checkpoint).or_else(|| self.kept_checkpoints.get(&seq))
+        let retained = self.checkpoints.get(&seq).map(|(work, _)| &work.checkpoint);
+        retained.or_else(|| self.retained.kept_checkpoints.get(&seq))
     }
 
     /// The cumulative prefix after the command at `seq`, with its stamp, while the replica retains
     /// it: one of the latest `RETAINED_LINKS` commands, or the pinned posted head.
     pub(crate) fn link_at(&self, seq: u64) -> Option<Link> {
-        let index = self.links.front().and_then(|first| seq.checked_sub(first.seq));
-        let retained = index.and_then(|index| self.links.get(usize::try_from(index).ok()?));
-        retained.copied().or(self.pinned.filter(|pinned| pinned.seq == seq)).or_else(|| self.kept.get(&seq).copied())
+        self.retained.link_at(seq)
     }
 
     /// Takes `signer`, a key the vault names that the replica's attested set predates, as attested
@@ -291,18 +279,15 @@ impl LiveReplay {
 
     /// The latest links the replica retains, oldest first, at most `crate::liveness::link`'s window.
     pub(crate) fn retained_links(&self) -> impl Iterator<Item = &Link> {
-        self.links.iter().skip(self.links.len().saturating_sub(RETAINED_LINKS / 4))
+        let links = &self.retained.links;
+        links.iter().skip(links.len().saturating_sub(RETAINED_LINKS / 4))
     }
 
     /// Keeps the posted head `(seq, link)` as one the replica holds, once its own link at `seq`
     /// is that one, so a start long after it still proves it. `None` while the replica has not
     /// reached `seq`, or no longer retains it unpinned.
     pub(crate) fn pin(&mut self, seq: u64, link: B256) -> Option<bool> {
-        let held = self.link_at(seq)?;
-        if held.link == link {
-            self.pinned = Some(held);
-        }
-        Some(held.link == link)
+        self.retained.pin(seq, link)
     }
 
     /// The log this replica holds, ready for `Sequencer::recover_from`, with `writer` the copy's

@@ -427,8 +427,10 @@ below.
 
 `engine replay --snapshots <dir>` replays a log in ranges, several at once, from the daily snapshots
 in `<dir>`. A trading server with `[daily_snapshots]` keeps the engine's state at the first
-checkpoint of each UTC day and serves it beside the archive. Nothing signs a snapshot. The replay
-splits the log at each snapshot's checkpoint, and starts a range from a snapshot only where the log
+checkpoint of each UTC day and serves it beside the archive. Its enclave key signs each snapshot
+over the deployment, the offset of the snapshot's checkpoint in the log, that checkpoint's root and
+the SHA-256 of the state's encoding, which a member's start requires (below) and a replay in ranges
+does not read. The replay splits the log at each snapshot's checkpoint, and starts a range from a snapshot only where the log
 holds a checkpoint at the snapshot's offset equal to the snapshot's, which it checks as it checks
 every checkpoint, and only once the root it computes over the snapshot's state, each market's index
 of resting orders rebuilt from the accounts' orders, is that checkpoint's; a snapshot of a state
@@ -508,6 +510,32 @@ instruction of that kind after the copy's last checkpoint is refused by a handov
 takeover's replay. A member's replica instead keeps those instructions in
 `<log_dir>.unaccepted-<seq>`, raises the Critical alert `copy_tail_unaccepted`, and cuts the copy back
 to its last checkpoint. The operator's stream then refills the copy.
+
+A rotation member whose copy is empty backfills it from the archives of the operator it follows and,
+with `[daily_snapshots]`, starts its replica from the newest snapshot, of those it holds and those the
+archives list, whose checkpoint the copy holds and the vault has finalized. It fetches a listed one
+whole, checking its length and hash against its listing, and takes a snapshot only when its signature,
+which it checks before it decodes the state, covers the state's bytes and is by the key that signed its
+checkpoint, a key the vault recorded, and the copy holds that checkpoint at the snapshot's offset. It
+tries the three newest in turn and removes a fetched one it refuses. Before that checkpoint it applies
+nothing: it checks every instruction's chained digest and
+seal, every checkpoint's signature and sequence number, and every withdrawal authorization, as a whole
+replay of the copy does, and computes from the instructions and the events their seals cover what that
+replay carries across the checkpoint besides the state: the running digest of every instruction, the
+checkpoint accounting, the approvals still to pay in payout order with their latest authorizations,
+and who sequenced each range. Its replica then applies the snapshot's checkpoint, computing the root of
+the snapshot's state over every key, each market's index of resting orders rebuilt from the accounts'
+orders, which must be the checkpoint's root, and replays the copy from there. A thread of its own then
+applies the copy before the snapshot to an engine of its own, checking each instruction's events, and
+keeps the financing rows of the rollovers there for the member's history index, which a whole replay
+would have kept as it went; a turn that comes first leaves the rest to the history index, which
+replays the log for them. A failure of the snapshot or of the copy raises the Warning alert
+`snapshot_start_refused`, and the replica replays the whole copy instead, which refuses a faulty copy
+for itself. What the member trusts is the state at the
+snapshot's checkpoint, on the word of the vault-recorded key that signed that checkpoint and the
+snapshot, as the vault and every exit trust that checkpoint's root; a fault of that enclave carries
+into the replica as it carries into the vault, and a whole `engine replay` finds it. A member whose copy
+holds instructions rebuilds its replica by a whole replay, as every later start does.
 
 Before a restarted trading server writes anything, it reads the posted head through the custody RPC
 quorum. It refuses to start on a log that lacks that head, and raises the Critical alert
@@ -1133,7 +1161,11 @@ Known limits:
   `log_check_pending` is raised after 30 minutes.
 - A boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn.
 - A start from a snapshot past the verified head cannot say who sequenced the range. It asks no one,
-  and raises `log_check_unattributable` until a full replay or a handover. A trading server set up
+  and raises `log_check_unattributable` until a full replay or a handover.
+- A member whose replica started from a daily snapshot did not replay the log before the snapshot's
+  checkpoint, so its own check at a handover or a promotion counts only for a range that starts after
+  that checkpoint, and it answers no other member's question, since the range a question covers may
+  start before it. Both hold until a whole replay of its copy, at its next start. A trading server set up
   to take no turns signs no withdrawal while the check applies, and raises `log_check_unavailable`.
 - Instructions other than withdrawals stay exposed to a branch that the host withholds, for at most
   one heartbeat interval past the newest sequence number that another member confirmed.

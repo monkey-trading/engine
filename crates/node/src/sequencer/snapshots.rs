@@ -105,8 +105,11 @@ impl Sequencer {
             (Some(job), Some(stats)) => stats.stage_job(job),
             _ => self.sync_log(false)?,
         }
+        // The key that signed the checkpoint signs the snapshot, in its deployment.
+        let domain = crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault };
+        let signing = crate::daily_snapshots::Signing { key: self.key.clone(), domain };
         if let Some(daily) = self.captures.daily.as_mut() {
-            daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine });
+            daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine, signing });
         }
         Ok(())
     }
