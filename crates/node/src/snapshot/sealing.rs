@@ -131,6 +131,13 @@ impl Endpoint {
         self.tx.is_closed()
     }
 
+    /// Takes every free slot of the owner's queue until the returned permits drop, so `reserve` refuses
+    /// as it does behind a lagging index.
+    #[cfg(test)]
+    pub(crate) fn hold_queue(&self) -> Vec<mpsc::OwnedPermit<Input>> {
+        std::iter::from_fn(|| self.tx.clone().try_reserve_owned().ok()).collect()
+    }
+
     /// A busy storage owner skips an optional capture without delaying public event publication.
     pub(crate) fn try_permit(&self) -> Option<OwnedSemaphorePermit> {
         self.permits.clone().try_acquire_owned().ok()
