@@ -273,6 +273,61 @@ impl Clock for StallingClock {
     }
 }
 
+/// A restart after a crash in a segment's rotation can find a listed segment, which is never written again,
+/// and an empty one after it. A checkpoint has no segment to follow its command in until the next command
+/// starts one, so the attempt writes nothing, and the log opens again after that command and its checkpoint.
+#[test]
+fn a_checkpoint_waits_for_the_segment_a_crash_in_rotation_left_empty() {
+    let dir = scratch_dir("pace-empty-segment");
+    let clock = Arc::new(TestClock::at(AT));
+    let mut seq = fresh(&dir, &clock);
+    let newest = |dir: &Path| {
+        let mut files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|file| file.unwrap().path())
+            .filter(|path| {
+                path.extension().is_some_and(|extension| extension == "jsonl")
+                    && path.file_name().is_some_and(|name| name != "manifest.jsonl")
+            })
+            .collect();
+        files.sort();
+        files.pop().unwrap()
+    };
+    let listed = |dir: &Path| Manifest::load(dir).unwrap().segments.len();
+    let rotated = listed(&dir);
+    // The first rotation after which the log's last entry before the new segment is a command, so no
+    // checkpoint covers it.
+    let segment = loop {
+        seq.sequence(Command::Tick).unwrap().expect("admitted");
+        seq.flush().unwrap();
+        if listed(&dir) == rotated {
+            continue;
+        }
+        let segment = newest(&dir);
+        let before = log_entries(&dir).len() - crate::test_support::file_entries(&segment).len();
+        if matches!(log_entries(&dir)[before - 1], LogEntry::Command(_)) {
+            break segment;
+        }
+        assert!(listed(&dir) < rotated + 8, "no rotation ends on a command");
+    };
+    drop(seq);
+    // The crash: the new segment's file is linked, and its first command never reached storage.
+    std::fs::write(&segment, "").unwrap();
+    let entries = log_entries(&dir).len();
+    let mut seq = recovered(&dir, &clock);
+    seq.checkpoint().unwrap();
+    seq.flush().unwrap();
+    assert_eq!(log_entries(&dir).len(), entries, "the checkpoint waits for a segment to follow a command in");
+    seq.trust(sample_around(&TrueTime(clock.clone()))).unwrap();
+    seq.sequence(Command::Tick).unwrap().expect("admitted");
+    seq.checkpoint().unwrap();
+    seq.flush().unwrap();
+    drop(seq);
+    let log = log_entries(&dir);
+    assert_eq!(log.len(), entries + 2, "the command, then its checkpoint");
+    assert!(matches!(log.last(), Some(LogEntry::Checkpoint(_))));
+}
+
 /// A sequencer over the log in `dir`, with `clock`.
 fn recovered(dir: &Path, clock: &Arc<TestClock>) -> Sequencer {
     sequencer_on(dir, clock.clone())

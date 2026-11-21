@@ -67,6 +67,13 @@ impl Payout {
 pub(super) const BACKLOG_WINDOW: usize = 4 * APPROVAL_PAGE_SIZE;
 
 impl Sequencer {
+    /// Attempts a paced checkpoint again when `retry`: one was withheld for a cause that has cleared.
+    /// Error cases:
+    /// - as `paced_checkpoint`
+    pub(super) fn retry_withheld(&mut self, retry: bool) -> anyhow::Result<()> {
+        if retry { self.paced_checkpoint() } else { Ok(()) }
+    }
+
     /// Loads the oldest recovered approvals once the previous window was observed, so a restart
     /// holds proofs and queries custody only for a window plus the approvals still unpaid. Nothing
     /// after the oldest unloaded approval is signed, and an unobserved due one blocks every later
@@ -248,6 +255,11 @@ impl Sequencer {
             return Ok(());
         }
         let Some(posted) = evidence.checkpoint_seq else { return Ok(()) };
+        // A restart after a crash in a segment's rotation has no segment for an authorization until the next
+        // command starts one; the next evidence releases it.
+        if !self.log.takes_non_command() {
+            return Ok(());
+        }
         let Some(ts) = self.admitted_ts(None) else { return Ok(()) };
         let issued_at = u64::try_from(ts / 1_000).context("negative payout issue time")?;
         let gate = self.gate.as_mut().expect("checkpoint gate exists");
