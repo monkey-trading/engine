@@ -293,10 +293,12 @@ Use this procedure when `daily_snapshot_failed` or `daily_snapshot_unreadable` f
 `[daily_snapshots]` in the configuration, the trading server writes the engine's state at the first
 checkpoint it writes on each UTC day, into the directory that the section names, and serves each
 file beside the log's archive. `engine replay --snapshots` starts a range of the log from a day's
-snapshot, so an audit replays the log's days in parallel. A snapshot is not part of the books and
-holds no authority: a replay checks it against the log's checkpoint and takes nothing that the
-snapshot alone says. A missing or damaged snapshot costs an audit time, never correctness, and
-clients are not affected.
+snapshot, so an audit replays the log's days in parallel. A snapshot is not part of the books: a
+replay checks it against the log's checkpoint and takes nothing that the snapshot alone says. A
+rotation member whose copy is empty starts its replica from one that the enclave key signed, as
+[Standing as an operator candidate](operator-candidate.md) describes, and replays its whole copy
+without one. A missing or damaged snapshot costs an audit or a member's start time, never
+correctness, and clients are not affected.
 
 The trading server keeps every day's snapshot, so the directory grows without a bound, by about
 420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old

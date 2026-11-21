@@ -411,7 +411,7 @@ mod ahead_tests;
 mod auth_tests;
 mod authorities;
 mod live;
-pub(crate) use live::LiveReplay;
+pub(crate) use live::{Before, LiveReplay};
 mod marks;
 mod paths;
 pub(crate) mod ranges;

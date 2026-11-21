@@ -285,6 +285,30 @@ fn the_nodes_own_check_counts_only_when_neither_its_member_nor_its_release_seque
     assert_eq!(own_check(None, &recorded, &[], head(39), (B2, &member(B2))), None);
 }
 
+/// A replica that started from a daily snapshot sees every command's records but applies only those after the
+/// snapshot's: its own check counts for a range after the snapshot's command, attributed from every record, and
+/// for none that starts at or before it, whose state it did not verify.
+#[test]
+fn the_nodes_own_check_counts_only_for_a_range_its_replay_applied() {
+    let mut recorded = takings(0, &[(10, A), (20, B), (30, B), (40, C)]);
+    recorded.set_applied_from(26);
+    // C's start from a snapshot of seq 25 verified B's range from 26 on, as attributed from 10's record.
+    assert_eq!(own_check(Some(head(25)), &recorded, &[], head(39), (C, &member(C))), Some(head(39)));
+    assert_eq!(own_check(Some(head(30)), &recorded, &[], head(39), (C, &member(C))), Some(head(39)));
+    // A range from 25 or before holds commands it did not apply.
+    assert_eq!(own_check(Some(head(24)), &recorded, &[], head(39), (C, &member(C))), Some(head(24)));
+    assert_eq!(own_check(Some(head(19)), &recorded, &[], head(39), (C, &member(C))), Some(head(19)));
+    // With nothing verified, the range is the latest holding, B's from 30, which it applied; from 32 it did not.
+    assert_eq!(own_check(None, &recorded, &[], head(39), (C, &member(C))), Some(head(39)));
+    recorded.set_applied_from(32);
+    assert_eq!(own_check(None, &recorded, &[], head(39), (C, &member(C))), None);
+    // Attribution reads every record: the range's sequencers are named as for a whole replay.
+    assert_eq!(
+        recorded.sequenced(Some(19), 39),
+        takings(0, &[(10, A), (20, B), (30, B), (40, C)]).sequenced(Some(19), 39)
+    );
+}
+
 /// A member a reorged skip named sequences with no record in the log: the keys it handed on name it as a
 /// holder through its last command, so neither its own check at a later handover, on any release, nor
 /// its answer when asked, counts for a range reaching that command; past it, it counts again.

@@ -714,7 +714,15 @@ candidate that the registry names, reached at `https://` and its registered API 
 frame is verified against the vault's signer at the latest block. Your trading server does all of
 these:
 
-- It keeps a copy of the log, with a live replica that one replay builds when it starts following.
+- It keeps a copy of the log, with a live replica that one replay builds when it starts following. A
+  member whose copy is empty, with `[daily_snapshots]`, builds the replica from the newest signed daily
+  snapshot instead, as `docs/security-model.md` describes: it replays only the log after the snapshot,
+  derives the financing rows before it on a thread of its own, and serves marks history from the
+  snapshot on. It starts from a snapshot from before the turns of the member in office, so its own log
+  check at its first take covers them. Until a whole replay at its next start, that check counts only for
+  a range after the snapshot, and it answers no other member's log-check question, so payouts may wait for
+  another member's check. A snapshot it cannot start from raises `snapshot_start_refused`, and it
+  replays the whole copy instead.
 - It resolves the operator again at each boundary, and after a failed stint: a second later, then
   twice as long each time, up to a stint.
 - From a minute before its own turn's boundary, it holds its keyless venue connections, such as

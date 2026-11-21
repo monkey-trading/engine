@@ -202,3 +202,49 @@ pub(crate) fn old_genesis_log(
     }
     seq.flush().unwrap();
 }
+
+/// Writes into `dir` a log of the dev genesis at the current protocol under the access policy the shared access
+/// helpers sign for, then `rounds` rounds of a price of BTC-USD, and of ETH-USD in the first round only, a screened
+/// credit of 100 and a withdrawal of 30 by the access test account, each approval authorized as mock custody
+/// authorizes it once a checkpoint covers it, and four ticks and a checkpoint.
+pub(crate) fn write_funded_log(dir: &Path, rounds: usize) {
+    use crate::clock::{Clock, SystemClock};
+    use crate::sequencer::margin_tests::prices;
+    use crate::test_support::{access, empty_custody_frontier};
+    use engine_core::Fixed;
+    use engine_core::event::Event;
+
+    const SEED: u8 = 1;
+    let (manifest, _) = watch::channel(Manifest::default());
+    let cfg = SequencerConfig { access_policy: Some(access::policy()), ..sequencer_config(dir, manifest) };
+    let key = Arc::new(EnclaveKey::test_key());
+    let mut seq = Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("a log");
+    let weighting = dev_config().genesis.params.toxicity.notional.expect("the dev config weighs by notional");
+    seq.carry_toxicity_notional(weighting).expect("the toxicity notional");
+    seq.activate_protocol().expect("the protocol's activation");
+    seq.genesis(&dev_config().genesis).expect("the dev genesis");
+    seq.trust(trusted_now()).expect("a trusted time sample");
+    seq.sequence(empty_custody_frontier()).expect("logged");
+    let declared = seq.sequence(access::declaration(&seq.engine, SEED)).expect("logged").expect("admitted");
+    assert!(declared.iter().any(|event| matches!(event, Event::EligibilityAttested { .. })), "{declared:?}");
+    let trader = access::account(SEED);
+    for round in 0..rounds {
+        let markets: &[u32] = if round == 0 { &[1, 2] } else { &[1] };
+        for market in markets {
+            let mid = format!("{}", 100 + round + 10 * *market as usize);
+            seq.sequence(prices(*market, &mid, SystemClock.now_ms())).expect("logged").expect("admitted");
+        }
+        let funding =
+            access::funding(&seq.engine, Some(trader), Some(trader), Fixed::from_int(100), &format!("0xf:{round}"));
+        seq.sequence(funding).expect("logged").expect("admitted");
+        let withdrawal = access::withdrawal(&seq.engine, SEED, Fixed::from_int(30), true);
+        let events = seq.sequence(withdrawal).expect("logged").expect("admitted");
+        assert!(events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. })), "{events:?}");
+        for _ in 0..4 {
+            seq.sequence(Command::Tick).expect("logged");
+        }
+        seq.checkpoint().expect("a checkpoint");
+    }
+    seq.checkpoint().expect("the last checkpoint");
+    seq.flush().expect("the log syncs");
+}

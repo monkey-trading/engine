@@ -87,13 +87,13 @@ pub(super) fn copy_log(from: &Path, to: &Path) -> anyhow::Result<()> {
 }
 
 /// The member's replica of its copy in `dir`, built by one replay from the book as a member builds
-/// it, with its dashboard record and the time it took: recording every command into that record, whose
-/// stats worker it then keeps in step, folding every mark, recording the checkpoints it verifies,
-/// writing each rollover's rows to `rows`, checking the history index in `history` against every entry,
-/// and with the command seals checked ahead by `workers`.
+/// it, or from `snapshot`, with its dashboard record and the time it took: recording every command into
+/// that record, whose stats worker it then keeps in step, folding every mark, recording the checkpoints it
+/// verifies, writing each rollover's rows to `rows`, checking the history index in `history` against every
+/// entry, and with the command seals checked ahead by `workers`.
 pub(super) fn build_replica(
     base: &Base,
-    dir: &Path,
+    (dir, snapshot): (&Path, Option<crate::daily_snapshots::Signed>),
     (signer, workers): (AccountId, ReplayWorkers),
     (rows, history): (Arc<RowsStore>, &HistorySection),
 ) -> (Follower, Stats, Duration) {
@@ -111,7 +111,7 @@ pub(super) fn build_replica(
         Ok(())
     };
     let copy = (dir, SEGMENT_COMMANDS, workers);
-    let follower = Follower::open_seeded(copy, (DOMAIN, signer, [signer].into()), records, fresh, observe)
+    let follower = Follower::open_seeded(copy, (DOMAIN, signer, [signer].into()), records, (fresh, snapshot), observe)
         .expect("the copy replays from the book");
     (follower, stats, started.elapsed())
 }

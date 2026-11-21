@@ -261,6 +261,10 @@ pub(crate) struct Takings {
     began: BTreeMap<u64, u64>,
     /// The first command seen: zero for a replay from genesis, past a snapshot's base for one from it.
     from: Option<u64>,
+    /// The first command the replay that collected the records applied, when it applied fewer than it saw:
+    /// a replica that starts from a daily snapshot sees every command but applies only those after the
+    /// snapshot's, so it verified no range before them (`own_check`).
+    applied_from: Option<u64>,
 }
 
 impl Takings {
@@ -299,6 +303,25 @@ impl Takings {
     /// The latest turn that had begun by the stamp of the command at `through`, as far as it is known.
     pub(crate) fn began_by(&self, through: u64) -> Option<u64> {
         self.began.range(..=through).next_back().map(|(_, turn)| *turn)
+    }
+
+    /// Notes that the replay collecting the records applied no command before `seq`: it saw the commands
+    /// before, but verified none of them (`own_check`).
+    pub(crate) fn set_applied_from(&mut self, seq: u64) {
+        self.applied_from = Some(seq);
+    }
+
+    /// The records as a replay that applied every command it saw holds them: for a test that compares a
+    /// replica from a snapshot with a whole replay.
+    #[cfg(test)]
+    pub(crate) fn applied_throughout(&self) -> Self {
+        Self { applied_from: None, ..self.clone() }
+    }
+
+    /// The first command the replay collecting the records applied, when it saw earlier ones (`set_applied_from`).
+    #[cfg(test)]
+    pub(crate) fn applied_from(&self) -> Option<u64> {
+        self.applied_from
     }
 
     /// Takes the records as complete from `next`, the next command's seq, when no command was seen:
@@ -387,9 +410,11 @@ fn turn_begun_by(ts: Millis) -> Option<u64> {
 /// The verified head after this node's own verification of the log through `head`, at a handover or
 /// a promoted member's resume: `head` when neither `release` nor any of `candidates`, the candidates
 /// this node's operator key sits for (`own_candidates`), sequenced the commands after `previous`
-/// through it, as `takings` and the keys' `holders` record; otherwise `previous`, and a following
-/// member's check is asked for as at a boundary without a handover. So the same member's other
-/// release, as after an upgrade, never counts as the check, however its start was made.
+/// through it, as `takings` and the keys' `holders` record, and the replay that collected `takings`
+/// applied every one of them; otherwise `previous`, and a following member's check is asked for as at a
+/// boundary without a handover. So the same member's other release, as after an upgrade, never counts as
+/// the check, however its start was made, and nor does a replica that started from a daily snapshot
+/// inside the range, whose state there rests on the snapshot's signer.
 pub(crate) fn own_check(
     previous: Option<VerifiedHead>,
     takings: &Takings,
@@ -402,6 +427,9 @@ pub(crate) fn own_check(
     }
     let after = previous.map(|previous| previous.seq);
     let first = takings.first(after, head.seq);
+    if takings.applied_from.is_some_and(|applied| applied > first) {
+        return previous;
+    }
     let sequenced = takings.sequenced(after, head.seq).map(|sequencers| sequencers.with_holders(holders, first));
     let independent = |sequencers: &Sequencers| {
         !sequencers.releases.contains(&release) && sequencers.candidates.is_disjoint(candidates)

@@ -1,11 +1,20 @@
 //! A member's copy at its turn: opening it and its replica, the incumbent a stale copy catches up
 //! from, and the tail handover that takes the turn.
 
+use std::collections::BTreeSet;
+
+use crate::checkpoints::Observation;
+
 use super::*;
+
+/// How many turns back the start of the in-office member's run of turns is read: one that held more is treated as
+/// holding every turn, so no snapshot is taken, since the member's own log check would not count.
+const RUN_TURNS: usize = 32;
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Opens the copy, bootstrapping an empty one from `operator`'s archive when given, and builds its
-    /// replica by one replay, or two when it cuts an unaccepted tail back (`Follower::replays`),
+    /// replica by one replay, or two when it cuts an unaccepted tail back (`Follower::replays`), or, for a
+    /// copy it bootstrapped, from the newest daily snapshot it can start from (`snapshot_start`),
     /// authenticated against every signer the vault recorded, with the dashboard record and the history
     /// index's check beside it, and the latest posted head pinned.
     /// Error cases:
@@ -27,10 +36,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         keep: &[u64],
     ) -> anyhow::Result<Opened> {
         let dir = self.cfg.node.log_dir.as_path();
-        if let Some(operator) = operator.filter(|_| !dir.join(MANIFEST).exists()) {
-            let archive = crate::standby::archive::archive_client(operator.danger_accept_invalid_certs)?;
-            crate::standby::archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
-        }
+        // The chain is read before the copy is bootstrapped: a read that fails then leaves the copy empty, so the
+        // open tried again bootstraps it again, and may still start its replica from a snapshot.
         let at = self.vault.observe(View::Finalized, &[]).await?;
         let mut signers = crate::handover::vault_signers(&self.vault, &at).await?;
         let final_epoch = at.lifecycle.as_ref().map_or(1, |lifecycle| lifecycle.signer_epoch);
@@ -39,6 +46,22 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         signers.insert(enclave);
         signers.extend(admitted);
         let domain = CheckpointDomain { chain_id: self.cfg.custody.chain_id, vault: self.cfg.custody.vault.parse()? };
+        let mut snapshot = None;
+        if let Some(operator) = operator.filter(|_| !dir.join(MANIFEST).exists()) {
+            // With trusted time, as the copy's own commands are not yet there to read.
+            let before = match self.cfg.daily_snapshots {
+                Some(_) => {
+                    let now_ms = self.time.sample().await?.earliest_ms;
+                    in_office_since(&self.vault, &at, now_ms, self.release.id()).await?
+                }
+                None => None,
+            };
+            let archive = crate::standby::archive::archive_client(operator.danger_accept_invalid_certs)?;
+            crate::standby::archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
+            let finalized = at.state.checkpoint.as_ref().map(|(seq, _)| *seq);
+            let bounds = (finalized, before);
+            snapshot = self.snapshot_start((archive, operator.origins()), bounds, domain, &signers).await;
+        }
         let (stats, mut history) = (Stats::new(self.cfg)?, HistoryPlan::for_member(&self.cfg.history)?);
         // The posted head is pinned as the replay passes it, so a rebuilt replica still holds it.
         let posted = match &self.heads {
@@ -54,16 +77,56 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let stopping = &self.stopping;
         let pins = (posted, keep);
         let workers = self.cfg.node.replay_workers;
-        let follower =
-            Follower::open_pinned(dir, segment_commands, workers, domain, enclave, signers, kept, pins, |entry| {
-                anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
-                history.observe(entry);
-                Ok(())
-            })
-            .map_err(|e| e.context(CopyRefused))?;
+        let observe = |entry: &crate::log::LogEntry| {
+            anyhow::ensure!(!stopping.load(Ordering::Acquire), Stopping);
+            history.observe(entry);
+            Ok(())
+        };
+        let follower = Follower::open_pinned(
+            dir,
+            segment_commands,
+            workers,
+            domain,
+            enclave,
+            signers,
+            kept,
+            pins,
+            snapshot,
+            observe,
+        )
+        .map_err(|e| e.context(CopyRefused))?;
         self.metrics.full_replays.inc_by(follower.replays());
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))
+    }
+
+    /// The daily snapshot the replica of a copy just bootstrapped from the archives of `origins` starts from,
+    /// under `[daily_snapshots]`: the newest, of those the directory holds and those the origins list, fetched
+    /// with `archive`, whose checkpoint the copy holds and the vault has finalized, at `finalized`, from before
+    /// the turns of the member in office began, at `before` (`in_office_since`), signed over its state by the
+    /// recorded signer of that checkpoint, one of `signers` (`daily_snapshots::snapshot_start`). None when the
+    /// section is absent, the vault has finalized no checkpoint or the copy holds none, or no snapshot passes; a
+    /// failure is paged as Warning `snapshot_start_refused`, and the replica replays the whole copy.
+    async fn snapshot_start(
+        &self,
+        (archive, origins): (reqwest::Client, Vec<String>),
+        (finalized, before): (Option<u64>, Option<Millis>),
+        domain: CheckpointDomain,
+        signers: &BTreeSet<AccountId>,
+    ) -> Option<crate::daily_snapshots::Signed> {
+        let snapshots = self.cfg.daily_snapshots.as_ref()?.dir.as_path();
+        let dir = self.cfg.node.log_dir.as_path();
+        // An archive that publishes nothing yet, as a fresh deployment's, leaves the copy empty.
+        if !dir.join(MANIFEST).exists() {
+            return None;
+        }
+        let copied = crate::log::last_checkpoint(dir)
+            .inspect_err(|e| {
+                warn!(alert = "snapshot_start_refused", "the copy's last checkpoint cannot be read: {e:#}")
+            })
+            .ok()??;
+        let bounds = (finalized?.min(copied.seq), before);
+        crate::daily_snapshots::snapshot_start(&archive, &origins, (snapshots, dir), domain, signers, bounds).await
     }
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the
@@ -143,4 +206,42 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             danger_accept_invalid_certs: handover.is_some_and(|handover| handover.danger_accept_invalid_certs),
         })
     }
+}
+
+/// When the turns of the member in office at `now_ms` began, as the finalized schedule at `at` draws them: the
+/// boundary of the first of the consecutive turns its candidate holds, read back at most `RUN_TURNS` turns, and the
+/// earliest time for a longer run; none while no turn is in effect. A turn drawn for `own`, this member's release,
+/// which it has yet to take, is passed over for the one before it. A member whose replica starts from a snapshot
+/// stamped before it has replayed every command of those turns, the range the verified head stands before as the
+/// keys reach the member at its first take (`log_check::own_check`): the check a member does at that take counts
+/// only for commands its replica applied. `now_ms` picks only that bound: a wrong one makes that check wait for a
+/// later one, never count where it should not.
+/// Error cases:
+/// - the schedule cannot be read
+pub(in crate::node::member) async fn in_office_since(
+    vault: &impl CheckpointChain,
+    at: &Observation,
+    now_ms: Millis,
+    own: [u8; 32],
+) -> anyhow::Result<Option<Millis>> {
+    // The turn drawn before the one that begins at `boundary`.
+    let before = async |boundary: Millis| {
+        let read = vault.scheduled_turn(at, boundary.saturating_sub(1)).await.context("reading the operator schedule");
+        Ok::<_, anyhow::Error>(read?.filter(|turn| turn.boundary < boundary))
+    };
+    let Some(mut current) = crate::handover::turns::turn_at(vault, at, Some(now_ms)).await? else { return Ok(None) };
+    let mut first = current.boundary;
+    for _ in 0..RUN_TURNS {
+        match before(first).await? {
+            Some(earlier) if current.release == own => {
+                first = earlier.boundary;
+                current = earlier;
+            }
+            Some(earlier) if earlier.candidate == current.candidate => first = earlier.boundary,
+            Some(_) => return Ok(Some(first)),
+            None if current.release == own => return Ok(None),
+            None => return Ok(Some(first)),
+        }
+    }
+    Ok(Some(Millis::MIN))
 }
