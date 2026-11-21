@@ -95,7 +95,7 @@ enum Cmd {
         /// its checkpoint's signed root, several ranges at once.
         #[arg(long, conflicts_with = "every_seal")]
         snapshots: Option<PathBuf>,
-        /// How many ranges replay at once with `--snapshots`; one per two cores when unset.
+        /// How many ranges replay at once with `--snapshots`; one per two physical cores when unset.
         #[arg(long, requires = "snapshots")]
         jobs: Option<NonZeroUsize>,
     },
@@ -267,7 +267,7 @@ fn main() -> anyhow::Result<()> {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
             let seals = if every_seal { SealChecks::Every(workers) } else { SealChecks::RunEnds };
-            let ranges = snapshots.map(|dir| (dir, jobs.unwrap_or_else(half_the_cores)));
+            let ranges = snapshots.map(|dir| (dir, jobs.unwrap_or_else(engine_node::default_jobs)));
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             anyhow::ensure!(
                 attestation.len() == release.len(),
@@ -450,12 +450,6 @@ fn audit(
         Some((dir, jobs)) => engine_node::replay_ranges_with_trust(path, &dir, domain, trusted, jobs),
         None => replay_path_with_trust(path, domain, trusted, seals).map(Audited::from),
     }
-}
-
-/// One range at a time for every two cores this process may use, and at least one.
-fn half_the_cores() -> NonZeroUsize {
-    let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-    NonZeroUsize::new(cores / 2).unwrap_or(NonZeroUsize::MIN)
 }
 
 #[cfg(test)]

@@ -90,13 +90,17 @@ fn ranges_bench() {
         cpu_secs() - cpu
     );
     drop(start);
-    // What a replay with `--custody-config` adds before its ranges: one whole read of the log on one thread
-    // for its checkpoints (`replay_audit::checkpoint_candidates`).
+    // What a replay with `--custody-config` adds before its ranges: a scan of the log for its checkpoints, its
+    // segments one per core at a time (`log::uncommanded`), beside a whole read on one thread for scale.
+    let cores = std::thread::available_parallelism().expect("the cores this process may use");
+    let started = Instant::now();
+    let found = crate::log::uncommanded(&dir.join("log"), cores, Some).expect("the log scans").len();
+    println!("BENCH custody_scan entries={found} threads={cores} s={:.1}", started.elapsed().as_secs_f64());
     let started = Instant::now();
     crate::log::SegmentedLog::open(&dir.join("log"), &mut |_| Ok(())).expect("the log reads");
     println!("BENCH whole_read s={:.1}", started.elapsed().as_secs_f64());
-    let cores = std::thread::available_parallelism().expect("the cores this process may use");
-    let jobs = std::num::NonZeroUsize::new(env("RANGES_BENCH_JOBS", (cores.get() / 2).max(1))).expect("jobs");
+    let default = crate::sequencer::replay::ranges::default_jobs();
+    let jobs = std::num::NonZeroUsize::new(env("RANGES_BENCH_JOBS", default.get())).expect("jobs");
     for _ in 0..env("REPLAY_BENCH_RUNS", 1) {
         let (started, cpu) = (Instant::now(), cpu_secs());
         let trust = Trust::Pinned { domain: None, signer: Some(signer) };
