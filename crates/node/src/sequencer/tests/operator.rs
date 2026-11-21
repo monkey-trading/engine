@@ -167,9 +167,7 @@ fn a_key_installed_again_is_a_new_seating() {
     drop(seq);
 
     let again = Some(RegistryOperator { admin_key: key, since: logged - 1_000 });
-    let mut seq = recover_installed(&dir, clock.clone(), Operator { address: key, ..recorded }, again).unwrap();
-    seq.trust(sample_around(clock.as_ref())).unwrap();
-    seq.wait_for_benchmarks().unwrap();
+    let mut seq = start_over_a_rollover(&dir, &clock, Operator { address: key, ..recorded }, again);
     assert!(seq.sequence(Command::Tick).unwrap().is_some(), "no hold waits on the key the installation replaces");
 }
 
@@ -213,7 +211,9 @@ fn a_rotation_no_installation_made_keeps_the_hold() {
             );
         }
         assert_eq!(seq.engine.operator_bounds().rotation.map(|rotation| rotation.address), Some(next));
-        seq.wait_for_benchmarks().unwrap();
+        seq.flush().unwrap();
+        drop(seq);
+        let mut seq = start_over_a_rollover(&dir, &clock, recorded, None);
         assert!(seq.sequence(Command::Tick).unwrap().is_none(), "elected: {elected}");
     }
 }
@@ -270,12 +270,38 @@ fn a_turns_member_takes_it_behind_a_benchmark_hold() {
     let (dir, clock, turn, member) = turn_log("turn-taken-held");
     let (release, recorded) = (B256::repeat_byte(0x53), dev_config().operator().unwrap());
     let mut seq = recover_turns(&dir, clock.clone(), Operator { address: member, ..recorded }, release);
+    assert!(seq.engine.next_rollover().is_some_and(|next| next <= clock.now_ms()), "the day's rollover is unpaid");
     seq.trust(sample_around(clock.as_ref())).unwrap();
     seq.wait_for_benchmarks().unwrap();
     assert!(seq.sequence(Command::Tick).unwrap().is_none(), "the hold admits no tick");
     seq.flush().unwrap();
     let written = commands(&log_entries(&dir));
     assert_eq!(written.last(), Some(&Command::TurnTaken { turn, release }), "the turn is taken behind the hold");
+}
+
+#[test]
+fn a_turns_member_holds_nothing_at_its_start_once_the_incumbent_paid_the_rollover() {
+    // The incumbent's last stamp passed the day's rollover, as its feeds' prices do before a boundary.
+    let (dir, clock, turn, member) = turn_log_under("turn-taken-current", &[], None);
+    let (begins, recorded) = (boundary(turn).unwrap(), dev_config().operator().unwrap());
+    clock.advance(Duration::from_millis((begins - 60_000 - clock.now_ms()) as u64));
+    let mut incumbent = recover_installed(&dir, clock.clone(), recorded, None).unwrap();
+    incumbent.trust(sample_around(clock.as_ref())).unwrap();
+    incumbent.sequence(Command::Tick).unwrap().expect("admitted");
+    incumbent.flush().unwrap();
+    drop(incumbent);
+    clock.advance(Duration::from_millis(61_000));
+
+    let release = B256::repeat_byte(0x57);
+    let mut seq = recover_turns(&dir, clock.clone(), Operator { address: member, ..recorded }, release);
+    assert!(seq.engine.next_rollover().is_some_and(|next| next > clock.now_ms()), "no rollover is unpaid");
+    seq.wait_for_benchmarks().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    assert!(seq.sequence(Command::Tick).unwrap().is_some(), "the member's start holds nothing");
+    assert!(!seq.benchmark_sync);
+    seq.flush().unwrap();
+    let written = commands(&log_entries(&dir));
+    assert_eq!(written[written.len() - 2..], [Command::TurnTaken { turn, release }, Command::Tick]);
 }
 
 #[test]
@@ -397,6 +423,22 @@ fn recover_installed_under(
     let base = sequencer_config(dir, manifest);
     let cfg = SequencerConfig { clock, genesis, operator, registry_operator, access_policy, ..base };
     Sequencer::recover(cfg, Arc::new(EnclaveKey::test_key()), broadcast::channel(16).0, mpsc::unbounded_channel().0)
+}
+
+/// `recover_installed` as a node with `[benchmarks]` starts, at the log's next rollover or later, so its
+/// first stamp finds a rollover unpaid and holds for a snapshot unless no key can sign one.
+fn start_over_a_rollover(
+    dir: &Path,
+    clock: &Arc<TestClock>,
+    operator: Operator,
+    registry: Option<RegistryOperator>,
+) -> Sequencer {
+    let mut seq = recover_installed(dir, clock.clone(), operator, registry).unwrap();
+    let next = seq.engine.next_rollover().expect("a rollover is scheduled");
+    clock.advance(Duration::from_millis(u64::try_from(next - clock.now_ms()).unwrap_or(0)));
+    seq.wait_for_benchmarks().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    seq
 }
 
 mod faults;

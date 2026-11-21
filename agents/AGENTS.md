@@ -609,8 +609,9 @@ an index: load only the rule whose hint matches the current action.
   `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
   implemented (Coinbase's, no key), and other venues' markets serve log-derived history only.
   `benchmark-publishers.toml` supplies the optional benchmark section with official publisher endpoints;
-  a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots and releases
-  synchronization before startup catch-up and after trusted-time halts spanning unpaid rollovers.
+  a separate `engine admin ... sync-benchmarks --watch` worker signs daily snapshots, which a start
+  holds for only over an unpaid rollover, or at its next rollover if none has applied by then, and a
+  trusted-time halt only when it spans an unpaid rollover.
   The optional `[custody.evm.staking.registry.fault_proof]` names the FaultProof contract and the
   penalty (`initial_bps`, `decay`) the node records once `V70` is in force; it needs the schedule.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct

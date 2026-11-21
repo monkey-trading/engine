@@ -555,9 +555,12 @@ These processes run outside the enclave, and none of them holds the enclave's ke
 
 ### The benchmark worker
 
-With `[benchmarks]` in the configuration, the trading server waits at every start for a signed
-snapshot of the publishers' rates before it sequences ordinary instructions. The benchmark worker
-fetches and signs those snapshots.
+With `[benchmarks]` in the configuration, the trading server charges no rollover after a start until a
+signed snapshot of the publishers' rates has applied. A start that finds a daily rollover unpaid waits
+for the snapshot before it sequences ordinary instructions, so the missed rollovers are charged at its
+rates. A start with every rollover paid, such as a turn's handover, sequences at once, and waits only
+if its next rollover comes before the snapshot does. The benchmark worker fetches and signs those
+snapshots.
 
 1. On a host of its own, with `OPERATOR_KEY_FILE` set for this process alone, start the worker:
 

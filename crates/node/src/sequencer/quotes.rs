@@ -83,11 +83,12 @@ impl Sequencer {
             }
         }
         let admitted = self.time.admit(host_ms, ts, now);
-        self.publish_hold();
         self.note_benchmark_time_admission(admitted, ts);
         if admitted {
             self.admit_benchmark_schedule(ts);
         }
+        // After the benchmark checks, so a hold this stamp starts, a start's included, is the one published.
+        self.publish_hold();
         admitted.then_some(ts)
     }
 }

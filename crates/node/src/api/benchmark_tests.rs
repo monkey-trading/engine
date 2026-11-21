@@ -1,5 +1,6 @@
 //! V19 deterministic dev scenario through the real publisher worker, signed admin API, TLS, and log:
-//! financing charged at each rollover's dated rate, across a restart.
+//! financing charged at each rollover's dated rate, across a restart that holds for the worker's
+//! snapshot over unpaid rollovers, and a restart with none unpaid that does not wait for it.
 
 use super::*;
 use std::fs;
@@ -80,8 +81,8 @@ endpoint = "{publisher}/estr"
     ));
     fs::write(&cfg_path, text).unwrap();
     let first = Node::start(&dir, START, Arc::new(TestClock::at(START))).await;
-    // A ticker cannot charge financing before the startup publisher synchronization.
-    assert!(first.try_submit(Command::Tick).await.is_none());
+    // A fresh log owes no rollover, so the start sequences before the worker's first snapshot.
+    assert!(first.try_submit(Command::Tick).await.is_some());
     first.sync(&cfg_path, || START).await;
     first
         .submit(Command::Deposit { account: TRADER, amount: fixed("100000"), chain_ref: "benchmark-deposit".into() })
@@ -117,8 +118,14 @@ endpoint = "{publisher}/estr"
     assert_eq!(charges(&events), [charge("0.01")]);
     first.stop().await;
 
-    // The publisher fixture includes the intervening rate changes. On restart it is fetched
-    // before ticks, deposits, or feeds can cause catch-up to use the pre-downtime snapshot.
+    // A restart with that rollover paid finds the log current and sequences with no worker running.
+    let current = Node::start(&dir, FIRST + 60_000, Arc::new(TestClock::at(FIRST + 60_000))).await;
+    assert!(charges(&current.submit(Command::Tick).await).is_empty());
+    current.stop().await;
+
+    // The publisher fixture includes the intervening rate changes. A restart over the two unpaid
+    // rollovers fetches it before ticks, deposits, or feeds can cause catch-up to use the
+    // pre-downtime snapshot.
     let restarted = Node::start(&dir, RESTART, Arc::new(TestClock::at(RESTART))).await;
     assert!(restarted.try_submit(Command::Tick).await.is_none());
     let request = restarted.sync(&cfg_path, || RESTART).await;

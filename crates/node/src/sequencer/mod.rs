@@ -135,7 +135,7 @@ pub struct Sequencer {
     gate: Option<Gate>,
     roots: roots::Roots,
     accounting: Accounting,
-    /// Startup and recovery wait for a signed, complete publisher attempt before catch-up.
+    /// Holds commands for a signed, complete publisher attempt before an unpaid rollover's catch-up.
     benchmark_sync: bool,
     benchmark_sync_enabled: bool,
     /// A `benchmark_sync_skipped` episode may be open, until a snapshot applies: from each start, since

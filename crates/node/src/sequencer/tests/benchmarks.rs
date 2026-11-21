@@ -16,7 +16,7 @@ fn benchmark_sync_refuses_each_missing_legacy_prerequisite_without_appending() {
         let result = seq.wait_for_benchmarks();
         if recorded == 7 {
             result.unwrap();
-            assert!(seq.benchmark_sync);
+            assert!(seq.benchmark_sync_enabled);
         } else {
             let err = result.unwrap_err();
             let prerequisite = if recorded & 1 == 0 {
@@ -27,7 +27,7 @@ fn benchmark_sync_refuses_each_missing_legacy_prerequisite_without_appending() {
                 "toxicity notional weighting"
             };
             assert!(err.to_string().contains(prerequisite), "{recorded}: {err:#}");
-            assert!(!seq.benchmark_sync);
+            assert!(!seq.benchmark_sync_enabled);
         }
         assert_eq!((seq.engine.last_seq(), seq.engine.next_rollover(), seq.engine.state_root()), before);
         assert!(seq.required.is_empty());
@@ -41,7 +41,7 @@ fn benchmark_sync_allows_cold_genesis_and_a_fully_initialized_v17_log() {
     let mut cold = recover_at(&dir, LEGACY_START);
     assert!(cold.engine.next_rollover().is_none());
     cold.wait_for_benchmarks().unwrap();
-    assert!(cold.benchmark_sync);
+    assert!(cold.benchmark_sync_enabled);
     assert!(commands(&log_entries(&dir)).is_empty());
 
     let dir = scratch_dir("benchmark-v17-history");
@@ -49,7 +49,7 @@ fn benchmark_sync_allows_cold_genesis_and_a_fully_initialized_v17_log() {
     assert_eq!(seq.engine.protocol_version(), ProtocolVersion::V17);
     let written = commands(&log_entries(&dir)).len();
     seq.wait_for_benchmarks().unwrap();
-    assert!(seq.benchmark_sync);
+    assert!(seq.benchmark_sync_enabled);
     assert_eq!(commands(&log_entries(&dir)).len(), written);
 }
 

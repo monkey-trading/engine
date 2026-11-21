@@ -145,11 +145,11 @@ endpoint = "{publisher}/estr"
     let wednesday: chrono::NaiveDate = "2026-10-21".parse().unwrap();
     let clock = Arc::new(TestClock::at(START));
 
-    // 1. The worker's first snapshot releases the hold on a fresh node. The dev genesis dates its own
-    //    rates today, as a benchmark's first rates, and the publishers' earlier rates are within the
-    //    cap of them.
+    // 1. A fresh node owes no rollover, so it sequences before the worker's first snapshot, which then
+    //    applies. The dev genesis dates its own rates today, as a benchmark's first rates, and the
+    //    publishers' earlier rates are within the cap of them.
     let node = start(&dir, START, clock.clone()).await;
-    assert!(node.try_submit(Command::Tick).await.is_none(), "held for the first snapshot");
+    assert!(node.try_submit(Command::Tick).await.is_some(), "a fresh log waits for no snapshot");
     node.sync(&cfg_path, || START).await;
     assert_eq!(observed(&node, "SOFR", tuesday).await, Some(fixed("0.04")));
     assert_eq!(resolved_refusals(&mut resolved), ["ESTR", "SOFR"], "nothing was refused");
@@ -300,7 +300,6 @@ endpoint = "{stand_in}/estr"
     ));
     fs::write(&cfg_path, text).unwrap();
     let node = start(&dir, now, Arc::new(TestClock::at(now))).await;
-    assert!(node.try_submit(Command::Tick).await.is_none(), "held for the first snapshot");
 
     let args = serde_json::to_string(&[
         "engine",
@@ -327,10 +326,17 @@ endpoint = "{stand_in}/estr"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The hold is released: the refused rate did not stop the snapshot.
-    assert!(node.try_submit(Command::Tick).await.is_some(), "the worker's snapshot applied");
     let page = pages.try_recv().expect("the alert reached the webhook");
     assert!(page.contains("benchmark_rate_refused") && page.contains("SOFR"), "{page}");
     node.stop().await;
     server.abort();
+    // The refused rate did not stop the snapshot, which applied without it.
+    let applied = log_entries(&dir).into_iter().any(|entry| match entry {
+        LogEntry::Command(command) => {
+            matches!(&command.sequenced.cmd, Command::SignedAdmin(request) if request.command.is_benchmark_snapshot())
+                && command.events.as_deref().is_some_and(|events| events.contains(&Event::AdminApplied))
+        }
+        _ => false,
+    });
+    assert!(applied, "the worker's snapshot applied");
 }
