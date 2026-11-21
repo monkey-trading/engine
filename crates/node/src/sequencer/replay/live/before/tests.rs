@@ -199,12 +199,16 @@ fn snapshot(entries: &[LogEntry], at: usize) -> Engine {
 fn replica(entries: &[LogEntry], at: Option<usize>) -> anyhow::Result<LiveReplay> {
     let Some(at) = at else {
         let mut replica = LiveReplay::new(DOMAIN, [signer()].into());
+        replica.sample_marks_with(Box::new(|_, _, _| {}));
         entries.iter().try_for_each(|entry| replica.apply(entry))?;
         return Ok(replica);
     };
     let engine = snapshot(entries, at);
     let LogEntry::Checkpoint(checkpoint) = &entries[at] else { anyhow::bail!("no checkpoint at entry {at}") };
     let mut replica = pass_over(entries, &engine, at)?.into_live(engine, checkpoint)?;
+    // As a member's build does (`standby::replica::build`).
+    replica.sample_marks_with(Box::new(|_, _, _| {}));
+    replica.count_marks_taken();
     entries[at..].iter().try_for_each(|entry| replica.apply(entry))?;
     Ok(replica)
 }
@@ -273,6 +277,7 @@ fn facts(replayed: &Replayed) -> serde_json::Value {
         "last_checkpoint_ts": replayed.last_checkpoint_ts,
         // A replica from a snapshot notes that it applied nothing before it (`Takings::set_applied_from`), which
         // `own_check` reads; the records are the whole replay's.
+        "last_marks": replayed.last_marks,
         "takings": format!("{:?}", replayed.takings.applied_throughout()),
     })
 }

@@ -334,6 +334,32 @@ fn a_replica_stores_every_rollovers_rows_for_the_index_that_resumes_from_it() {
     }
 }
 
+/// A replica from a daily snapshot leaves the history's store the rows a whole replay would: the derivation through
+/// the snapshot's command keeps each rollover's rows up to it, that command's included, none after it, and none once
+/// stopped.
+#[test]
+fn the_rows_before_a_snapshot_are_derived_into_the_store() {
+    let mut rig = Rig::new("rollover-derive-through");
+    rig.open(2);
+    let due = rig.seq.engine.next_rollover().expect("a rollover is due");
+    rig.move_to(due + 100);
+    sequenced(&mut rig.seq, Command::Tick);
+    let at = rig.seq.engine.last_seq().expect("a command");
+    sequenced(&mut rig.seq, Command::Tick);
+    rig.seq.flush().unwrap();
+    let rollover = command_at(&log_entries(&rig.dir), at);
+    let store = |name: &str| RowsStore::new(&scratch_dir(name), RETENTION.as_millis() as i64);
+    let (through, running) = (store("rollover-derive-through-at"), AtomicBool::new(false));
+    assert_eq!(through.derive_through(&rig.dir, at, &running).unwrap(), Some(1), "one rollover through it");
+    assert_eq!(through.derived(&rollover).unwrap().expect("its rows are kept").rows.len(), 4);
+    let before = store("rollover-derive-through-before");
+    assert_eq!(before.derive_through(&rig.dir, at - 1, &running).unwrap(), Some(0));
+    assert!(before.derived(&rollover).unwrap().is_none(), "the rollover is after the snapshot's command");
+    let stopped = store("rollover-derive-through-stopped");
+    assert_eq!(stopped.derive_through(&rig.dir, at, &AtomicBool::new(true)).unwrap(), None);
+    assert!(stopped.derived(&rollover).unwrap().is_none(), "a stopped derivation keeps nothing");
+}
+
 // ── Helpers ──
 
 impl Rig {

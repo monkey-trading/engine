@@ -119,6 +119,8 @@ impl Building {
         let (stats, marks, _, rows) = records;
         let mut replica =
             recording(pass.into_live(engine, &checkpoint)?, &(stats.clone(), marks.clone(), None, rows.clone()));
+        // The marks fold starts at the snapshot, as the marks it holds were taken there.
+        replica.count_marks_taken();
         replica.apply(entry)?;
         *self = Building::Live(Box::new(replica));
         Ok(())

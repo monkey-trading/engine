@@ -333,8 +333,9 @@ an index: load only the rule whose hint matches the current action.
   command prefix, accounting, payout order, takings and the rest (`sequencer/replay/live/before.rs`), the replica
   replays on from the snapshot, its root checked at its checkpoint, counting no full replay, its own boundary check
   counting only a range after the snapshot and answering none (`log_check::own_check`), a thread of its own derives
-  the financing rows before the snapshot while it follows (`standby/replica/rows.rs`), and any failure pages Warning
-  `snapshot_start_refused` and replays the whole copy (`standby/replica/build.rs`); from a
+  the financing rows before the snapshot while it follows, stopped and not awaited at its turn
+  (`standby/replica/rows.rs`, `RowsStore::derive_through`), its marks history starting at the snapshot, and any
+  failure pages Warning `snapshot_start_refused` and replays the whole copy (`standby/replica/build.rs`); from a
   minute before its own turn's boundary it holds its keyless venue connections open with their quotes held
   back, which its start lets through to its sequencer, while a connection that carries a key (`VenueConnection::warms`,
   `warm` in config) opens only as the turn starts, the launch operators sharing one account per keyed vendor

@@ -130,6 +130,13 @@ impl LiveReplay {
         self.replay.sample_marks_with(sink);
     }
 
+    /// Counts the marks the engine holds now as taken, as a replay that applied the commands that set them does:
+    /// for a replica from a daily snapshot, so its first command hands on only the marks it moves.
+    pub(crate) fn count_marks_taken(&mut self) {
+        let marks = self.replay.engine.markets().iter().filter_map(|(id, market)| Some((*id, market.mark?)));
+        self.replay.last_marks = marks.collect();
+    }
+
     /// Has the seals of the copy at `path` checked ahead of the replica by `workers`, from the next command
     /// it applies, until `stop_checking_seals_ahead` (`Replay::check_seals_ahead`).
     pub(crate) fn check_seals_ahead(&mut self, path: &std::path::Path, workers: crate::log::ReplayWorkers) {

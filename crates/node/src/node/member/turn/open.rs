@@ -1,6 +1,8 @@
 //! A member's copy at its turn: opening it and its replica, the incumbent a stale copy catches up
 //! from, and the tail handover that takes the turn.
 
+use std::collections::BTreeSet;
+
 use super::*;
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
@@ -95,7 +97,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         (archive, origins): (reqwest::Client, Vec<String>),
         finalized: Option<u64>,
         domain: CheckpointDomain,
-        signers: &std::collections::BTreeSet<AccountId>,
+        signers: &BTreeSet<AccountId>,
     ) -> Option<crate::daily_snapshots::Signed> {
         let snapshots = self.cfg.daily_snapshots.as_ref()?.dir.as_path();
         let dir = self.cfg.node.log_dir.as_path();

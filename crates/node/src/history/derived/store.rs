@@ -10,6 +10,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, ensure};
@@ -20,7 +21,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tracing::warn;
 
 use crate::history::derived::{Derived, aggregates};
-use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset};
+use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset, SegmentedLog, Stop};
 
 /// The directory under the history's own.
 const DIR: &str = "financing";
@@ -70,6 +71,42 @@ impl RowsStore {
         {
             warn!(alert = "financing_rows_unstored", seq, "the financing read cannot prove these rows: {e:#}");
         }
+    }
+
+    /// Applies the log in `dir` from its start through the command at `through` to an engine of its own, checked
+    /// against each command's logged events, and keeps each command's rows (`keep`), until `stop` is set: the rows
+    /// a whole replay of the log would have kept, for a replica that applied only the commands after `through`.
+    /// How many commands' rows it kept, or none for a log that starts past genesis, which no empty engine applies,
+    /// or a derivation `stop` ended.
+    /// Error cases:
+    /// - the log cannot be read, a command does not apply, or its logged events differ from the engine's
+    /// - a command's rows are not those its events' aggregates cover
+    pub(crate) fn derive_through(&self, dir: &Path, through: u64, stop: &AtomicBool) -> anyhow::Result<Option<u64>> {
+        let (mut engine, mut kept, mut ended) = (engine_core::Engine::new(), 0u64, None);
+        SegmentedLog::read_span_ahead(dir, 0, |entry| {
+            if stop.load(Ordering::Acquire) {
+                return Err(Stop.into());
+            }
+            let LogEntry::Command(command) = entry else { return Ok(()) };
+            let seq = command.sequenced.seq;
+            if engine.last_seq().is_none() && seq != 0 {
+                return Err(Stop.into());
+            }
+            let events = engine.apply(&command.sequenced).with_context(|| format!("applying seq {seq}"))?;
+            // No root is computed, the only thing that drains the engine's record of changed keys.
+            engine.discard_changed_keys();
+            ensure!(command.events.as_ref() == Some(&events), "events logged at seq {seq} differ from the engine's");
+            if let Some(derived) = Derived::of(seq, &events, engine.take_derived())? {
+                self.keep(seq, command.sequenced.ts, &derived.rows);
+                kept += 1;
+            }
+            if seq >= through {
+                ended = Some(kept);
+                return Err(Stop.into());
+            }
+            Ok(())
+        })?;
+        Ok(ended)
     }
 
     /// `record`, without syncing the file or its directory: for rows a crash may lose, because the replay

@@ -547,7 +547,9 @@ orders, which must be the checkpoint's root, and replays the copy from there. A 
 applies the copy before the snapshot to an engine of its own, checking each instruction's events, and
 keeps the financing rows of the rollovers there for the member's history index, which a whole replay
 would have kept as it went; a turn that comes first leaves the rest to the history index, which
-replays the log for them. A failure of the snapshot or of the copy raises the Warning alert
+replays the log for them. The marks history it folds starts at the snapshot, so for the markets the
+provider backfill does not cover it serves log-derived marks from there until a whole replay at its
+next start. A failure of the snapshot or of the copy raises the Warning alert
 `snapshot_start_refused`, and the replica replays the whole copy instead, which refuses a faulty copy
 for itself. What the member trusts is the state at the
 snapshot's checkpoint, on the word of the vault-recorded key that signed that checkpoint and the

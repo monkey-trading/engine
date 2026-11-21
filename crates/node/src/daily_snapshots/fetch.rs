@@ -12,6 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use sha2::{Digest, Sha256};
 use tokio::time::timeout;
+use tracing::debug;
 
 use crate::daily_snapshots::writer::{publish_staged, sync_dir};
 use crate::daily_snapshots::{Listed, MANIFEST, MAX_SNAPSHOT_BYTES, offset_named};
@@ -44,9 +45,9 @@ pub(crate) async fn offered(client: &reqwest::Client, origins: &[String], bound:
                     == Some(reqwest::StatusCode::NOT_FOUND) =>
             {
                 answered = true;
-                tracing::debug!(origin = %origin, "this origin publishes no daily snapshots");
+                debug!(origin = %origin, "this origin publishes no daily snapshots");
             }
-            Err(e) => tracing::debug!(origin = %origin, "no daily snapshot listing from this origin: {e:#}"),
+            Err(e) => debug!(origin = %origin, "no daily snapshot listing from this origin: {e:#}"),
         }
     }
     (offered, answered)
