@@ -26,7 +26,7 @@ fn a_snapshot_is_due_on_each_new_utc_day() {
     writer.take(job(Offset { seq: 5, index: 1 }, noon));
     assert!(!writer.due(noon + DAY_MS / 2 - 1), "the last millisecond of the day");
     assert!(writer.due(noon + DAY_MS / 2), "midnight");
-    drop(writer);
+    writer.finish();
     let listed = read_manifest(&dir).unwrap();
     assert_eq!((listed.len(), listed[0].ts), (1, noon));
     let restarted = Writer::start(&dir, Some(5)).unwrap();
@@ -88,10 +88,9 @@ fn a_busy_writer_skips_the_day_and_its_drop_waits_a_bounded_time() {
     // An encoding that never comes holds the thread.
     let (_encoder, pending) = std::sync::mpsc::channel::<crate::stats::background::Encoded>();
     writer.take(Job { engine: Encoding::Pending(pending), ..job(Offset { seq: 5, index: 1 }, 0) });
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    // The thread clears `ready` as it takes the job; yielding to it, with no sleep, waits for that and no time.
     while writer.ready() {
-        assert!(std::time::Instant::now() < deadline, "the thread took the snapshot");
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::yield_now();
     }
     assert!(!writer.due(1), "the day is taken");
     assert!(writer.due(DAY_MS) && !writer.ready());

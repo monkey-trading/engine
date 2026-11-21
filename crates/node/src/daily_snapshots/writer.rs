@@ -135,6 +135,16 @@ impl Writer {
         Ok(Self { jobs: Some(jobs), last_ts, idle, ended, thread: Some(thread) })
     }
 
+    /// Closes the queue and waits for the thread to publish what it holds, however long that takes, for a test
+    /// that reads what it wrote.
+    #[cfg(test)]
+    pub(crate) fn finish(mut self) {
+        self.jobs = None;
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("the writer's thread does not panic");
+        }
+    }
+
     /// Whether a snapshot is due at a checkpoint stamped `ts`: none is taken yet, or the newest is on an
     /// earlier UTC day.
     pub(crate) fn due(&self, ts: Millis) -> bool {
