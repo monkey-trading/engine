@@ -4,11 +4,11 @@
 //! from a snapshot (`daily_snapshots::load`), its resting-order index rebuilt from the accounts' orders, at
 //! the checkpoint the log holds at the snapshot's offset, which must be the snapshot's own. Each range
 //! applies that checkpoint first, which computes the snapshot's root over every key and compares it with
-//! the checkpoint's, checks its signature as any checkpoint's, and restarts the seal chain there; then it
-//! replays strictly, as a whole-log replay does, through the checkpoint where the next range starts. The
-//! pass over the ranges then requires each to start from the checkpoint the one before ended at and from
-//! the state it ended in, compared by the SHA-256 of the whole state's encoding, which binds what the root
-//! leaves out too. So the ranges tile the log as one history, as a whole-log replay applies it, and a
+//! the checkpoint's (a fault naming the snapshot when they differ), checks its signature as any checkpoint's,
+//! and restarts the seal chain there; then it replays strictly, as a whole-log replay does, through the
+//! checkpoint where the next range starts. The pass over the ranges then requires each to start from the
+//! checkpoint the one before ended at and from the state it ended in, compared by the SHA-256 of the whole
+//! state's encoding, which binds what the root leaves out too. So the ranges tile the log as one history, as a whole-log replay applies it, and a
 //! snapshot's root check only fails a bad snapshot before its range runs.
 //!
 //! What a sequential replay carries across that checkpoint besides the engine is either reset there (the
@@ -42,6 +42,7 @@ use crate::checkpoints::SignerHistory;
 use crate::daily_snapshots;
 use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, Offset, SegmentedLog, Stop};
 pub use crate::sequencer::replay::ranges::stitch::Audited;
+use crate::sequencer::replay::roots::RootMismatch;
 use crate::sequencer::replay::{Replay, Replayed};
 
 /// What a range's replay leaves to the pass over the ranges: entries that name what came before it.
@@ -361,7 +362,16 @@ fn replay_range(
         }
         Ok(())
     });
-    replay.settled(read)?;
+    if let Err(failed) = replay.settled(read) {
+        // The range before it verified the log's root at this checkpoint, so the snapshot's state fails it.
+        return Err(match (&range.start, failed.downcast_ref::<RootMismatch>()) {
+            (Some((start, file)), Some(mismatch)) if mismatch.seq == start.seq => failed.context(format!(
+                "daily snapshot {}'s state does not match the root of its checkpoint at {start}, which the log holds",
+                file.display()
+            )),
+            _ => failed,
+        });
+    }
     if let Some((start, _, file)) = &first {
         anyhow::bail!("the log holds no checkpoint at {start}, which daily snapshot {} names", file.display());
     }
