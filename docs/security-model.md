@@ -454,6 +454,14 @@ from the log. A replay in ranges trusts the same, and nothing a snapshot says: a
 only where a range starts. With `--custody-config`, no range starts after the vault's finalized
 checkpoint.
 
+What a replay in ranges takes: on a machine with 20 cores and 64 GB of memory, `engine replay
+--snapshots` with `--signer` or `--attestation` replays 30 days of launch flow at 100,000 accounts,
+about 246 million instructions, in about 25 minutes. Its default of one range for every two cores
+runs ten day ranges at once, in three waves; each range keeps about 1.6 cores busy for about 8
+minutes, and holds an engine of that size. With `--custody-config` the replay first reads the whole
+log once, on one thread, for the checkpoints the vault accepted, which adds about two hours at that
+size.
+
 A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
 replica build and a taken copy's replay check every seal in full, since each goes on to sign over,
 or hold as its own, the running digest of every instruction that log heads carry (below), which
