@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, RequestAuth};
 use engine_core::command::Command;
-use engine_core::eip712::{B256, Eip712Domain, recover};
+use engine_core::eip712::{B256, Eip712Domain};
 use engine_core::event::{Event, Reject};
 use engine_core::types::{AccountId, Millis};
 use engine_core::volume_tier::RequestLimit;
@@ -132,23 +132,25 @@ impl ApiState {
             self.limits.check_account(account)?;
             return Ok(None);
         }
-        // The digest is computed at most once, whichever path checks the signature.
-        let mut hash = Some(hash);
-        let mut digest = None;
-        let mut digest = move |domain: &Eip712Domain, auth: &RequestAuth| -> B256 {
-            *digest.get_or_insert_with(|| hash.take().expect("the digest is computed once")(domain, auth))
-        };
-        if let Err(reason) = rules.check(account, auth.as_ref(), &mut digest) {
-            if declaration || !session || !matches!(reason, Reject::InvalidSignature) {
+        // The signature is recovered once, whether it is the account's or a session key's.
+        let signer = rules
+            .signer(auth.as_ref(), hash)
+            .map_err(|reason| {
                 debug!(?reason, "request refused");
-                return Err(ApiError::Unauthorized(match reason {
+                ApiError::Unauthorized(match reason {
                     Reject::MissingSignature => "missing signature",
                     _ => "invalid signature",
-                }));
+                })
+            })?
+            .expect("signed rules recover a signer from every request they pass");
+        let auth = auth.expect("signed rules refuse an unsigned request");
+        if signer != account {
+            if declaration || !session {
+                debug!(reason = ?Reject::InvalidSignature, "request refused");
+                return Err(ApiError::Unauthorized("invalid signature"));
             }
-            return self.authorise_session_key(account, auth, &mut digest, rules.domain(), seen).await;
+            return self.authorise_session_key(account, auth, signer, seen).await;
         }
-        let auth = auth.expect("check refuses an unsigned request wherever signatures are required");
         // Accounts and declarations are never removed and nonces only grow, so none of these checks
         // can pass a request that the engine then sees ahead of its account's next nonce.
         let (credited, declared, paid, next, last_sequenced, last_seq) = self
@@ -202,33 +204,24 @@ impl ApiState {
         Ok(Some(auth))
     }
 
-    /// Admits a request `rules.check` refused as an invalid signature when the signature is a
-    /// registered, live session key's: from `V41` a session key may act for its account through
+    /// Admits a request signed by `signer`, a key other than the account's, when it is a registered,
+    /// live session key of the account: from `V41` a session key may act for its account through
     /// orders, cancels, and the requests that carry them. The account must be credited, the key
     /// registered for it and neither revoked nor expired at the sequenced time, and the request
     /// fresh on the key's own nonce sequence. The engine re-checks everything it sequences and
     /// refuses a session-key withdrawal as out of scope, in the log.
     /// Error cases:
-    /// - the recovered signer is no session key of the account, or the account was never credited
+    /// - the signer is no session key of the account, or the account was never credited
     /// - the key is revoked or expired
     /// - a nonce other than the key's next, or a request expiry already past
     /// - the account's session keys are over their rate
     async fn authorise_session_key(
         &self,
         account: AccountId,
-        auth: Option<RequestAuth>,
-        digest: &mut impl FnMut(&Eip712Domain, &RequestAuth) -> B256,
-        domain: Option<Eip712Domain>,
+        auth: RequestAuth,
+        signer: AccountId,
         seen: &mut Option<u64>,
     ) -> Result<Option<RequestAuth>, ApiError> {
-        let Some(domain) = domain else { return Err(ApiError::Unauthorized("invalid signature")) };
-        let Some(auth) = auth else { return Err(ApiError::Unauthorized("missing signature")) };
-        let Some(signer) = recover(&digest(&domain, &auth), &auth.signature) else {
-            return Err(ApiError::Unauthorized("invalid signature"));
-        };
-        if signer == account {
-            return Err(ApiError::Unauthorized("invalid signature"));
-        }
         let (credited, key, next, last_sequenced, last_seq) = self
             .query(move |e| {
                 (

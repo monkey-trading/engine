@@ -46,7 +46,9 @@ hyper-util.workspace = true
 instant-acme.workspace = true
 ipnet.workspace = true
 jmt.workspace = true
-k256 = { workspace = true, features = ["getrandom"] }
+# The generator's precomputed multiples, for every signature the enclave key makes: command seals, signed
+# answers and stream frames, checkpoints.
+k256 = { workspace = true, features = ["getrandom", "precomputed-tables", "std"] }
 num_cpus.workspace = true
 percent-encoding.workspace = true
 ppp.workspace = true

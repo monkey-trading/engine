@@ -81,25 +81,25 @@ impl ClientAuth {
         }
     }
 
-    /// Checks a request may act for `account` under these rules, leaving its nonce and expiry to
-    /// the caller: unsigned under `Unsigned`, and signed by `account` under `Eip712`. `hash` gives
-    /// the digest the request signs under a domain with its nonce and expiry.
+    /// Who signed a request under these rules, leaving its nonce and expiry to the caller: no one for
+    /// an unsigned request under `Unsigned`, and under `Eip712` the key its signature recovers to,
+    /// which may act for an account only if it is the account's own or, from `V41`, a session key of
+    /// it. `hash` gives the digest the request signs under a domain with its nonce and expiry.
     /// Error cases:
     /// - `MissingSignature`: unsigned under `Eip712`
-    /// - `InvalidSignature`: signed under `Unsigned`, or not by `account`
-    pub fn check(
+    /// - `InvalidSignature`: signed under `Unsigned`, or a signature that recovers no key
+    pub fn signer(
         &self,
-        account: AccountId,
         auth: Option<&RequestAuth>,
         hash: impl FnOnce(&Eip712Domain, &RequestAuth) -> B256,
-    ) -> Result<(), Reject> {
+    ) -> Result<Option<AccountId>, Reject> {
         match (self.domain(), auth) {
-            (None, None) => Ok(()),
+            (None, None) => Ok(None),
             (Some(_), None) => Err(Reject::MissingSignature),
-            (Some(domain), Some(auth)) if eip712::recover(&hash(&domain, auth), &auth.signature) == Some(account) => {
-                Ok(())
+            (Some(domain), Some(auth)) => {
+                eip712::recover(&hash(&domain, auth), &auth.signature).map(Some).ok_or(Reject::InvalidSignature)
             }
-            (_, Some(_)) => Err(Reject::InvalidSignature),
+            (None, Some(_)) => Err(Reject::InvalidSignature),
         }
     }
 }
@@ -145,7 +145,7 @@ impl Engine {
     /// [`RequestScope::Trade`] under the key's own nonce sequence; `Funds` and `Keys` requests and
     /// dead keys refuse with their own rejections.
     /// Error cases:
-    /// - `MissingSignature` or `InvalidSignature`: see `ClientAuth::check`
+    /// - `MissingSignature` or `InvalidSignature`: see `ClientAuth::signer`
     /// - `InvalidNonce`: a nonce other than the signer's next
     /// - `Expired` or `ExpiryTooFar`: see `RequestAuth::check_expiry`
     /// - `SessionKeyRevoked` or `SessionKeyExpired`: a session key the account revoked, or one past
@@ -273,5 +273,35 @@ pub(crate) fn auth_failure(reject: &Reject) -> String {
         Reject::ExpiryTooFar { latest } => format!("expiry after the latest allowed, {latest}"),
         // `authorise_admin` refuses only for the reasons above.
         other => serde_json::to_string(other).expect("rejections serialise"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use k256::ecdsa::SigningKey;
+
+    use super::*;
+
+    /// Under `Eip712` a request names the key its signature recovers to, the account's or any other,
+    /// and a signature that recovers none or a missing one is refused; under `Unsigned` only an
+    /// unsigned request passes, naming no one.
+    #[test]
+    fn a_requests_signer_is_the_key_its_signature_recovers_to() {
+        let signed = ClientAuth::Eip712 { chain_id: 1, vault: AccountId([7; 20]) };
+        let hash = |domain: &Eip712Domain, auth: &RequestAuth| {
+            eip712::cancel_hash(domain, AccountId([1; 20]), 3, auth.nonce, auth.expires_at)
+        };
+        let key = SigningKey::from_slice(&[0x11; 32]).expect("a valid scalar");
+        let unsigned = RequestAuth { nonce: 4, expires_at: 10, signature: Signature::ZERO };
+        let domain = signed.domain().expect("signed rules have a domain");
+        let auth = RequestAuth { signature: eip712::sign(&key, &hash(&domain, &unsigned)), ..unsigned.clone() };
+        assert_eq!(signed.signer(Some(&auth), hash), Ok(Some(eip712::address(key.verifying_key()))));
+        let other = RequestAuth { nonce: 5, ..auth.clone() };
+        let recovered = signed.signer(Some(&other), hash).expect("a well-formed signature recovers a key");
+        assert_ne!(recovered, Some(eip712::address(key.verifying_key())), "over another digest, another key");
+        assert_eq!(signed.signer(None, hash), Err(Reject::MissingSignature));
+        assert_eq!(signed.signer(Some(&unsigned), hash), Err(Reject::InvalidSignature));
+        assert_eq!(ClientAuth::Unsigned.signer(None, hash), Ok(None));
+        assert_eq!(ClientAuth::Unsigned.signer(Some(&auth), hash), Err(Reject::InvalidSignature));
     }
 }

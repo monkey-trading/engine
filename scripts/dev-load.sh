@@ -10,10 +10,11 @@
 # Each leg prints order-to-fill and price-to-stamp at p50, p99 and p999, the sequencer's
 # batch time, stream lag, the sequencer's busy share, and the process's CPU and resident memory,
 # against the launch bar; the run's log then replays to its roots. It fails if either measured leg
-# breaks the bar, with a loaded runner's tolerance (order-to-fill p50 is held to a 10 ms regression
-# guard instead, while the bar's 5 ms verdict is still printed), or did not measure what it claims:
-# a request refused, rejected or unanswered, a subscriber that took no frame, lost its connection or
-# had not taken the leg's last commands, or no fill or stamped price.
+# breaks the bar, with a loaded runner's tolerance, or did not measure what it claims: a request
+# refused, rejected or unanswered, a subscriber that took no frame, lost its connection or had not
+# taken the leg's last commands, or no fill or stamped price. The 5 ms order-to-fill p50 bar is held on
+# CI's Linux runners; on macOS each batch's sync is a full flush of about 3.5 ms, which puts a Mac's p50
+# near the bar.
 #
 # Needs only Cargo: the venues and the screening source are loopback stand-ins, on free ports, with
 # private temporary data. The screening source answers each call after a remote source's round trip,
