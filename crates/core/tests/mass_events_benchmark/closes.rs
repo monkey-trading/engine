@@ -7,7 +7,7 @@ use engine_core::event::Event;
 
 use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::report::timed;
-use crate::support::{accounts, count, finish, report};
+use crate::support::{accounts, count, finish, held, report};
 
 const NAMED: NamedCounts = NamedCounts { adders: 1, openers: 0, closeouts: 0 };
 const STAKERS: usize = 10_000;
@@ -20,6 +20,10 @@ const EPOCH_MS: i64 = 25 * 60_000;
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_emission_period_close() {
+    held("mass_emission_period_close", mass_emission_period_close_measured);
+}
+
+fn mass_emission_period_close_measured() {
     let mix = Mix {
         origin: Some(Origin { start_after: START_AFTER_MS, epoch_ms: 24 * 3_600_000 }),
         period_losses: true,
@@ -44,6 +48,10 @@ fn mass_emission_period_close() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_staking_epoch_close() {
+    held("mass_staking_epoch_close", mass_staking_epoch_close_measured);
+}
+
+fn mass_staking_epoch_close_measured() {
     let stakers = STAKERS.min(accounts() / 10);
     let mix = Mix {
         origin: Some(Origin { start_after: START_AFTER_MS, epoch_ms: EPOCH_MS }),

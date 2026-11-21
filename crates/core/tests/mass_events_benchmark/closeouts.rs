@@ -10,7 +10,7 @@ use crate::common::BTC;
 use crate::common::f;
 use crate::common::launch_book::{Mix, NamedCounts, WEEKEND_MARGINS, Weak, WeakKind, build, price_command};
 use crate::report::timed;
-use crate::support::{accounts, assert_financed, count, finish, positions_held, report, roll_to};
+use crate::support::{accounts, assert_financed, count, finish, held, positions_held, report, roll_to};
 
 const NAMED: NamedCounts = NamedCounts { adders: 1, openers: 0, closeouts: 0 };
 const WTI: MarketId = 32;
@@ -48,6 +48,10 @@ fn weekend(share: u64) {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_weekend_gap_start() {
+    held("mass_weekend_gap_start", mass_weekend_gap_start_measured);
+}
+
+fn mass_weekend_gap_start_measured() {
     weekend(0);
     weekend(20);
     finish();
@@ -80,6 +84,10 @@ fn crash(share: u64) {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_crash() {
+    held("mass_crash", mass_crash_measured);
+}
+
+fn mass_crash_measured() {
     crash(20);
     crash(50);
     finish();
@@ -90,6 +98,10 @@ fn mass_crash() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_stress_level_change() {
+    held("mass_stress_level_change", mass_stress_level_change_measured);
+}
+
+fn mass_stress_level_change_measured() {
     let mut book = build(&Mix::proposal(accounts()), NAMED);
     let markets = book.h.engine.markets().len();
     // The USD-quoted market with the most net client quantity, moved five per cent the way its clients
