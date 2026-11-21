@@ -99,3 +99,27 @@ fn an_index_of_resting_orders_a_decoded_state_lost_is_rebuilt_from_its_orders() 
     assert_eq!(fills(&events).iter().map(|fill| fill.order_id).collect::<Vec<_>>(), [order_id]);
     assert_eq!(decoded.apply(h.log.last().unwrap()).unwrap(), events);
 }
+
+/// An order indexed in BTC-USD, the earlier market, as well as its own fails the check, as `rebuild_resting` would drop it
+/// from the earlier market: each market's index is compared on its own.
+#[test]
+fn an_order_indexed_in_an_earlier_market_as_well_as_its_own_fails_the_check() {
+    let mut h = Harness::v17();
+    let a = acct(1);
+    h.deposit(a, "100000");
+    h.price(BTC, "100");
+    h.order(a, BTC, Side::Buy, "1", OrderKind::Stop { price: f("110") });
+    h.order(a, ETH, Side::Buy, "1", OrderKind::Limit { price: f("90") });
+    assert!(h.engine.resting_matches_orders());
+    let (order_id, account) =
+        h.engine.markets()[&ETH].resting.iter().map(|(id, account)| (*id, *account)).next().unwrap();
+    let mut encoded = serde_json::to_value(&h.engine).unwrap();
+    let earlier = encoded["markets"][BTC.to_string()]["resting"].as_object_mut().unwrap();
+    earlier.insert(order_id.to_string(), serde_json::to_value(account).unwrap());
+    let mut doubled: Engine = serde_json::from_value(encoded).unwrap();
+    assert!(doubled.markets()[&BTC].resting.contains_key(&order_id), "the earlier market indexes it too");
+    assert!(!doubled.resting_matches_orders());
+    doubled.rebuild_resting();
+    assert!(doubled.resting_matches_orders());
+    assert!(!doubled.markets()[&BTC].resting.contains_key(&order_id), "rebuilding drops it from the earlier market");
+}

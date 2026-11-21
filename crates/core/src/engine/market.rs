@@ -108,31 +108,31 @@ impl Engine {
     /// dropped an order from the index, or added one, cannot change what the state does. Call it before
     /// `restore_indexes`, whose trigger index reads it.
     pub fn rebuild_resting(&mut self) {
-        let mut rebuilt: BTreeMap<MarketId, BTreeMap<OrderId, AccountId>> = BTreeMap::new();
-        for (account, held) in self.accounts.iter() {
-            for (order_id, order) in &held.orders {
-                rebuilt.entry(order.market).or_default().insert(*order_id, *account);
-            }
-        }
+        let mut rebuilt = self.orders_by_market();
         for (id, market) in self.markets.iter_mut() {
             market.resting = rebuilt.remove(id).unwrap_or_default();
         }
     }
 
-    /// Whether each market's index of resting orders is the one `rebuild_resting` gives: a check for tests.
+    /// Whether each market's index of resting orders is the one `rebuild_resting` gives it, order by order
+    /// and market by market: a check for tests.
     #[doc(hidden)]
     pub fn resting_matches_orders(&self) -> bool {
-        let mut indexed: BTreeMap<OrderId, (AccountId, MarketId)> = BTreeMap::new();
-        for (id, market) in self.markets.iter() {
-            indexed.extend(market.resting.iter().map(|(order_id, account)| (*order_id, (*account, *id))));
+        let rebuilt = self.orders_by_market();
+        self.markets
+            .iter()
+            .all(|(id, market)| rebuilt.get(id).map_or(market.resting.is_empty(), |held| *held == market.resting))
+    }
+
+    /// The accounts' orders, each under its market and order id.
+    fn orders_by_market(&self) -> BTreeMap<MarketId, BTreeMap<OrderId, AccountId>> {
+        let mut by_market: BTreeMap<MarketId, BTreeMap<OrderId, AccountId>> = BTreeMap::new();
+        for (account, held) in self.accounts.iter() {
+            for (order_id, order) in &held.orders {
+                by_market.entry(order.market).or_default().insert(*order_id, *account);
+            }
         }
-        let held = self.accounts.iter().flat_map(|(account, held)| {
-            held.orders
-                .iter()
-                .filter(|(_, order)| self.markets.contains_key(&order.market))
-                .map(move |(order_id, order)| (*order_id, (*account, order.market)))
-        });
-        indexed.into_iter().eq(held.collect::<BTreeMap<_, _>>())
+        by_market
     }
 }
 
