@@ -10,6 +10,7 @@ use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
 
 use crate::sequencer::withdrawal_scenario::client::Client;
+use crate::sequencer::withdrawal_scenario::exit_log::log_tail;
 use crate::sequencer::withdrawal_scenario::rpc::Chain;
 use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::sequencer::withdrawal_scenario::{
@@ -17,9 +18,6 @@ use crate::sequencer::withdrawal_scenario::{
 };
 use crate::test_support::ANVIL_CONFIG;
 use crate::test_support::LOADED_WAIT;
-
-/// How many of its log's last lines a child's exit reports: a node logs why it stopped last.
-const EXIT_LOG_LINES: usize = 40;
 
 /// A child process and the log its output goes to.
 pub(crate) struct ChildProcess {
@@ -346,18 +344,6 @@ fn verdict_covers(metrics: &str, after: u64) -> bool {
         .is_some_and(|seq| seq >= after)
 }
 
-/// The last `EXIT_LOG_LINES` lines of the log at `path`, or why it cannot be read.
-fn log_tail(path: &Path) -> String {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let text = String::from_utf8_lossy(&bytes);
-            let lines: Vec<&str> = text.lines().collect();
-            lines[lines.len().saturating_sub(EXIT_LOG_LINES)..].join("\n")
-        }
-        Err(e) => format!("(the log cannot be read: {e})"),
-    }
-}
-
 /// Reserves an unused loopback TCP port for a subsequently spawned process.
 /// Error cases:
 /// - the operating system cannot allocate a loopback listener
@@ -446,7 +432,8 @@ pub(super) fn write_config(
 mod tests {
     use std::time::Duration;
 
-    use super::{ChildProcess, EXIT_LOG_LINES, gate_admits};
+    use super::{ChildProcess, gate_admits};
+    use crate::sequencer::withdrawal_scenario::exit_log::EXIT_LOG_LINES;
 
     #[tokio::test]
     async fn a_child_that_exits_reports_the_end_of_its_log() {
