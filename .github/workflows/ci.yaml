@@ -198,10 +198,10 @@ jobs:
                 crates/node/src/custody/* | crates/node/src/checkpoints/* | crates/node/src/withdrawals.rs \
                   | crates/node/src/sequencer/payout* | crates/node/src/exit.rs | crates/node/src/api/payouts.rs \
                   | crates/node/src/api/reissue.rs | crates/node/src/api/withdrawal_queue.rs | crates/node/src/api/exit.rs)
-                  areas+=" rust vault_deposits scenario_tests production_secrets log_heads recovery_scale" ;;
+                  areas+=" rust vault_deposits scenario_tests production_secrets log_heads snapshot_restart recovery_scale" ;;
                 crates/node/src/access* | crates/node/src/sequencer/access* | crates/node/src/api/access.rs \
                   | crates/node/src/api/state*)
-                  areas+=" rust vault_deposits scenario_tests $api" ;;
+                  areas+=" rust vault_deposits scenario_tests snapshot_restart $api" ;;
                 # The API: its routes, stream, TLS and limits.
                 crates/node/src/api/stream/quotes/* | crates/node/src/api/admin.rs \
                   | crates/node/src/api/distributions.rs | crates/node/src/limits/*)
@@ -235,7 +235,7 @@ jobs:
                 crates/verify/*) areas+=" rust image attestation_verifier wasm_verifier ct_watch signed_api" ;;
                 # The scenarios' signed access source and request signer.
                 crates/node/examples/access_source.rs | crates/core/examples/sign_request.rs)
-                  areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets" ;;
+                  areas+=" rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets snapshot_restart" ;;
                 # The latency budget's engine-core benchmarks, and the harness they share.
                 crates/core/tests/hot_path_benchmark* | crates/core/tests/launch_book_benchmark* \
                   | crates/core/tests/mass_events_benchmark*)
