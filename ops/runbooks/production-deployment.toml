@@ -43,7 +43,7 @@ liquidity_floor = "30500000"
 # `OperatorSchedule`'s constructor (deploy-and-rollback.md, "Deploy the rotation contracts"), in seconds
 # but for `block_millis` and `head_blocks`. The schedule takes the beacon genesis time and the turn length
 # from the seed receiver. Its heartbeat rule is the owner's: a failed operator is replaced once three
-# witnessed slots of 140 s pass with no head, 7 to 9.5 minutes after its last head landed. The bounds, the
+# witnessed slots of 140 s pass with no head, 7 to 9.3 minutes after its last head landed. The bounds, the
 # take window's bounds, the switch budget and the block time are fixed at deployment, and the timelock
 # moves the rule and the window within them only while no turn names the operator.
 [schedule]

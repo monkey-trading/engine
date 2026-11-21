@@ -1,16 +1,17 @@
 //! The rotation contracts' launch dev scenario on a local Anvil, which `scripts/dev-launch-values.sh`
 //! runs: beside the vault and the registry, the log heads, the seed receiver, the operator schedule, the
 //! parameter vote and the fault proof deploy with the values `ops/runbooks/production-deployment.toml`
-//! holds, and the timelock names the schedule in the registry. The node then reads them back and accepts
-//! them: the schedule's turns are this build's, the liveness rule reads the heartbeat rule through the
-//! custody quorum and sequences under it at the production template's ticker, and the node records the
-//! vote and fault proof contracts when it activates the protocol.
+//! holds, and the timelock names the schedule in the registry. The node then reads them back: the
+//! liveness rule's read through the custody quorum finds the launch heartbeat rule, which the node does
+//! not refuse at the production template's ticker, and the node's custody watcher mirrors past the
+//! deployment, each window having found the registry naming the configured schedule, the schedule naming
+//! the registry with this build's turn length, the vote contract naming the schedule and the fault proof
+//! naming the vault.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, Bytes};
-use alloy::rpc::types::TransactionRequest;
+use alloy::primitives::{Address, U64};
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use engine_core::operator_faults::Penalty;
@@ -19,11 +20,10 @@ use k256::ecdsa::SigningKey;
 
 use super::chain::{Chain, Parameters, setParametersCall};
 use super::node::{Node, custody_section};
-use super::{address, dev_parameters};
+use super::{address, completed_through, dev_parameters};
 use crate::checkpoints::scenario::deploy;
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
-use crate::custody::registry::{turn_length_call, turn_length_refusal};
 use crate::liveness::chain::{LivenessDomain, Rule, view};
 use crate::liveness::operator::limits::refused;
 use crate::standby_key::chain::{StandbyChain, StandbyDomain};
@@ -35,7 +35,8 @@ const TEMPLATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/
 /// Mainnet's beacon genesis time and a day's turns, as the receiver is deployed in production.
 const BEACON_GENESIS: u64 = 1_606_824_023;
 const DAY_SECS: u64 = 86_400;
-/// The restriction lifetime and the fault proof penalty the production template proposes.
+/// The restriction lifetime and the fault proof penalty the node records, as the production template
+/// proposes them.
 const TTL_MS: Millis = DAY_SECS as Millis * 1000;
 const PENALTY: Penalty = Penalty { initial_bps: 10_000, decay_ms: 730 * DAY_SECS as Millis * 1000 };
 
@@ -140,13 +141,8 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
          {window:?} and a {switch_budget} s switch budget, and the registry names it"
     );
 
-    // 3. The node's custody watcher takes the schedule's turns as this build's.
-    let call = TransactionRequest::default().to(schedule).input(turn_length_call().into());
-    let length: Bytes = chain.provider.request("eth_call", (call, "latest")).await.unwrap();
-    assert_eq!(turn_length_refusal(&length).unwrap(), None, "the node refuses the schedule's turn length");
-
-    // 4. The liveness rule reads the heartbeat rule through the custody quorum and sequences under it at
-    //    the production template's ticker.
+    // 3. The liveness rule's read through the custody quorum finds the launch rule, which the node does
+    //    not refuse at the production template's ticker.
     let dir = scratch_dir("launch-schedule");
     let anvil: NodeConfig =
         toml::from_str(&std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap()).unwrap();
@@ -161,14 +157,23 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
     let template: toml::Table = toml::from_str(&std::fs::read_to_string(TEMPLATE).unwrap()).unwrap();
     let Ticker { tick } = toml::from_str(&format!("tick = {:?}", template["node"]["tick"].as_str().unwrap())).unwrap();
     assert_eq!(refused(read.rule, tick), None, "the node refuses to sequence under the launch rule");
-    println!("PASS: the node reads the rule through its custody quorum and sequences under it at a {tick:?} ticker");
+    println!("PASS: the node reads the launch rule through its custody quorum and accepts it at a {tick:?} ticker");
 
-    // 5. At its protocol activation the node records the vote and fault proof contracts.
+    // 4. The node starts with the contracts configured, and its custody watcher mirrors past the deployment:
+    //    each window first checks the registry's schedule, the schedule's registry and turn length, the vote
+    //    contract's schedule and the fault proof's vault, and mirrors nothing past a refusal.
+    let deployed: U64 = chain.provider.request("eth_blockNumber", ()).await.unwrap();
+    let deployed = deployed.to::<u64>();
     let node = Node::start(&chain, enclave).await;
+    node.wait("the custody watcher to mirror past the deployment", move |e| completed_through(e) >= Some(deployed))
+        .await;
     let governance = node.query(|e| e.governance().config).await.expect("the node records the vote contract");
     assert_eq!((governance.vote.0, governance.restriction_ttl_ms), (vote.0.0, TTL_MS));
     let faults = node.query(|e| e.operator_faults().config).await.expect("the node records the fault proof");
     assert_eq!((faults.contract.0, faults.penalty), (fault_proof.0.0, PENALTY));
-    println!("PASS: the node recorded the vote contract with {normal} s and {fast} s windows, and the fault proof");
+    println!(
+        "PASS: the node's custody watcher accepted the schedule, its turns, the vote contract and the fault proof, \
+         and mirrored past block {deployed}"
+    );
     node.stop().await;
 }

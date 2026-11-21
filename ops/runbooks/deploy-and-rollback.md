@@ -239,7 +239,18 @@ describes.
 
 Run the commands from `contracts/` in a checkout of the release's commit, with `<deployer>` the
 Foundry keystore account that deploys. `$VAULT`, `$REGISTRY`, `$TIMELOCK` and `$RPC` are set as
-[Variables](reference.md#variables) describes.
+[Variables](reference.md#variables) describes, and `$L1_RPC` is an Ethereum provider.
+
+**The registry records the first release's configuration hash, and that configuration names these
+contracts.** Compute each contract's address before [Deploy the contracts](#deploy-the-contracts)
+deploys the registry, and write it into the configuration before you hash it. A contract's address
+follows from the account that deploys it and that account's nonce at the deployment:
+
+```shell
+cast compute-address <deployer> --nonce <nonce>
+```
+
+Deploy each contract from that account at that nonce, and send nothing else from it in between.
 
 1. **Deploy the log heads** on Arbitrum, naming the vault.
 
@@ -252,9 +263,12 @@ Foundry keystore account that deploys. `$VAULT`, `$REGISTRY`, `$TIMELOCK` and `$
    Set `LOG_HEADS` to the address that the command prints after `Deployed to:`.
 
 2. **Deploy the seed receiver and the seed relay,** as steps 1 to 3 of
-   [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) describe. Each
-   deployment needs the owner's approval. Set `SEED_RECEIVER` to the receiver's address on Arbitrum
-   and `SEED_RELAY` to the relay's address on Ethereum.
+   [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) describe.
+
+   **Changes the live system.** The owner must approve each deployment.
+
+   Set `SEED_RECEIVER` to the receiver's address on Arbitrum and `SEED_RELAY` to the relay's address on
+   Ethereum.
 
 3. **Deploy the operator schedule** on Arbitrum, with the registry, the seed receiver, the log heads
    and the `[schedule]` values.
@@ -321,7 +335,8 @@ Foundry keystore account that deploys. `$VAULT`, `$REGISTRY`, `$TIMELOCK` and `$
 7. **Name the contracts in the release's configuration,** before
    [Prepare a release](#prepare-a-release) hashes it. The configuration is part of the release, so a
    contract named later needs a new release. In `node.toml`, built from
-   [production-node.toml](production-node.toml), set these keys:
+   [production-node.toml](production-node.toml), set these keys. The template carries the last three
+   commented out: uncomment them, since without them the release mirrors no turn.
 
    - `log_heads.contract` to `$LOG_HEADS`;
    - `seed_relay.receiver` to `$SEED_RECEIVER`, and `seed_relay.relay` to `$SEED_RELAY`;
@@ -330,7 +345,8 @@ Foundry keystore account that deploys. `$VAULT`, `$REGISTRY`, `$TIMELOCK` and `$
    - `custody.evm.staking.registry.fault_proof.contract` to `$FAULT_PROOF`, with its `penalty`.
 
 **How to tell it is resolved.** The registry names the schedule, every check above prints what it
-should, and the checks in [Variables and checks](seed-relay.md#variables-and-checks) pass.
+should, and checks 2 to 5 in [Variables and checks](seed-relay.md#variables-and-checks) pass. The
+relayer's checks there need a running trading server, so they wait for the first deployment.
 
 ## First deployment
 

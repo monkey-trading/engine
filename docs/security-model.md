@@ -1291,7 +1291,7 @@ checkpoint always waits.
 **Promotion.** Once `heartbeatMisses` witnessed slots pass with no head of the signer epoch, anyone
 may promote the next qualified member in the turn's order. The vault then moves its signer to that
 member's vouched standby key, in a new signer epoch, with no timelock. Detection takes
-`heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head that landed, 7 to 9.5
+`heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head that landed, 7 to 9.3
 minutes at the launch values, and at most 10 minutes under the deployment bounds. Each promotion
 adds the promoted member's start, and each member in the order that fails to start adds one more
 detection window.

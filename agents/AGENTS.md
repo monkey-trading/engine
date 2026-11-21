@@ -853,9 +853,10 @@ an index: load only the rule whose hint matches the current action.
   `dev-launch-values.sh`, the launch values scenario on Anvil: the vault, token, timelock and staking
   contract deploy from `ops/runbooks/production-deployment.toml`, and the node's `InitEmissions` and
   `InitStaking` checks read them back and accept those values and no other budget, epoch or cooldown;
-  then the rotation contracts deploy from the same file, the timelock names the schedule, and the node
-  takes its turns, sequences under its heartbeat rule read through the custody quorum, and records the
-  vote and fault proof contracts (`custody/tests/election_scenario/launch_schedule.rs`);
+  then the rotation contracts deploy from the same file, the timelock names the schedule, the node reads
+  the heartbeat rule through the custody quorum and does not refuse it, and its custody watcher, checking
+  the registry's schedule, the schedule's turn length, the vote's schedule and the fault proof's vault,
+  mirrors past the deployment (`custody/tests/election_scenario/launch_schedule.rs`);
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
   `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: the operator's house cap change applies with
   rotation on until the three-member set takes effect and is refused after; the set of 40:30:30 votes on

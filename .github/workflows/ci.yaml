@@ -264,8 +264,9 @@ jobs:
                 # start from it; the node's tests read the rest of ops/.
                 ops/runbooks/production-deployment.toml)
                   areas+=" rust vault_deposits scenario_tests node_load soak recovery_scale" ;;
-                # The node load scenario's connections, limits and screening slots are the template's.
-                ops/runbooks/production-node.toml) areas+=" rust node_load soak" ;;
+                # The node load scenario's connections, limits and screening slots are the template's, and
+                # the launch values scenario reads its ticker.
+                ops/runbooks/production-node.toml) areas+=" rust node_load soak vault_deposits" ;;
                 ops/*) areas+=" rust" ;;
                 rustfmt.toml | deny.toml | scripts/check-file-loc.sh | scripts/check-reference-logs.sh) areas+=" rust" ;;
                 # The scenarios on Anvil deploy the contracts and their mocks; the contracts' own tests

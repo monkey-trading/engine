@@ -105,7 +105,7 @@ case_ pull_request "rust node_load soak recovery_scale" crates/node/src/load_sce
 case_ pull_request "rust scenario_tests node_load soak recovery_scale" crates/node/src/sequencer/seeded.rs
 case_ pull_request "rust recovery_scale soak" crates/node/src/sequencer/recovery_scale/mod.rs \
   crates/node/src/sequencer/recovery_scale/flow.rs
-case_ pull_request "rust node_load soak" ops/runbooks/production-node.toml
+case_ pull_request "rust node_load soak vault_deposits" ops/runbooks/production-node.toml
 case_ pull_request "rust vault_deposits scenario_tests node_load soak recovery_scale" ops/runbooks/production-deployment.toml
 case_ pull_request "rust" config/ct-watch.toml
 case_ pull_request "rust attestation_verifier" crates/node/src/verify/tests/mod.rs
