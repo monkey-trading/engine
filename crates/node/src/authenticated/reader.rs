@@ -347,7 +347,7 @@ const fn node_budget(keys: usize) -> usize {
 
 /// The nibble of `key` at `depth`.
 fn nibble(key: &KeyHash, depth: usize) -> u8 {
-    key.0[depth / 2] >> if depth % 2 == 0 { 4 } else { 0 } & 15
+    key.0[depth / 2] >> if depth.is_multiple_of(2) { 4 } else { 0 } & 15
 }
 
 /// The nibbles, as a bitmap, of the range of `1 << height` children starting at `start`.
