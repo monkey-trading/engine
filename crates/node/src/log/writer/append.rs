@@ -15,11 +15,20 @@ enum Appended<'a> {
 }
 
 impl LogWriter {
+    /// Whether a checkpoint or withdrawal entry has a place yet: the open segment holds a command for it
+    /// to follow. A log reopened after a crash during rotation may end with a listed segment, which is
+    /// never written again, and nothing, or an empty segment, after it; the entry then waits for the
+    /// next command, which starts the segment.
+    pub(crate) fn takes_non_command(&self) -> bool {
+        self.open.as_ref().is_some_and(|(segment, _)| segment.commands > 0)
+    }
+
     /// Buffers one entry as a JSON line, and returns its offset. A command first completes the
     /// current segment if it is full.
     /// Error cases:
     /// - completing the current segment or starting a new one fails
-    /// - a withdrawal or checkpoint comes before any command in this segment
+    /// - a withdrawal or checkpoint comes before any command in this segment, including a
+    ///   segment recovery found created and still empty
     /// - the entry cannot be encoded
     pub fn append(&mut self, entry: &LogEntry) -> anyhow::Result<Offset> {
         let mut line = serde_json::to_vec(entry).context("encoding log entry")?;
@@ -54,6 +63,12 @@ impl LogWriter {
             self.start_segment(seq)?;
         }
         let (segment, out) = self.open.as_mut().context("log entry before the first command of its segment")?;
+        // Every segment starts with a command, which the open check requires. A segment a crash left
+        // linked and empty is open here with no command, and its predecessor is already listed.
+        ensure!(
+            matches!(appended, Appended::Command(_)) || segment.commands > 0,
+            "log entry before the first command of its segment"
+        );
         self.unsynced = true;
         self.appended += 1;
         self.appended_bytes += line.len() as u64;

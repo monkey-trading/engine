@@ -231,6 +231,10 @@ impl Sequencer {
             return Ok(());
         }
         let seq = self.engine.last_seq().context("checkpoint before any command")?;
+        // After a crash in a segment's rotation no segment takes it until the next command; a later attempt covers it.
+        if !self.log.takes_non_command() {
+            return Ok(());
+        }
         if self.dedup_checkpoint_seq == Some(seq) {
             // A scheduled and an explicit checkpoint can meet at one seq; the earlier entry
             // already commits this state, and two signed roots at one seq break historical
@@ -455,6 +459,9 @@ impl Sequencer {
         } else {
             None
         };
+        if !self.log.takes_non_command() {
+            return self.retry_withheld(retry);
+        }
         let pending = std::mem::take(&mut gate.pending);
         for (seq, account, amount, nonce) in pending {
             let release_seq = self.withdrawal_release_seq(account, nonce, seq, authorized.as_ref())?;
@@ -481,13 +488,6 @@ impl Sequencer {
             self.legacy_authorizations.remove(&(account, nonce));
         }
         self.retry_withheld(retry)
-    }
-
-    /// Attempts a paced checkpoint again when `retry`: one was withheld for a cause that has cleared.
-    /// Error cases:
-    /// - as `paced_checkpoint`
-    fn retry_withheld(&mut self, retry: bool) -> anyhow::Result<()> {
-        if retry { self.paced_checkpoint() } else { Ok(()) }
     }
 }
 
