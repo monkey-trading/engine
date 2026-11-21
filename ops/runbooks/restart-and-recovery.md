@@ -287,6 +287,76 @@ affected.
 
 **How to tell it is resolved.** The console reaches `history index holds the log's tip`.
 
+### Daily snapshots
+
+Use this procedure when `daily_snapshot_failed` or `daily_snapshot_unreadable` fires. With
+`[daily_snapshots]` in the configuration, the trading server writes the engine's state at the first
+checkpoint it writes on each UTC day, into the directory that the section names, and serves each
+file beside the log's archive. `engine replay --snapshots` starts a range of the log from a day's
+snapshot, so an audit replays the log's days in parallel. A snapshot is not part of the books and
+holds no authority: a replay checks it against the log's checkpoint and takes nothing that the
+snapshot alone says. A missing or damaged snapshot costs an audit time, never correctness, and
+clients are not affected.
+
+The trading server keeps every day's snapshot, so the directory grows without a bound, by about
+420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old
+snapshots off the host, as step 4 describes.
+
+1. Read what the trading server lists:
+
+   ```shell
+   curl -sf $API/v1/archive/snapshots/manifest.jsonl | jq -c '{file, seq, ts, bytes}'
+   ```
+
+   There is one line for each day on which the trading server sequenced and wrote a checkpoint. A
+   day with no line is a day with no snapshot. An empty answer means that no snapshot has been
+   written yet. The answer 404 means that the configuration has no `[daily_snapshots]`.
+
+2. For `daily_snapshot_failed`, read the alert's message. It names the cause: the writer did not
+   start, the writer was still writing the last snapshot, or the state could not be encoded or
+   written. The trading server tries again at the next UTC day's first checkpoint, and the alert
+   resolves when a snapshot is published. Check the free space and the permissions of the
+   snapshot directory on the data disk. A writer that did not start publishes nothing until the
+   trading server restarts.
+
+   **Changes the live system.** The owner must approve the restart, as
+   [Restart a healthy trading server](#restart-a-healthy-trading-server) describes. The alert alone
+   is no reason to restart outside a planned window, since no client is affected.
+
+3. For `daily_snapshot_unreadable`, read the alert's message. A request failed because the
+   directory's manifest or a listed file could not be read, or because the file's length or SHA-256
+   hash differs from its listing, and the request answered 500. Request the file that the message
+   names, and print the listed hash beside it:
+
+   ```shell
+   curl -sf $API/v1/archive/snapshots/manifest.jsonl | jq -r 'select(.file == "<file>") | .sha256'
+   curl -sf $API/v1/archive/snapshots/<file> | sha256sum
+   ```
+
+   `<file>` is the name from the manifest. The first command prints the listed hash. The second
+   prints the hash of what the trading server serves, which for a file that fails is the hash of
+   an empty answer, `e3b0c442…`. If the manifest itself failed, check the permissions and the disk
+   of the snapshot directory instead.
+
+   A file that fails or does not match is damaged. Stop the trading server, mount the data disk on the host,
+   remove the file and its line in the directory's `manifest.jsonl`, and start the trading server
+   again. A replay in ranges then takes that day from the snapshot before it.
+
+   **Changes the live system.** The owner must approve the stop and the start. Remove only the
+   damaged file and its line.
+
+4. To keep the directory within the disk, copy the snapshots off the host first, by downloading each
+   file that the manifest lists, as [Download the public log and verify
+   it](reference.md#download-the-public-log-and-verify-it) does for segments. Then remove old files
+   and their lines from the manifest, in one stop of the trading server, with the same approval as
+   step 3. Keep the newest snapshot.
+
+**How to tell it is resolved.** The manifest lists a snapshot for the day after the alert, and
+`curl -sf $API/v1/archive/snapshots/<file>` answers 200.
+
+**When to escalate.** Call the owner if `daily_snapshot_failed` fires on two days running after the
+disk and the permissions check out.
+
 ## A lost or damaged data disk
 
 Use this table when part of the data disk is lost or damaged.
@@ -295,6 +365,7 @@ Use this table when part of the data disk is lost or damaged.
 | --- | --- | --- |
 | `history/` only | Nothing is lost, and the index rebuilds. | Follow [Rebuild the derived stores](#rebuild-the-derived-stores). |
 | `snapshots/` | The recovery caches, and with `[snapshots]` the account history index and the segment catalog. The books are not affected. | Start the trading server. It replays the whole log, rebuilds the index and the catalog, and takes a cache again at its first checkpoint. |
+| The `[daily_snapshots]` directory | The daily snapshots and their manifest. The books are not affected. | Start the trading server. The writer starts empty and takes a snapshot at its first checkpoint, and an audit merges the ranges of the lost days. |
 | `alerts/` | Pages not yet delivered are lost. | Start the trading server. The outbox is created empty. Check `engine_alert_pages_pending`. |
 | The cursors | The deposit and staking scans start again from `custody.evm.start_block`, and credit nothing twice. | Start the trading server. The scan is slow to catch up, and `custody_deposits_lagging` fires meanwhile. |
 | The log | The books. | Find a copy that reaches the vault's `latestSeq`, as [A log shorter than the vault](#a-log-shorter-than-the-vault) describes. |
