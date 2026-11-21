@@ -97,7 +97,10 @@ tier has a different first band, as [Volume tiers](#volume-tiers) describes.
 | The other 14 shares | 2.0 bps to $500k | 4.0 bps to $2M | 8.0 bps |
 
 The toxicity add-on and the stress level, described below, can widen the spread. However, the spread
-charged on reducing or closing a position never exceeds the market's closing spread cap.
+charged on reducing or closing a position never exceeds the market's closing spread cap. A market
+order that reverses a position is refused when its blended spread would exceed that cap, while a
+reduce-only order that closes the position still executes. A triggered order that a reversal cap
+refuses closes the position where it can and cancels the rest of the order.
 
 | Markets | Closing spread cap |
 | --- | --- |
@@ -294,11 +297,13 @@ Before an account's first deposit is credited or its first order is accepted, th
 an eligibility declaration. The server screens both the account and the address of the client that
 sends each declaration, order and withdrawal.
 
-A withdrawal must be for at least 10 USDC. Withdrawals join a public first-in, first-out queue. If
-the vault holds too little USDC, the request at the head of the queue is paid in part. Once a
-checkpoint that the vault has accepted includes the approval, the enclave signs an authorisation for
-it. Anyone can submit that authorisation to the vault within 24 hours. An authorisation that expires
-unpaid is signed again when its account asks.
+A withdrawal is paid in whole units of USDC's six decimal places. The engine rounds the amount you
+request down to that unit, reserves the rounded amount from your balance, and leaves the remainder
+in your balance. The rounded amount must be at least 10 USDC. Withdrawals join a public first-in,
+first-out queue. If the vault holds too little USDC, the request at the head of the queue is paid in
+part. Once a checkpoint that the vault has accepted includes the approval, the enclave signs an
+authorisation for it. Anyone can submit that authorisation to the vault within 24 hours. An
+authorisation that expires unpaid is signed again when its account asks.
 
 If the enclave stops posting checkpoints, the vault stops accepting deposits after one day. After 14
 days without a checkpoint, anyone can start the vault's exit against the last checkpoint. Each
@@ -341,7 +346,9 @@ forward only with seven days' public notice.
 When operator rotation is enabled, MONKEY stakers elect the operators, and one of them is drawn each
 day to run the engine. The operator in office then receives a fifth of each staking distribution.
 While rotation is enabled, the settings above can change only through a vote that carries more than
-two thirds of the elected operators' stake.
+two thirds of the elected operators' stake. A vote can also impose a restriction that tightens a
+setting at once. A restriction lapses after a lifetime that the log records, which is at most seven
+days, and passing the same proposal again renews it.
 
 Each change to the rules takes effect as a new protocol version, which the log records. An old log
 therefore replays under the rules that applied when it was written. The

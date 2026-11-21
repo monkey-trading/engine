@@ -1305,7 +1305,8 @@ Known limits:
   That is the member's fault, and [fault proofs](#fault-proofs) make it provable.
 - A heartbeat proves that the enclave sequences, not that clients are served. A host can keep its
   own turn halted with held heads, through a benchmark-sync hold or a trusted-time halt, until the
-  turn ends.
+  turn ends. A start holds for the benchmark worker's snapshot only when it finds a rollover unpaid,
+  or when its next rollover falls before the worker's next snapshot.
 - A held head names the newest sequence number that another member confirmed, not the log's tip. A
   trusted-time halt stops the signed stream, so a tip that no member had received by then could
   never be confirmed, and requiring it would promote a member through every such halt.
