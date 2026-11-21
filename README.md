@@ -41,10 +41,12 @@ out each of them in full, with the values the engine launches with. The
 
 Each market has a reference price, which the engine calculates from the quotes of independent
 venues. The reference price is the median of the mid prices that the market's venues have quoted
-within the last second. A market can be traded only while at least two of its venues have quoted
-within that second and their quotes agree to within the market's divergence limit. When either
-condition fails, or when the market's exchange is closed, the market has no price and no order in it
-can be executed. The divergence limit is measured in basis points, abbreviated to bps. One basis
+within the last second. A market can be traded only while at least as many of its venues as its
+minimum have quoted within that second and their quotes agree to within the market's divergence
+limit. Every market requires two venues except the index, metals and oil futures markets, which are
+priced from Massive alone and have no price while Massive is unavailable. When either condition
+fails, or when the market's exchange is closed, the market has no price and no order in it can be
+executed. The divergence limit is measured in basis points, abbreviated to bps. One basis
 point is one hundredth of one percent.
 
 | Markets | Venues | Trading hours | Divergence limit |

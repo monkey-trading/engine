@@ -102,6 +102,7 @@ says so. The status code tells the client what kind of refusal it is.
 | 422 | The body is JSON but does not match the route's request, for example because of an unknown or missing field. |
 | 429 | The client or the account is over a rate limit. `Retry-After` gives the wait in whole seconds. |
 | 500 | The server failed to read its own records. The cause is in its log. |
+| 501 | The server cannot offer the route in its current setup, for example a withdrawal request while custody has no finalized checkpoint service to pay it out. |
 | 503 | The server cannot answer now. Where it expects to answer soon, it sends `Retry-After`. |
 
 A request that the server refuses with a 4xx status never reaches the log, and it uses no nonce. A
@@ -336,8 +337,9 @@ account's own, so a key that floods the server cannot stop the account from revo
 ## Signed answers
 
 The enclave signs every answer under `/v1`, including refusals, so that a client can check that the
-answer came from the attested enclave and answers the request it sent. Four routes are not signed:
-`/v1/health`, `/v1/attestation`, `/v1/attestation/collateral` and `/v1/archive/{file}`. The
+answer came from the attested enclave and answers the request it sent. Five routes are not signed:
+`/v1/health`, `/v1/attestation`, `/v1/attestation/collateral`, `/v1/archive/{file}` and
+`/v1/archive/snapshots/{file}`. The
 attestation and the archive carry their own proofs, and the health check carries nothing to rely on.
 
 ### The challenge
@@ -672,10 +674,11 @@ A market that is reduce-only, closed or without a price refuses orders of its ow
 `GET /v1/markets` shows; none of these is a hold. `trusted_time.state` is `starting` before the
 first reading, `sampled` while readings are current, or `held` with a `cause` of `no_sample` or
 `drift`. Each venue's `state`, and each of its symbols', is one of `quoting`, `stale`, `silent`,
-`delayed`, `down`, `off` and `not_expected`. A venue shows the state of its best symbol, and
-`connections` gives the number of connections that carry the venue. A symbol that two connections
-carry shows the better state of the two. `unpriced_markets` lists the open markets that have no
-price, with the reason and source counts of their `pricing`.
+`delayed`, `down`, `off` and `not_expected`. A venue shows the state of its worst symbol, counting a symbol
+whose market takes no quotes as better than one that quotes, and `connections` gives the number of
+connections that carry the venue. A symbol that two connections carry shows the better state of the
+two. `unpriced_markets` lists the open markets that have no price, with the reason and source counts
+of their `pricing`.
 
 While the server's time is not trustworthy, it signs nothing, so the answer to this route arrives
 unsigned. A client takes an unsigned `/v1/status`, or a signed stream that closes, as that state,
@@ -804,7 +807,7 @@ account, like the account read, and is limited by the client's request rate like
 
 | Field | Meaning |
 | --- | --- |
-| `seq` | The last command processed in the state the answer read. |
+| `seq` | The last command processed in the state the answer read, or `null` before the first. |
 | `account`, `market`, `side`, `qty`, `reduce_only` | The order previewed. |
 | `fill` | The fill: its quantity `qty`, which for a reduce-only order is at most the position; its average price `price`, spread included; the reference price `mid`; the spread `spread_bps`; and `increases`, whether it grows the position. `null` when the order cannot be priced, and `refused` says why. |
 | `equity`, `initial_margin`, `maintenance_margin` | The account's equity, initial margin and maintenance margin after the fill, the order's market valued at `mid` and every other at its current price. When `fill` is `null`, the account as it is now. |
@@ -1149,7 +1152,8 @@ request's `requested_seq` from which to continue, and `limit`, from 1 to 200, wi
 Both return `seq`, the last command the answer reflects, `queue` and `next`.
 
 Each queue entry holds `account`, the requested `amount`, the `remaining` amount not yet approved,
-`requested_seq`, and `position`, its place in the whole queue counting from 1. Each page scans at
+`requested_seq`, `position`, its place in the whole queue counting from 1, and, when it is not zero,
+`ticket`, the request's enqueue order counting the requests already completed. Each page scans at
 most `limit` requests of the whole queue, so an account's page can be empty and still have a `next`,
 which the client must follow.
 
@@ -1352,8 +1356,10 @@ widths and ranges are in `closeout_bucket_bps`, `closeout_range_bps`, `profit_bu
 | `operator_faults` | The fault proof contract, its penalty, and when each penalised member's penalty started. |
 | `checkpoint` | The latest checkpoint, in the form the stream carries it, or `null`. |
 
-A field that does not apply is left out. A noticed change appears in `params_notice` or
-`listing_notices` until it takes effect, at least seven days after the notice.
+`score_rules`, `governance`, `pending_ceiling`, `house_loss` and `operator_faults` are left out when
+they do not apply. The other fields are always present, and are `null` or empty when nothing
+applies. A noticed change appears in `params_notice` or `listing_notices` until it takes effect, at
+least seven days after the notice.
 
 ### Series
 
@@ -1362,13 +1368,16 @@ A field that does not apply is left out. A noticed change appears in `params_not
 | Parameter | Meaning |
 | --- | --- |
 | `metric` | Required. One of `nav`, `cash`, `withdrawal_queue`, `total_staked`, `total_allocated`, `cumulative_distributed`, `long`, `short`, `volume`, `monkey_per_loss` and `distributed_per_epoch`. |
-| `market` | The market, which `long` and `short` require and `volume` accepts. Without it, `volume` covers every market. |
+| `market` | The market, which `long` and `short` require and `volume` accepts. Without it, `volume` covers every market. Every other metric takes no market, and a request that names one gets 400. |
 | `resolution` | Required. `1m`, `1h` or `1d`. |
 | `from_ms`, `to_ms` | Only buckets within this window. |
 | `limit` | Entries per page, from 1 to 2000. The default is 500. |
 
-The answer names the metric's `kind` and `unit`, gives `entries` and `next`, and states where its
-data begins. `[stats]` in the configuration sets how long each resolution is kept.
+The answer names the `metric`, its `market` and `resolution`, and its `kind` and `unit`. It gives
+`entries`, and `next`, the `from_ms` of the following page or `null` when the window is exhausted.
+It also gives `retained_from_ms`, the start of the oldest bucket still held once retention has
+pruned older ones, `max_limit`, which is 2000, and where the data begins. `[stats]` in the
+configuration sets how long each resolution is kept.
 
 ### Where dashboard data begins
 
@@ -1520,7 +1529,7 @@ Each message carries its `offset` and a `type`:
 | `type` | Content |
 | --- | --- |
 | `command` | `seq`; `ts`, the time at which the command was processed; `cmd`, the command, tagged by its own `type`; `events`; and `seal`, the enclave's signature over the command, its events and the entry before it. |
-| `checkpoint` | `seq`; the state `root`; the enclave's `signature` and its `signer`; and `domain`, the chain and vault the checkpoint commits to. A server that posts its checkpoints to the vault also names `parent`, the vault's checkpoint that this one extends. |
+| `checkpoint` | `seq`; the state `root`; the enclave's `signature` and its `signer`; and `domain`, the chain and vault the checkpoint commits to. A server that posts its checkpoints to the vault also names `parent`, the vault's checkpoint that this one extends. `deferred_withdrawals` is present and true while withdrawal signatures wait for custody to confirm this checkpoint. |
 | `withdrawal` | A signed withdrawal authorisation, in the form the payouts route gives it. |
 
 The first command in a log has seq 0. A command message looks like this:
@@ -1562,9 +1571,12 @@ fails to verify. `engine verify-frames` checks a saved connection, one frame a l
 The server sends a heartbeat frame when the connection opens and then at least every
 `api.heartbeat_interval`, 5 seconds by default. Its message is
 `{"type": "heartbeat", "head": "<seq>:<index>"}`, where `head` is the last message the server has
-stored, or `null` before the first. A client treats the stream as stale when no heartbeat has
-arrived for about two intervals. While the server's time is not trustworthy, it cannot sign a frame,
-so it closes the connection, and the client resumes it with `after`.
+stored, or `null` before the first. A client treats the stream as stale when
+no heartbeat has arrived for about two intervals. While the server's time is not trustworthy, it
+cannot sign a frame, so it closes the connection, and the client resumes it with `after`. The
+exception is a connection with `heads=1` on a server that holds a daily operator turn. It stays
+open, skips its heartbeats, and receives each log head bare, outside a frame, since a head carries
+its own signature.
 
 With `status=1`, the connection receives the body of `GET /v1/status`, with `"type": "status"`, at
 the start and whenever it changes. With `notice=1`, it receives the body of `GET /v1/notice`, with
@@ -1582,11 +1594,11 @@ account data is public. The client sends a text message:
 {"op": "quotes", "account": "0x…", "markets": [1, 2]}
 ```
 
-The list may name at most `api.quote_max_markets` markets, four by default. Sending the message
-again replaces the subscription, and an empty `markets` ends it. The connection then receives one
-quote message per market, in signed frames, and a new one for each market whose quote has changed.
-The server reads quotes only after the log has moved, and at most once every `api.quote_interval`,
-100 milliseconds by default.
+The list may name at most `api.quote_max_markets` distinct markets, four by default. Sending the
+message again replaces the subscription, and an empty `markets` ends it. The connection then
+receives one quote message per market, in signed frames, and a new one for each market whose quote
+has changed. The server reads quotes only after the log has moved, and at most once every
+`api.quote_interval`, 100 milliseconds by default.
 
 ```json
 {"type": "quote", "account": "0x…", "market": 1, "open": true, "reduce_only": false,
