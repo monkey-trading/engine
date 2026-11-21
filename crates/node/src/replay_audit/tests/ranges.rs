@@ -82,6 +82,29 @@ fn a_snapshot_whose_state_fails_its_checkpoints_root_is_named() {
     assert!(error.contains(&format!("state root mismatch at seq {}", offset.seq)), "{error}");
 }
 
+/// Under custody trust no range starts after the vault's finalized checkpoint: a snapshot after it starts
+/// none, and the replay gives the verdict of the whole replay under the same vault history.
+#[test]
+fn a_snapshot_after_the_finalized_checkpoint_starts_no_range() {
+    let ranged = Ranged::new("ranges-finalized-anchor", false);
+    let signer = AccountId(ranged.key.address());
+    // The snapshot is at the third checkpoint; the vault has finalized the second.
+    let (parent, authorities) = ranged.history_through(1);
+    let whole = crate::sequencer::replay_path_with_authorities(
+        &ranged.dir,
+        ranged.domain,
+        signer,
+        parent,
+        authorities.clone(),
+        seals(),
+    )
+    .expect("the whole log replays under the vault's history");
+    let custody = Trust::Custody { domain: ranged.domain, signer, parent, authorities };
+    let in_ranges = replay_ranges(&ranged.dir, &ranged.snapshots, custody, jobs()).expect("in one range");
+    assert_eq!((in_ranges.ranges, in_ranges.skipped.len()), (1, 0), "the snapshot starts no range");
+    same(Audited::from(whole), in_ranges);
+}
+
 // ── Helpers ──
 
 /// A log directory, under one key: a withdrawal approved under `V21` and the checkpoint that defers it, one
@@ -155,9 +178,14 @@ impl Ranged {
     /// The vault's finalized anchor, the last checkpoint, and its signer history: every checkpoint under
     /// the one key, in epoch 1.
     fn history(&self) -> (CheckpointParent, crate::checkpoints::SignerHistory) {
-        let anchor = checkpoint_parent(self.checkpoints.last().unwrap());
+        self.history_through(self.checkpoints.len() - 1)
+    }
+
+    /// As `history` with the checkpoint at `last` the finalized anchor, the vault holding none after it.
+    fn history_through(&self, last: usize) -> (CheckpointParent, crate::checkpoints::SignerHistory) {
+        let anchor = checkpoint_parent(&self.checkpoints[last]);
         let history = crate::checkpoints::SignerHistory {
-            checkpoints: self.checkpoints.iter().map(|cp| accepted(cp, 1)).collect(),
+            checkpoints: self.checkpoints[..=last].iter().map(|cp| accepted(cp, 1)).collect(),
             epochs: [(1, AccountId(self.key.address()))].into(),
         };
         (anchor, history)
@@ -217,6 +245,11 @@ fn seals() -> SealChecks {
 /// Requires the whole replay and the replay in ranges, in two ranges, to agree on what an audit reports.
 fn agree(whole: Audited, in_ranges: Audited) {
     assert_eq!(in_ranges.ranges, 2);
+    same(whole, in_ranges);
+}
+
+/// Requires the whole replay and the replay in ranges to agree on what an audit reports, in however many ranges.
+fn same(whole: Audited, in_ranges: Audited) {
     assert_eq!(
         (whole.commands, whole.checkpoints, whole.pending, &whole.checkpoint_signers),
         (in_ranges.commands, in_ranges.checkpoints, in_ranges.pending, &in_ranges.checkpoint_signers)
