@@ -531,11 +531,15 @@ to its last checkpoint. The operator's stream then refills the copy.
 
 A rotation member whose copy is empty backfills it from the archives of the operator it follows and,
 with `[daily_snapshots]`, starts its replica from the newest snapshot, of those it holds and those the
-archives list, whose checkpoint the copy holds and the vault has finalized. It fetches a listed one
+archives list, whose checkpoint the copy holds and the vault has finalized, and whose state is from
+before the turns of the member in office began, the first of the turns in a row that the finalized
+schedule draws for that member at trusted time. It fetches a listed one
 whole, checking its length and hash against its listing, and takes a snapshot only when its signature,
 which it checks before it decodes the state, covers the state's bytes and is by the key that signed its
 checkpoint, a key the vault recorded, and the copy holds that checkpoint at the snapshot's offset. It
-tries the three newest in turn and removes a fetched one it refuses. Before that checkpoint it applies
+tries the three newest in turn, removes a fetched one it refuses, and fetches an archive's copy of a
+held one it refuses. A copy that credited a deposit or approved a withdrawal before custody finality is
+replayed whole, as for a recovery cache. Before that checkpoint it applies
 nothing: it checks every instruction's chained digest and
 seal, every checkpoint's signature and sequence number, and every withdrawal authorization, as a whole
 replay of the copy does, and computes from the instructions and the events their seals cover what that
@@ -1201,7 +1205,11 @@ Known limits:
 - A member whose replica started from a daily snapshot did not replay the log before the snapshot's
   checkpoint, so its own check at a handover or a promotion counts only for a range that starts after
   that checkpoint, and it answers no other member's question, since the range a question covers may
-  start before it. Both hold until a whole replay of its copy, at its next start. A trading server set up
+  start before it. Both hold until a whole replay of its copy, at its next start. It starts from a
+  snapshot before the turns of the member in office, where the last check's range starts while each
+  check counts, so its own check at its first take counts; after a check that did not count, the range
+  may start earlier, and with two members in the set payouts then wait until the set changes, as after
+  any check that does not count. A trading server set up
   to take no turns signs no withdrawal while the check applies, and raises `log_check_unavailable`.
 - Instructions other than withdrawals stay exposed to a branch that the host withholds, for at most
   one heartbeat interval past the newest sequence number that another member confirmed.

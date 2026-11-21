@@ -318,6 +318,12 @@ impl Takings {
         Self { applied_from: None, ..self.clone() }
     }
 
+    /// The first command the replay collecting the records applied, when it saw earlier ones (`set_applied_from`).
+    #[cfg(test)]
+    pub(crate) fn applied_from(&self) -> Option<u64> {
+        self.applied_from
+    }
+
     /// Takes the records as complete from `next`, the next command's seq, when no command was seen:
     /// a log with none yet, or a start whose snapshot covers every command.
     pub(crate) fn complete_from(mut self, next: u64) -> Self {

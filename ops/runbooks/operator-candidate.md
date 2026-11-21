@@ -718,8 +718,9 @@ these:
   member whose copy is empty, with `[daily_snapshots]`, builds the replica from the newest signed daily
   snapshot instead, as `docs/security-model.md` describes: it replays only the log after the snapshot,
   derives the financing rows before it on a thread of its own, and serves marks history from the
-  snapshot on. Until a whole replay at its next start, its own log check at a handover counts only for a
-  range after the snapshot, and it answers no other member's log-check question, so payouts may wait for
+  snapshot on. It starts from a snapshot from before the turns of the member in office, so its own log
+  check at its first take covers them. Until a whole replay at its next start, that check counts only for
+  a range after the snapshot, and it answers no other member's log-check question, so payouts may wait for
   another member's check. A snapshot it cannot start from raises `snapshot_start_refused`, and it
   replays the whole copy instead.
 - It resolves the operator again at each boundary, and after a failed stint: a second later, then

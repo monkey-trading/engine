@@ -1,6 +1,7 @@
 //! A member whose copy is empty starts its replica from the newest daily snapshot its archive lists whose
 //! checkpoint the copy holds and the vault finalized, with no whole replay; a member without `[daily_snapshots]`,
-//! one whose vault has finalized no checkpoint, and one whose copy holds the log already replay the whole copy.
+//! one whose vault has finalized no checkpoint, and one whose copy holds the log already replay the whole copy; and
+//! the snapshot is from before the turns of the member in office, as the schedule draws them.
 
 use super::*;
 use crate::config::DailySnapshotsSection;
@@ -61,7 +62,69 @@ async fn a_member_replays_its_whole_copy_when_no_snapshot_start_applies() {
     }
 }
 
+/// The turns of the member in office began at the first of the turns in a row its candidate holds, read back past
+/// the turns it holds to one another member holds; at the first turn when it holds every turn before; at the earliest
+/// time when it holds more than are read back; and none are in office before the first turn. The member's own turns,
+/// not yet taken, are passed over for the member's before them.
+#[tokio::test]
+async fn the_in_office_members_turns_began_at_the_first_it_holds_in_a_row() {
+    let schedule = Schedule([1, 2, 2, 3, 3, 3].iter().zip(1..).map(|(holder, turn)| drawn(turn, *holder)).collect());
+    let at = schedule.observe(View::Finalized, &[]).await.unwrap();
+    let began = |now_ms| super::super::open::in_office_since(&schedule, &at, now_ms, [0xff; 32]);
+    assert_eq!(began(boundary(6) + 1).await.unwrap(), Some(boundary(4)), "three turns in a row");
+    assert_eq!(began(boundary(3)).await.unwrap(), Some(boundary(2)), "two turns in a row");
+    assert_eq!(began(boundary(1)).await.unwrap(), Some(boundary(1)), "the first turn");
+    assert_eq!(began(boundary(1) - 1).await.unwrap(), None, "before the first turn");
+    let own = super::super::open::in_office_since(&schedule, &at, boundary(6), [3; 32]).await.unwrap();
+    assert_eq!(own, Some(boundary(2)), "the member's own turns are passed over");
+    let long = Schedule((1..=40).map(|turn| drawn(turn, 9)).collect());
+    let at = long.observe(View::Finalized, &[]).await.unwrap();
+    let began = super::super::open::in_office_since(&long, &at, boundary(40), [0xff; 32]).await.unwrap();
+    assert_eq!(began, Some(Millis::MIN), "more turns in a row than are read back");
+}
+
 // ── Helpers ──
+
+/// A schedule's drawn turns, oldest first.
+struct Schedule(Vec<ScheduledTurn>);
+
+impl CheckpointChain for Schedule {
+    async fn state(&self, _view: View) -> anyhow::Result<VaultState> {
+        let zero = engine_core::Fixed::ZERO;
+        let signer = AccountId([0; 20]);
+        let (balance, deposited, distributions_paid) = (zero, zero, zero);
+        Ok(VaultState { height: 1, signer, checkpoint: None, balance, deposits: 0, deposited, distributions_paid })
+    }
+
+    async fn post(&self, _checkpoint: &crate::log::Checkpoint) -> anyhow::Result<()> {
+        anyhow::bail!("this vault takes no checkpoints")
+    }
+
+    async fn scheduled_turn(&self, _at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
+        Ok(self.0.iter().rev().find(|turn| turn.boundary <= now_ms).cloned())
+    }
+}
+
+/// Turn `turn`, drawn for the candidate `holder` names.
+fn drawn(turn: u64, holder: u8) -> ScheduledTurn {
+    let candidate = AccountId([holder; 20]);
+    let boundary = boundary(turn);
+    ScheduledTurn {
+        turn,
+        boundary,
+        candidate,
+        admin_key: candidate,
+        release: [holder; 32],
+        generation: 1,
+        set: 1,
+        source: None,
+    }
+}
+
+/// The boundary of the stand-in schedule's turn `turn`.
+fn boundary(turn: u64) -> Millis {
+    turn as Millis * 1_000_000
+}
 
 /// Publishes into `dir` signed daily snapshots of the operator's log in `log` at its second and third checkpoints
 /// of a state with custody finality, whose segments the archive holds; their listings.

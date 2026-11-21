@@ -6,7 +6,9 @@
 //! checkpoint accounting, genesis progress, the activations, the latest applied parameters, the checkpoint
 //! signers and roots, the turn takings, the approvals in payout order with their latest authorizations, and the
 //! approvals a checkpoint deferred. From `V22` the engine keeps every approval, so the snapshot's approvals name
-//! which approval events enter payout order, as the engine's own did when each command applied.
+//! which approval events enter payout order, as the engine's own did when each command applied. A copy that credited
+//! a deposit or approved a withdrawal before custody finality is refused: their provenance (`legacy::Approvals`)
+//! is replay state only a whole replay derives, as for a recovery cache (`check_snapshot_provenance`).
 //!
 //! What it takes on trust is the state at the snapshot's checkpoint: the vault's recorded signer that signed the
 //! checkpoint, and the snapshot over its whole state, vouches that the commands before it produce it. The
@@ -59,7 +61,6 @@ pub(crate) struct Before {
     genesis: GenesisProgress,
     deferred: Vec<(u64, AccountId, Fixed, u64)>,
     accounting: Accounting,
-    legacy_deposits: BTreeMap<String, LegacyDeposit>,
     checkpoint_signers: BTreeSet<AccountId>,
     payout_checkpoints: BTreeMap<u64, B256>,
     takings: crate::log_check::Takings,
@@ -109,7 +110,6 @@ impl Before {
             genesis: GenesisProgress::default(),
             deferred: Vec::new(),
             accounting: Accounting::default(),
-            legacy_deposits: BTreeMap::new(),
             checkpoint_signers: BTreeSet::new(),
             payout_checkpoints: BTreeMap::new(),
             takings: crate::log_check::Takings::default(),
@@ -145,6 +145,7 @@ impl Before {
     /// - a command out of sequence or stamped before the last, whose seal does not verify over its link or is
     ///   by none of the signers, that carries no logged events, or whose events the checkpoint accounting or a
     ///   custody finality activation's legacy credits refuse
+    /// - a credit or an approval before custody finality, whose provenance only a whole replay keeps
     /// - a withdrawal entry that is not a typed authorization by one of the signers of an approval the snapshot
     ///   holds, made before it, naming a checkpoint the copy holds before it
     /// - a checkpoint at another seq than the last command's, whose signature does not verify or is by none of
@@ -174,7 +175,8 @@ impl Before {
         self.origin.command(command, version)?;
         let events = command.events.as_deref().with_context(|| format!("seq {seq} has no logged events"))?;
         let cmd = &command.sequenced.cmd;
-        legacy::check_activation_ledger(cmd, &self.legacy_deposits)?;
+        // No legacy credit is ever taken, so a custody finality activation must list none.
+        legacy::check_activation_ledger(cmd, &BTreeMap::new())?;
         if let Some(version) = activated(cmd, events) {
             self.version = Some(version);
             self.activations.push((version, seq));
@@ -184,14 +186,16 @@ impl Before {
             self.params_seq = Some(seq);
         }
         self.accounting.apply(cmd, events)?;
-        // A credit counts as legacy under a version the copy activated before custody finality: a copy whose
-        // first command follows a state no log holds, as a test's does, starts past it.
-        if self.version.is_some()
-            && !version.supports_deposit_finality()
-            && let Some(deposit) = LegacyDeposit::from_command(cmd, events)
-        {
-            self.legacy_deposits.insert(deposit.chain_ref.clone(), deposit);
-        }
+        // A credit or an approval is legacy under a version the copy activated before custody finality: a copy
+        // whose first command follows a state no log holds, as a test's does, starts past it.
+        let approves = || events.iter().any(|event| matches!(event, Event::WithdrawalApproved { .. }));
+        ensure!(
+            self.version.is_none()
+                || version.supports_deposit_finality()
+                || (LegacyDeposit::from_command(cmd, events).is_none() && !approves()),
+            "seq {seq} credits a deposit or approves a withdrawal before custody finality, whose provenance only a \
+             whole replay keeps"
+        );
         self.takings.stamped(seq, ts);
         self.takings.command(seq, events);
         let kept = |account: &AccountId, nonce: &u64| {
@@ -227,7 +231,10 @@ impl Before {
     /// Takes a withdrawal entry (see `entry`): a copy's replay takes only a typed authorization, by an attested
     /// signer, of an approval the engine holds when the entry comes.
     fn withdrawal(&mut self, withdrawal: &SignedWithdrawal) -> anyhow::Result<()> {
-        let auth = withdrawal.authorization.as_ref().context("withdrawal completion requires a trusted signer")?;
+        let auth = withdrawal
+            .authorization
+            .as_ref()
+            .context("the pass before a daily snapshot takes only typed withdrawal authorizations")?;
         let signer = self.attested.contains(&auth.signer).then_some(auth.signer);
         crate::checkpoints::signature::verify_withdrawal(withdrawal, Some(self.domain), signer)?;
         let key = (withdrawal.account, withdrawal.nonce);
@@ -344,7 +351,6 @@ impl Before {
             last_checkpoint_ts: self.last_checkpoint_ts,
             deferred: self.deferred,
             accounting: self.accounting,
-            legacy_deposits: self.legacy_deposits,
             domain: Some(self.domain),
             attested: Some(self.attested),
             checkpoint_signers: self.checkpoint_signers,

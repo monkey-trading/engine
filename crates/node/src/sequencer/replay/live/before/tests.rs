@@ -18,7 +18,8 @@ const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: Acc
 /// holds what a replica that replays the whole copy holds, whichever checkpoint the snapshot stands at: the
 /// state, the command prefix after every command it retains, the last checkpoint, and what its start finishes
 /// with, the checkpoint accounting, the approvals in payout order with their authorizations, the genesis, the
-/// activations and the checkpoints' roots among them.
+/// activations and the checkpoints' roots among them; but for the first command it applied, which its own log
+/// check counts from (`log_check::own_check`).
 #[tokio::test]
 async fn a_replica_from_a_snapshot_holds_what_a_whole_replay_holds() {
     let dir = scratch_dir("before-equals-whole");
@@ -27,6 +28,7 @@ async fn a_replica_from_a_snapshot_holds_what_a_whole_replay_holds() {
     let approvals = entries.iter().filter(|entry| matches!(entry, LogEntry::Withdrawal(_))).count();
     assert!(approvals >= 2, "the log authorizes approvals on both sides of a snapshot");
     let mut whole = replica(&entries, None).unwrap();
+    assert_eq!(whole.takings().applied_from(), None, "a whole replay applied every command");
     let starts = snapshot_starts(&entries);
     assert!(starts.len() >= 4, "the log holds checkpoints a snapshot can stand at: {starts:?}");
     let root = whole.state_root();
@@ -34,6 +36,8 @@ async fn a_replica_from_a_snapshot_holds_what_a_whole_replay_holds() {
     for at in starts {
         let mut from = replica(&entries, Some(at)).unwrap_or_else(|e| panic!("the snapshot at entry {at}: {e:#}"));
         assert_eq!(from.state_root(), root, "the snapshot at entry {at}");
+        let LogEntry::Checkpoint(checkpoint) = &entries[at] else { unreachable!("a snapshot's checkpoint") };
+        assert_eq!(from.takings().applied_from(), Some(checkpoint.seq + 1), "the snapshot at entry {at}");
         let links: Vec<_> = (0..=expected.engine.last_seq().unwrap()).map(|seq| from.link_at(seq)).collect();
         assert!(links.iter().all(Option::is_some), "the snapshot at entry {at} retains every link");
         let actual = finished(from, &dir);
@@ -47,8 +51,8 @@ async fn a_replica_from_a_snapshot_holds_what_a_whole_replay_holds() {
 /// The pass refuses a copy a whole replay refuses before the snapshot, each at the check it names: a command whose
 /// seal no longer signs it, a checkpoint by a signer the vault has not recorded, a second checkpoint at one seq
 /// naming another root, a withdrawal entry whose authorization no longer signs it, one that comes before its
-/// approval, one that names a checkpoint the copy holds only after it, and one whose approval the snapshot holds
-/// otherwise.
+/// approval, one that names a checkpoint the copy holds only after it, one with no typed authorization, which a
+/// whole replay checks against the engine, and one whose approval the snapshot holds otherwise.
 #[tokio::test]
 async fn the_pass_refuses_what_a_whole_replay_refuses() {
     let dir = scratch_dir("before-refuses");
@@ -108,6 +112,11 @@ async fn the_pass_refuses_what_a_whole_replay_refuses() {
         withdrawal.amount += Fixed::from_int(1);
     }
     cases.push(("an authorization of another amount", resigned, "invalid typed withdrawal signature"));
+    let mut untyped = entries.clone();
+    if let LogEntry::Withdrawal(withdrawal) = &mut untyped[paid] {
+        withdrawal.authorization = None;
+    }
+    cases.push(("an untyped authorization", untyped, "takes only typed withdrawal authorizations"));
     for (case, copy, said) in cases {
         let end = position(&copy, |entry| *entry == entries[at]);
         let error = format!("{:#}", pass_over(&copy, &engine, end).err().unwrap_or_else(|| panic!("{case} passed")));
@@ -120,6 +129,21 @@ async fn the_pass_refuses_what_a_whole_replay_refuses() {
     let otherwise: Engine = serde_json::from_value(otherwise).unwrap();
     let error = format!("{:#}", pass_over(&entries, &otherwise, at).err().expect("another approval passed"));
     assert!(error.contains("typed payout differs from its immutable approval"), "{error}");
+}
+
+/// The pass refuses a copy that credited a deposit before custody finality, whose provenance only a whole replay
+/// keeps, as a recovery cache's start does.
+#[test]
+fn the_pass_refuses_a_copy_with_credits_before_custody_finality() {
+    use engine_core::auth::ClientAuth;
+    let dir = scratch_dir("before-legacy");
+    let chain_ref = format!("{}:1", B256::repeat_byte(2));
+    let credit = Command::Deposit { account: AccountId([7; 20]), amount: Fixed::from_int(100), chain_ref };
+    let unsigned = ClientAuth::Unsigned;
+    crate::sequencer::fixture_tests::old_genesis_log(&dir, &unsigned, ProtocolVersion::V19, Vec::new(), vec![credit]);
+    let entries = log_entries(&dir);
+    let error = pass_over(&entries, &Engine::new(), entries.len()).err().expect("a legacy credit passed");
+    assert!(format!("{error:#}").contains("credits a deposit or approves a withdrawal before custody finality"));
 }
 
 /// The replica does not start from a snapshot that stands at another command than the pass's last, at whose seq

@@ -326,11 +326,14 @@ an index: load only the rule whose hint matches the current action.
   stint, 1 s after the first and doubling to a stint, `standby/operator.rs`, into a copy with a live replica
   built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`, or, for an empty
   copy it backfills under `[daily_snapshots]`, from the newest daily snapshot, of those it holds and those its origins
-  list, whose checkpoint the copy holds and the vault finalized, the three newest tried in turn and a refused fetch
-  removed (`daily_snapshots/fetch.rs`, `daily_snapshots/start.rs`, `node/member/turn/open.rs`), signed over its
+  list, whose checkpoint the copy holds and the vault finalized, stamped before the turns of the member in office
+  began as the finalized schedule draws them at trusted time (`in_office_since`), the three newest tried in turn, a
+  refused fetch removed and a refused held one giving way to an origin's (`daily_snapshots/fetch.rs`,
+  `daily_snapshots/start.rs`, `node/member/turn/open.rs`), signed over its
   state's bytes by that checkpoint's recorded signer, checked before the state is decoded: a pass over the copy before
-  it applies nothing, checks every link, seal, checkpoint signature and root agreement and authorization and folds the
-  command prefix, accounting, payout order, takings and the rest (`sequencer/replay/live/before.rs`), the replica
+  it applies nothing, checks every link, seal, checkpoint signature and root agreement and authorization, refuses a
+  copy with credits or approvals before custody finality, and folds the command prefix, accounting, payout order,
+  takings and the rest (`sequencer/replay/live/before.rs`), the replica
   replays on from the snapshot, its root checked at its checkpoint, counting no full replay, its own boundary check
   counting only a range after the snapshot and answering none (`log_check::own_check`), a thread of its own derives
   the financing rows before the snapshot while it follows, stopped and not awaited at its turn
@@ -1177,7 +1180,8 @@ Run from the repo root:
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole
   replay to what a whole replay gives, takes the node's turn through the tail handover and stamps its first command,
-  and an altered snapshot is passed over with Warning `snapshot_start_refused`); the member's start from a snapshot
+  takes the snapshot before midnight when the in-office member's turns began there, and an altered snapshot is passed
+  over with Warning `snapshot_start_refused`); the member's start from a snapshot
   against a whole replay on a kept log of launch flow: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::bench::member_start_bench -- --ignored --nocapture`
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch

@@ -3,8 +3,9 @@
 //! signed daily snapshot at its first checkpoint and at its first past midnight; a member with an empty copy
 //! backfills the node's archive over HTTP, fetches from it the newest snapshot its copy holds, and builds its replica
 //! from it with no whole replay, to the state, command prefix and last checkpoint a whole replay of the copy gives;
-//! it then takes the node's turn through the tail handover and stamps its first command; and a snapshot whose state
-//! its signer did not vouch for is passed over, paged as Warning `snapshot_start_refused`.
+//! it then takes the node's turn through the tail handover and stamps its first command; a member whose in-office
+//! member's turns began at midnight takes the snapshot before them; and a snapshot whose state its signer did not
+//! vouch for is passed over, paged as Warning `snapshot_start_refused`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -71,7 +72,7 @@ fn dev_scenario_member_snapshot_start() {
         let held = crate::log::last_checkpoint(&copy).expect("the copy reads").expect("a checkpoint").seq;
         let member_snapshots = run.join("member-snapshots");
         let signers = [signer].into();
-        let signed = snapshot_start(&client, &origins, (&member_snapshots, &copy), DOMAIN, &signers, held)
+        let signed = snapshot_start(&client, &origins, (&member_snapshots, &copy), DOMAIN, &signers, (held, None))
             .await
             .expect("the snapshot is usable");
         assert_eq!(signed.snapshot.offset.seq, midnight.seq, "the member took the snapshot past midnight");
@@ -114,6 +115,14 @@ fn dev_scenario_member_snapshot_start() {
         assert!(member.seq.last_seq() > Some(held), "the member sequences past the node's head");
         println!("MEMBER turn tail_bytes={} start_s={:.3}", switch.bytes, start.as_secs_f64());
 
+        // A member whose in-office member's turns began at midnight takes the snapshot before them, which a check of
+        // those turns from its replica needs (`log_check::own_check`), and does not fetch the one past midnight.
+        let (first, before_turns) = (published(&snapshots, 2).remove(0), run.join("member-snapshots-before-turns"));
+        let bounds = (held, Some(midnight.ts));
+        let earlier = snapshot_start(&client, &origins, (&before_turns, &copy), DOMAIN, &signers, bounds).await;
+        assert_eq!(earlier.map(|signed| signed.snapshot.offset.seq), Some(first.seq), "the snapshot before midnight");
+        assert_eq!(daily_snapshots::read_manifest(&before_turns).unwrap(), [first], "and only it is fetched");
+
         // A snapshot whose state its signer did not vouch for is passed over, and paged.
         let path = member_snapshots.join(&midnight.file);
         let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -121,7 +130,7 @@ fn dev_scenario_member_snapshot_start() {
         accounts.values_mut().next().expect("an account")["balance"] = serde_json::json!("1");
         std::fs::write(&path, serde_json::to_vec(&written).unwrap()).unwrap();
         let (_guard, mut alerts) = capture_alerts();
-        let refused = snapshot_start(&client, &[], (&member_snapshots, &copy), DOMAIN, &signers, held).await;
+        let refused = snapshot_start(&client, &[], (&member_snapshots, &copy), DOMAIN, &signers, (held, None)).await;
         assert!(refused.is_none(), "an altered snapshot is not used");
         let alert = alerts.try_recv().expect("the refusal is paged");
         assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("snapshot_start_refused", "WARN"));
