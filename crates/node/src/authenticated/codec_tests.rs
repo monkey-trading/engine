@@ -1,10 +1,14 @@
-//! The node codec gives what upstream's own decoding of the stored JSON gives, parsing it once.
+//! The node codec gives what upstream's own decoding of a stored node gives, from its JSON or its compact
+//! borsh form, parsing it once.
 
 use anyhow::Result;
 use jmt::storage::{NibblePath, Node, NodeKey};
 
 use crate::authenticated::tests::{fresh, put, raw};
 use crate::authenticated::{Root, codec};
+
+/// Upstream's tags for its node variants in its borsh form, which a compact node starts with.
+const COMPACT_TAGS: [u8; 3] = [0, 1, 2];
 
 /// Every node a store holds after inserts, rewrites and deletes, internal and leaf, decodes to the node
 /// upstream's decoding of its JSON gives, its unhashed counts included.
@@ -74,4 +78,79 @@ fn packed(parent: &NodeKey, index: u8, version: u64) -> Result<NodeKey> {
     }
     wire["num_nibbles"] = (nibbles + 1).into();
     Ok(NodeKey::new(version, serde_json::from_value(wire)?))
+}
+
+/// Every node a store holds reads back from its compact form as upstream's decoding of its JSON gives it.
+#[test]
+fn every_stored_node_reads_back_from_its_compact_form() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let changes = (0..300u32).map(|n| put(&n.to_be_bytes(), &n.to_le_bytes())).collect();
+    store.update(&Root::empty([32; 32]), changes)?;
+    let conn = raw(&dir)?;
+    let mut rows = conn.prepare("SELECT version, path, data FROM nodes")?;
+    let rows =
+        rows.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)))?;
+    for row in rows {
+        let (version, path, data) = row?;
+        let key = NodeKey::new(u64::try_from(version)?, serde_json::from_slice::<NibblePath>(&path)?);
+        let upstream: Node = serde_json::from_slice(&data)?;
+        let compact = codec::encode(&upstream, true)?;
+        assert!(COMPACT_TAGS.contains(&compact[0]) && compact.len() < data.len(), "{compact:?}");
+        assert_eq!(codec::decode(&key, &compact)?, upstream);
+    }
+    Ok(())
+}
+
+/// A compact node is read only when it is exactly one node: an unknown tag, a byte too few or too many,
+/// or a count past its node's is refused.
+#[test]
+fn a_compact_node_is_refused_unless_it_is_exactly_one_node() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let root = store.update(&Root::empty([33; 32]), vec![put(b"a", b"A"), put(b"b", b"B")])?;
+    let conn = raw(&dir)?;
+    let key = codec::root_key(root.version.expect("a version"))?;
+    let data: Vec<u8> =
+        conn.query_row("SELECT data FROM nodes WHERE path = ?1 AND version = ?2", (codec::path(&key)?, 0), |row| {
+            row.get(0)
+        })?;
+    let compact = codec::encode(&serde_json::from_slice::<Node>(&data)?, true)?;
+    assert_eq!(compact[0], 1, "the root is internal");
+    let first_child = 1 + compact[1..].iter().position(|tag| *tag == 1).expect("a child");
+    let damaged = [
+        [compact.as_slice(), &[0]].concat(),
+        compact[..compact.len() - 1].to_vec(),
+        [&[3], &compact[1..]].concat(),
+        [&compact[..first_child], &[2], &compact[first_child + 1..]].concat(),
+        [&compact[..compact.len() - 16], &u64::MAX.to_le_bytes(), &compact[compact.len() - 8..]].concat(),
+    ];
+    for bytes in damaged {
+        assert!(codec::decode(&key, &bytes).is_err(), "{bytes:?}");
+    }
+    Ok(())
+}
+
+/// A namespace written compactly stores its new nodes compact and still reads its earlier JSON ones, and
+/// another namespace in the same store keeps writing JSON.
+#[test]
+fn a_compactly_written_namespace_stores_compact_nodes_beside_its_json_ones() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let (compact, json) = ([34; 32], [35; 32]);
+    let first = store.update(&Root::empty(compact), vec![put(b"a", b"A")])?;
+    store.write_compactly(compact)?;
+    let second = store.update(&first, vec![put(b"b", b"B")])?;
+    let other = store.update(&Root::empty(json), vec![put(b"c", b"C")])?;
+    let conn = raw(&dir)?;
+    let starts = |namespace: [u8; 32], version: u64| -> Result<Vec<u8>> {
+        let mut rows = conn.prepare("SELECT data FROM nodes WHERE namespace = ?1 AND version = ?2")?;
+        let firsts =
+            rows.query_map((&namespace[..], i64::try_from(version)?), |row| Ok(row.get::<_, Vec<u8>>(0)?[0]))?;
+        Ok(firsts.collect::<rusqlite::Result<_>>()?)
+    };
+    assert!(starts(compact, 0)?.iter().all(|byte| !COMPACT_TAGS.contains(byte)), "the first version is JSON");
+    let written = starts(compact, 1)?;
+    assert!(!written.is_empty() && written.iter().all(|byte| COMPACT_TAGS.contains(byte)), "the second is compact");
+    assert!(starts(json, 0)?.iter().all(|byte| !COMPACT_TAGS.contains(byte)), "the other namespace stays JSON");
+    assert_eq!((store.read(&second, b"a")?, store.read(&second, b"b")?), (Some(b"A".to_vec()), Some(b"B".to_vec())));
+    assert_eq!((store.read(&first, b"a")?, store.read(&other, b"c")?), (Some(b"A".to_vec()), Some(b"C".to_vec())));
+    Ok(())
 }

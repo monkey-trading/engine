@@ -110,6 +110,8 @@ struct WriteFiles {
 #[derive(Default)]
 struct Runtime {
     namespaces: BTreeMap<[u8; 32], Namespace>,
+    /// The namespaces whose new nodes are written compact.
+    compact: std::collections::BTreeSet<[u8; 32]>,
     poisoned: bool,
 }
 

@@ -33,10 +33,12 @@ impl Index {
         Self::resume(store, Head::empty(namespace, retention_ms)?)
     }
 
-    /// Resumes only a parent-certified COMPLETE head, proving the fixed state leaf.
+    /// Resumes only a parent-certified COMPLETE head, proving the fixed state leaf. The index writes its new
+    /// nodes compact, beside the JSON ones an older release wrote, which still read.
     /// Error cases:
     /// - unavailable/inconsistent state, a pending root, or failed proof/lease
     pub fn resume(store: Store, certified_head: Head) -> Result<Self> {
+        store.write_compactly(certified_head.root.namespace)?;
         let pin = store.lease(&certified_head.root)?;
         checked_state(&store, &certified_head)?;
         Ok(Self { store, head: certified_head, _visible_pin: pin, requires_rebuild: false })

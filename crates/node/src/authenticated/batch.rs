@@ -152,16 +152,16 @@ fn retirements(
     Ok(rows.into_iter().collect())
 }
 
-/// Inserts immutable nodes and live values, then proves every exact written result in this transaction,
-/// reading each new node back, with the nodes the operation has `checked`.
+/// Inserts immutable nodes, `compact` or as JSON, and live values, then proves every exact written result
+/// in this transaction, reading each new node back, with the nodes the operation has `checked`.
 /// Error cases:
 /// - version collision, malformed generated node or mismatch in actual persisted bytes
-pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked) -> Result<()> {
+pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked, compact: bool) -> Result<()> {
     let root = &prepared.root;
     let version = root.version.ok_or_else(|| anyhow::anyhow!("unversioned generated root"))?;
     for (key, node) in prepared.batch.node_batch.nodes() {
         ensure!(key.version() == version, "generated node version mismatch");
-        let raw = serde_json::to_vec(node)?;
+        let raw = codec::encode(node, compact)?;
         codec::decode(key, &raw)?;
         conn.prepare_cached("INSERT INTO nodes(namespace,version,path,data) VALUES(?1,?2,?3,?4)")?.execute(params![
             &root.namespace[..],
