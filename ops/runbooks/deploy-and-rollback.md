@@ -119,7 +119,8 @@ Use this procedure before any deployment or upgrade. None of its steps touches a
 
 6. Fill in every value in `node.toml` that carries an `OWNER` or `REPLACE` marker in
    [production-node.toml](production-node.toml), and delete each marker comment as you set its
-   value. Then confirm that no marker is left:
+   value. For a first deployment, the contracts' addresses are the ones that
+   [Deploy the contracts](#deploy-the-contracts) plans. Then confirm that no marker is left:
 
    ```shell
    grep -nE 'OWNER|REPLACE' node.toml
@@ -183,6 +184,38 @@ Use this procedure once, before the first deployment. **Changes the live system.
 approve each deployment. The constructor values are in
 [production-deployment.toml](production-deployment.toml).
 
+**Plan the addresses after step 1, before step 2.** Step 3 records the first release's configuration
+hash in the registry, and that configuration names the vault, the registry, its staking contract and
+the contracts that [Deploy the rotation contracts](#deploy-the-rotation-contracts) deploys. Deploy
+those seven contracts on Arbitrum from one deployer account that sends nothing else in between, in
+this order: the vault, the registry, the log heads, the seed receiver, the operator schedule, the
+parameter vote and the fault proof. `<deployer>` is that account's Foundry keystore name. Compute the
+seven addresses in that order from the account's address and its next nonce:
+
+```shell
+DEPLOYER=$(cast wallet address --account <deployer>)
+NONCE=$(cast nonce $DEPLOYER --rpc-url $RPC)
+for i in 0 1 2 3 4 5 6; do cast compute-address $DEPLOYER --nonce $((NONCE + i)); done
+```
+
+The registry deploys its staking contract itself, at
+`cast compute-address <registry address> --nonce 1`. The seed relay is on Ethereum, at the address
+that [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) computes. Write
+each address into `node.toml` before [Prepare a release](#prepare-a-release) hashes it. The template
+carries the schedule, the vote and the fault proof commented out: uncomment them, since without them
+the release mirrors no turn.
+
+- `custody.vault` and `custody.evm.staking.registry.contract`;
+- `custody.evm.staking.contract`, the staking contract;
+- `log_heads.contract`, and `seed_relay.receiver` and `seed_relay.relay`;
+- `custody.evm.staking.registry.schedule`;
+- `custody.evm.staking.registry.vote.contract`, with its `restriction_ttl`;
+- `custody.evm.staking.registry.fault_proof.contract`, with its `penalty`.
+
+After each deployment, check that the address it printed is the planned one. **If one differs, stop:
+the release's configuration names a contract that does not exist, and the release must be prepared
+again before the registry records it.**
+
 1. Deploy an OpenZeppelin `TimelockController`, with `[timelock] min_delay` as its delay and the
    deployment's multisig as its proposer. The delay must not be zero. Grant the executor and
    administrator roles deliberately, and once the timelock is set up, leave it administering
@@ -238,19 +271,11 @@ timelock turns it on later, as
 describes.
 
 Run the commands from `contracts/` in a checkout of the release's commit, with `<deployer>` the
-Foundry keystore account that deploys. `$VAULT`, `$REGISTRY`, `$TIMELOCK` and `$RPC` are set as
-[Variables](reference.md#variables) describes, and `$L1_RPC` is an Ethereum provider.
-
-**The registry records the first release's configuration hash, and that configuration names these
-contracts.** Compute each contract's address before [Deploy the contracts](#deploy-the-contracts)
-deploys the registry, and write it into the configuration before you hash it. A contract's address
-follows from the account that deploys it and that account's nonce at the deployment:
-
-```shell
-cast compute-address <deployer> --nonce <nonce>
-```
-
-Deploy each contract from that account at that nonce, and send nothing else from it in between.
+keystore name of the account that deployed the vault and the registry. `$VAULT`, `$REGISTRY`,
+`$TIMELOCK` and `$RPC` are set as [Variables](reference.md#variables) describes, and `$L1_RPC` is an
+Ethereum provider. Each contract lands at the address that
+[Deploy the contracts](#deploy-the-contracts) planned for it, which the release's configuration
+already names.
 
 1. **Deploy the log heads** on Arbitrum, naming the vault.
 
@@ -260,10 +285,12 @@ Deploy each contract from that account at that nonce, and send nothing else from
    forge create src/LogHeads.sol:LogHeads --rpc-url $RPC --account <deployer> --broadcast --constructor-args $VAULT
    ```
 
-   Set `LOG_HEADS` to the address that the command prints after `Deployed to:`.
+   Set `LOG_HEADS` to the address that the command prints after `Deployed to:`, which must be the
+   planned one.
 
 2. **Deploy the seed receiver and the seed relay,** as steps 1 to 3 of
-   [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) describe.
+   [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) describe, with the
+   receiver deployed from `<deployer>` at its planned address.
 
    **Changes the live system.** The owner must approve each deployment.
 
@@ -283,7 +310,8 @@ Deploy each contract from that account at that nonce, and send nothing else from
    the interval, the head tolerance, the missed slots and the held-head blocks. Then come the take
    window as its slots, minimum and maximum, the switch budget in seconds, and Arbitrum's block time in
    milliseconds. The constructor reverts with `InvalidLiveness` or `InvalidTakeWindow` when the values
-   break the schedule's limits. Set `SCHEDULE` to the address that the command prints, and check it:
+   break the schedule's limits. Set `SCHEDULE` to the address that the command prints, which must be
+   the planned one, and check it:
 
    ```shell
    cast call $SCHEDULE 'registry()(address)' --rpc-url $RPC
@@ -319,7 +347,7 @@ Deploy each contract from that account at that nonce, and send nothing else from
    forge create src/ParameterVote.sol:ParameterVote --rpc-url $RPC --account <deployer> --broadcast --constructor-args $SCHEDULE 259200 3600
    ```
 
-   Set `VOTE` to the address that the command prints.
+   Set `VOTE` to the address that the command prints, which must be the planned one.
    `cast call $VOTE 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`.
 
 6. **Deploy the fault proof** on Arbitrum, naming the vault.
@@ -330,22 +358,10 @@ Deploy each contract from that account at that nonce, and send nothing else from
    forge create src/FaultProof.sol:FaultProof --rpc-url $RPC --account <deployer> --broadcast --constructor-args $VAULT
    ```
 
-   Set `FAULT_PROOF` to the address that the command prints.
+   Set `FAULT_PROOF` to the address that the command prints, which must be the planned one.
 
-7. **Name the contracts in the release's configuration,** before
-   [Prepare a release](#prepare-a-release) hashes it. The configuration is part of the release, so a
-   contract named later needs a new release. In `node.toml`, built from
-   [production-node.toml](production-node.toml), set these keys. The template carries the last three
-   commented out: uncomment them, since without them the release mirrors no turn.
-
-   - `log_heads.contract` to `$LOG_HEADS`;
-   - `seed_relay.receiver` to `$SEED_RECEIVER`, and `seed_relay.relay` to `$SEED_RELAY`;
-   - `custody.evm.staking.registry.schedule` to `$SCHEDULE`;
-   - `custody.evm.staking.registry.vote.contract` to `$VOTE`, with its `restriction_ttl`;
-   - `custody.evm.staking.registry.fault_proof.contract` to `$FAULT_PROOF`, with its `penalty`.
-
-**How to tell it is resolved.** The registry names the schedule, every check above prints what it
-should, and checks 2 to 5 in [Variables and checks](seed-relay.md#variables-and-checks) pass. The
+**How to tell it is resolved.** The registry names the schedule, every contract is at the address
+that the release's configuration names, every check above prints what it should, and checks 2 to 5 in [Variables and checks](seed-relay.md#variables-and-checks) pass. The
 relayer's checks there need a running trading server, so they wait for the first deployment.
 
 ## First deployment

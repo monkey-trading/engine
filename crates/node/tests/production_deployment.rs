@@ -178,10 +178,9 @@ fn the_runbooks_commands_carry_the_inputs() {
 fn the_heartbeat_rule_is_the_owners_decision_of_2026_11_21() {
     let Schedule { liveness, take_window, .. } = inputs().schedule;
     let Liveness { heartbeat_interval, head_tolerance, heartbeat_misses, .. } = liveness;
-    assert_eq!((heartbeat_interval, head_tolerance, heartbeat_misses, take_window.slots), (140, 40, 3, 2));
     // A promotion passes `heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head's slot:
     // 7 to 9.3 minutes, and at most ten with the tolerance.
-    assert_eq!((heartbeat_misses * heartbeat_interval, (heartbeat_misses + 1) * heartbeat_interval), (420, 560));
+    assert_eq!((heartbeat_interval, head_tolerance, heartbeat_misses, take_window.slots), (140, 40, 3, 2));
 }
 
 #[test]
@@ -241,4 +240,13 @@ fn the_runbooks_schedule_deployment_carries_the_inputs() {
     for args in [&schedule, &vote] {
         assert!(runbook.lines().any(|line| line.trim().ends_with(args.as_str())), "the runbook lacks `{args}`");
     }
+    // The checks after the schedule's deployment print the file's rule and window.
+    let Liveness { heartbeat_interval, head_tolerance, heartbeat_misses, head_blocks } = liveness;
+    let prints = format!(
+        "`{heartbeat_interval}`, `{head_tolerance}`, `{heartbeat_misses}` and `{head_blocks}`, and the third `{}`, `{}` \
+         and `{}`.",
+        take_window.slots, take_window.minimum, take_window.maximum
+    );
+    let prose = runbook.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(prose.contains(&prints), "the runbook's schedule checks lack `{prints}`");
 }
