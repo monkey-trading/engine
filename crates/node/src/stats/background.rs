@@ -73,9 +73,33 @@ pub(crate) struct Reader {
     /// Held while a read checks `encodes` and queues, and while an encode is counted, so no read
     /// that found none pending is queued behind one.
     admission: Arc<Mutex<()>>,
+    /// Called at the two points admission guards, for tests to hold a thread there.
+    #[cfg(test)]
+    pub(super) probe: Arc<Mutex<Option<Probe>>>,
 }
 
+/// Where admission is held that a test may stop at, and whether `admission` is held there.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Point {
+    /// A read has seen `encodes` and not yet queued.
+    Checked,
+    /// An encode is counted and not yet queued.
+    Counted,
+}
+
+#[cfg(test)]
+pub(super) type Probe = Arc<dyn Fn(Point, bool) + Send + Sync>;
+
 impl Reader {
+    #[cfg(test)]
+    fn reached(&self, point: Point) {
+        let probe = self.probe.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(probe) = probe {
+            probe(point, self.admission.try_lock().is_err());
+        }
+    }
+
     /// Hands the worker a job, behind those already queued, waiting while its queue is full. A read
     /// the worker runs takes the record's lock, so the caller must not hold it. `false` once the
     /// worker has stopped.
@@ -85,6 +109,8 @@ impl Reader {
         if encode {
             let _admission = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
             self.encodes.fetch_add(1, Ordering::AcqRel);
+            #[cfg(test)]
+            self.reached(Point::Counted);
         }
         let sent = self.jobs.send(job).is_ok();
         self.sent.fetch_add(u64::from(sent && command), Ordering::Relaxed);
@@ -99,7 +125,10 @@ impl Reader {
         // Held to the queueing, which never waits, so an encode counted after the check is queued
         // after this read.
         let _admission = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
-        if self.encodes.load(Ordering::Acquire) > 0 {
+        let pending = self.encodes.load(Ordering::Acquire);
+        #[cfg(test)]
+        self.reached(Point::Checked);
+        if pending > 0 {
             return Err(read);
         }
         match self.jobs.try_send(Job::Read(read)) {
@@ -166,6 +195,8 @@ impl Background {
             sent: Arc::clone(&self.sent),
             encodes: Arc::clone(&self.encodes),
             admission: Arc::clone(&self.admission),
+            #[cfg(test)]
+            probe: Arc::default(),
         }
     }
 
