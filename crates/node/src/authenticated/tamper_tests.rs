@@ -191,6 +191,35 @@ fn raw_damage_that_keeps_the_header_is_refused_by_the_next_write() -> Result<()>
     Ok(())
 }
 
+/// Swapping the root pages of the `nodes` and `value_rows` tables in the file's schema between two writes,
+/// with SQLite's header and schema cookie left as they were, is refused by the next write, which reads the
+/// schema from the file, and the write commits nothing.
+#[test]
+fn a_schema_damaged_below_the_header_is_refused_by_the_next_write() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let root = store.update(&Root::empty([20; 32]), vec![put(b"a", b"A"), put(b"b", b"B")])?;
+    let before = row_count(&raw(&dir)?, "nodes")?;
+    let path = dir.path.join("store.sqlite");
+    let original = std::fs::read(&path)?;
+    let root_page = |table: &str| -> usize {
+        let record = [b"table".as_slice(), table.as_bytes(), table.as_bytes()].concat();
+        let at = original.windows(record.len()).position(|window| window == record.as_slice()).expect("the record");
+        assert!(original[at + record.len() + 1..].starts_with(format!("CREATE TABLE {table}").as_bytes()));
+        at + record.len()
+    };
+    let (nodes, values) = (root_page("nodes"), root_page("value_rows"));
+    let mut damaged = original.clone();
+    damaged.swap(nodes, values);
+    assert_ne!(damaged, original, "the root pages differ");
+    std::fs::write(&path, &damaged)?;
+    assert_eq!(damaged[..100], original[..100], "the header is unchanged");
+    assert!(store.update(&root, vec![put(b"a", b"next")]).is_err(), "the swapped tables are refused");
+    std::fs::write(&path, &original)?;
+    assert_eq!(row_count(&raw(&dir)?, "nodes")?, before, "the refused write committed nothing");
+    assert_eq!(store.read(&root, b"a")?, Some(b"A".to_vec()));
+    Ok(())
+}
+
 /// Finds distinct first nibbles so the fixture has two independently stored root children.
 /// Error cases:
 /// - key hashing fails; the finite fixture search failing is a test failure
