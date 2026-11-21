@@ -29,12 +29,6 @@ pub(super) const ORDER_TO_FILL_US: [u64; 3] = [5_000, 25_000, 100_000];
 pub(super) const PRICE_TO_STAMP_S: [f64; 3] = [0.001, 0.010, 0.050];
 pub(super) const STREAM_LAG_P99_MS: u64 = 100;
 pub(super) const BUSY_SHARE: f64 = 0.5;
-/// The regression guard a measured leg's order-to-fill p50 is held to in place of the bar's 5 ms,
-/// which the request path does not yet meet on every runner (#1045): about 1.7 times the slowest
-/// window CI's runners have shown (5.8 ms), and above the development machine's at full scale. The bar
-/// is still judged and printed on every run, and its absolute value is judged on the production host
-/// (#910).
-pub(super) const ORDER_TO_FILL_P50_GUARD_US: u64 = 10_000;
 
 /// The plan the node's side hands the generator, as JSON in `LOAD_PLAN`.
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -2,13 +2,12 @@
 //! usual size a leg breaks the launch bar on unchanged code, and a regression breaks it again. A leg
 //! that breaks it is run once more on the same node, and fails only if the second run breaks it too.
 
-use crate::load_scenario::report::{guarded, tolerate};
+use crate::load_scenario::report::tolerate;
 use crate::load_scenario::{MISSES, Run};
 
-/// What failed a measured leg's run: the bar's breaches outside the tolerance for a loaded runner,
-/// but for an order-to-fill p50 within its regression guard.
+/// What failed a measured leg's run: the bar's breaches outside the tolerance for a loaded runner.
 pub(super) fn failed(run: &Run) -> Vec<String> {
-    tolerate(&guarded(&run.windows), MISSES)
+    tolerate(&run.windows, MISSES)
 }
 
 /// Whether `run`, a leg that has just ended after the `earlier` ones, is run again: a measured leg that
@@ -30,7 +29,9 @@ pub(super) fn judged(runs: &[Run]) -> Vec<&Run> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load_scenario::report::Breach;
+    use crate::load_scenario::plan::{Figures, Quantiles};
+    use crate::load_scenario::report::{Breach, Snapshot, judge, order_to_fill_bars};
+    use crate::metrics::Metrics;
 
     fn run(leg: &str, over: bool) -> Run {
         let breach = Breach { budget: "order_to_fill_us", quantile: "p50", figure: 20_000.0, bar: 5_000.0 };
@@ -75,6 +76,26 @@ mod tests {
         unmeasured.gaps = vec!["no market order filled".into()];
         assert!(!wanted(&[], &unmeasured));
         assert!(!wanted(&[], &run("ramp_20x", true)));
+    }
+
+    /// Order-to-fill's median is held to the launch bar's 5 ms, at this runner's scale, in every window:
+    /// a run at the bar in every window holds, and one window just over it fails the run.
+    #[test]
+    fn a_run_whose_order_to_fill_median_passes_its_bar_in_one_window_fails() {
+        let metrics = Metrics::new();
+        let before = Snapshot::take(&metrics);
+        metrics.latency.price_to_stamp.observe(0.000_1);
+        let node = Snapshot::take(&metrics).since(&before);
+        let bar = order_to_fill_bars()[0];
+        let window = |p50| {
+            let filled = Quantiles { count: 100, p50, p99: p50, p999: p50, max: p50 };
+            judge(&Figures { order_to_fill_us: filled, ..Figures::default() }, &node)
+        };
+        let at_bar = Run { windows: vec![window(bar); 5], ..run("launch_flow", false) };
+        assert!(failed(&at_bar).is_empty(), "every window at the bar");
+        let mut over = at_bar;
+        over.windows[2] = window(bar + 1);
+        assert_eq!(failed(&over).len(), 1, "one window over the bar: {:?}", over.windows[2]);
     }
 
     #[test]

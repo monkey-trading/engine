@@ -946,7 +946,7 @@ an index: load only the rule whose hint matches the current action.
   bar holding the market orders of traders that sent a screened request within the screening bound, whose decisions the
   node keeps fresh, under a source answering in 200 ms, and those of traders that wait for the source, or may, or that
   queue behind another trader's wait on their client's connection, printed apart (#1070), failing outside it under
-  a loaded runner's tolerance but for order-to-fill p50, held to a 10 ms regression guard until #1045 cuts the path, then the log replayed from the rebuilt book (`replay::replay_path_from`);
+  a loaded runner's tolerance, then the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-recovery-scale.sh`, the recovery dev scenario (`sequencer/recovery_scale/`, #908): a node's sequencer takes over
   the launch book on a test clock and writes 30 days of launch flow and 3 of ten times it on accelerated sequenced time
   (`flow.rs`: the template's ticks, each market's price commands at `load_scenario`'s live rates while its venue is
