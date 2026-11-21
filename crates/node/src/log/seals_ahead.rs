@@ -173,6 +173,7 @@ impl SealsAhead {
     /// then checks every seal in place.
     pub(crate) fn start(path: &Path, from: u64, link: B256, workers: ReplayWorkers) -> Option<Self> {
         if !readable_twice(path) {
+            info!(path = %path.display(), "the replay checks each command seal in place: the log cannot be read a second time");
             return None;
         }
         let workers = workers.0.get();
@@ -288,13 +289,14 @@ impl Live {
 }
 
 /// Whether the log at `path` can be read a second time without taking bytes from the replay's own
-/// read: a directory or a regular file, and not a pipe, a device or a descriptor's alias under `/dev`
-/// or `/proc`, which a second open may share with the first.
+/// read: a directory, wherever it is, whose segments the reader opens afresh and requires to be regular
+/// files, or a regular file that is not a descriptor's alias under `/dev` or `/proc`, which a second open
+/// may share with the first. Not a pipe or a device.
 fn readable_twice(path: &Path) -> bool {
     fs::canonicalize(path).is_ok_and(|real| {
-        !real.starts_with("/dev")
-            && !real.starts_with("/proc")
-            && fs::metadata(&real).is_ok_and(|found| found.is_dir() || found.is_file())
+        fs::metadata(&real).is_ok_and(|found| {
+            found.is_dir() || (found.is_file() && !real.starts_with("/dev") && !real.starts_with("/proc"))
+        })
     })
 }
 
