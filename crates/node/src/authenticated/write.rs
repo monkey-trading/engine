@@ -46,11 +46,12 @@ impl Store {
     /// - short/excess source, reserved key, failed proof, version collision or durability failure
     pub fn write_stream(&self, root: &Root, key: &[u8], length: u64, mut source: impl Read) -> Result<Root> {
         let key = caller_key(&root.namespace, key)?;
+        let compact = self.compact(&root.namespace)?;
         self.write_transaction(
             root,
             |tx| {
                 let checked = Checked::default();
-                let mut staging = Staging::new(tx, root, &checked)?;
+                let mut staging = Staging::new(tx, root, &checked, compact)?;
                 staging.value(key, Some((length, &mut source)))?;
                 let written = staging.finish()?;
                 ensure!(
@@ -95,11 +96,12 @@ impl Store {
             let hash = caller_key(&root.namespace, &key)?;
             ensure!(sorted.insert(hash, value).is_none(), "duplicate caller key or key hash");
         }
+        let compact = self.compact(&root.namespace)?;
         self.write_transaction(
             root,
             |tx| {
                 let checked = Checked::default();
-                let mut staging = Staging::new(tx, root, &checked)?;
+                let mut staging = Staging::new(tx, root, &checked, compact)?;
                 for (key, value) in &sorted {
                     let mut source = Cursor::new(value.as_deref().unwrap_or_default());
                     let input = value.as_ref().map(|bytes| (bytes.len() as u64, &mut source));
@@ -224,6 +226,28 @@ impl Store {
             return Err(error);
         }
         self.publish(root)
+    }
+
+    /// Writes the nodes of `namespace`'s later versions compact, in upstream's borsh form, where its earlier
+    /// ones stay JSON; every read takes either.
+    /// Error cases:
+    /// - poisoned runtime lock
+    pub fn write_compactly(&self, namespace: [u8; 32]) -> Result<()> {
+        self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.compact.insert(namespace);
+        Ok(())
+    }
+
+    /// Whether `namespace`'s new nodes are written compact.
+    /// Error cases:
+    /// - poisoned runtime lock
+    pub(super) fn compact(&self, namespace: &[u8; 32]) -> Result<bool> {
+        Ok(self
+            .inner
+            .runtime
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lease registry poisoned"))?
+            .compact
+            .contains(namespace))
     }
 
     /// Whether a commit's outcome was uncertain, so this store refuses writes until it is reopened.

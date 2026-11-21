@@ -22,14 +22,16 @@ pub(super) struct Staging<'a> {
     queue: Queue,
     pending: BTreeMap<KeyHash, Option<Vec<u8>>>,
     wrote: bool,
+    /// Whether the update writes its nodes compact.
+    compact: bool,
 }
 
 impl<'a> Staging<'a> {
     /// Proves the original maintenance queue before accepting logical changes, sharing the nodes
-    /// `checked` across the update's reads.
+    /// `checked` across the update's reads, and writing its nodes `compact` or as JSON.
     /// Error cases:
     /// - a queue/root proof or cursor check fails
-    pub(super) fn new(conn: &'a Connection, root: &Root, checked: &'a Checked) -> Result<Self> {
+    pub(super) fn new(conn: &'a Connection, root: &Root, checked: &'a Checked, compact: bool) -> Result<Self> {
         Ok(Self {
             conn,
             checked,
@@ -38,6 +40,7 @@ impl<'a> Staging<'a> {
             queue: receipts::queue(conn, root)?,
             pending: BTreeMap::new(),
             wrote: false,
+            compact,
         })
     }
 
@@ -101,7 +104,7 @@ impl<'a> Staging<'a> {
         }
         let changes = std::mem::take(&mut self.pending).into_iter().collect();
         let prepared = batch::prepare(self.conn, &self.root, changes, self.queue.clone(), false, self.checked)?;
-        batch::persist(self.conn, &prepared, self.checked)?;
+        batch::persist(self.conn, &prepared, self.checked, self.compact)?;
         self.root = prepared.root;
         self.points = Points::new(self.conn, &self.root, self.checked);
         self.queue.hi = self.root.version.ok_or_else(|| anyhow::anyhow!("missing staged version"))? + 1;

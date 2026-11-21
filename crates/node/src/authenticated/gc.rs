@@ -134,7 +134,7 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
     // Collection is rare, so its prepare and persist each check their nodes afresh; its checks after the
     // deletes below read through `receipts::point`, which always does.
     let prepared = batch::prepare(conn, root, changes, queue.clone(), true, &Checked::default())?;
-    batch::persist(conn, &prepared, &Checked::default())?;
+    batch::persist(conn, &prepared, &Checked::default(), store.compact(&root.namespace)?)?;
     for row in &retired {
         report.deleted += match row {
             RetiredRow::Node(key) => conn

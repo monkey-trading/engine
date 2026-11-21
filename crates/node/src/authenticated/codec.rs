@@ -1,14 +1,17 @@
 //! Validate fixed-size node shapes before calling upstream code with assertions.
 
-use anyhow::{Result, ensure};
+use anyhow::{Result, bail, ensure};
 use jmt::storage::{LeafNode, NibblePath, Node, NodeKey};
 use jmt::{KeyHash, ValueHash};
 use serde::{Deserialize, Serialize};
 
 use crate::authenticated::{EMPTY_HASH, Hasher, MAX_NODE_BYTES};
 
-/// `Node::Internal`'s index among upstream's node variants, in its borsh form.
+/// `Node::Null`'s, `Node::Internal`'s and `Node::Leaf`'s indexes among upstream's node variants, in its
+/// borsh form, which a stored node starts with when it is compact. JSON starts with none of them.
+const NULL_VARIANT: u8 = 0;
 const INTERNAL_VARIANT: u8 = 1;
+const LEAF_VARIANT: u8 = 2;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,13 +90,23 @@ pub(super) fn child_key(parent: &NodeKey, index: u8, version: u64) -> Result<Nod
     Ok(NodeKey::new(version, path.nibbles().chain(std::iter::once(index.into())).collect()))
 }
 
-/// Decodes bounded, fixed-arity node fields and validates all local invariants first, parsing the stored
-/// JSON once.
+/// A node as it is stored: upstream's compact borsh form, or its JSON.
 /// Error cases:
-/// - malformed JSON, invalid counters/versions/prefixes, null children, or excessive depth
+/// - the node does not encode
+pub(super) fn encode(node: &Node, compact: bool) -> Result<Vec<u8>> {
+    Ok(if compact { borsh::to_vec(node)? } else { serde_json::to_vec(node)? })
+}
+
+/// Decodes bounded, fixed-arity node fields, stored compact or as JSON, and validates all local
+/// invariants first, parsing the stored bytes once.
+/// Error cases:
+/// - malformed bytes, invalid counters/versions/prefixes, null children, or excessive depth
 pub(super) fn decode(key: &NodeKey, raw: &[u8]) -> Result<Node> {
     ensure!(raw.len() <= MAX_NODE_BYTES, "node exceeds storage format");
-    let wire: WireNode = serde_json::from_slice(raw)?;
+    let wire = match raw.first() {
+        Some(&(NULL_VARIANT | INTERNAL_VARIANT | LEAF_VARIANT)) => compact(raw)?,
+        _ => serde_json::from_slice(raw)?,
+    };
     let path = path_wire(&path(key)?)?;
     match &wire {
         WireNode::Null => ensure!(path.num_nibbles == 0, "non-root null node"),
@@ -165,6 +178,78 @@ fn node(wire: &WireNode) -> Result<Node> {
     form.extend_from_slice(&u64::try_from(internal.children.num_children)?.to_le_bytes());
     form.extend_from_slice(&u64::try_from(internal.leaf_count)?.to_le_bytes());
     Ok(borsh::from_slice(&form)?)
+}
+
+/// The wire form of upstream's borsh form of a node, read strictly: known tags only, every count in range,
+/// and no byte past the node.
+/// Error cases:
+/// - an unknown tag, a short or long input, or a count past `usize`
+fn compact(raw: &[u8]) -> Result<WireNode> {
+    let mut bytes = Bytes(raw);
+    let wire = match bytes.byte()? {
+        NULL_VARIANT => WireNode::Null,
+        LEAF_VARIANT => WireNode::Leaf(WireLeaf { key_hash: bytes.hash()?, value_hash: bytes.hash()? }),
+        INTERNAL_VARIANT => {
+            let mut children: [Option<WireChild>; 16] = Default::default();
+            for child in &mut children {
+                *child = match bytes.byte()? {
+                    0 => None,
+                    1 => Some(WireChild {
+                        hash: bytes.hash()?,
+                        version: bytes.u64()?,
+                        node_type: match bytes.byte()? {
+                            0 => WireType::Leaf,
+                            1 => WireType::Internal { leaf_count: usize::try_from(bytes.u64()?)? },
+                            _ => bail!("invalid compact child type"),
+                        },
+                    }),
+                    _ => bail!("invalid compact child tag"),
+                };
+            }
+            let num_children = usize::try_from(bytes.u64()?)?;
+            let leaf_count = usize::try_from(bytes.u64()?)?;
+            WireNode::Internal(Box::new(WireInternal { children: WireChildren { children, num_children }, leaf_count }))
+        }
+        _ => bail!("invalid compact node tag"),
+    };
+    ensure!(bytes.0.is_empty(), "bytes past a compact node");
+    Ok(wire)
+}
+
+/// A compact node's bytes, read in order.
+struct Bytes<'a>(&'a [u8]);
+
+impl<'a> Bytes<'a> {
+    /// The next `n` bytes.
+    /// Error cases:
+    /// - fewer are left
+    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+        ensure!(self.0.len() >= n, "short compact node");
+        let (taken, rest) = self.0.split_at(n);
+        self.0 = rest;
+        Ok(taken)
+    }
+
+    /// The next byte.
+    /// Error cases:
+    /// - none is left
+    fn byte(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+
+    /// The next little-endian `u64`.
+    /// Error cases:
+    /// - fewer than eight bytes are left
+    fn u64(&mut self) -> Result<u64> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into()?))
+    }
+
+    /// The next 32-byte hash.
+    /// Error cases:
+    /// - fewer than 32 bytes are left
+    fn hash(&mut self) -> Result<[u8; 32]> {
+        Ok(self.take(32)?.try_into()?)
+    }
 }
 
 /// Computes node hashes exclusively through upstream implementations.

@@ -166,6 +166,61 @@ fn host_lengths_cannot_request_unbounded_node_or_value_decoding() -> Result<()> 
     Ok(())
 }
 
+/// Damage written into the file's bytes between two writes, with SQLite's header and change counter left as
+/// they were, is refused by the next write that reads the damaged node: each write opens its own connection,
+/// which reads its pages and schema from the file.
+#[test]
+fn raw_damage_that_keeps_the_header_is_refused_by_the_next_write() -> Result<()> {
+    let (dir, store) = fresh()?;
+    // Compact, so a byte of a child's hash can change and the node still decode.
+    store.write_compactly([19; 32])?;
+    let root = store.update(&Root::empty([19; 32]), vec![put(b"a", b"A"), put(b"b", b"B")])?;
+    let key = codec::root_key(root.version.expect("a version"))?;
+    let node: Vec<u8> =
+        raw(&dir)?.query_row("SELECT data FROM nodes WHERE path = ?1", [codec::path(&key)?], |row| row.get(0))?;
+    let child_hash = 2 + node[1..].iter().position(|tag| *tag == 1).expect("a child");
+    let path = dir.path.join("store.sqlite");
+    let mut file = std::fs::read(&path)?;
+    let header = file[..100].to_vec();
+    let at = file.windows(node.len()).position(|window| window == node.as_slice()).expect("the root node's bytes");
+    file[at + child_hash + 5] ^= 0x55;
+    std::fs::write(&path, &file)?;
+    assert_eq!(std::fs::read(&path)?[..100], header, "the header is unchanged");
+    let refused = store.update(&root, vec![put(b"a", b"next")]).expect_err("the damaged root node is refused");
+    assert!(format!("{refused:#}").contains("root node hash mismatch"), "{refused:#}");
+    Ok(())
+}
+
+/// Swapping the root pages of the `nodes` and `value_rows` tables in the file's schema between two writes,
+/// with SQLite's header and schema cookie left as they were, is refused by the next write, which reads the
+/// schema from the file, and the write leaves the file as it found it.
+#[test]
+fn a_schema_damaged_below_the_header_is_refused_by_the_next_write() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let root = store.update(&Root::empty([20; 32]), vec![put(b"a", b"A"), put(b"b", b"B")])?;
+    let path = dir.path.join("store.sqlite");
+    let original = std::fs::read(&path)?;
+    // A `sqlite_schema` record's body holds its type, name and table name side by side, then its root page,
+    // one byte for a page below 128, then its SQL.
+    let root_page_at = |table: &str| -> usize {
+        let record = [b"table".as_slice(), table.as_bytes(), table.as_bytes()].concat();
+        let at = original.windows(record.len()).position(|window| window == record.as_slice()).expect("the record");
+        assert!(original[at + record.len() + 1..].starts_with(format!("CREATE TABLE {table}").as_bytes()));
+        at + record.len()
+    };
+    let mut damaged = original.clone();
+    damaged.swap(root_page_at("nodes"), root_page_at("value_rows"));
+    assert_ne!(damaged, original, "the root pages differ");
+    std::fs::write(&path, &damaged)?;
+    assert!(store.update(&root, vec![put(b"a", b"next")]).is_err(), "the swapped tables are refused");
+    assert_eq!(std::fs::read(&path)?, damaged, "the refused write changed the file");
+    assert!(!dir.path.join("store.sqlite-journal").exists(), "the refused write left a journal");
+    std::fs::write(&path, &original)?;
+    let next = store.update(&root, vec![put(b"a", b"next")])?;
+    assert_eq!(store.read(&next, b"a")?, Some(b"next".to_vec()), "the repaired store writes from the same head");
+    Ok(())
+}
+
 /// Finds distinct first nibbles so the fixture has two independently stored root children.
 /// Error cases:
 /// - key hashing fails; the finite fixture search failing is a test failure

@@ -1,7 +1,7 @@
 //! Proof-verified, host-backed JMT versions with authenticated persistent retirement receipts.
 //! `open_existing` is strictly read-only; the parent authorizes writes only after recovery preflight.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -26,7 +26,10 @@ pub use versions::{Lease, Session};
 mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
-/// The exact packed representation and upstream proof interpretation bound by cache signatures.
+/// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
+/// 2 stores each node as its JSON or as upstream's compact borsh form, which its first byte tells apart, and
+/// this release reads both; a release before compact nodes reads JSON alone, so it refuses a store holding a
+/// compact node at the first one it meets, and its recovery falls back as for any unreadable cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -107,6 +110,8 @@ struct WriteFiles {
 #[derive(Default)]
 struct Runtime {
     namespaces: BTreeMap<[u8; 32], Namespace>,
+    /// The namespaces whose new nodes are written compact.
+    compact: BTreeSet<[u8; 32]>,
     poisoned: bool,
 }
 
@@ -222,3 +227,5 @@ mod recovery_tests;
 mod tamper_tests;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod update_tests;
