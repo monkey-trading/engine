@@ -455,21 +455,21 @@ only where a range starts. With `--custody-config`, no range starts after the va
 checkpoint.
 
 A replay in ranges is projected, not yet measured, to take about 25 minutes for 30 days of launch
-flow, the expected mix of prices and orders, at 100,000 accounts, about 246 million instructions, on a
-machine with 20 physical cores and
-64 GB of memory, with `--signer` alone or `--attestation`. The projection takes about 79
-CPU-microseconds an instruction with run-end seal checks and about 40 CPU-seconds to load and root
-each day's snapshot, about 20,800 CPU-seconds in all, and assumes each range keeps about 1.6 cores
-busy as one replaying alone does. The default runs one range for every two physical cores, ten here,
-each taking the next day as it finishes. A range replays no faster than one core applies its
-instructions, so more cores shorten the replay only while there are days to share among them, and
-ranges that slow each other lengthen it: at 10,000 accounts, an hour of flow replayed whole in 78
-seconds and in eight ranges on seven jobs in 32, on a shared machine. Each range holds an engine of
-its own: seven at 10,000 accounts peaked at 0.9 GB together, so a range at 100,000 accounts holds
-about 1.3 GB, and memory bounds `--jobs` as cores do. With `--custody-config` the replay first scans
-the log for the checkpoints to ask the vault about, reading every segment at once and parsing only
-what are not instructions: at 10,000 accounts it took 0.2 seconds where a whole read took 18, and at
-100,000 accounts it reads about 390 GB from disk, a few minutes at a fast disk's speed.
+flow, the expected mix of prices and orders, at 100,000 accounts, about 246 million instructions, on
+a machine with 20 physical cores and 64 GB of memory, with `--signer` alone or `--attestation`. The
+projection takes about 79 CPU-microseconds an instruction with run-end seal checks and about 40
+CPU-seconds to load and root each day's snapshot, about 20,800 CPU-seconds in all, and assumes each
+range keeps about 1.6 cores busy as one replaying alone does. The default runs one range for every
+two physical cores, ten here, each taking the next day as it finishes. A range replays no faster
+than one core applies its instructions, so more cores shorten the replay only while there are days
+to share among them, and ranges that slow each other lengthen it: at 10,000 accounts, an hour of
+flow replayed whole in 78 seconds and in eight ranges on seven jobs in 32, on a shared machine. Each
+range holds an engine of its own: seven at 10,000 accounts peaked at 0.9 GB together, so a range at
+100,000 accounts holds about 1.3 GB, and memory bounds `--jobs` as cores do. With `--custody-config`
+the replay first scans the log for the checkpoints to ask the vault about, reading every segment at
+once and parsing only what are not instructions: at 10,000 accounts it took 0.2 seconds where a
+whole read took 18, and at 100,000 accounts it reads about 390 GB from disk, a few minutes at a fast
+disk's speed.
 
 A trading server's recovery, the log-head prefix pass, the startup history rebuild, a member's
 replica build and a taken copy's replay check every seal in full, since each goes on to sign over,
