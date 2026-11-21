@@ -112,6 +112,25 @@ fn stale_writer_root_and_version_overflow_refuse() -> Result<()> {
     Ok(())
 }
 
+/// An unsynced update commits and reads as an update does, without a sync, and the next synced update
+/// syncs the database and its directory once, its own commit and the unsynced one's with it.
+#[test]
+fn an_unsynced_update_reads_at_once_and_the_next_synced_update_syncs_it() -> Result<()> {
+    let (_dir, store) = fresh()?;
+    let first = store.update(&Root::empty([8; 32]), vec![put(b"x", b"one")])?;
+    let synced = store.syncs();
+    let second = store.update_unsynced(&first, vec![put(b"x", b"two"), put(b"y", b"new")])?;
+    assert_eq!(
+        (store.read(&second, b"x")?, store.read(&second, b"y")?),
+        (Some(b"two".to_vec()), Some(b"new".to_vec()))
+    );
+    assert_eq!(store.syncs(), synced, "an unsynced update syncs nothing");
+    let third = store.update(&second, vec![(b"y".to_vec(), None)])?;
+    assert_eq!((store.read(&third, b"x")?, store.read(&third, b"y")?), (Some(b"two".to_vec()), None));
+    assert_eq!(store.syncs(), synced + 1, "the synced update syncs once");
+    Ok(())
+}
+
 /// Creates an isolated file-backed store without a new test dependency.
 /// Error cases:
 /// - temporary directory or store creation fails

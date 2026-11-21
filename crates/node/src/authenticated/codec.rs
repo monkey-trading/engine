@@ -1,10 +1,14 @@
 //! Validate fixed-size node shapes before calling upstream code with assertions.
 
 use anyhow::{Result, ensure};
-use jmt::storage::{NibblePath, Node, NodeKey};
+use jmt::storage::{LeafNode, NibblePath, Node, NodeKey};
+use jmt::{KeyHash, ValueHash};
 use serde::{Deserialize, Serialize};
 
 use crate::authenticated::{EMPTY_HASH, Hasher, MAX_NODE_BYTES};
+
+/// `Node::Internal`'s index among upstream's node variants, in its borsh form.
+const INTERNAL_VARIANT: u8 = 1;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,37 +70,32 @@ pub(super) fn path(key: &NodeKey) -> Result<Vec<u8>> {
     Ok(raw)
 }
 
-/// Creates a root node key using the upstream serde representation.
+/// Creates a root node key: the empty path at `version`.
 /// Error cases:
-/// - serialization fails
+/// - none
 pub(super) fn root_key(version: u64) -> Result<NodeKey> {
-    Ok(NodeKey::new(version, serde_json::from_slice::<NibblePath>(br#"{"num_nibbles":0,"bytes":[]}"#)?))
+    Ok(NodeKey::new(version, NibblePath::from_iter(std::iter::empty())))
 }
 
-/// Derives a bounded child path without accessing upstream private nibble constructors.
+/// Derives a bounded child path: the parent's nibbles and then `index`, collected through upstream's
+/// public nibble collection, which packs a path as its own child keys do.
 /// Error cases:
 /// - the parent is already a full path, or the child index/version is invalid
 pub(super) fn child_key(parent: &NodeKey, index: u8, version: u64) -> Result<NodeKey> {
-    let mut wire = path_wire(&path(parent)?)?;
-    ensure!(wire.num_nibbles < 64 && index < 16 && version <= parent.version(), "invalid child key");
-    if wire.num_nibbles % 2 == 0 {
-        wire.bytes.push(index << 4);
-    } else {
-        let last = wire.bytes.last_mut().ok_or_else(|| anyhow::anyhow!("missing path byte"))?;
-        *last |= index;
-    }
-    wire.num_nibbles += 1;
-    Ok(NodeKey::new(version, serde_json::from_slice(&serde_json::to_vec(&wire)?)?))
+    let path = parent.nibble_path();
+    ensure!(path.num_nibbles() < 64 && index < 16 && version <= parent.version(), "invalid child key");
+    Ok(NodeKey::new(version, path.nibbles().chain(std::iter::once(index.into())).collect()))
 }
 
-/// Decodes bounded, fixed-arity node fields and validates all local invariants first.
+/// Decodes bounded, fixed-arity node fields and validates all local invariants first, parsing the stored
+/// JSON once.
 /// Error cases:
 /// - malformed JSON, invalid counters/versions/prefixes, null children, or excessive depth
 pub(super) fn decode(key: &NodeKey, raw: &[u8]) -> Result<Node> {
     ensure!(raw.len() <= MAX_NODE_BYTES, "node exceeds storage format");
     let wire: WireNode = serde_json::from_slice(raw)?;
     let path = path_wire(&path(key)?)?;
-    match wire {
+    match &wire {
         WireNode::Null => ensure!(path.num_nibbles == 0, "non-root null node"),
         WireNode::Leaf(leaf) => {
             for nibble in 0..path.num_nibbles {
@@ -106,7 +105,6 @@ pub(super) fn decode(key: &NodeKey, raw: &[u8]) -> Result<Node> {
                     "leaf outside its path"
                 );
             }
-            let _ = leaf.value_hash;
         }
         WireNode::Internal(internal) => {
             ensure!(path.num_nibbles < 64, "internal node at terminal depth");
@@ -127,12 +125,46 @@ pub(super) fn decode(key: &NodeKey, raw: &[u8]) -> Result<Node> {
                     }
                 };
                 total = total.checked_add(leaves).ok_or_else(|| anyhow::anyhow!("leaf count overflow"))?;
-                let _ = child.hash;
             }
             ensure!(total == internal.leaf_count, "invalid leaf count");
         }
     }
-    Ok(serde_json::from_slice(raw)?)
+    node(&wire)
+}
+
+/// The upstream node a validated wire node describes, field for field as upstream's own decoding of the
+/// same JSON gives it. An internal node has no public constructor, so it is built from its borsh form,
+/// which upstream's derive fixes: the variant's index, each of the 16 children as an option of its
+/// hash, version and type, the child count, then the leaf count, each count a little-endian `u64`.
+/// Error cases:
+/// - upstream's decoding refuses the form, which a validated node never gives
+fn node(wire: &WireNode) -> Result<Node> {
+    let internal = match wire {
+        WireNode::Null => return Ok(Node::Null),
+        WireNode::Leaf(leaf) => return Ok(LeafNode::new(KeyHash(leaf.key_hash), ValueHash(leaf.value_hash)).into()),
+        WireNode::Internal(internal) => internal,
+    };
+    let mut form = Vec::with_capacity(1 + 16 * 50 + 16);
+    form.push(INTERNAL_VARIANT);
+    for child in internal.children.children.iter() {
+        let Some(child) = child else {
+            form.push(0);
+            continue;
+        };
+        form.push(1);
+        form.extend_from_slice(&child.hash);
+        form.extend_from_slice(&child.version.to_le_bytes());
+        match child.node_type {
+            WireType::Leaf => form.push(0),
+            WireType::Internal { leaf_count } => {
+                form.push(1);
+                form.extend_from_slice(&u64::try_from(leaf_count)?.to_le_bytes());
+            }
+        }
+    }
+    form.extend_from_slice(&u64::try_from(internal.children.num_children)?.to_le_bytes());
+    form.extend_from_slice(&u64::try_from(internal.leaf_count)?.to_le_bytes());
+    Ok(borsh::from_slice(&form)?)
 }
 
 /// Computes node hashes exclusively through upstream implementations.

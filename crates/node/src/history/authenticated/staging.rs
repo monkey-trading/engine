@@ -45,7 +45,7 @@ impl Staged {
 
     /// Commits after finite work; the caller finishes one small header operation before this check.
     /// Error cases:
-    /// - any exact update proof, durable commit, lease, or observer failure
+    /// - any exact update proof, private commit, lease, or observer failure
     pub fn flush_if_full(&mut self, observe: &mut impl FnMut(&Root, StageInfo) -> Result<()>) -> Result<()> {
         if self.overlay.len() >= STAGED_KEYS || self.overlay.held_bytes() >= STAGED_BYTES {
             self.flush(observe)?;
@@ -74,7 +74,13 @@ impl Staged {
         let info = ();
         let fresh = Overlay::new(&self.store, &self.root);
         let updates = std::mem::replace(&mut self.overlay, fresh).finish();
-        let root = self.store.update(&self.root, updates)?;
+        // A private stage is never a head: the complete stage's synced update makes it durable with
+        // itself, and a crash before then resumes from the head the stages started at.
+        let root = if self.state.complete {
+            self.store.update(&self.root, updates)?
+        } else {
+            self.store.update_unsynced(&self.root, updates)?
+        };
         let pin = self.store.lease(&root)?;
         self.root = root;
         self.overlay = Overlay::session(&self.store, &pin);

@@ -33,10 +33,10 @@ impl Index {
         self.ingest_taken(&taken)
     }
 
-    /// Ingests consecutive commands as one published update, so a batch costs one durable commit
-    /// plus one per full private stage, instead of one per command. Each command's derived rows are
-    /// stored after its logged events. Commands the head already covers are skipped; a retry of the
-    /// head's command must match it exactly.
+    /// Ingests consecutive commands as one published update, so a batch costs one synced commit, its
+    /// complete stage's, plus one unsynced commit per full private stage, instead of one per command.
+    /// Each command's derived rows are stored after its logged events. Commands the head already covers
+    /// are skipped; a retry of the head's command must match it exactly.
     /// Error cases:
     /// - invalid order/retry, failed proof/stage/durability, or a writer requiring fresh generation,
     ///   for any command in the batch; the published head is unchanged on error
@@ -44,7 +44,7 @@ impl Index {
         self.ingest_with(commands, &mut |_, _, _| Ok(()))
     }
 
-    /// Drives the real staged pipeline with an observation/failure seam after private durable commits.
+    /// Drives the real staged pipeline with an observation/failure seam after private commits.
     /// Error cases:
     /// - the same validation/write failures as ingest, or the private test observer
     fn ingest_with(

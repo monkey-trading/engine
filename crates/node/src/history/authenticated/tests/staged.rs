@@ -69,6 +69,23 @@ fn thousand_event_command_uses_bounded_private_batches_and_publishes_only_comple
     }
 }
 
+/// A command's private stages commit without a sync, and its complete stage syncs them with itself: one
+/// sync for the whole update, however many stages it took.
+#[test]
+fn a_commands_private_stages_sync_once_with_its_complete_stage() {
+    let (mut index, _) = fixture("stage-syncs", 1_000);
+    let before = index.store.syncs();
+    let mut stages = 0;
+    index
+        .ingest_observed(fanout(0, 0, 1_257), |_, _, _| {
+            stages += 1;
+            Ok(())
+        })
+        .expect("whole large command");
+    assert!(stages > 20, "{stages} private stages");
+    assert_eq!(index.store.syncs() - before, 1, "only the complete stage syncs");
+}
+
 #[test]
 fn thousand_event_expiry_on_no_events_keeps_equality_then_expires_every_row_and_kind() {
     let (mut index, _) = fixture("thousand-expiry", 100);
@@ -120,7 +137,7 @@ fn midstage_append_failure_leaves_old_complete_head_pinned_and_refuses_any_stale
                 assert_eq!(visible.page(query(A))?, expected(std::slice::from_ref(&original), &query(A), 100));
                 if stages == 3 {
                     failed_root = Some(root.clone());
-                    anyhow::bail!("injected failure after three real durable private commits");
+                    anyhow::bail!("injected failure after three real private commits");
                 }
                 Ok(())
             })

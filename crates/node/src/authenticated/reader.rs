@@ -85,17 +85,25 @@ impl<'a> Reader<'a> {
     /// Error cases:
     /// - bounded storage traversal or upstream membership/nonmembership verification fails
     pub(super) fn read(&self, key: KeyHash) -> Result<Option<Vec<u8>>> {
-        self.prepare(&[key])?;
+        self.prepare_paths(&[key], false)?;
         let tree = JellyfishMerkleTree::<_, Hasher>::new(self);
         let (value, proof) = tree.get_with_proof(key, self.root.version.unwrap_or(0))?;
         proof.verify(RootHash(self.root.hash), key, value.as_deref())?;
         Ok(value)
     }
 
-    /// Fetches every requested old-tree path and its one-hop siblings before infallible JMT reads.
+    /// Fetches every requested old-tree path and all one-hop children before JMT updates them.
     /// Error cases:
     /// - an unavailable/malformed node, child inconsistency, or exhausted finite resource budget
     pub(super) fn prepare(&self, keys: &[KeyHash]) -> Result<()> {
+        self.prepare_paths(keys, true)
+    }
+
+    /// Fetches every requested old-tree path and, at each internal node on it, every child or, for a
+    /// proof, the children `proof_children` names, before JMT's infallible sibling reads.
+    /// Error cases:
+    /// - an unavailable/malformed node, child inconsistency, or exhausted finite resource budget
+    fn prepare_paths(&self, keys: &[KeyHash], every_child: bool) -> Result<()> {
         let Some(version) = self.root.version else { return Ok(()) };
         for query in keys {
             let mut key = codec::root_key(version)?;
@@ -104,8 +112,9 @@ impl<'a> Reader<'a> {
                     self.cache.borrow().get(&key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
                 let Node::Internal(internal) = &node else { break };
                 ensure!(depth < 64, "terminal internal node");
-                self.prepare_children(&key, &node)?;
                 let nibble = query.0[depth / 2] >> if depth % 2 == 0 { 4 } else { 0 } & 15;
+                let wanted = if every_child { u16::MAX } else { proof_children(internal.generate_bitmaps().0, nibble) };
+                self.prepare_children(&key, &node, wanted)?;
                 let child = internal.children_sorted().find(|(n, _)| u8::from(*n) == nibble);
                 let Some((_, child)) = child else { break };
                 key = codec::child_key(&key, nibble, child.version)?;
@@ -120,7 +129,7 @@ impl<'a> Reader<'a> {
     pub(super) fn value_version(&self, key: KeyHash) -> Result<Option<u64>> {
         let Some(version) = self.root.version else { return Ok(None) };
         self.charge(0)?;
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT version FROM value_rows WHERE namespace=?1 AND key=?2 AND version<=?3
              ORDER BY version DESC LIMIT 1",
         )?;
@@ -158,7 +167,8 @@ impl<'a> Reader<'a> {
     fn fetch(&self, key: &NodeKey) -> Result<Node> {
         self.charge(0)?;
         ensure!(key.version() <= self.root.version.unwrap_or(0), "unexpected future node");
-        let mut stmt = self.conn.prepare("SELECT data FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3")?;
+        let mut stmt =
+            self.conn.prepare_cached("SELECT data FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3")?;
         let mut rows = stmt.query(params![&self.root.namespace[..], key.version() as i64, codec::path(key)?])?;
         let row = rows.next()?.ok_or_else(|| anyhow::anyhow!("missing authenticated node"))?;
         let raw = row.get_ref(0)?.as_blob()?;
@@ -167,16 +177,23 @@ impl<'a> Reader<'a> {
         codec::decode(key, raw)
     }
 
-    /// Materializes one-hop children before JMT can reach its infallible sibling reader.
+    /// Materializes the one-hop children in the `wanted` bitmap before JMT can reach its infallible
+    /// sibling reader, each checked against its authenticated parent once per reader.
     /// Error cases:
     /// - a direct child is unavailable, malformed, or inconsistent with its authenticated parent
-    fn prepare_children(&self, key: &NodeKey, node: &Node) -> Result<()> {
+    fn prepare_children(&self, key: &NodeKey, node: &Node, wanted: u16) -> Result<()> {
         let Node::Internal(internal) = node else { return Ok(()) };
         if self.prepared.borrow().contains(key) {
             return Ok(());
         }
         for (nibble, child) in internal.children_sorted() {
+            if wanted & (1 << u8::from(nibble)) == 0 {
+                continue;
+            }
             let child_key = codec::child_key(key, u8::from(nibble), child.version)?;
+            if self.cache.borrow().contains_key(&child_key) {
+                continue;
+            }
             let loaded = match self.recorded(&child_key, child.hash) {
                 Some(node) => node,
                 None => self.check(&child_key, child.hash, "child")?,
@@ -195,7 +212,9 @@ impl<'a> Reader<'a> {
             ensure!(count == child.leaf_count(), "child leaf count mismatch");
             self.cache.borrow_mut().insert(child_key, loaded);
         }
-        self.prepared.borrow_mut().insert(key.clone());
+        if wanted == u16::MAX {
+            self.prepared.borrow_mut().insert(key.clone());
+        }
         Ok(())
     }
 
@@ -274,7 +293,7 @@ impl TreeReader for Reader<'_> {
     fn get_value_option(&self, max_version: u64, key: KeyHash) -> Result<Option<Vec<u8>>> {
         ensure!(self.root.version == Some(max_version), "unexpected value version");
         self.charge(0)?;
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT version, data FROM value_rows WHERE namespace=?1 AND key=?2 AND version<=?3
              ORDER BY version DESC LIMIT 1",
         )?;
@@ -303,4 +322,23 @@ impl TreeReader for Reader<'_> {
 /// The nodes a reader of `keys` point paths may load: the root and each path's 64 levels of 16 children.
 const fn node_budget(keys: usize) -> usize {
     1 + keys * 64 * 16
+}
+
+/// The children, as a bitmap of nibbles, a proof of the path through `nibble` of an internal node with
+/// the `existing` children can read: the child at `nibble`, and at each of the node's four heights the
+/// child alone in the range holding `nibble` or in its sibling range. Upstream reads a sibling only when
+/// it is alone in its range, and descends into a child other than `nibble`'s only when that child is
+/// alone in `nibble`'s range, so this is a superset of what its infallible reads can ask for.
+pub(super) fn proof_children(existing: u16, nibble: u8) -> u16 {
+    let mut wanted = existing & (1 << nibble);
+    for height in 0..4u8 {
+        let start = (nibble >> height) << height;
+        for start in [start, start ^ (1 << height)] {
+            let range = existing & ((((1u32 << (1u32 << height)) - 1) << start) as u16);
+            if range.count_ones() == 1 {
+                wanted |= range;
+            }
+        }
+    }
+    wanted
 }

@@ -94,6 +94,9 @@ struct Inner {
     files: Mutex<Option<WriteFiles>>,
     writer: Mutex<()>,
     runtime: Mutex<Runtime>,
+    /// The syncs this store has made, for a test that counts them.
+    #[cfg(test)]
+    syncs: std::sync::atomic::AtomicUsize,
 }
 
 struct WriteFiles {
@@ -204,11 +207,15 @@ fn key_hash(namespace: &[u8; 32], key: &[u8]) -> Result<jmt::KeyHash> {
 #[cfg(test)]
 mod checked_tests;
 #[cfg(test)]
+mod codec_tests;
+#[cfg(test)]
 mod gc_tests;
 #[cfg(test)]
 mod large_tests;
 #[cfg(test)]
 mod preflight_tests;
+#[cfg(test)]
+mod proof_tests;
 #[cfg(test)]
 mod recovery_tests;
 #[cfg(test)]

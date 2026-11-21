@@ -1,4 +1,4 @@
-//! Large logical updates share one durable SQL commit over bounded upstream proof batches.
+//! Large logical updates share one SQL commit over bounded upstream proof batches.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
@@ -11,12 +11,34 @@ use crate::authenticated::reader::Checked;
 use crate::authenticated::staging::Staging;
 use crate::authenticated::{Root, Store, caller_key, db, geometry};
 
+/// Whether a write syncs the database file and its directory, after SQLite's own commit syncs, before it
+/// returns its root.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Durability {
+    /// Synced: the root survives a crash once the write returns.
+    Synced,
+    /// Committed atomically under SQLite's commit syncs, the file and directory synced by the store's next
+    /// synced write.
+    Deferred,
+}
+
 impl Store {
     /// Applies every exact caller change atomically, chunking physical values and JMT batches internally.
     /// Error cases:
     /// - duplicate/reserved keys, representational overflow, invalid proofs/storage or durability failure
     pub fn update(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {
         self.update_checked(root, changes, |_| Ok(()), || Ok(()))
+    }
+
+    /// As `update`, but leaves the store's sync of the database file and its directory, which makes the
+    /// rollback journal's deletion durable, to its next synced write. SQLite's own commit syncs still run:
+    /// the root commits atomically and reads at once, and survives a crash once a later synced write
+    /// returns. For a root its caller needs to survive a crash only once a later synced write completes
+    /// it, such as a private stage of a larger update.
+    /// Error cases:
+    /// - as `update`
+    pub fn update_unsynced(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {
+        self.update_with(root, changes, |_| Ok(()), || Ok(()), Durability::Deferred)
     }
 
     /// Writes one arbitrary-length value from a finite caller source without collecting it in memory.
@@ -40,6 +62,7 @@ impl Store {
             },
             |_| Ok(()),
             || Ok(()),
+            Durability::Synced,
         )
     }
 
@@ -52,6 +75,20 @@ impl Store {
         changes: Vec<(Vec<u8>, Option<Vec<u8>>)>,
         before_commit: impl FnOnce(&Connection) -> Result<()>,
         after_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Root> {
+        self.update_with(root, changes, before_commit, after_commit, Durability::Synced)
+    }
+
+    /// The update path, its commit seams and whether it syncs.
+    /// Error cases:
+    /// - any exact change, proof, SQL, hook, commit or sync check fails
+    fn update_with(
+        &self,
+        root: &Root,
+        changes: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+        before_commit: impl FnOnce(&Connection) -> Result<()>,
+        after_commit: impl FnOnce() -> Result<()>,
+        durability: Durability,
     ) -> Result<Root> {
         let mut sorted = BTreeMap::new();
         for (key, value) in changes {
@@ -89,10 +126,12 @@ impl Store {
             },
             before_commit,
             after_commit,
+            durability,
         )
     }
 
-    /// Serializes mutation and acknowledges the final logical root only after commit and directory sync.
+    /// Serializes mutation and acknowledges the final logical root only after commit and, for a synced
+    /// write, the database's and its directory's sync.
     /// Error cases:
     /// - writes unauthorized, stale/retired root, poisoned store, malformed geometry or failed work/durability
     pub(super) fn write_transaction(
@@ -101,6 +140,7 @@ impl Store {
         work: impl FnOnce(&Connection) -> Result<Root>,
         before_commit: impl FnOnce(&Connection) -> Result<()>,
         after_commit: impl FnOnce() -> Result<()>,
+        durability: Durability,
     ) -> Result<Root> {
         root.validate()?;
         let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
@@ -134,8 +174,9 @@ impl Store {
                 return Err(error);
             }
         };
+        let synced = || if durability == Durability::Synced { self.sync() } else { Ok(()) };
         if let Err(error) =
-            tx.commit().map_err(anyhow::Error::from).and_then(|()| after_commit()).and_then(|()| self.sync())
+            tx.commit().map_err(anyhow::Error::from).and_then(|()| after_commit()).and_then(|()| synced())
         {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);
@@ -202,7 +243,7 @@ impl Store {
         Ok(runtime.namespaces.get(&root.namespace).map_or(0, |namespace| namespace.floor))
     }
 
-    /// Advances the private live root only after its durable acknowledgement boundary.
+    /// Advances the private live root only after its commit and, for a synced write, its sync.
     /// Error cases:
     /// - poisoned runtime lock
     pub(super) fn publish(&self, root: &Root) -> Result<()> {

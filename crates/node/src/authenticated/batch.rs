@@ -163,18 +163,18 @@ pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked)
         ensure!(key.version() == version, "generated node version mismatch");
         let raw = serde_json::to_vec(node)?;
         codec::decode(key, &raw)?;
-        conn.execute(
-            "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,?2,?3,?4)",
-            params![&root.namespace[..], version as i64, codec::path(key)?, raw],
-        )?;
+        conn.prepare_cached("INSERT INTO nodes(namespace,version,path,data) VALUES(?1,?2,?3,?4)")?.execute(params![
+            &root.namespace[..],
+            version as i64,
+            codec::path(key)?,
+            raw
+        ])?;
     }
     for ((row_version, key), value) in prepared.batch.node_batch.values() {
         // Missing leaves never read value rows; omitting tombstones avoids permanent per-delete garbage.
         if let Some(value) = value {
-            conn.execute(
-                "INSERT INTO value_rows(namespace,key,version,data) VALUES(?1,?2,?3,?4)",
-                params![&root.namespace[..], &key.0[..], *row_version as i64, value],
-            )?;
+            conn.prepare_cached("INSERT INTO value_rows(namespace,key,version,data) VALUES(?1,?2,?3,?4)")?
+                .execute(params![&root.namespace[..], &key.0[..], *row_version as i64, value])?;
         }
     }
     let reader = Reader::new(conn, root, true, checked)?;
