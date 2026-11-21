@@ -338,9 +338,9 @@ snapshots off the host, as step 4 describes.
    an empty answer, `e3b0c442…`. If the manifest itself failed, check the permissions and the disk
    of the snapshot directory instead.
 
-   A file that fails or does not match is damaged. Stop the trading server, mount the data disk on the host,
-   remove the file and its line in the directory's `manifest.jsonl`, and start the trading server
-   again. A replay in ranges then takes that day from the snapshot before it.
+   A file that fails or does not match is damaged. Stop the trading server, mount the data disk on
+   the host, remove the file and its line in the directory's `manifest.jsonl`, and start the
+   trading server again. A replay in ranges then takes that day from the snapshot before it.
 
    **Changes the live system.** The owner must approve the stop and the start. Remove only the
    damaged file and its line.
