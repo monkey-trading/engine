@@ -37,9 +37,27 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$root/contracts" && forge build)
-CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
-  --ignored --exact --nocapture \
-  custody::tests::election_scenario::daily_turns::dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary
-CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
-  --ignored --exact --nocapture \
-  custody::tests::election_scenario::liveness::fallback::dev_scenario_a_down_successor_falls_back_to_the_next_member
+
+# Each test is bounded well under the CI job's 60 minutes (the longest passes in about 12), so a hang
+# fails that test by name, with the output it had printed, where the job's own timeout keeps none. The
+# tests are built first, so the bound covers the run and not the compile.
+CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib --no-run
+bound="${ROTATION_TEST_SECS:-1200}"
+bounded_test() {
+  local test="$1" status=0
+  echo "==> $test (at most ${bound}s)"
+  if command -v timeout >/dev/null; then
+    CARGO_INCREMENTAL=0 timeout --kill-after=30 "$bound" cargo test --locked --manifest-path "$root/Cargo.toml" \
+      -p engine-node --lib -- --ignored --exact --nocapture "$test" || status=$?
+  else
+    CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" \
+      -p engine-node --lib -- --ignored --exact --nocapture "$test" || status=$?
+  fi
+  if [[ $status -eq 124 ]]; then
+    echo "FAIL: $test did not finish within ${bound}s; its last PASS line above names the stage it completed" >&2
+  fi
+  return "$status"
+}
+
+bounded_test custody::tests::election_scenario::daily_turns::dev_scenario_each_daily_turn_takes_the_keys_at_its_boundary
+bounded_test custody::tests::election_scenario::liveness::fallback::dev_scenario_a_down_successor_falls_back_to_the_next_member
