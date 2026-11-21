@@ -131,8 +131,8 @@ Known limits:
   enough addresses and credited accounts: at the production values and a source that takes its full
   2 seconds, 68 accounts behind 34 addresses, two of the accounts holding a position or withdrawable
   cash.
-- The trading server keeps decisions for at most 50,000 accounts and addresses at once. Past that, a
-  request from a new account and address waits for the source each time, as no decision is kept
+- The trading server keeps decisions for at most 50,000 pairs of an account and a client address at
+  once. Past that, a request from a new pair waits for the source each time, as no decision is kept
   for it.
 - A hold for a confirmed sanction has no automatic release or refund.
 - Jurisdiction screening uses the address of the connection's peer or, behind a configured
@@ -167,6 +167,14 @@ processes. The bounds are:
   launched with. After listing, a cap can only be lowered.
 - The close-out level moves only after seven days' notice, and only within 50% either side of its
   launch value.
+- The stress parameters and a listed market's financing markup change only after seven days' notice.
+  The operator can hold a stress floor of at most level 1, which lapses after 72 hours. The
+  toxicity score's tiers change only after seven days' notice, and stay within 50% either side of
+  their launch values.
+- A signed benchmark rate moves from the rate already applied by at most 300 basis points for each
+  calendar day between their dates, and a market that holds positions stays on its benchmark.
+- A new operator key takes effect seven days after its rotation is logged, and the old key then
+  signs nothing.
 - No holding time pays a lower profit fee than at launch. The base fee moves only between its launch
   value and one and a half times that value. The fee curve moves only to one that is at or above the
   launch curve at every holding time, and that reaches its base rate within 30 minutes at most. Each
@@ -311,7 +319,7 @@ futures contract that its listing names, than the market's `min_sources`. Every 
 but the seven CME-traded futures markets needs fresh quotes from two venues, so a delay beyond the
 bounds below on either venue leaves the market without a price. Those seven (US500, US100, US30,
 JP225, XAU-USD, XAG-USD and WTI) take `min_sources = 1` and price from Massive's futures feed alone,
-by the owner's decision of 2026-11-20, because Massive's futures data derives from CME's. They have no
+because Massive's futures data derives from CME's. They have no
 price while Massive is unavailable, and no second source checks a Massive print, so a bad print
 within `max_age_ms` sets their price. Two connections to one venue, such as Coinbase's Advanced Trade and Exchange
 feeds or Kraken's two connections, carry one source name. The engine holds one quote per source, the
@@ -423,7 +431,8 @@ one relabelled to name the signer of the run before it fails at its last. The re
 run before it reports any later fault, so the run's failure comes in log order. It applies a run's
 instructions before the seal that authenticates them is checked, which changes only where a fault is
 reported, since an audit acts on nothing. `engine replay --every-seal` checks every seal in full, as
-below.
+below. It cannot be combined with `--snapshots`, whose ranges each check seals only at the ends of
+their runs.
 
 `engine replay --snapshots <dir>` replays a log in ranges, several at once, from the daily snapshots
 in `<dir>`. A trading server with `[daily_snapshots]` keeps the engine's state at the first
@@ -590,16 +599,23 @@ Known limits:
   withholds the poster's submissions extends the window by however long the tail stays unanchored.
 - Clients keep the signed replies and frames they received, but the trading server does not compare
   them with the restarted log.
+- **Segment boundaries.** A crash can leave the log's newest segment empty, because a segment is
+  listed before its first instruction is durable. A checkpoint, a payout authorization or an
+  inherited withdrawal's signature must follow an instruction in its segment, so the trading server
+  writes none of them until the next instruction is sequenced. A host that times a crash there can
+  delay those entries until then. It cannot erase or reorder any of them by doing so, and the
+  delayed entries are written afterwards.
 - **A standby's check.** A standby, a trading server that follows the operator's signed stream into
   a copy of the log, does compare. It takes an instruction only when its seal continues the copy and
   is the followed enclave's, or one that a checkpoint in the copy names, so history sealed before a
   handover still extends it. Each stream it resumes must first repeat the copy's last instruction
-  exactly, with each signature and signer compared as the bytes it holds.
+  and every entry after it exactly, with each signature and signer compared as the bytes it holds.
 - **A standby's cold start.** The completed segments that a standby backfills from the archive, its
   mirrors first, are checked only by hash against the manifest that the answering origin served.
   Before the standby first follows onto them, it replays them as its takeover would replay them. A
-  copy that does not replay is set aside, the standby raises the Critical alert
-  `standby_backfill_refused`, and it backfills again from the operator alone.
+  copy that does not replay, or that a mirror cut short of its first checkpoint, is set aside, the
+  standby raises the Critical alert `standby_backfill_refused`, and it backfills again from the
+  operator alone.
 - When the operator's log no longer holds what the standby copied, the standby raises the Critical
   alert `operator_log_rollback` through its own alert routing, naming the range, and keeps its copy
   unchanged to restore from. The signs are a signed heartbeat behind the copy, a repeated
@@ -628,6 +644,13 @@ Known limits:
   segment catalog are read and updated only through proofs against roots the trading server signed.
   Their signatures establish integrity, not freshness, so the same independent check against custody
   applies, and a full `engine replay` checks the log segments a snapshot skipped.
+- A read of the authenticated account history checks each value, and each node along its proof,
+  against the signed root. A stored node that no read or update uses is checked by the next update
+  that rewrites its parent, so corruption there is found then and not before.
+- The host can withhold, omit or replace the daily snapshots it serves, and a day on which its
+  writer is still busy with the last snapshot has none. A replay in ranges accepts a snapshot only
+  at a checkpoint the log holds, so this makes the replay slower, down to a whole replay, and never
+  makes it accept a state the log does not produce.
 - The alert outbox keeps pages on the host's disk. It checks their schema and rows, but cannot
   detect their deletion or rollback, and its age budget across restarts uses the host clock.
 - Without snapshots, the account history index is read from the host's disk with only its schema and
@@ -678,15 +701,16 @@ window from a new branch and the boundary, read after it in the same answer, fro
 holds, as backends behind a load balancer can during a reorganisation. The stored window ends then come
 from two branches, and the next boundary read matches only the newer one.
 
-Principal is therefore released only against the block the release tag names, with reads executed in
-that block by the hash the quorum voted with the tag, so a scan that differs from the chain the tag
+Principal is therefore released only against the block the release tag names, or against the scan's
+end when the headers above the end, read through the quorum, link it to that block. The trading
+server executes its reads in that block by its hash, so a scan that differs from the chain the tag
 commits to is never released. The finalised frontier moves only to that block, once the scan covers
-it. Before it moves, the trading server reads, in that block, the vault's deposit count and its record
-of every deposit it releases: the payer, amount and beneficiary. It also reads the header of every block
-such a deposit is in. On any difference, it scans again from the finalised frontier. A deposit credited
-from a window that straddled a reorganisation, or from providers answering from a branch the release
-tag has left, is therefore reversed or moved, as after any reorganisation before finality, at the latest
-once the release tag passes its block, and never released.
+it. Before it moves, the trading server reads, in that block, the vault's deposit count and its
+record of every deposit it releases: the payer, amount and beneficiary. It also reads the header of
+every block such a deposit is in. On any difference, it scans again from the finalised frontier. A
+deposit credited from a window that straddled a reorganisation, or from providers answering from a
+branch the release tag has left, is therefore reversed or moved, as after any reorganisation before
+finality, at the latest once the release tag passes its block, and never released.
 
 When the quorum proves that a deposit was reversed before finality, the engine debits it once,
 raises a Critical alert, and runs the usual close-out, writing off against the house any loss on an
@@ -801,10 +825,11 @@ to a member's vouched standby key when the schedule promotes that member, as
 [liveness and promotion](#liveness-and-promotion) describes.
 
 The vault's guardian is fixed at deployment, and the deployment sets it to the same multisig, which
-acts as guardian without the delay. The guardian may pause withdrawals for seven days, and it cannot
-extend that pause. It may also retire the signer. After a retirement, the vault refuses withdrawals,
-checkpoints and promotions until the timelock installs a signer. It refuses MONKEY and USDC claims
-until that signer posts a checkpoint, which an exit that starts first rules out.
+acts as guardian without the delay. The guardian may pause withdrawals and USDC distribution claims
+for seven days, and it cannot extend that pause. It may also retire the signer. After a retirement,
+the vault refuses withdrawals, checkpoints and promotions until the timelock installs a signer. It
+refuses MONKEY and USDC claims until that signer posts a checkpoint, which an exit that starts first
+rules out.
 
 Known limits:
 

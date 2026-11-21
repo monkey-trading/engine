@@ -47,8 +47,10 @@ market's limit. That limit is 25 bps on crypto, 5 bps on FX, 10 bps on indices a
 
 A limit order is executed once its execution price, including the spread, reaches its limit or
 better. A stop order is executed at the prevailing price once the reference price reaches its stop.
-A working order whose market is closed is executed at the first price after the market opens, even
-if that price has gapped. If a triggered order cannot be executed for any reason other than its
+While a market is closed, its working orders wait, and the first price after the market opens
+triggers them as any other price does. A stop order then executes at that price even if it has
+gapped. A limit order executes only if that price reaches its limit or better, and otherwise keeps
+waiting. If a triggered order cannot be executed for any reason other than its
 price, for example because the account has insufficient margin, the order is cancelled.
 
 Any order can be marked reduce-only, in which case it can only reduce an existing position. An order
@@ -58,7 +60,8 @@ that opens or increases a position in a share must be worth at least $10.
 
 You can attach a take profit and a stop loss to a position. Either level can be set on the order
 that opens or adds to the position, or later by a separate request. An order that names only one
-level leaves the other unchanged. A reduce-only order cannot set levels.
+level leaves the other unchanged. A separate request sets exactly the levels it names, so a request
+that names only one level removes the other. A reduce-only order cannot set levels.
 
 When the price at which the whole position would close, including the spread, reaches a take profit
 or stop loss level, the whole position is closed. A take profit executes at its level or better. A
@@ -125,8 +128,9 @@ towards the score, and neither does a close-out.
 ### Stress levels
 
 Each market has a stress level, which widens its spreads during turbulent conditions. The level
-rises as soon as one of its triggers fires, and it steps down five minutes after the last trigger
-clears. The operator can hold a market at level 1 for at most 72 hours.
+rises as soon as one of its triggers fires. It steps down once its triggers call for a lower level
+and the current level has been in force for at least five minutes. The operator can hold a market
+at level 1 for at most 72 hours.
 
 | Level | Size spread | Added spread | Triggers |
 | --- | --- | --- | --- |
@@ -171,9 +175,10 @@ benchmark rate less the markup, and pays the difference when the markup is the l
 | US500, US100, US30, XAU-USD, XAG-USD, WTI and the shares | SOFR | 2.5% | 360 |
 | JP225 | TONA | 2.5% | 365 |
 
-Benchmark rates come from each rate's official publisher. A market whose benchmark has no published
-rate for the day accrues no financing. Accounts at volume tiers 2 and 3 pay a markup reduced by 10%
-and 20% respectively.
+Benchmark rates come from each rate's official publisher. A rollover uses the most recent rate
+published on or before its date, even if that rate is several days old. A market whose benchmark
+has never had a published rate accrues no financing. Accounts at volume tiers 2 and 3 pay a markup
+reduced by 10% and 20% respectively.
 
 ### Dividends and share splits
 
@@ -241,16 +246,17 @@ times leverage at tier 0 and 50 times at tier 1, while a hedged book in an offse
 A group gives no credit to the initial requirement while one of its markets that you hold cannot be
 traded, because it is closed or has no price.
 
-Closing one position of a hedge gives up its group's credit, and can raise the initial requirement. An
-order that only reduces a position is checked like an order that adds one when it would leave the
-initial requirement higher, and is rejected if your equity would fall below it. Whether it raises the
-requirement is judged with every group's credit kept, so while one of a group's markets cannot be
-traded, an order closing another leg of the group is checked too, though the requirement shown falls.
-An order that lowers the requirement on that basis is never checked. A close-all, a triggered stop or limit order, a take profit or stop
-loss, and a close-out are never rejected for margin, so a close-all of one market can close a leg that
-an order could not. A triggered order that turns a position around is checked on the risk it adds. The
-order preview shows the price, the margin after the order and any reason it would be rejected, for any
-size.
+Closing one position of a hedge gives up its group's credit, and can raise the initial requirement.
+An order that only reduces a position is checked like an order that adds one when it would leave the
+initial requirement higher, and is rejected if your equity would fall below it. Whether it raises
+the requirement is judged with every group's credit kept, so while one of a group's markets cannot
+be traded, an order closing another leg of the group is checked too, though the requirement shown
+falls. An order that lowers the requirement on that basis is never checked. A close-all, a triggered
+stop or limit order, a take profit or stop loss, and a close-out are never rejected because closing
+a leg raises the requirement, so a close-all of one market can close a leg that an order could not.
+A triggered order that opens, increases or turns around a position is checked on the risk it adds,
+and is cancelled if that check fails. The order preview shows the price, the margin after the order
+and any reason it would be rejected, for any size.
 
 The close-out level is half of the portfolio requirement. If your equity falls below the close-out
 level, the engine closes one position or group at a time. It closes the one whose closing restores
@@ -261,10 +267,11 @@ again, and the other positions in its group close on their own. After any trade,
 close-all, your account is checked for close-out once all of that request's trades are done. Any
 loss beyond your balance is borne by the house, not by you.
 
-The house also limits its own exposure. An order is rejected if it would take the house's net
-exposure past its limit, which is the larger of a share of the house's net asset value and a fixed
-floor. The floors range from $3.16 million for each share to $31.6 million for BTC-USD, with $61
-million across all markets.
+The house also limits its own exposure. An order that opens or increases a position and raises the
+house's net exposure in its market is rejected if it would take that exposure past the market's
+limit, or the house's gross exposure across all markets past the total limit. A limit is the larger
+of a share of the house's net asset value and a fixed floor. The floors range from $3.16 million for
+each share to $31.6 million for BTC-USD, with $61 million across all markets.
 
 ### Market closures
 
