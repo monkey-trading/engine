@@ -45,7 +45,7 @@ impl Staged {
 
     /// Commits after finite work; the caller finishes one small header operation before this check.
     /// Error cases:
-    /// - any exact update proof, durable commit, lease, or observer failure
+    /// - any exact update proof, private commit, lease, or observer failure
     pub fn flush_if_full(&mut self, observe: &mut impl FnMut(&Root, StageInfo) -> Result<()>) -> Result<()> {
         if self.overlay.len() >= STAGED_KEYS || self.overlay.held_bytes() >= STAGED_BYTES {
             self.flush(observe)?;

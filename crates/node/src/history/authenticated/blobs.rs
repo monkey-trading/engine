@@ -47,7 +47,7 @@ pub(super) fn read_event(store: &Store, root: &Root, row: &Row) -> Result<Event>
 
 /// Proves and removes all pieces in finite overlays before expiry can remove their list/queue header.
 /// Error cases:
-/// - invalid descriptor, missing/wrong-sized chunk, proof or staged durable commit failure
+/// - invalid descriptor, missing/wrong-sized chunk, proof or staged commit failure
 pub(super) fn delete_event(
     stage: &mut Staged,
     row: &Row,
@@ -113,7 +113,7 @@ impl<F: FnMut(&Root, StageInfo) -> Result<()>> ChunkWriter<'_, F> {
 
     /// Stages a uniquely scoped piece and flushes the bounded overlay when full.
     /// Error cases:
-    /// - old-key proof/nonmembership, counter overflow, or staged durable write failure
+    /// - old-key proof/nonmembership, counter overflow, or staged write failure
     fn emit(&mut self) -> Result<()> {
         let key = self.row.chunk_key(self.chunks);
         ensure!(self.stage.overlay.read_bytes(&key)?.is_none(), "new history payload chunk is occupied");

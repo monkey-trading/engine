@@ -6,9 +6,8 @@ use jmt::storage::{NibblePath, Node, NodeKey};
 use crate::authenticated::tests::{fresh, put, raw};
 use crate::authenticated::{Root, codec};
 
-/// Every node a store holds after inserts, rewrites and deletes, internal nodes of each child count and
-/// leaves at each depth among them, decodes to the node upstream's decoding of its JSON gives, its
-/// unhashed counts included.
+/// Every node a store holds after inserts, rewrites and deletes, internal and leaf, decodes to the node
+/// upstream's decoding of its JSON gives, its unhashed counts included.
 #[test]
 fn every_stored_node_decodes_as_upstream_decodes_it() -> Result<()> {
     let (dir, store) = fresh()?;

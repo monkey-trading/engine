@@ -11,12 +11,14 @@ use crate::authenticated::reader::Checked;
 use crate::authenticated::staging::Staging;
 use crate::authenticated::{Root, Store, caller_key, db, geometry};
 
-/// Whether a write syncs the database file and its directory before it returns its root.
+/// Whether a write syncs the database file and its directory, after SQLite's own commit syncs, before it
+/// returns its root.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Durability {
     /// Synced: the root survives a crash once the write returns.
     Synced,
-    /// Committed atomically, and synced by the store's next synced write.
+    /// Committed atomically under SQLite's commit syncs, the file and directory synced by the store's next
+    /// synced write.
     Deferred,
 }
 
@@ -28,9 +30,10 @@ impl Store {
         self.update_checked(root, changes, |_| Ok(()), || Ok(()))
     }
 
-    /// As `update`, but leaves the sync of the database file and its directory to the store's next synced
-    /// write: the root commits atomically and reads at once, and survives a crash once a later synced
-    /// write returns. For a root nothing acknowledges, such as a private stage a synced update completes.
+    /// As `update`, but leaves the store's sync of the database file and its directory, which makes the
+    /// rollback journal's deletion durable, to its next synced write. SQLite's own commit syncs still run:
+    /// the root commits atomically and reads at once, and survives a crash once a later synced write
+    /// returns. For a root nothing acknowledges, such as a private stage a synced update completes.
     /// Error cases:
     /// - as `update`
     pub fn update_unsynced(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {
