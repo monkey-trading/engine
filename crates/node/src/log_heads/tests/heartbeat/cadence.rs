@@ -52,9 +52,12 @@ async fn heads_go_out_every_half_interval_when_neither_interval_divides_it() {
 fn a_whole_number_of_read_periods_makes_half_an_interval() {
     let secs = Duration::from_secs;
     for interval in [secs(30), secs(49), secs(50), secs(60), secs(140), Duration::from_millis(31_337)] {
-        for retry in [secs(1), secs(5), secs(7), secs(30), secs(3_600)] {
+        for retry in
+            [Duration::from_millis(7), Duration::from_millis(99), secs(1), secs(5), secs(7), secs(30), secs(3_600)]
+        {
             let (period, pace) = crate::log_heads::v2::cadence(interval, retry);
             assert!(period <= retry.min(interval / 6) && !period.is_zero(), "{interval:?}, {retry:?}: {period:?}");
+            assert!(pace <= interval / 2, "{interval:?}, {retry:?}: {pace:?}");
             assert_eq!(pace.as_nanos() % period.as_nanos(), 0, "{interval:?}, {retry:?}");
             let short = (interval / 2).as_nanos() - pace.as_nanos();
             assert!(short < pace.as_nanos() / period.as_nanos(), "{interval:?}, {retry:?}: {pace:?}");

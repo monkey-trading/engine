@@ -186,8 +186,9 @@ pub(crate) fn cadence(interval: Duration, retry: Duration) -> (Duration, Duratio
     let most = retry.min((interval / 6).max(MIN_READ_EVERY));
     let half = interval / 2;
     let ticks = u32::try_from(half.as_nanos().div_ceil(most.as_nanos())).unwrap_or(u32::MAX).max(1);
-    let period = (half / ticks).max(most.min(MIN_READ_EVERY));
-    (period, period * ticks)
+    let period = half / ticks;
+    // Only a zero interval leaves no period to divide.
+    if period.is_zero() { (most, most) } else { (period, period * ticks) }
 }
 
 /// The v2 head to sign now, if any. A live head is at the seq the liveness rule lets it sign, newer

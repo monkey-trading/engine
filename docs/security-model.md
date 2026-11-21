@@ -1190,14 +1190,21 @@ server posts a head only after one of its reads of the chain. The reads come at 
 interval, spaced so that a whole number of them makes half an interval. A read or a send slow
 enough to pass the time a post is due delays that post to the first read after it finishes. One
 failed or late head leaves at most one slot without a head, and a promotion needs
-`heartbeatMisses` such slots in a row, at least three under any rule the schedule accepts.
+`heartbeatMisses` such slots in a row, at least three under any rule the schedule accepts. A turn's
+first head under its assignment must land within the take window, at least two slots, and one failed
+first head still leaves the next in time. At the first turn after none named the operator, the
+trading server finds the turn up to 30 seconds and a read after the boundary. Under an interval of
+90 seconds or more, that is still within half an interval. Under a shorter interval with a
+tolerance near the interval, a failed first head at that turn reaches the chain in time only
+through the members' relays.
 
 When the chain's newest head is older than five sixths of an interval, each member relays the
 newest head that the operator signed. The operator's own heads are due every half interval, so
 members relay a head only when the operator's posts fail or are slow to land. A send that the
 relayer's endpoint accepts but that never lands holds the operator's later posts for one heartbeat
-interval, until the trading server replaces it at its nonce. Through that interval the operator
-still signs its heads, and the members' relays carry them.
+interval from the send, and up to one and a half intervals until the next post due after that
+replaces it at its nonce. Through that time the operator still signs its heads, and the members'
+relays carry them.
 
 The schedule's deployment sets the heartbeat interval, the number of missed slots before a
 promotion (`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract

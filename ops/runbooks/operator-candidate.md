@@ -954,10 +954,16 @@ posts is its heartbeat. A member whose operator misses the heartbeat is promoted
 ### What the operator's trading server does
 
 The operator's trading server posts an `engine.log-head.v2` head through the relayer of
-`[log_heads]`, normally twice per `heartbeatInterval`. It posts less often only after a slow chain
-read or send, which delays the next post until the read or send has finished. The interval is the
-schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer must hold enough for two
-posts per interval.**
+`[log_heads]`, normally twice per `heartbeatInterval`. It posts less often only in two cases:
+
+- A slow chain read or send delays the next post until the read or send has finished.
+- A head that the relayer's endpoint accepts but that never lands holds the posts after it for up to
+  one and a half intervals, until a new head replaces it at its nonce. The members' callers relay the
+  heads that the trading server signs meanwhile, as [Configure the liveness caller](#configure-the-liveness-caller)
+  describes.
+
+The interval is the schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer
+must hold enough for two posts per interval.**
 
 With another member in the turn's set, the trading server signs a head or a checkpoint only at a seq
 that another member's enclave confirmed holding. It therefore sequences only while a member follows

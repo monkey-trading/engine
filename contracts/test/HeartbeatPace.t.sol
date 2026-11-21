@@ -6,11 +6,12 @@ import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 
 /// The operator's heads at the node's pace, against the schedule's count: a head every half interval,
-/// rounded up to the second, the first anywhere in that half interval after the boundary, as a member
-/// that also held the turn before posts it, and each landing up to just under the head tolerance after
-/// it was signed, with every slot witnessed. With any one head failing, or one a read tick late, a sixth
-/// of an interval, with the rest following it, at every second of that phase, no promotion or skip comes
-/// due. Once a head of the signer epoch has landed, the promotion also stays further off than the
+/// rounded up to the second, and each landing up to just under the head tolerance after it was signed,
+/// with every slot witnessed. The first comes anywhere in the half interval after the boundary, as a
+/// member that also held the turn before posts it, or, if later, within the poster's 30 s turn read and
+/// a read tick, a sixth of an interval, as the first turn after none named the operator finds it. With
+/// any one head failing, or one a read tick late, with the rest following it, at every second of that
+/// phase, no promotion or skip comes due. Once a head of the signer epoch has landed, the promotion also stays further off than the
 /// operator's stop margin. Before one has, as at the first turn after rotation turns on, the boundary's
 /// slot and the one before it start the count, and under the tightest rule a failed first head can bring
 /// the operator's stop, though not the promotion, before its next head lands.
@@ -18,6 +19,8 @@ abstract contract HeartbeatPaceTest is LivenessTest {
     /// The operator's node stops signing this long before a promotion could pass (`liveness::DELTA`).
     uint64 internal constant STOP_MARGIN = 15;
     uint256 internal constant NONE = type(uint256).max;
+    /// How often the poster reads whether a turn names the operator while none does (`TURN_READ_EVERY`).
+    uint64 internal constant TURN_READ = 30;
 
     uint64 internal start;
     uint64 internal nextWitness;
@@ -37,7 +40,7 @@ abstract contract HeartbeatPaceTest is LivenessTest {
         (uint64 interval, uint64 tolerance,) = _rule();
         uint64[2] memory delays = [uint64(0), tolerance - 1];
         for (uint256 d = 0; d < 2; ++d) {
-            for (uint64 offset = 0; offset < _gap(interval); ++offset) {
+            for (uint64 offset = 0; offset < _firstWithin(interval); ++offset) {
                 // The first head, which latches the turn, then two steady ones.
                 for (uint256 j = 0; j < 3; ++j) {
                     uint256 snapshot = vm.snapshotState();
@@ -118,6 +121,13 @@ abstract contract HeartbeatPaceTest is LivenessTest {
         return (interval + 1) / 2;
     }
 
+    /// How long after the boundary the first head may come: half an interval, or the poster's 30 s turn
+    /// read and a read tick when that is later.
+    function _firstWithin(uint64 interval) internal pure virtual returns (uint64) {
+        uint64 found = TURN_READ + (interval + 5) / 6;
+        return found > _gap(interval) ? found : _gap(interval);
+    }
+
     /// The heartbeat rule the schedule was deployed with: interval, tolerance and misses.
     function _rule() internal view returns (uint64 interval, uint64 tolerance, uint16 misses) {
         (interval, tolerance, misses,) = schedule.liveness();
@@ -146,10 +156,17 @@ contract HeartbeatPaceThreeMissesTest is HeartbeatPaceTest {
 
 /// The tightest rule the schedule accepts at 49 s slots: three misses, the longest tolerance and no
 /// switch budget, so the take window spans the least time it can. The turn's boundary falls on its slot's
-/// last second, which leaves the least time before a skip.
+/// last second, which leaves the least time before a skip. Its first head comes within half an interval,
+/// as a member continuing into the turn posts it: at the first turn after none named the operator, a
+/// first head found 30 s and a read tick after the boundary that then fails leaves its member a take only
+/// through the members' relays, under any interval shorter than 90 s.
 contract HeartbeatPaceTightestTest is HeartbeatPaceTest {
     function _newSchedule() internal override returns (OperatorSchedule) {
         return _built(OperatorSchedule.Liveness(49, 48, 3, 10), 0);
+    }
+
+    function _firstWithin(uint64 interval) internal pure override returns (uint64) {
+        return _gap(interval);
     }
 
     function test_the_boundary_falls_on_its_slots_last_second() public view {
