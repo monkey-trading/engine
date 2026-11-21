@@ -14,6 +14,8 @@ use crate::liveness::fake::{ChainState, DOMAIN, FakeChain, RECEIVER, VAULT};
 use crate::liveness::link::Copy;
 use crate::test_support::{capture_alerts, capture_alerts_and_resolutions};
 
+mod reach;
+
 /// How often the fixer polls in these tests.
 const TEST_POLL: Duration = Duration::from_millis(50);
 

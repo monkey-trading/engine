@@ -661,7 +661,8 @@ bloom's false positive, costs.
 The fallback fixer reads every 30 s because anyone may fix a turn's fallback block, a draw included,
 and the schedule's governance may replace the seed receiver at any time: the block's hash must then be
 recorded within 256 blocks, 64 s on Arbitrum One. Once a block is fixed it reads every 5 s until the
-hash is recorded.
+hash is recorded. After a slow poll the wait before its next read shrinks, down to none, so that a read and
+a send as slow as that poll still fit inside the 64 s.
 
 Per provider account, a day's load is the operator in effect's readers (the watcher, the liveness rule,
 the log-head reads, the relayer balance read, the fixer and the seed relay) plus the other two members'
