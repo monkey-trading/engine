@@ -532,9 +532,13 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(schedule.turnOf(turn).generation, 2);
     }
 
-    function test_AnotherMemberOnTheSameReleaseTakesANewGeneration() public {
+    /// No other member can run alice's release, so a generation never passes between members on one.
+    function test_AnotherMemberTakesANewGenerationAndCannotRunTheSameRelease() public {
         _candidate(alice, 30_000e18, 1);
-        _candidate(bob, 20_000e18, 1);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, alice));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(bob, _digest(1), CONFIG, true);
+        _candidate(bob, 20_000e18, 2);
         _delegate(alice, alice);
         _delegate(bob, bob);
         _setRotation(true);
@@ -873,12 +877,81 @@ contract OperatorScheduleTest is ScheduleTest {
         assertEq(registry.namedOperator().candidate, carol);
         assertEq(registry.operatorGeneration(), 0);
         assertFalse(registry.rotationEnabled());
-        assertEq(vault.currentRelease(), _release(0));
-        // The fold before the turns no longer stands: a node waits for a new generation.
+        // The fold before the turns no longer stands, and only the timelock names a release now: the
+        // vault names none, never the release it named before rotation turned on, and a sync folds nothing.
+        uint64 generation = vault.releaseGeneration();
+        assertEq(vault.currentRelease(), bytes32(0));
         assertEq(vault.syncedRelease(), bytes32(0));
         vault.syncRelease();
-        assertEq(vault.releaseGeneration(), 3);
-        assertEq(vault.syncedRelease(), _release(0));
+        assertEq(vault.currentRelease(), bytes32(0));
+        assertEq(vault.releaseGeneration(), generation, "a sync folded a release while rotation is off");
+        vm.prank(address(governance));
+        vault.setCurrentRelease(_digest(7), CONFIG);
+        assertEq(vault.currentRelease(), _release(7));
+        assertEq(vault.syncedRelease(), _release(7));
+        assertGt(vault.releaseGeneration(), generation, "named in a new generation");
+        assertEq(vault.releaseGeneration(), vault.generationCounter());
+    }
+
+    /// The governance fallback while drawn turns stand: rotation off on its own, then, once the turns have
+    /// ended, one timelock batch that installs the fallback's operator and then names its release. The vault
+    /// names the last turn's member's release until the batch and the fallback's from it, never the release
+    /// it named before rotation turned on; the batch naming the release first reverts as a whole.
+    function test_TheFallbackInstallsThenNamesItsReleaseInOneBatchOnceTheTurnsEnd() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        vm.warp(schedule.boundary(turn));
+        bytes32 member = registry.candidateOf(alice).release;
+        assertTrue(member != _release(0));
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        assertEq(vault.currentRelease(), member, "the turn's member's release while its turn names it");
+        vm.warp(uint256(schedule.turnsRunUntil()) + 1);
+        assertEq(vault.currentRelease(), member, "and once the turns have ended, until the installation");
+
+        (address[] memory targets, bytes[] memory payloads) = _fallbackBatch(carol, 9, false);
+        (address[] memory namingFirst, bytes[] memory namingFirstPayloads) = (new address[](2), new bytes[](2));
+        (namingFirst[0], namingFirst[1]) = (targets[1], targets[0]);
+        (namingFirstPayloads[0], namingFirstPayloads[1]) = (payloads[1], payloads[0]);
+        bytes32 salt = _scheduleBatch(targets, payloads);
+        bytes32 namingFirstSalt = _scheduleBatch(namingFirst, namingFirstPayloads);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
+        vm.expectRevert(Vault.RotationActive.selector);
+        _executeBatch(namingFirst, namingFirstPayloads, namingFirstSalt);
+        assertEq(vault.currentRelease(), member, "a reverted batch changes nothing");
+
+        _executeBatch(targets, payloads, salt);
+        assertEq(registry.operatorInEffect().candidate, carol);
+        assertEq(vault.currentRelease(), _release(9), "the fallback's release");
+        assertEq(vault.syncedRelease(), _release(9), "folded by the naming, with nothing left to sync");
+    }
+
+    /// A batch that also turns rotation off, on a registry that names a schedule, with the switch still on
+    /// and the last drawn turn ended but still naming its member. Rotation off, the installation and the
+    /// naming in one transaction move the vault from that member's release to the fallback's.
+    function test_TheFallbackBatchTurnsRotationOffOnceTheLastTurnHasEnded() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(0), CONFIG)));
+        _rotateOne(alice);
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        _draw(turn);
+        bytes32 member = registry.candidateOf(alice).release;
+        (address[] memory targets, bytes[] memory payloads) = _fallbackBatch(carol, 9, true);
+        vm.warp(schedule.turnsRunUntil());
+        bytes32 salt = _scheduleBatch(targets, payloads);
+        vm.warp(block.timestamp + GOVERNANCE_DELAY);
+        assertTrue(registry.rotationSwitch());
+        assertEq(registry.namedOperator().candidate, alice, "the ended turn still names its member");
+        assertEq(vault.currentRelease(), member);
+
+        _executeBatch(targets, payloads, salt);
+        assertFalse(registry.rotationEnabled());
+        assertEq(registry.operatorInEffect().candidate, carol);
+        assertEq(vault.currentRelease(), _release(9), "the fallback's release");
+        assertEq(vault.syncedRelease(), _release(9));
     }
 
     function test_AMemberHoldingATurnCannotLeave() public {

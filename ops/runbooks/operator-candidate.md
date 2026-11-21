@@ -226,6 +226,19 @@ be elected or adopted into a rotation set.
      $CANDIDATE $DIGEST $CONFIG_HASH true)
    ```
 
+   A release belongs, for good, to the first candidate that the timelock approves it for or
+   installs on it. The deployment's release belongs to the deployment's operator. The call reverts
+   with `ReleaseTaken(<owner>)` when the release belongs to another candidate. The candidate's
+   configuration names its own admin key, so its hash, and the release, are its own. Before
+   scheduling the call, confirm that the release belongs to no other candidate:
+
+   ```shell
+   cast call $REGISTRY 'releaseOwner(bytes32)(address)' \
+     $(cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)) --rpc-url $RPC
+   ```
+
+   The command prints the zero address, or `$CANDIDATE` for a release already approved for it.
+
 9. Confirm that the candidate is eligible:
 
    ```shell
@@ -941,8 +954,9 @@ until the timelock installs an operator once those turns end.
 
 A failed operator is replaced within minutes, as [Minute-scale liveness](#minute-scale-liveness)
 describes. The registry's own `promote()` reverts while a schedule is named. Once the turn's order
-is exhausted, the governance fallback applies: rotation off, then `installOperator` once the drawn
-turns end, as [When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
+is exhausted, the governance fallback applies: rotation off, then, once the drawn turns end, one
+batch that installs an operator and then names its release, as
+[When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
 
 ## Minute-scale liveness
 
@@ -1213,8 +1227,8 @@ earlier turn. The promotion names the next qualified member, and names the incum
 the keys, last. It names the incumbent's own standby key only when no other member qualifies. The
 incumbent stops by its own clock before that, because `promotionDueAt()` counts this path too. With
 no member qualifying, the promotion is refused after the incumbent has stopped. Then use the
-governance fallback: rotation off, then `installOperator`, as
-[When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
+governance fallback: rotation off, then one batch that installs an operator and names its release,
+as [When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
 
 The timelock sets the take window within its deployment bounds, with `setTakeWindow`, while no turn
 names the operator. These bounds hold:

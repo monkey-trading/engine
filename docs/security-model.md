@@ -857,10 +857,16 @@ Known limits:
 
 The deployment's multisig proposes changes through a timelock with a nonzero delay, which is three
 days at launch. The timelock lifts a withdrawal pause, changes the deposit pause, and names the
-release that may hold the enclave's keys. While operator rotation is off, it sets one launch
-measurement and configuration hash as the current release. While rotation is on, it approves
-releases for the operator in effect, whose candidate account moves the vault's current release to
-one of them, withdrawing the approval of the release it leaves.
+release that may hold the enclave's keys. While the registry's `rotationEnabled()` is false, the
+timelock sets one launch measurement and configuration hash as the current release. Nothing else
+changes that release then. `rotationEnabled()` is false while rotation's switch is off and no drawn
+turn names the operator. Turning rotation off leaves the vault naming the release its keys are on.
+Once an installation ends the drawn turns, the vault names no release until the timelock names one.
+While rotation is on, the timelock approves releases for the operator in effect, whose candidate
+account moves the vault's current release to one of them, withdrawing the approval of the release it
+leaves. A release belongs to the first candidate that the timelock approves it for or installs on
+it. The deployment's release belongs to the deployment's operator. The registry refuses a release
+for any candidate but its own.
 
 The timelock installs the vault's signer. While rotation is on, it can install only the enclave
 address that the operator in effect registered. The vault also moves its signer, with no timelock,
@@ -1259,7 +1265,8 @@ every member of the set, so a promotion is refused only when no member qualifies
 
 The key holder is the candidate whose assignment, release move or naming as a turn's source recorded
 the release that signed the signer epoch's newest head, which no later release move of its own
-changes. A head counts only if its enclave signed it since the latest turn drawn while the registry
+changes. Each release belongs to one candidate, so no other candidate's record moves it.
+A head counts only if its enclave signed it since the latest turn drawn while the registry
 named its own operator began: the first turn, or the first after an installation. Without one, no
 member has taken the keys in the epoch since then, so they are where the epoch found them. They are
 with the member of the latest turn that a member took or a promotion reached; in a turn the epoch
@@ -1331,8 +1338,11 @@ member that handed its drawn turn to a skip's member takes the turn back once a 
 removes the skip.
 
 **The governance fallback.** Once no position in the order qualifies, the order is exhausted, and
-the governance fallback applies. The timelock turns rotation off, and then installs an operator with
-`installOperator` once the drawn turns have ended. The fallback takes at most the 10-minute
+the governance fallback applies. The timelock turns rotation off. Once the drawn turns have ended,
+one timelock batch installs an operator with `installOperator` and then names its release with
+`setCurrentRelease`. The last drawn turn's member stays named until the installation, so the vault
+names that member's release until the batch and the fallback's from it, and never the release it
+named before rotation turned on. The fallback takes at most the 10-minute
 detection bound, plus the timelock's delay, plus up to two turns for the drawn turns to end. At
 launch values that is below the 14-day exit period.
 

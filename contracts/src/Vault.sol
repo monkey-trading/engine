@@ -140,18 +140,13 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     uint64 public signerSince;
     /// @notice Every address ever installed as the signer, which the schedule never promotes.
     mapping(address signer => bool installed) public wasSigner;
-    /// @notice The enclave release that holds the signer's key: `keccak256` of its 48-byte SEV-SNP
-    /// launch measurement and the SHA-256 of the config file it runs with. A node opens its sealed
-    /// keys only while it is this release, and hands them only to this release, so no code or config
-    /// receives the key without the timelock delay, and setting another release supersedes this one.
-    /// While the operator registry has rotation on, this is instead the registry's named
-    /// operator's release, which `syncRelease` folds into this contract's state.
-    bytes32 public namedRelease;
     /// @notice Generations handed out so far: each `setCurrentRelease`, each `syncRelease` that folds
     /// a change, and each turn generation the registry's schedule reserves takes the next, so none
     /// is handed out twice.
     uint64 public generationCounter;
     /// @dev The generation, time and release of the last fold by `setCurrentRelease` or `syncRelease`.
+    /// While rotation is off, only `setCurrentRelease` folds, and `currentRelease` is the folded
+    /// release, or zero once a turn of the schedule has ended after the fold (`_folded`).
     uint64 private foldedGeneration;
     uint64 private foldedAt;
     bytes32 private foldedRelease;
@@ -443,12 +438,19 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit RegistrySet(registry_);
     }
 
-    /// @notice The release that holds the enclave's keys: what governance named while rotation is
-    /// off, or the registry's named operator's while the registry has rotation on.
+    /// @notice The release that holds the enclave's keys: `keccak256` of its 48-byte SEV-SNP launch
+    /// measurement and the SHA-256 of the config file it runs with. A node opens its sealed keys only
+    /// while it is this release, and hands them only to this release, so no code or config receives
+    /// the key without the timelock delay. While the registry has rotation on (`rotationEnabled`: its
+    /// switch, or a drawn turn naming the operator), it is the registry's named operator's release.
+    /// While rotation is off, it is the release last folded, which only `setCurrentRelease` changes
+    /// then: the one the keys were on when rotation turned off, or none (zero) once an installation
+    /// has ended the drawn turns, until `setCurrentRelease` names one.
     function currentRelease() public view returns (bytes32 release) {
         bool rotation;
-        (rotation, release,,) = _rotation();
-        if (!rotation) release = namedRelease;
+        uint64 until;
+        (rotation, release,, until) = _rotation();
+        if (!rotation) release = _folded(until);
     }
 
     /// @notice The generation of `currentRelease()`: a node seals its keys under the generation it
@@ -467,20 +469,18 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// a generation a later sync would supersede.
     function syncedRelease() external view returns (bytes32) {
         (, bytes32 release, uint64 turn, uint64 until) = _rotation();
-        if (turn != 0) return release;
-        return until > foldedAt ? bytes32(0) : foldedRelease;
+        return turn != 0 ? release : _folded(until);
     }
 
     /// @notice Folds a registry-driven release change into this contract's state, raising the
-    /// release generation: anyone calls it once an election or promotion moves the operator, the
-    /// operator in effect moves its own release through the registry's `setRelease`, or the
-    /// schedule's turns stop naming the operator. A node seals its keys only after this, so they are
-    /// sealed under the generation the release change raised. A no-op while a turn names the
-    /// operator, whose generation the schedule holds.
+    /// release generation: anyone calls it once an election or promotion moves the operator, or the
+    /// operator in effect moves its own release through the registry's `setRelease`, while rotation
+    /// is on. A node seals its keys only after this, so they are sealed under the generation the
+    /// release change raised. A no-op while a turn names the operator, whose generation the schedule
+    /// holds, and while rotation is off, when only `setCurrentRelease` names a release.
     function syncRelease() public {
         (bool rotation, bytes32 release, uint64 turn, uint64 until) = _rotation();
-        if (turn != 0) return;
-        if (!rotation) release = namedRelease;
+        if (turn != 0 || !rotation) return;
         if (release == foldedRelease && until <= foldedAt) return;
         emit ReleaseSynced(release, _fold(release));
     }
@@ -504,7 +504,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         (bool rotation,,,) = _rotation();
         if (rotation) revert RotationActive();
         bytes32 release = keccak256(abi.encodePacked(launchDigest, configHash));
-        namedRelease = release;
         emit CurrentReleaseChanged(release, _fold(release), launchDigest, configHash);
     }
 
@@ -513,6 +512,12 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         OperatorRegistry reg = registry;
         if (address(reg) == address(0)) return (false, 0, 0, 0);
         return reg.rotationState();
+    }
+
+    /// @dev The release the last fold made current, or zero when the turn of the schedule that started
+    /// last ends after that fold (`until`): the turn's generation superseded it.
+    function _folded(uint64 until) private view returns (bytes32) {
+        return until > foldedAt ? bytes32(0) : foldedRelease;
     }
 
     /// @dev Makes `release` the folded release in the next generation.

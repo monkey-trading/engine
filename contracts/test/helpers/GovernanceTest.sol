@@ -30,4 +30,16 @@ abstract contract GovernanceTest is Test {
         vm.warp(block.timestamp + delay);
         governance.execute(target, 0, data, bytes32(0), salt);
     }
+
+    /// @dev Schedules the calls as one timelock batch now, for `_executeBatch` once the delay has passed.
+    function _scheduleBatch(address[] memory targets, bytes[] memory payloads) internal returns (bytes32 salt) {
+        salt = bytes32(operationCount++);
+        uint256 delay = governance.getMinDelay();
+        vm.prank(multisig);
+        governance.scheduleBatch(targets, new uint256[](targets.length), payloads, bytes32(0), salt, delay);
+    }
+
+    function _executeBatch(address[] memory targets, bytes[] memory payloads, bytes32 salt) internal {
+        governance.executeBatch(targets, new uint256[](targets.length), payloads, bytes32(0), salt);
+    }
 }

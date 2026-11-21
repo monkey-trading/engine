@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {LogHeads} from "../src/LogHeads.sol";
+import {OperatorRegistry} from "../src/OperatorRegistry.sol";
 import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {SkipTest} from "./Skip.t.sol";
 
@@ -184,6 +185,34 @@ contract KeyHolderTest is SkipTest {
         _aliceBeats();
         assertEq(logHeads.headRelease(vault.signerEpoch()), holding.release, "the keys are on alice's release 1");
         assertEq(schedule.releaseCandidate(holding.release), alice);
+        for (uint256 slots = 0; slots < 6; ++slots) {
+            _slotOn(true);
+            assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the key holder");
+        }
+        assertEq(schedule.turnOf(turn).reason, 1, "skipped, past alice");
+    }
+
+    /// The scene above with dave, not alice, trying to move: onto the release alice's enclave holds the keys
+    /// under. The release is alice's alone, so neither the timelock's approval of it for dave nor dave's move
+    /// lands, the key holder lookup still names alice, and the skips of bob's turn still pass over her.
+    function test_NoOtherCandidateTakesTheKeyHoldersReleaseToHandItTheTurnItWithheld() public {
+        second = alice;
+        _aliceHoldsTheKeys(4);
+        assertEq(schedule.memberAt(setId, seed, turn, 1), alice);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseTaken.selector, alice));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(dave, _digest(1), CONFIG, true);
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ReleaseNotApproved.selector, holding.release));
+        vm.prank(dave);
+        registry.setRelease(_digest(1), CONFIG);
+        assertTrue(registry.candidateOf(dave).release != holding.release, "dave runs alice's release");
+        assertEq(schedule.releaseCandidate(holding.release), alice);
+        _poll();
+        vm.warp(block.timestamp + 30);
+        _aliceBeats();
+        assertEq(logHeads.headRelease(vault.signerEpoch()), holding.release, "the keys are on alice's release 1");
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, alice, "the key holder lookup names alice");
         for (uint256 slots = 0; slots < 6; ++slots) {
             _slotOn(true);
             assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the key holder");

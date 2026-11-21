@@ -46,9 +46,12 @@ apart: the first records the block whose hash the fallback seed folds in, and th
 A timelock with a nonzero delay governs the vault and the registry, with the deployment's multisig
 as its proposer. The timelock rotates the signing key, approves releases, pauses deposits or
 withdrawals, and switches operator rotation on and off. While rotation is off, it can install an
-operator. It also moves the registry's parameters within the bounds set at deployment. A guardian,
-which is the same multisig acting without the delay, can only pause withdrawals for seven days and
-retire the signing key until the timelock installs another.
+operator. While the registry's `rotationEnabled()` is false, only the timelock changes the vault's
+release. A release belongs to the first candidate that the timelock approves it for or installs on
+it. The deployment's release belongs to the deployment's operator. The registry refuses a release
+for any candidate but its own. The timelock also moves the registry's parameters within the bounds
+set at deployment. A guardian, which is the same multisig acting without the delay, can only pause
+withdrawals for seven days and retire the signing key until the timelock installs another.
 
 ## Building and testing
 

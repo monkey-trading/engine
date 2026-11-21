@@ -305,13 +305,13 @@ in [How a takeover goes](#how-a-takeover-goes) is running.**
 
     **With `[benchmarks]`, the trading server's start holds for a snapshot that the old key signs.
     If that key is dead, the hold never ends, because the staking mirror that would bring your key
-    in waits behind it.** In that case, run the whole governance fallback instead, as steps 2 to 6
+    in waits behind it.** In that case, run the whole governance fallback instead, as steps 2 to 5
     of [When no standby qualifies](#when-no-standby-qualifies) describe, with your own candidate and
-    key. Turning rotation off removes the release that the registry named, and a configuration with
-    `operator.rotation_enabled = true` is refused once rotation is off. The timelock therefore names
-    a release whose configuration has your admin key and `operator.rotation_enabled = false`, that
-    release starts with `new-key`, and the timelock installs your key and calls `setSigner`.
-    Schedule the calls together, because each waits the timelock's delay while the exit period runs.
+    key. A configuration with `operator.rotation_enabled = true` is refused once rotation is off.
+    The fallback therefore runs another release, whose configuration has your admin key and
+    `operator.rotation_enabled = false`. The timelock installs your key and names that release in
+    the same batch. That release starts with `new-key`, and the timelock calls `setSigner`. Schedule
+    the calls together, because each waits the timelock's delay while the exit period runs.
 
 **How to tell it is resolved.** `checkpointSigner()` prints `$NEW`, `latestSeq()` rises, and
 `GET /v1/operator` names your admin key once the effective time has passed.
@@ -339,10 +339,17 @@ operator's admin key, and the people who can sign the timelock calls.
    cast call $TIMELOCK 'getMinDelay()(uint256)' --rpc-url $RPC
    ```
 
-2. Turn rotation off, with the pattern in
+2. Turn rotation off, unless it is off already. Read the switch:
+
+   ```shell
+   cast call $REGISTRY 'rotationSwitch()(bool)' --rpc-url $RPC
+   ```
+
+   If it prints `true`, turn it off with the pattern in
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
-   and this target and data. `setRotation(false)` cancels an election that is not yet in effect, and
-   lifts the limits on `setSigner` and `setCurrentRelease`.
+   and this target and data, and schedule step 3's batch at the same time. If it prints `false`, go
+   to step 3. `setRotation(false)` stops draws, cancels an election that is not yet in effect, and
+   lifts the limits on `setSigner` and `setCurrentRelease` once no drawn turn names the operator.
 
    **Changes the live system.** The owner must approve this contract call.
 
@@ -351,44 +358,88 @@ operator's admin key, and the people who can sign the timelock calls.
    DATA=$(cast calldata 'setRotation(bool)' false)
    ```
 
-   Once the call executes, `cast call $REGISTRY 'rotationEnabled()(bool)' --rpc-url $RPC` prints
+   Turning rotation off leaves the vault naming the release its keys are on. While a drawn turn
+   names the operator, until the installation, the vault names the turn's member's release. A skip,
+   a promotion or the member's own move to another release can still change it. A drawn turn that
+   has yet to start names its member from its boundary.
+
+   While `cast call $REGISTRY 'rotationEnabled()(bool)' --rpc-url $RPC` prints `false`, only the
+   timelock's `setCurrentRelease` changes the vault's release. Until it does, the vault names the
+   release that `setCurrentRelease` or `syncRelease` last made current, or none once an installation
+   has ended the drawn turns.
+
+   Once the call executes, `cast call $REGISTRY 'rotationSwitch()(bool)' --rpc-url $RPC` prints
    `false`, and the trading server mirrors the change.
 
-3. Name the fallback's release, as step 1 of
-   [First deployment](deploy-and-rollback.md#first-deployment) describes.
-
-   **Changes the live system.** The owner must approve this contract call.
-
-   ```shell
-   TARGET=$VAULT
-   DATA=$(cast calldata 'setCurrentRelease(bytes,bytes32)' <fallback digest> <fallback config hash>)
-   ```
-
-   `<fallback digest>` is the fallback release's launch measurement, and `<fallback config hash>` is
-   its configuration's SHA-256.
-
-4. Install the fallback's operator. With rotation off, the timelock alone can seat the new
+3. Install the fallback's operator and name its release, in one batch, with the pattern in
+   [Calling several contracts in one timelock batch](reference.md#calling-several-contracts-in-one-timelock-batch)
+   and these calls, in this order. With rotation off, the timelock alone can seat the new
    operator's admin key, so administrative instructions work even if the failed operator's key is
-   gone, as [The operator key is lost](key-recovery.md#the-operator-key-is-lost) describes.
+   gone, as [The operator key is lost](key-recovery.md#the-operator-key-is-lost) describes. Once an
+   installation has ended the drawn turns, the vault names no release until the timelock names one,
+   so the batch names the fallback's release in the same transaction. The order matters:
+   `setCurrentRelease` reverts with `RotationActive` while a drawn turn names the operator, which
+   lasts until the installation.
 
-   **Changes the live system.** The owner must approve this contract call. Schedule it no later than
-   step 5's `setSigner`, and execute it first.
+   **Changes the live system.** The owner must approve this batch. Schedule it no later than step
+   4's `setSigner`, and execute it first.
 
    ```shell
-   TARGET=$REGISTRY
-   DATA=$(cast calldata 'installOperator(address,address,bytes,bytes32)' \
-     <candidate> <admin key> <fallback digest> <fallback config hash>)
+   TARGETS="[$REGISTRY,$VAULT]"
+   VALUES="[0,0]"
+   PAYLOADS="[$(cast calldata 'installOperator(address,address,bytes,bytes32)' \
+     <candidate> <admin key> <fallback digest> <fallback config hash>),$(cast calldata \
+     'setCurrentRelease(bytes,bytes32)' <fallback digest> <fallback config hash>)]"
    ```
 
    `<candidate>` is the fallback's candidate address, and `<admin key>` is its admin key's address.
-   The registry reverts with `RotationActive` while rotation is on, and with `TurnsPending(<until>)`
-   while drawn turns still run. On chain, the installation takes effect at once. The engine mirrors
-   it, and the installed key signs administrative instructions seven days after the mirror is
-   logged, with no further step.
+   `<fallback digest>` is the fallback release's launch measurement, and `<fallback config hash>` is
+   its configuration's SHA-256.
 
-   Once the call executes,
-   `cast call $REGISTRY 'operatorInEffect()((address,address,bytes32,uint64))' --rpc-url $RPC` names
-   the new key, and `curl -sf $API/v1/operator | jq .operator` shows it from the effective time.
+   Before you schedule the batch, confirm that the fallback's release belongs to no other
+   candidate:
+
+   ```shell
+   cast call $REGISTRY 'releaseOwner(bytes32)(address)' \
+     $(cast keccak $(cast concat-hex <fallback digest> <fallback config hash>)) --rpc-url $RPC
+   ```
+
+   The command prints the zero address, or `<candidate>`.
+
+   Execute the batch once these hold:
+
+   - Step 2 has executed, when it runs.
+   - The schedule's drawn turns have ended, when the registry names a schedule:
+
+     ```shell
+     export SCHEDULE=$(cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC)
+     cast call $SCHEDULE 'turnsRunUntil()(uint64)' --rpc-url $RPC
+     cast block latest --field timestamp --rpc-url $RPC
+     ```
+
+     The first output is no later than the second. A registry that elects names no schedule, so
+     `$SCHEDULE` is the zero address, and no turn is ever drawn.
+
+   Before then the batch reverts as a whole and changes nothing: `installOperator` reverts with
+   `RotationActive` while the switch is on, and with `TurnsPending(<until>)` while drawn turns
+   still run. It also reverts with `ReleaseTaken(<owner>)` when the fallback's release belongs to
+   another candidate. A batch that reverts stays ready, and anyone with the executor role could run
+   it later, so cancel a batch you replace, as
+   [Calling several contracts in one timelock batch](reference.md#calling-several-contracts-in-one-timelock-batch)
+   describes. On chain, the installation takes effect at once. The engine mirrors it, and the
+   installed key signs administrative instructions seven days after the mirror is logged, with no
+   further step.
+
+   Once the batch executes, the vault names the fallback's release, folded into a new generation:
+
+   ```shell
+   cast call $REGISTRY 'operatorInEffect()((address,address,bytes32,uint64))' --rpc-url $RPC
+   cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+   cast call $VAULT 'syncedRelease()(bytes32)' --rpc-url $RPC
+   ```
+
+   The first command names the new key, and its third field equals the output of the second and the
+   third. `curl -sf $API/v1/operator | jq .operator` shows the new key from the effective time.
 
    The installation leaves the failed operator's candidacy listed and approved. To upgrade once
    rotation is on again, the installed operator needs a candidacy of its own, as
@@ -397,7 +448,7 @@ operator's admin key, and the people who can sign the timelock calls.
    operator is listed only after the timelock withdraws the failed operator's approval or raises the
    cap.
 
-5. Boot the fallback on its own host, with the published log from a standby's copy or a mirror, and
+4. Boot the fallback on its own host, with the published log from a standby's copy or a mirror, and
    with `new-key`. Verify its attestation, and have the timelock call `setSigner($NEW)`, as steps 3
    to 5 of [New keys](key-recovery.md#new-keys) describe.
 
@@ -408,8 +459,9 @@ operator's admin key, and the people who can sign the timelock calls.
    `log_recovery_failed` and the message `the log records operator …`. Start it again once the
    installation is final.
 
-6. The fallback's configuration names the new admin key. Its hash is the configuration hash that
-   steps 3 and 4 name, so the key is fixed with the release.
+5. The fallback's configuration names the new admin key. Its hash is the configuration hash that
+   step 3 names, so the key is fixed with the release. The installation makes the release the
+   fallback candidate's for good, and the registry refuses it for any other candidate.
 
    - Recovery admits a configuration that names the key the registry installed, read at the vault's
      finalised block, before the log has mirrored the installation.
@@ -425,7 +477,7 @@ operator's admin key, and the people who can sign the timelock calls.
      has passed. From then, a hold waits for that key's snapshot. To read the effective time, run
      `curl -sf $API/v1/operator | jq .pending_rotation`.
 
-7. Before rotation is turned on again, have the timelock withdraw every release approved for the
+6. Before rotation is turned on again, have the timelock withdraw every release approved for the
    failed operator, which delists it. Use the pattern in
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
    for each release.
@@ -444,7 +496,7 @@ operator's admin key, and the people who can sign the timelock calls.
    become the admin key seven days later. A liveness promotion would also pick it as the top
    eligible standby.
 
-8. Confirm, for each release that the failed candidate held, that the approval is withdrawn and the
+7. Confirm, for each release that the failed candidate held, that the approval is withdrawn and the
    candidate is no longer listed:
 
    ```shell

@@ -490,8 +490,8 @@ When `benchmark_sync_pending` fires and the operator key is gone, no worker can 
 
 1. If rotation is on, run the whole fallback that
    [When no standby qualifies](standby.md#when-no-standby-qualifies) describes. The registry
-   installs an operator only while rotation is off, and turning rotation off also withdraws the
-   release that the registry named.
+   installs an operator only while rotation is off. The installed operator runs a release whose
+   configuration has rotation off. Only the timelock's `setCurrentRelease` names that release.
 2. Once the registry's installation of another key is final, restart the trading server, as
    [Restart and recovery](restart-and-recovery.md) describes. The trading server then ends the hold
    at its first stamp.

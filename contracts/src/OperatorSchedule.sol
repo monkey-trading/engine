@@ -220,8 +220,8 @@ contract OperatorSchedule is SeedSchedule {
     mapping(uint64 turn => mapping(address candidate => uint8 held)) private held;
 
     /// @notice The candidate whose assignment or release move last recorded `release`, or the operator a
-    /// draw found the registry naming on it; zero for a release never recorded. Only the timelock approves
-    /// a release for a candidate, so no candidate moves another's entry.
+    /// draw found the registry naming on it; zero for a release never recorded. Each release belongs to
+    /// one candidate (`OperatorRegistry.releaseOwner`), so no candidate moves another's entry.
     mapping(bytes32 release => address candidate) public releaseCandidate;
 
     /// @notice The latest turn drawn while the registry named its own operator, with no turn naming one:
