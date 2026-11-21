@@ -246,7 +246,10 @@ impl Node {
     /// Credits the test account.
     pub(super) async fn deposit(&self) {
         let declaration = self.access_command(|engine| crate::test_support::access::declaration(engine, 1)).await;
-        assert!(matches!(declaration.as_slice(), [Event::EligibilityAttested { .. }]));
+        assert!(
+            matches!(declaration.as_slice(), [Event::EligibilityAttested { .. }]),
+            "the declaration was refused: {declaration:?}"
+        );
         let events = self
             .access_command(|engine| {
                 crate::test_support::access::funding(
