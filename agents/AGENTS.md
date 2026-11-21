@@ -1052,7 +1052,8 @@ an index: load only the rule whose hint matches the current action.
   push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
   failing on main", or comments on the open one, naming the run, its commit and the failed jobs; a
   job that fails there after its change's PR and merge group skipped it reads a path its area misses.
-  Actions are pinned by commit SHA. `ci-passed` is the one CI check branch rules require: it passes
+  Actions are pinned by commit SHA, and the contract jobs install Foundry through `.github/actions/install-foundry`:
+  v1.8.3's release archive, pinned by SHA-256 and downloaded under `image/retry`. `ci-passed` is the one CI check branch rules require: it passes
   only when every other job succeeded or was skipped because its area did not change, so each new
   job must be added to its `needs` and its area map, and every path it reads to `changes`. Each
   job but `changes`, `ci-passed` and `main-failure-issue` has a `cancel-<job>` companion that runs only on a pull
