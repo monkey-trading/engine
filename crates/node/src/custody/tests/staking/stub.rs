@@ -1,7 +1,5 @@
 //! A reader that answers the staking mirror from a fixed event list.
 
-use alloy::primitives::B256;
-
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{BlockRef, Finality, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
 use crate::custody::tests::fakes::{CHAIN_ID, canonical_hash};
@@ -24,7 +22,7 @@ impl VaultReader for StubReader {
             .map(|number| BlockLink {
                 number,
                 hash: canonical_hash(number),
-                parent_hash: B256::ZERO,
+                parent_hash: canonical_hash(number.saturating_sub(1)),
                 timestamp: number * 12,
             })
             .collect())

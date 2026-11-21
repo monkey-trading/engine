@@ -22,7 +22,7 @@ impl VaultReader for ForkReader {
             .map(|number| BlockLink {
                 number,
                 hash: if number == 3 { self.endpoint } else { canonical_hash(number) },
-                parent_hash: B256::ZERO,
+                parent_hash: canonical_hash(number.saturating_sub(1)),
                 timestamp: number * 12,
             })
             .collect())
