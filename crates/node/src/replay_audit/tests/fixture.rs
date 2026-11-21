@@ -241,12 +241,7 @@ pub(super) fn accepted(cp: &Checkpoint, signer_epoch: u64) -> AcceptedCheckpoint
     AcceptedCheckpoint { seq: cp.seq, root: cp.root.clone(), signer: cp.signer.parse().unwrap(), signer_epoch }
 }
 
-pub(super) fn payout(
-    engine: &Engine,
-    key: &EnclaveKey,
-    domain: CheckpointDomain,
-    signer_epoch: u64,
-) -> SignedWithdrawal {
+fn payout(engine: &Engine, key: &EnclaveKey, domain: CheckpointDomain, signer_epoch: u64) -> SignedWithdrawal {
     let proof = engine.approval_proof(TRADER, 1).unwrap();
     let mut withdrawal = SignedWithdrawal {
         account: TRADER,

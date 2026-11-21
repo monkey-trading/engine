@@ -66,7 +66,7 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     assert!(error.contains("predates V27"), "{error}");
     let cases: [(&str, Alter); 3] = [
         ("of format 2", |snapshot| snapshot["schema"] = 2.into()),
-        ("names offset", |snapshot| snapshot["offset"]["index"] = 2.into()),
+        ("names offset", |snapshot| snapshot["offset"] = "5:2".into()),
         ("stand at seqs", |snapshot| snapshot["checkpoint"]["seq"] = 6.into()),
     ];
     for (said, alter) in cases {

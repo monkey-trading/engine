@@ -5,10 +5,10 @@
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::command::AdminCommand;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::{Engine, Fixed};
 
 use super::*;
 use crate::daily_snapshots::{Job, publish_now};
@@ -19,6 +19,7 @@ use crate::sequencer::replay::ranges::{Trust, replay_ranges};
 use crate::snapshot::sealing::Encoding;
 use crate::tee::EnclaveKey;
 use crate::test_support::{deposit, withdraw};
+use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
 /// A range whose withdrawal entries release an approval a checkpoint before the range deferred, and pay it
 /// through that checkpoint, replays to what the whole log replays to, under a pinned signer and under the
@@ -64,10 +65,11 @@ fn a_payout_naming_a_checkpoint_no_earlier_range_holds_is_refused() {
 
 // ── Helpers ──
 
-/// A log directory, under one key: a deposit and a withdrawal approved under `V22`, the checkpoint that
-/// defers its approval, an activation of `V27` and its checkpoint, at which a daily snapshot is published;
-/// then the deferred approval's release and its typed payout, which name the first checkpoint, a tick and a
-/// last checkpoint. `absent` names a seq the log holds no checkpoint at in the payout.
+/// A log directory, under one key: a withdrawal approved under `V21` and the checkpoint that defers it, one
+/// approved under `V22` and its checkpoint, an activation of `V27`, a tick and the checkpoint at which a daily
+/// snapshot is published; then the deferred approval's release and the typed payout of the second through its
+/// checkpoint, both after the snapshot, a tick and a last checkpoint. `absent` names in the payout the seq
+/// after its checkpoint, at which the log holds none.
 struct Ranged {
     dir: PathBuf,
     snapshots: PathBuf,
@@ -82,38 +84,42 @@ impl Ranged {
         let key = EnclaveKey::generate();
         let (mut entries, mut engine) = (Vec::new(), Engine::new());
         let operator = Operator { address: AccountId([8; 20]), chain_id: domain.chain_id, vault: domain.vault };
+        let activate = |version| Command::Admin(AdminCommand::ActivateProtocol { version });
         for cmd in [
             Command::Admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)),
             Command::Admin(AdminCommand::SetOperator(operator)),
-            Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V22 }),
+            activate(ProtocolVersion::V21),
             deposit(100, "ranged-deposit"),
             withdraw(40),
         ] {
             append_command(&mut entries, &mut engine, cmd);
         }
+        // Approved before `V22`, so the engine keeps no approval: the checkpoint defers its release.
+        let legacy = (engine.last_seq().unwrap(), Fixed::from_int(40));
         let first = checkpoint(&mut engine, &key, domain, CheckpointParent::default());
         entries.push(LogEntry::Checkpoint(first.clone()));
-        let mut typed = super::fixture::payout(&engine, &key, domain, 1);
-        if absent {
-            let auth = typed.authorization.as_mut().expect("typed");
-            auth.checkpoint_seq -= 1;
-            typed.signature = key.sign_payout(&typed).unwrap();
+        for cmd in [activate(ProtocolVersion::V22), withdraw(10)] {
+            append_command(&mut entries, &mut engine, cmd);
         }
-        let activate = Command::Admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V27 });
-        append_command(&mut entries, &mut engine, activate);
         let second = checkpoint(&mut engine, &key, domain, checkpoint_parent(&first));
         entries.push(LogEntry::Checkpoint(second.clone()));
+        let typed = typed_payout(&engine, &key, domain, absent);
+        for cmd in [activate(ProtocolVersion::V27), Command::Tick] {
+            append_command(&mut entries, &mut engine, cmd);
+        }
+        let third = checkpoint(&mut engine, &key, domain, checkpoint_parent(&second));
+        entries.push(LogEntry::Checkpoint(third.clone()));
         let snapshot = Job {
-            offset: Offset { seq: second.seq, index: 1 },
-            checkpoint: second.clone(),
+            offset: Offset { seq: third.seq, index: 1 },
+            checkpoint: third.clone(),
             ts: engine.now(),
             engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()),
         };
-        entries.push(LogEntry::Withdrawal(release(&engine, &key, domain)));
+        entries.push(LogEntry::Withdrawal(release(legacy, &key, domain)));
         entries.push(LogEntry::Withdrawal(typed));
         append_command(&mut entries, &mut engine, Command::Tick);
-        let third = checkpoint(&mut engine, &key, domain, checkpoint_parent(&second));
-        entries.push(LogEntry::Checkpoint(third.clone()));
+        let fourth = checkpoint(&mut engine, &key, domain, checkpoint_parent(&third));
+        entries.push(LogEntry::Checkpoint(fourth.clone()));
 
         let dir = scratch_dir(name);
         let manifest = watch::channel(Manifest::default()).0;
@@ -124,7 +130,7 @@ impl Ranged {
         writer.flush().unwrap();
         let snapshots = scratch_dir(&format!("{name}-snapshots"));
         publish_now(&snapshots, snapshot).unwrap();
-        Self { dir, snapshots, domain, key, checkpoints: vec![first, second, third] }
+        Self { dir, snapshots, domain, key, checkpoints: vec![first, second, third, fourth] }
     }
 
     /// The vault's finalized anchor, the last checkpoint, and its signer history: every checkpoint under
@@ -139,19 +145,45 @@ impl Ranged {
     }
 }
 
-/// The untyped release of the deferred approval `engine` holds for `TRADER`'s nonce 1.
-fn release(engine: &Engine, key: &EnclaveKey, domain: CheckpointDomain) -> SignedWithdrawal {
-    let approval = engine.withdrawal_approval(TRADER, 1).expect("approved");
+/// The untyped release of `TRADER`'s nonce 1, approved at `seq` for `amount` and deferred.
+fn release((seq, amount): (u64, Fixed), key: &EnclaveKey, domain: CheckpointDomain) -> SignedWithdrawal {
     SignedWithdrawal {
         account: TRADER,
-        amount: approval.amount,
+        amount,
         nonce: 1,
         chain_id: domain.chain_id,
         vault: domain.vault,
-        signature: key.sign_withdrawal(domain.chain_id, &domain.vault.0, TRADER, approval.amount, 1),
-        approved_seq: Some(approval.approved_seq),
+        signature: key.sign_withdrawal(domain.chain_id, &domain.vault.0, TRADER, amount, 1),
+        approved_seq: Some(seq),
         authorization: None,
     }
+}
+
+/// The typed payout of the approval `engine` holds for `TRADER`, through the checkpoint at `engine`'s last
+/// seq, or, when `absent`, naming the seq after it with that checkpoint's root and proof.
+fn typed_payout(engine: &Engine, key: &EnclaveKey, domain: CheckpointDomain, absent: bool) -> SignedWithdrawal {
+    let nonce = engine.withdrawal_approvals().find(|approval| approval.account == TRADER).expect("held").nonce;
+    let proof = engine.approval_proof(TRADER, nonce).unwrap();
+    let mut withdrawal = SignedWithdrawal {
+        account: TRADER,
+        amount: proof.approval.amount,
+        nonce,
+        chain_id: domain.chain_id,
+        vault: domain.vault,
+        signature: String::new(),
+        approved_seq: Some(proof.approval.approved_seq),
+        authorization: Some(Authorization {
+            signer: AccountId(key.address()),
+            signer_epoch: 1,
+            issued_at: 1,
+            expires_at: 1 + LIFETIME_SECONDS,
+            checkpoint_seq: proof.seq + u64::from(absent),
+            checkpoint_root: proof.root,
+            siblings: proof.siblings,
+        }),
+    };
+    withdrawal.signature = key.sign_payout(&withdrawal).unwrap();
+    withdrawal
 }
 
 fn jobs() -> NonZeroUsize {
