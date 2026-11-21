@@ -10,7 +10,7 @@ use engine_core::types::AccountId;
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, SignerHistory, View, accepted_history};
 use crate::config::{CustodyProvider, NodeConfig};
-use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SealChecks, SegmentedLog};
+use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SealChecks};
 use crate::sequencer::Replayed;
 use crate::sequencer::replay::Audited;
 use crate::sequencer::replay::ranges::{Trust, replay_ranges};
@@ -120,9 +120,11 @@ async fn build_trust(
     Ok(AuditTrust { parent, authorities })
 }
 
-/// Reads candidate identities without opening a writer, repairing a manifest, or trusting the log.
+/// Reads candidate identities without opening a writer, repairing a manifest, or trusting the log: from a
+/// log directory its segments at once, each parsing only its entries that are not commands
+/// (`log::uncommanded`), since the replay that follows checks the whole log.
 /// Error cases:
-/// - the path or manifest cannot be read, or the exact finalized checkpoint is absent
+/// - the path or a segment cannot be read, or the exact finalized checkpoint is absent
 fn checkpoint_candidates(
     path: &Path,
     parent: CheckpointParent,
@@ -154,7 +156,8 @@ fn checkpoint_candidates(
         Ok(())
     };
     if found.is_dir() {
-        SegmentedLog::open(path, &mut visit)?;
+        let jobs = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        log::uncommanded(path, jobs)?.into_iter().try_for_each(&mut visit)?;
     } else {
         log::read_file(path, &mut visit)?;
     }

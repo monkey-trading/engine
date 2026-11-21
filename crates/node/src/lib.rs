@@ -44,7 +44,7 @@ pub mod standby;
 mod standby_key;
 mod stats;
 mod status;
-pub use sequencer::replay::{Audited, replay_ranges_with_attested, replay_ranges_with_trust};
+pub use sequencer::replay::{Audited, default_jobs, replay_ranges_with_attested, replay_ranges_with_trust};
 pub use sequencer::{
     replay, replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
