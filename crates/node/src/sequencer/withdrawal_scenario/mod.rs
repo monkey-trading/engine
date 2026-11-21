@@ -2,6 +2,7 @@
 
 pub(crate) mod client;
 mod exit;
+mod exit_log;
 mod exit_wallet;
 mod flows;
 mod guardian;
