@@ -15,27 +15,40 @@ access_expect_refusal() {
   done
 }
 
-# Posts the trader's signed order on `side` and prints the seconds the POST took, failing unless it
-# filled; a second argument names the rejection reason expected instead.
+# Posts the trader's signed order on `side` and sets `order_took` to the seconds the POST took, failing
+# unless it filled; a second argument names the rejection reason expected instead. The order is a limit
+# through the book (see `access_order_body`), so it fills at the current price however long the source
+# keeps it waiting and the mock feed moves meanwhile. Call it directly, never in a command substitution:
+# a failure there would end only the substitution and leave the caller to read an empty time.
 access_timed_order() {
-  local side="$1" expected="${2:-}" signed response took events
-  signed="$(ACCESS_ORDER_SIDE="$side" access_request "$trader_key" order)"
-  response="$(curl --max-time 10 -sk -w '\n%{time_total}' "$api/v1/orders" -H 'content-type: application/json' -d "$signed")"
-  took="${response##*$'\n'}"
+  local side="$1" expected="${2:-}" signed response events
+  signed="$(ACCESS_ORDER_SIDE="$side" ACCESS_ORDER_THROUGH_BOOK=1 access_request "$trader_key" order)" \
+    || fail "a $side order could not be built"
+  response="$(curl --max-time 10 -sk -w '\n%{time_total}' "$api/v1/orders" -H 'content-type: application/json' -d "$signed")" \
+    || fail "a $side order got no answer"
+  order_took="${response##*$'\n'}"
   events="${response%$'\n'*}"
+  [[ "$order_took" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "a $side order gave no time: $response"
   if [[ -z "$expected" ]]; then
     jq -e 'any(.[]; .type == "fill")' <<< "$events" >/dev/null || fail "a $side order did not fill: $events"
   else
     jq -e --arg reason "$expected" 'any(.[]; .type == "order_rejected" and .reason.reason == $reason)' <<< "$events" >/dev/null \
       || fail "a $side order was not refused with $expected: $events"
   fi
-  echo "$took"
 }
 
 # Fails unless `seconds` is at least (`at_least`) or below (`below`) `bound`.
 access_took() {
   python3 -c 'import sys; took, how, bound = float(sys.argv[1]), sys.argv[2], float(sys.argv[3]); sys.exit(0 if (took >= bound if how == "at_least" else took < bound) else 1)' "$1" "$2" "$3" \
     || fail "$4 took $1 s, not $2 $3 s"
+}
+
+# Sends the timed order on `side` (and its expected refusal, if any) and checks its time against `bound`.
+access_timed() {
+  local how="$1" bound="$2" label="$3"
+  shift 3
+  access_timed_order "$@"
+  access_took "$order_took" "$how" "$bound" "$label"
 }
 
 access_funding_reference() {
@@ -65,10 +78,10 @@ step "A trader's first order waits on the source, its next orders reuse the deci
 ACCESS_SOURCE_DELAY_MS=1000 access_set_fixture clear
 access_decisions_run_out
 calls="$(access_calls "$trader")"
-access_took "$(access_timed_order buy)" at_least 1 "the first order after the trader's decision ran out"
+access_timed at_least 1 "the first order after the trader's decision ran out" buy
 [[ "$(access_calls "$trader")" == $((calls + 1)) ]] || fail "the first order did not ask the source once"
 for side in sell buy sell; do
-  access_took "$(access_timed_order "$side")" below 0.5 "an order on a fresh decision"
+  access_timed below 0.5 "an order on a fresh decision" "$side"
 done
 [[ "$(access_calls "$trader")" == $((calls + 1)) ]] || fail "orders on a fresh decision asked the source"
 # An order every second for three bounds: none waits, and only the background refreshes ask.
@@ -78,13 +91,13 @@ steady=0
 while ((SECONDS < steady_until)); do
   side=buy
   ((steady % 2)) && side=sell
-  access_took "$(access_timed_order "$side")" below 0.5 "a steady trader's order"
+  access_timed below 0.5 "a steady trader's order" "$side"
   steady=$((steady + 1))
   sleep 1
 done
 # The trader ends flat, so the house's NAV the later cases hold fixed does not move with the price.
 if ((steady % 2)); then
-  access_took "$(access_timed_order sell)" below 0.5 "a steady trader's closing order"
+  access_timed below 0.5 "a steady trader's closing order" sell
   steady=$((steady + 1))
 fi
 refreshes=$(($(access_calls "$trader") - calls - 1))
@@ -93,15 +106,15 @@ echo "a steady trader's $steady orders waited on no call; the source answered $r
 # Idle past twice the bound, the trader's decision runs out unrefreshed, and its next order asks again.
 sleep $((2 * bound + 2))
 calls="$(access_calls "$trader")"
-access_took "$(access_timed_order buy)" at_least 1 "the first order after an idle spell"
+access_timed at_least 1 "the first order after an idle spell" buy
 [[ "$(access_calls "$trader")" == $((calls + 1)) ]] || fail "an expired decision was not fetched again"
-access_took "$(access_timed_order sell)" below 0.5 "the next order"
+access_timed below 0.5 "the next order" sell
 # A sanctioned account's refusal is asked for once and reused for its next order and withdrawal.
 ACCESS_SOURCE_DELAY_MS=1000 access_set_fixture clear "$trader"
 access_decisions_run_out
 calls="$(access_calls "$trader")"
-access_took "$(access_timed_order buy account_sanctioned)" at_least 1 "the first refused order"
-access_took "$(access_timed_order buy account_sanctioned)" below 0.5 "a refused order on the kept refusal"
+access_timed at_least 1 "the first refused order" buy account_sanctioned
+access_timed below 0.5 "a refused order on the kept refusal" buy account_sanctioned
 events="$(access_post /v1/withdrawals "$(access_request "$trader_key" withdrawal)")"
 jq -e 'any(.[]; .type == "withdrawal_rejected" and .reason.reason == "account_sanctioned")' <<< "$events" >/dev/null \
   || fail "a withdrawal on the kept refusal was not refused: $events"

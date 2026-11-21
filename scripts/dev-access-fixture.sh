@@ -75,10 +75,18 @@ access_attest() {
   fail "signed eligibility declaration was not recorded"
 }
 
+# The order body for `account`: a market order quoted at the market's mark, or with ACCESS_ORDER_THROUGH_BOOK a limit through it.
 access_order_body() {
   local account="$1" mark
   mark="$(curl --max-time 5 -skf "$api/v1/markets" | jq -er '.[] | select(.id == 1) | .mark')"
-  echo "{\"account\":\"$account\",\"client_id\":46,\"market\":1,\"side\":\"${ACCESS_ORDER_SIDE:-buy}\",\"qty\":\"0.01\",\"kind\":{\"kind\":\"market\",\"quoted\":\"$mark\"}}"
+  local side="${ACCESS_ORDER_SIDE:-buy}" kind
+  kind="{\"kind\":\"market\",\"quoted\":\"$mark\"}"
+  if [[ -n "${ACCESS_ORDER_THROUGH_BOOK:-}" ]]; then
+    # A limit 5% through the book, far past the mock feed's move over any wait, fills at the current price
+    # where a market order's slippage bound (at most the market's own) would refuse a move over the wait.
+    kind="$(awk -v mark="$mark" -v side="$side" 'BEGIN { printf "{\"kind\":\"limit\",\"price\":\"%.2f\"}", mark * (side == "buy" ? 1.05 : 0.95) }')"
+  fi
+  echo "{\"account\":\"$account\",\"client_id\":46,\"market\":1,\"side\":\"$side\",\"qty\":\"0.01\",\"kind\":$kind}"
 }
 
 access_request() {
