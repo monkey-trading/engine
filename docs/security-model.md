@@ -1186,14 +1186,18 @@ into slots of one heartbeat interval, and anyone may mark a slot as witnessed wh
 
 **Heartbeats.** While a turn names the operator, the operator's enclave posts an
 `engine.log-head.v2` head as its heartbeat, normally twice per heartbeat interval. The trading
-server posts a head only after one of its reads of the chain, which come at least six times per
-interval. A read slow enough to pass the time a post is due delays that post to the next read. One
+server posts a head only after one of its reads of the chain. The reads come at least six times per
+interval, spaced so that a whole number of them makes half an interval. A read or a send slow
+enough to pass the time a post is due delays that post to the first read after it finishes. One
 failed or late head leaves at most one slot without a head, and a promotion needs
-`heartbeatMisses` such slots in a row.
+`heartbeatMisses` such slots in a row, at least three under any rule the schedule accepts.
 
 When the chain's newest head is older than five sixths of an interval, each member relays the
 newest head that the operator signed. The operator's own heads are due every half interval, so
-members relay a head only when the operator's posts fail or are slow to land.
+members relay a head only when the operator's posts fail or are slow to land. A send that the
+relayer's endpoint accepts but that never lands holds the operator's later posts for one heartbeat
+interval, until the trading server replaces it at its nonce. Through that interval the operator
+still signs its heads, and the members' relays carry them.
 
 The schedule's deployment sets the heartbeat interval, the number of missed slots before a
 promotion (`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract

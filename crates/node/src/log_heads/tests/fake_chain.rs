@@ -36,6 +36,8 @@ struct FakeState {
     posted_v2_at: Vec<tokio::time::Instant>,
     /// How long each turn read takes.
     turn_latency: std::time::Duration,
+    /// Refuse every v2 send, as an endpoint that cannot pay for gas would.
+    fail_v2: bool,
 }
 
 /// A chain whose posted head, epoch, and read failures the test drives. `post` enforces the
@@ -113,6 +115,11 @@ impl FakeChain {
     /// Each turn read takes `latency` from now on.
     pub(super) fn slow_turn_reads(&self, latency: std::time::Duration) {
         self.0.lock().unwrap().turn_latency = latency;
+    }
+
+    /// Refuses every v2 send from now on.
+    pub(super) fn fail_v2_posts(&self) {
+        self.0.lock().unwrap().fail_v2 = true;
     }
 
     /// A turn names the operator from now on, as `turn` reads it.
@@ -199,6 +206,7 @@ impl HeadsChain for FakeChain {
     async fn post_v2(&self, epoch: u64, head: &HeadV2, _signature: &str) -> anyhow::Result<PostOutcome> {
         let mut state = self.0.lock().unwrap();
         let turn = state.turn.ok_or_else(|| anyhow::anyhow!("UseV1"))?;
+        anyhow::ensure!(!state.fail_v2, "the endpoint refused the send");
         let held = head.hold != Hold::Live;
         // `LogHeads.postV2`'s rules: the parent is the held head, the seq newer (a held head may repeat
         // it), a live head newer in signing time, a held head's block newer than the bound one.

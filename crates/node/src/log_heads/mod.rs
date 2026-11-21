@@ -39,8 +39,6 @@ use crate::tee::EnclaveKey;
 /// reads, each reading whether a turn names the operator: a turn's start moves it to v2 heads within half
 /// a 60 s heartbeat interval, well inside the take window. In a turn it reads the turn before each post.
 const TURN_READ_EVERY: Duration = Duration::from_secs(30);
-/// The shortest read cadence a heartbeat interval sets, against a zero interval.
-const MIN_READ_EVERY: Duration = Duration::from_millis(100);
 
 /// A rollback freeze latch shared between the log-head poster and the sequencer. The poster sets
 /// it the moment it detects a rollback, before its `Freeze` request dequeues behind work already
@@ -172,8 +170,8 @@ pub(crate) struct Poster<R> {
 
 impl<R: HeadsChain> Poster<R> {
     /// Records each released head as it changes, and reads the chain on the retry timer, or, if that is
-    /// sooner, every `TURN_READ_EVERY` with the heartbeat's inputs and every sixth of the heartbeat interval
-    /// while a turn names the operator; posts at most once per interval, or per half heartbeat interval in a
+    /// sooner, every `TURN_READ_EVERY` with the heartbeat's inputs and at least every sixth of the heartbeat
+    /// interval while a turn names the operator; posts at most once per interval, or per half heartbeat interval in a
     /// turn, once the head moves. A rollback — an on-chain head past this node's released head, or one
     /// naming another prefix at a seq this node retains — logs Critical `log_rollback` naming it,
     /// freezes the sequencer, and returns, which stops the node.
@@ -334,7 +332,7 @@ impl<R: HeadsChain> Poster<R> {
             }
             // While a turn names the operator, the head is the heartbeat: it goes out twice per heartbeat
             // interval, as v2.
-            let pace = turn.map_or(self.interval, |turn| turn.interval / 2);
+            let pace = turn.map_or(self.interval, |turn| v2::cadence(turn.interval, self.retry).1);
             let due = posted_at.is_none_or(|at| tick.saturating_duration_since(at) >= pace);
             let turn_due = turn_read.is_none_or(|at| tick.saturating_duration_since(at) >= TURN_READ_EVERY);
             if self.heartbeat.is_some() && (due || turn_due) {
@@ -350,16 +348,16 @@ impl<R: HeadsChain> Poster<R> {
             if std::mem::take(&mut read_failed) {
                 info!(alert_resolved = "log_head_read_failed", "reading the posted log head recovered");
             }
-            // A post waits for a read tick: while a turn names the operator they come at least every sixth
-            // of its interval, so heads go out every half interval whatever the checkpoint retry, a tick
-            // later when a slow read or send skipped the tick a post was due at.
+            // A post waits for a read tick: while a turn names the operator a whole number of them makes half
+            // its interval, so heads go out every half interval whatever the checkpoint retry, and at the
+            // first tick after a slow read or send that skipped the tick a post was due at.
             let rotating = self.heartbeat.as_ref().map_or(self.retry, |_| TURN_READ_EVERY);
-            let reads = self.retry.min(turn.map_or(rotating, |turn| (turn.interval / 6).max(MIN_READ_EVERY)));
+            let reads = turn.map_or(self.retry.min(rotating), |turn| v2::cadence(turn.interval, self.retry).0);
             if retry.period() != reads {
                 retry = interval_at(tokio::time::Instant::now() + reads, reads);
                 retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
             }
-            let pace = turn.map_or(self.interval, |turn| turn.interval / 2);
+            let pace = turn.map_or(self.interval, |turn| v2::cadence(turn.interval, self.retry).1);
             let carried = first_post.is_some_and(|at| at.elapsed() >= pace);
             let since_anchor =
                 anchor_ts.filter(|_| carried).zip(self.trusted.as_ref().and_then(|clock| clock.now_ms()));

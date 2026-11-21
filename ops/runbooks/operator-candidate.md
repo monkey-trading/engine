@@ -955,7 +955,7 @@ posts is its heartbeat. A member whose operator misses the heartbeat is promoted
 
 The operator's trading server posts an `engine.log-head.v2` head through the relayer of
 `[log_heads]`, normally twice per `heartbeatInterval`. It posts less often only after a slow chain
-read, which delays a post to the next read, at most a sixth of an interval later. The interval is the
+read or send, which delays the next post until the read or send has finished. The interval is the
 schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer must hold enough for two
 posts per interval.**
 

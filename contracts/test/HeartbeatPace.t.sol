@@ -5,14 +5,19 @@ import {LogHeads} from "../src/LogHeads.sol";
 import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 
-/// The operator's heads at the node's pace, against the schedule's count: a head every half interval, or
-/// every two thirds of one after a slow chain read skips the node's read tick, the first from anywhere in
-/// the interval after the boundary and each landing up to just under the head tolerance after it was
-/// signed, with every slot witnessed. With any one head failing, at every phase of a slot to the second,
-/// no promotion or skip comes due, and the promotion stays further off than the operator's stop margin.
+/// The operator's heads at the node's pace, against the schedule's count: a head every half interval,
+/// rounded up to the second, the first anywhere in that half interval after the boundary, as a member
+/// that also held the turn before posts it, and each landing up to just under the head tolerance after
+/// it was signed, with every slot witnessed. With any one head failing, or one a read tick late, a sixth
+/// of an interval, with the rest following it, at every second of that phase, no promotion or skip comes
+/// due. Once a head of the signer epoch has landed, the promotion also stays further off than the
+/// operator's stop margin. Before one has, as at the first turn after rotation turns on, the boundary's
+/// slot and the one before it start the count, and under the tightest rule a failed first head can bring
+/// the operator's stop, though not the promotion, before its next head lands.
 abstract contract HeartbeatPaceTest is LivenessTest {
     /// The operator's node stops signing this long before a promotion could pass (`liveness::DELTA`).
     uint64 internal constant STOP_MARGIN = 15;
+    uint256 internal constant NONE = type(uint256).max;
 
     uint64 internal start;
     uint64 internal nextWitness;
@@ -27,25 +32,20 @@ abstract contract HeartbeatPaceTest is LivenessTest {
         schedule.witness();
     }
 
-    /// The heartbeat rule the schedule was deployed with: interval, tolerance and misses.
-    function _rule() internal view returns (uint64 interval, uint64 tolerance, uint16 misses) {
-        (interval, tolerance, misses,) = schedule.liveness();
-    }
-
-    function test_no_single_failed_head_brings_a_promotion_or_skip_due() public {
+    function test_no_single_failed_or_late_head_brings_a_promotion_or_skip_due() public {
         vm.pauseGasMetering();
         (uint64 interval, uint64 tolerance,) = _rule();
-        uint64[2] memory gaps = [interval / 2, interval * 2 / 3];
         uint64[2] memory delays = [uint64(0), tolerance - 1];
-        for (uint256 g = 0; g < 2; ++g) {
-            for (uint256 d = 0; d < 2; ++d) {
-                for (uint64 offset = 0; offset < interval; ++offset) {
-                    // The first head, which latches the turn, then two steady ones.
-                    for (uint256 dropped = 0; dropped < 3; ++dropped) {
-                        uint256 snapshot = vm.snapshotState();
-                        _beatAt(gaps[g], delays[d], offset, dropped, 1);
-                        vm.revertToState(snapshot);
-                    }
+        for (uint256 d = 0; d < 2; ++d) {
+            for (uint64 offset = 0; offset < _gap(interval); ++offset) {
+                // The first head, which latches the turn, then two steady ones.
+                for (uint256 j = 0; j < 3; ++j) {
+                    uint256 snapshot = vm.snapshotState();
+                    _beatAt(delays[d], offset, j, 0, NONE);
+                    vm.revertToState(snapshot);
+                    snapshot = vm.snapshotState();
+                    _beatAt(delays[d], offset, NONE, 0, j);
+                    vm.revertToState(snapshot);
                 }
             }
         }
@@ -55,9 +55,9 @@ abstract contract HeartbeatPaceTest is LivenessTest {
     /// above can see one.
     function test_failed_heads_spanning_the_misses_bring_the_promotion_due() public {
         vm.pauseGasMetering();
-        (uint64 interval,, uint16 misses) = _rule();
+        (,, uint16 misses) = _rule();
         vm.expectRevert(bytes("promotion due"));
-        this.beatAt(interval / 2, 0, 0, 1, 2 * uint256(misses) + 2);
+        this.beatAt(0, 0, 1, 2 * uint256(misses) + 1, NONE);
     }
 
     /// With only heads that latch nothing landing, as the incumbent's while the turn's member never takes
@@ -65,32 +65,37 @@ abstract contract HeartbeatPaceTest is LivenessTest {
     function test_heads_that_latch_nothing_bring_the_skip_due() public {
         vm.pauseGasMetering();
         bindsOther = true;
-        (uint64 interval,,) = _rule();
         vm.expectRevert(bytes("skip due"));
-        this.beatAt(interval / 2, 0, 0, 0, 0);
+        this.beatAt(0, 0, NONE, 0, NONE);
     }
 
     /// `_beatAt`, called externally so an expected revert is caught at this call.
-    function beatAt(uint64 gap, uint64 delay, uint64 offset, uint256 dropFrom, uint256 dropCount) external {
-        _beatAt(gap, delay, offset, dropFrom, dropCount);
+    function beatAt(uint64 delay, uint64 offset, uint256 dropped, uint256 alsoDropped, uint256 late) external {
+        _beatAt(delay, offset, dropped, alsoDropped, late);
     }
 
-    /// Signs a head every `gap` seconds from `offset` after the boundary, each landing `delay` after it was
-    /// signed, with `dropCount` from the `dropFrom`th failing, witnessing each slot a second in, through the
-    /// misses plus two intervals past the last failure. Before each landing, requires no skip due and the
+    /// Signs a head every half interval from `offset` after the boundary, each landing `delay` after it was
+    /// signed: the `dropped`th fails, with the `alsoDropped` after it, and from the `late`th each is signed
+    /// a read tick late. Witnesses each slot a second in, through the misses plus two intervals past the
+    /// last failure. Before each landing, requires no skip or promotion due, and once a head has landed, the
     /// promotion further off than the stop margin.
-    function _beatAt(uint64 gap, uint64 delay, uint64 offset, uint256 dropFrom, uint256 dropCount) internal {
+    function _beatAt(uint64 delay, uint64 offset, uint256 dropped, uint256 alsoDropped, uint256 late) internal {
         (uint64 interval,, uint16 misses) = _rule();
+        uint64 gap = _gap(interval);
+        uint64 tick = (interval + 5) / 6;
         nextWitness = start / interval + 1;
-        uint256 attempts = dropFrom + dropCount + (uint256(misses) + 2) * interval / gap + 1;
+        uint256 attempts = 4 + alsoDropped + (uint256(misses) + 2) * interval / gap;
+        bool landed;
         for (uint256 j = 0; j < attempts; ++j) {
-            uint64 signAt = start + offset + uint64(j) * gap;
+            uint64 signAt = start + offset + uint64(j) * gap + (j >= late ? tick : 0);
             uint64 landAt = signAt + delay;
             _witnessThrough(landAt, interval);
             vm.warp(landAt);
-            require(schedule.promotionDueAt() > landAt + STOP_MARGIN, "promotion due");
+            uint64 due = schedule.promotionDueAt();
+            require(due > landAt && (!landed || due > landAt + STOP_MARGIN), "promotion due");
             require(schedule.skipDueAt() > landAt, "skip due");
-            if (j >= dropFrom && j < dropFrom + dropCount) continue;
+            if (j >= dropped && j - dropped <= alsoDropped) continue;
+            landed = true;
             LogHeads.HeadV2 memory head = _nextHead();
             (head.stamp, head.signedAt) = (signAt * 1000, signAt * 1000);
             if (bindsOther) ++head.position;
@@ -107,43 +112,47 @@ abstract contract HeartbeatPaceTest is LivenessTest {
             ++nextWitness;
         }
     }
+
+    /// Half an interval, rounded up to the second.
+    function _gap(uint64 interval) internal pure returns (uint64) {
+        return (interval + 1) / 2;
+    }
+
+    /// The heartbeat rule the schedule was deployed with: interval, tolerance and misses.
+    function _rule() internal view returns (uint64 interval, uint64 tolerance, uint16 misses) {
+        (interval, tolerance, misses,) = schedule.liveness();
+    }
+
+    /// A schedule with `rule` as its value and both its bounds, a two-slot take window and `budget`.
+    function _built(OperatorSchedule.Liveness memory rule, uint64 budget) internal returns (OperatorSchedule) {
+        OperatorSchedule.TakeWindow memory window = OperatorSchedule.TakeWindow(2, 2, 2);
+        return
+            new OperatorSchedule(
+                registry, receiver, new LogHeads(vault), rule, rule, rule, window, budget, BLOCK_MILLIS
+            );
+    }
 }
 
 /// The forge default rule: 60 s slots, 30 s tolerance, five misses.
 contract HeartbeatPaceDefaultTest is HeartbeatPaceTest {}
 
-/// Three misses, the fewest a rule with a take window can have: 140 s slots, 40 s tolerance, a two-slot
-/// window, under the 20 s test switch budget.
+/// Three misses, the fewest a rule with a take window can have: 140 s slots and 40 s tolerance, under the
+/// 20 s test switch budget.
 contract HeartbeatPaceThreeMissesTest is HeartbeatPaceTest {
     function _newSchedule() internal override returns (OperatorSchedule) {
-        return new OperatorSchedule(
-            registry,
-            receiver,
-            new LogHeads(vault),
-            OperatorSchedule.Liveness(140, 40, 3, 200),
-            OperatorSchedule.Liveness(90, 5, 3, 10),
-            OperatorSchedule.Liveness(140, 60, 3, 256),
-            OperatorSchedule.TakeWindow(2, 2, 4),
-            SWITCH_BUDGET,
-            BLOCK_MILLIS
-        );
+        return _built(OperatorSchedule.Liveness(140, 40, 3, 200), SWITCH_BUDGET);
     }
 }
 
-/// The shortest slots with the largest share of tolerance the liveness scenario runs: 30 s slots, 20 s
-/// tolerance, three misses and a two-slot window, under a 5 s switch budget.
-contract HeartbeatPaceShortSlotsTest is HeartbeatPaceTest {
+/// The tightest rule the schedule accepts at 49 s slots: three misses, the longest tolerance and no
+/// switch budget, so the take window spans the least time it can. The turn's boundary falls on its slot's
+/// last second, which leaves the least time before a skip.
+contract HeartbeatPaceTightestTest is HeartbeatPaceTest {
     function _newSchedule() internal override returns (OperatorSchedule) {
-        return new OperatorSchedule(
-            registry,
-            receiver,
-            new LogHeads(vault),
-            OperatorSchedule.Liveness(30, 20, 3, 10),
-            OperatorSchedule.Liveness(30, 5, 3, 10),
-            OperatorSchedule.Liveness(30, 20, 3, 10),
-            OperatorSchedule.TakeWindow(2, 2, 4),
-            5,
-            BLOCK_MILLIS
-        );
+        return _built(OperatorSchedule.Liveness(49, 48, 3, 10), 0);
+    }
+
+    function test_the_boundary_falls_on_its_slots_last_second() public view {
+        assertEq(start % 49, 48);
     }
 }
