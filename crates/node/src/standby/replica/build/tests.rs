@@ -264,6 +264,7 @@ async fn a_snapshot_from_the_in_office_members_turns_is_not_taken() {
     truthful.last_mut().unwrap().ts = turns_began;
     write_listings(&origin, &truthful);
     let held = scratch_dir("build-snapshot-turns-held");
+    std::fs::create_dir_all(&held).unwrap();
     let kept = truthful.first().unwrap().clone();
     let mut damaged: serde_json::Value =
         serde_json::from_slice(&std::fs::read(origin.join(&kept.file)).unwrap()).unwrap();
@@ -276,7 +277,7 @@ async fn a_snapshot_from_the_in_office_members_turns_is_not_taken() {
     assert!(alert["message"].contains("signature"), "{alert:?}");
     assert!(alerts.try_recv().is_err(), "the newer one is not tried");
     assert!(!held.join(&newer.file).exists(), "the newer one is not fetched");
-    assert_eq!(read_manifest(&held).unwrap(), [kept.clone()], "the older one listed once");
+    assert_eq!(read_manifest(&held).unwrap(), std::slice::from_ref(&kept), "the older one listed once");
     assert_eq!(std::fs::read(held.join(&kept.file)).unwrap(), std::fs::read(origin.join(&kept.file)).unwrap());
 }
 
