@@ -1,0 +1,26 @@
+name: Install Foundry
+description: >-
+  Installs Foundry v1.8.3 (linux amd64) from its release archive, pinned by SHA-256, retrying a
+  refused or failed download.
+runs:
+  using: composite
+  steps:
+    - name: Download and verify
+      shell: bash
+      env:
+        FOUNDRY_VERSION: v1.8.3
+        FOUNDRY_SHA256: 7ca48e6ca3cac1bce1403ca67e5bc1dc3bc1fd818199c9957c7165079c228568
+      run: |
+        set -euo pipefail
+        export dir="$RUNNER_TEMP/foundry"
+        mkdir -p "$dir"
+        export FOUNDRY_VERSION FOUNDRY_SHA256
+        # Each attempt fetches the same pinned archive and checks it, so a retry cannot change what installs.
+        "$GITHUB_WORKSPACE/image/retry" bash -c '
+          set -euo pipefail
+          curl --fail --silent --show-error --location --output "$dir/foundry.tar.gz" \
+            "https://github.com/foundry-rs/foundry/releases/download/${FOUNDRY_VERSION}/foundry_${FOUNDRY_VERSION}_linux_amd64.tar.gz"
+          echo "${FOUNDRY_SHA256}  $dir/foundry.tar.gz" | sha256sum --check --status'
+        tar -xzf "$dir/foundry.tar.gz" -C "$dir"
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/forge" --version

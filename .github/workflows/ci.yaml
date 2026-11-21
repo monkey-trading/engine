@@ -514,10 +514,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install dependencies
         run: ../image/retry forge soldeer install
       # One small contract, so its compile fetches the pinned solc under `retry` before any build.
@@ -545,10 +542,7 @@ jobs:
           shared-key: engine-lib
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
@@ -609,10 +603,7 @@ jobs:
           shared-key: engine-lib
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
@@ -650,10 +641,7 @@ jobs:
         with:
           shared-key: engine-lib
           save-if: false
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
@@ -1171,10 +1159,7 @@ jobs:
           path: target/debug
       - name: Make the downloaded build executable
         run: chmod +x target/debug/engine target/debug/examples/access_source target/debug/examples/sign_request
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
@@ -1203,10 +1188,7 @@ jobs:
           path: target/debug
       - name: Make the downloaded build executable
         run: chmod +x target/debug/engine target/debug/examples/access_source target/debug/examples/sign_request
-      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
-        with:
-          version: v1.8.3
-          cache: false
+      - uses: ./.github/actions/install-foundry
       - name: Install contract dependencies
         working-directory: contracts
         run: ../image/retry forge soldeer install
