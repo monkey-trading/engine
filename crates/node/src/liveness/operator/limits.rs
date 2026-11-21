@@ -31,7 +31,7 @@ pub(super) fn lagging(tip: Released, confirmed: Option<Signable>, since: Option<
 /// Why the node refuses to sequence under `rule` with a ticker every `tick`: a detection window at or
 /// below `DELTA` plus twice the head round trip, or a ticker slower than half an interval, which would
 /// leave a live head no newer seq to sign.
-pub(super) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
+pub(crate) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
     let window = Duration::from_secs(rule.interval.saturating_mul(u64::from(rule.misses)));
     if window <= DELTA + 2 * HEAD_ROUND_TRIP {
         return Some("heartbeatMisses x heartbeatInterval is at or below the stop margin plus two head round trips");

@@ -984,7 +984,7 @@ The operator's trading server posts an `engine.log-head.v2` head through the rel
   heads that the trading server signs meanwhile, as [Configure the liveness caller](#configure-the-liveness-caller)
   describes.
 
-The interval is the schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer
+The interval is the schedule's `liveness()`, 140 seconds at launch. **The `[log_heads]` relayer
 must hold enough for two posts per interval.**
 
 With another member in the turn's set, the trading server signs a head or a checkpoint only at a seq
@@ -1137,7 +1137,7 @@ the new key to register before the epoch's close.
 
 ### A promotion
 
-Once `heartbeatMisses` witnessed slots, 5 by default, pass with no head, anyone's `promote()` names
+Once `heartbeatMisses` witnessed slots, 3 at launch, pass with no head, anyone's `promote()` names
 the next qualified member. The vault moves its signer to that member's standby key, in a new signer
 epoch. The promotion names the next member in the turn's order that never received the keys of the
 turn, whether or not it was drawn or skipped to, and takes the key holder last. A member that held
@@ -1177,7 +1177,7 @@ server has stopped signing.
 A member takes its turn with its first head under its assignment, which `LogHeads` latches. **Post
 the first head as soon as the trading server holds the keys.**
 
-`takeWindow` witnessed slots, 2 by default, after the latest of the boundary's slot, the
+`takeWindow` witnessed slots, 2 at launch, after the latest of the boundary's slot, the
 assignment's slot and the last signer change's slot, are the window for that latch. To read the
 window, run:
 

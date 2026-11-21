@@ -90,9 +90,13 @@ the engine and the contracts must agree on.
 
 - [Deploy and rollback](../ops/runbooks/deploy-and-rollback.md#deploy-the-contracts) gives the order
   in which the timelock and the vault are deployed, and the checks the vault's constructor applies.
+  [Deploy the rotation contracts](../ops/runbooks/deploy-and-rollback.md#deploy-the-rotation-contracts)
+  gives the order of the log heads, the seed contracts, the schedule, the parameter vote and the fault
+  proof.
 - [`production-deployment.toml`](../ops/runbooks/production-deployment.toml) holds the launch
   values: the timelock's delay, the emission budget, the exit period, the claim window, the
-  staleness limit, and the staking epoch and cooldown.
+  staleness limit, the staking epoch and cooldown, the schedule's heartbeat rule, take window, switch
+  budget and bounds, and the parameter vote's windows.
 - [Seed relay](../ops/runbooks/seed-relay.md#deploy-the-relay-and-receiver) gives the order in which
   the seed receiver, the relay and the schedule are deployed.
 - [Standing as an operator candidate](../ops/runbooks/operator-candidate.md) covers registering

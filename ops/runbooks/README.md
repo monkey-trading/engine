@@ -16,6 +16,7 @@ variables and the checks that the other runbooks use.
 | Find what an alert means and which runbook answers it | [Alerts](alerts.md) |
 | Install a release, upgrade to one, or return to the previous one | [Deploy and rollback](deploy-and-rollback.md) |
 | Deploy the contracts, and initialise emissions and staking | [Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
+| Deploy the contracts that daily operator turns need | [Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
 | Write the trading server's configuration | [production-node.toml](production-node.toml) |
 | Stop new positions in one market or in all of them | [Make markets reduce-only](reduce-only.md) |
 | Bring a stopped or crashed trading server back | [Restart and recovery](restart-and-recovery.md) |
@@ -60,5 +61,6 @@ following parts says so where it does:
   against the parts that run locally, but not end to end.
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on the vendor
   accounts and the screening source. The contracts' launch values are set in
-  [production-deployment.toml](production-deployment.toml), and only the opening day is still to be
+  [production-deployment.toml](production-deployment.toml). The opening day, the schedule's switch
+  budget, held-head blocks and bounds, and the parameter vote's windows are proposed and still to be
   confirmed.

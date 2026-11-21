@@ -8,6 +8,7 @@
 mod chain;
 mod daily_turns;
 mod faults;
+mod launch_schedule;
 mod liveness;
 mod node;
 mod operator_share;

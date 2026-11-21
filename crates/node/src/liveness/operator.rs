@@ -479,7 +479,7 @@ mod attested;
 mod episodes;
 use episodes::{Episodes, resolve};
 mod fencing;
-mod limits;
+pub(crate) mod limits;
 use limits::{lagging, read_due, refused, unturned};
 mod read;
 use read::Read;
