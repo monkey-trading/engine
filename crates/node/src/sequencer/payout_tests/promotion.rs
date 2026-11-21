@@ -144,9 +144,14 @@ fn a_promoted_start_proves_approvals_only_at_a_checkpoint_its_log_holds() {
     promoted.seq.flush().unwrap();
     let reissued = promoted.signed.try_recv().unwrap().authorization.unwrap();
     assert_eq!((reissued.checkpoint_seq, reissued.signer), (held.seq, AccountId(standby.address())));
-    let attested = [AccountId(node.seq.key.address()), AccountId(standby.address())].into();
-    crate::sequencer::replay_path_with_attested(&copy, Some(node.domain()), attested, Default::default())
-        .expect("a replay of the promoted log checks every authorization's root");
+    let attested: std::collections::BTreeSet<_> =
+        [AccountId(node.seq.key.address()), AccountId(standby.address())].into();
+    for seals in [crate::log::SealChecks::default(), crate::log::SealChecks::RunEnds] {
+        crate::sequencer::replay_path_with_attested(&copy, Some(node.domain()), attested.clone(), seals)
+            .unwrap_or_else(|e| {
+                panic!("a replay of the promoted log checks every authorization's root, {seals:?}: {e:#}")
+            });
+    }
 }
 
 impl Node {

@@ -15,34 +15,34 @@ use crate::test_support::{TRADER, dev_config, scratch_dir};
 mod attested;
 mod fixture;
 mod ranges;
-use fixture::{Fixture, accepted, append_command, checkpoint, checkpoint_parent, write_file};
+use fixture::{Fixture, accepted, append_command, checkpoint, checkpoint_parent, seal_modes, write_file};
 
 #[tokio::test]
 async fn custody_audit_verifies_old_and_current_signatures_without_modifying_the_public_log() {
-    let fixture = Fixture::new("audit-rotation");
-    let before = fs::read(&fixture.path).unwrap();
-    let replayed =
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), Default::default())
-            .await
-            .unwrap();
-    assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
-    assert_eq!(replayed.engine.accounts()[&TRADER].balance, Fixed::from_int(60));
-    assert_eq!(replayed.engine.withdrawal_approvals().count(), 1);
-    assert_eq!(replayed.checkpoint_signers.len(), 2);
-    assert!(replayed.checkpoint_signers.contains(&AccountId(fixture.old.address())));
-    assert!(replayed.checkpoint_signers.contains(&fixture.signer()));
-    assert_eq!(fs::read(&fixture.path).unwrap(), before);
-    assert_eq!(fs::read_dir(fixture.path.parent().unwrap()).unwrap().count(), 1);
-    assert!(
-        crate::sequencer::replay_path_with_trust(
-            &fixture.path,
-            Some(fixture.domain),
-            Some(fixture.signer()),
-            Default::default()
-        )
-        .is_err(),
-        "the existing offline single-signer mode remains strict"
-    );
+    for seals in seal_modes() {
+        let fixture = Fixture::new("audit-rotation");
+        let before = fs::read(&fixture.path).unwrap();
+        let replayed =
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), seals).await.unwrap();
+        assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
+        assert_eq!(replayed.engine.accounts()[&TRADER].balance, Fixed::from_int(60));
+        assert_eq!(replayed.engine.withdrawal_approvals().count(), 1);
+        assert_eq!(replayed.checkpoint_signers.len(), 2);
+        assert!(replayed.checkpoint_signers.contains(&AccountId(fixture.old.address())));
+        assert!(replayed.checkpoint_signers.contains(&fixture.signer()));
+        assert_eq!(fs::read(&fixture.path).unwrap(), before);
+        assert_eq!(fs::read_dir(fixture.path.parent().unwrap()).unwrap().count(), 1);
+        assert!(
+            crate::sequencer::replay_path_with_trust(
+                &fixture.path,
+                Some(fixture.domain),
+                Some(fixture.signer()),
+                seals
+            )
+            .is_err(),
+            "the existing offline single-signer mode remains strict"
+        );
+    }
 }
 
 #[tokio::test]
@@ -132,81 +132,77 @@ async fn independently_supplied_current_signer_is_required_before_trusting_any_h
 
 #[tokio::test]
 async fn a_retired_vault_signer_is_audited_against_its_epoch_signer() {
-    let mut fixture = Fixture::new("audit-retired-signer");
-    fixture.chain.at.state.signer = AccountId([0; 20]);
-    fixture.chain.at.lifecycle.as_mut().unwrap().signer = AccountId([0; 20]);
-    let replayed =
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), Default::default())
-            .await
-            .unwrap();
-    assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
-    let error = replay_with_chain(
-        &fixture.path,
-        &fixture.chain,
-        fixture.domain,
-        AccountId(fixture.old.address()),
-        Default::default(),
-    )
-    .await
-    .err()
-    .unwrap();
-    assert!(format!("{error:#}").contains("supplied trusted signer"), "{error:#}");
+    for seals in seal_modes() {
+        let mut fixture = Fixture::new("audit-retired-signer");
+        fixture.chain.at.state.signer = AccountId([0; 20]);
+        fixture.chain.at.lifecycle.as_mut().unwrap().signer = AccountId([0; 20]);
+        let replayed =
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), seals).await.unwrap();
+        assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
+        let error =
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, AccountId(fixture.old.address()), seals)
+                .await
+                .err()
+                .unwrap();
+        assert!(format!("{error:#}").contains("supplied trusted signer"), "{error:#}");
+    }
 }
 
 #[tokio::test]
 async fn reissues_on_an_old_root_survive_two_rotations_without_an_intermediate_checkpoint() {
-    let mut fixture = Fixture::new("audit-reissue-epochs");
-    let middle = std::mem::replace(&mut fixture.current, crate::tee::EnclaveKey::generate());
-    fixture.entries.retain(|entry| match entry {
-        LogEntry::Command(command) => command.sequenced.seq <= 4,
-        LogEntry::Checkpoint(cp) => cp.seq == 4,
-        LogEntry::Withdrawal(payout) => payout.authorization.as_ref().unwrap().checkpoint_seq == 4,
-    });
-    fixture.chain.accepted.lock().unwrap().remove(&5);
-    let accepted = fixture.chain.accepted.lock().unwrap().get(&4).unwrap().clone();
-    fixture.chain.at.state.checkpoint = Some((4, accepted.root.clone()));
-    fixture.chain.at.state.signer = fixture.signer();
-    let signer = fixture.signer();
-    let lifecycle = fixture.chain.at.lifecycle.as_mut().unwrap();
-    lifecycle.signer = signer;
-    lifecycle.signer_epoch = 3;
-    lifecycle.checkpoint_seq = Some(4);
-    lifecycle.checkpoint_root = Some(accepted.root);
-    fixture.chain.epochs.lock().unwrap().insert(3, signer);
-    let original = fixture
-        .entries
-        .iter()
-        .find_map(|entry| match entry {
-            LogEntry::Withdrawal(payout) => Some(payout.clone()),
-            _ => None,
-        })
-        .unwrap();
-    for (epoch, key) in [(2, &middle), (3, &fixture.current)] {
-        let mut reissued = original.clone();
-        let auth = reissued.authorization.as_mut().unwrap();
-        auth.signer = AccountId(key.address());
-        auth.signer_epoch = epoch;
-        reissued.signature = key.sign_payout(&reissued).unwrap();
-        fixture.entries.push(LogEntry::Withdrawal(reissued));
-    }
-    write_file(&fixture.path, &fixture.entries);
-    let replayed =
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, Default::default()).await.unwrap();
-    assert_eq!((replayed.checkpoints, replayed.engine.withdrawal_approvals().count()), (1, 1));
-    let pages = fixture.chain.epoch_pages.lock().unwrap().clone();
-    assert_eq!(pages, [(B256::repeat_byte(0x88), vec![1, 2, 3])]);
-    assert!(fixture.chain.accepted.lock().unwrap().values().all(|cp| cp.signer_epoch == 1));
+    for seals in seal_modes() {
+        let mut fixture = Fixture::new("audit-reissue-epochs");
+        let middle = std::mem::replace(&mut fixture.current, crate::tee::EnclaveKey::generate());
+        fixture.entries.retain(|entry| match entry {
+            LogEntry::Command(command) => command.sequenced.seq <= 4,
+            LogEntry::Checkpoint(cp) => cp.seq == 4,
+            LogEntry::Withdrawal(payout) => payout.authorization.as_ref().unwrap().checkpoint_seq == 4,
+        });
+        fixture.chain.accepted.lock().unwrap().remove(&5);
+        let accepted = fixture.chain.accepted.lock().unwrap().get(&4).unwrap().clone();
+        fixture.chain.at.state.checkpoint = Some((4, accepted.root.clone()));
+        fixture.chain.at.state.signer = fixture.signer();
+        let signer = fixture.signer();
+        let lifecycle = fixture.chain.at.lifecycle.as_mut().unwrap();
+        lifecycle.signer = signer;
+        lifecycle.signer_epoch = 3;
+        lifecycle.checkpoint_seq = Some(4);
+        lifecycle.checkpoint_root = Some(accepted.root);
+        fixture.chain.epochs.lock().unwrap().insert(3, signer);
+        let original = fixture
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                LogEntry::Withdrawal(payout) => Some(payout.clone()),
+                _ => None,
+            })
+            .unwrap();
+        for (epoch, key) in [(2, &middle), (3, &fixture.current)] {
+            let mut reissued = original.clone();
+            let auth = reissued.authorization.as_mut().unwrap();
+            auth.signer = AccountId(key.address());
+            auth.signer_epoch = epoch;
+            reissued.signature = key.sign_payout(&reissued).unwrap();
+            fixture.entries.push(LogEntry::Withdrawal(reissued));
+        }
+        write_file(&fixture.path, &fixture.entries);
+        let replayed = replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, seals).await.unwrap();
+        assert_eq!((replayed.checkpoints, replayed.engine.withdrawal_approvals().count()), (1, 1));
+        let pages = fixture.chain.epoch_pages.lock().unwrap().clone();
+        assert_eq!(pages, [(B256::repeat_byte(0x88), vec![1, 2, 3])]);
+        assert!(fixture.chain.accepted.lock().unwrap().values().all(|cp| cp.signer_epoch == 1));
 
-    fixture.chain.epochs.lock().unwrap().insert(2, signer);
-    assert!(
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, Default::default()).await.is_err(),
-        "a different epoch signer cannot authenticate the logged reissue"
-    );
-    fixture.chain.epochs.lock().unwrap().remove(&2);
-    assert!(
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, Default::default()).await.is_err(),
-        "missing epoch history must never fall back to a log-named retired signer"
-    );
+        fixture.chain.epochs.lock().unwrap().insert(2, signer);
+        assert!(
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, seals).await.is_err(),
+            "a different epoch signer cannot authenticate the logged reissue"
+        );
+        fixture.chain.epochs.lock().unwrap().remove(&2);
+        assert!(
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, signer, seals).await.is_err(),
+            "missing epoch history must never fall back to a log-named retired signer"
+        );
+    }
 }
 
 #[tokio::test]
@@ -233,65 +229,63 @@ async fn tampered_withdrawal_proof_roots_fail_the_custody_backed_replay() {
 
 #[tokio::test]
 async fn unknown_tail_still_requires_the_independently_trusted_current_signer() {
-    let mut fixture = Fixture::new("audit-current-tail");
-    let mut engine = crate::sequencer::replay_path_with_authorities(
-        &fixture.path,
-        fixture.domain,
-        fixture.signer(),
-        fixture.parent(),
-        fixture.history(),
-        Default::default(),
-    )
-    .unwrap()
-    .engine;
-    append_command(&mut fixture.entries, &mut engine, Command::Tick);
-    let tail = checkpoint(&mut engine, &fixture.current, fixture.domain, fixture.parent());
-    fixture.entries.push(LogEntry::Checkpoint(tail));
-    write_file(&fixture.path, &fixture.entries);
-    let replayed =
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), Default::default())
-            .await
+    for seals in seal_modes() {
+        let mut fixture = Fixture::new("audit-current-tail");
+        let mut engine = crate::sequencer::replay_path_with_authorities(
+            &fixture.path,
+            fixture.domain,
+            fixture.signer(),
+            fixture.parent(),
+            fixture.history(),
+            seals,
+        )
+        .unwrap()
+        .engine;
+        append_command(&mut fixture.entries, &mut engine, Command::Tick);
+        let tail = checkpoint(&mut engine, &fixture.current, fixture.domain, fixture.parent());
+        fixture.entries.push(LogEntry::Checkpoint(tail));
+        write_file(&fixture.path, &fixture.entries);
+        let replayed =
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), seals).await.unwrap();
+        assert_eq!((replayed.commands, replayed.checkpoints), (7, 3));
+        let proof = engine.approval_proof(TRADER, 1).unwrap();
+        let mut payout = fixture
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                LogEntry::Withdrawal(payout) => Some(payout.clone()),
+                _ => None,
+            })
             .unwrap();
-    assert_eq!((replayed.commands, replayed.checkpoints), (7, 3));
-    let proof = engine.approval_proof(TRADER, 1).unwrap();
-    let mut payout = fixture
-        .entries
-        .iter()
-        .find_map(|entry| match entry {
-            LogEntry::Withdrawal(payout) => Some(payout.clone()),
-            _ => None,
-        })
-        .unwrap();
-    let auth = payout.authorization.as_mut().unwrap();
-    auth.signer = fixture.signer();
-    auth.signer_epoch = 2;
-    auth.checkpoint_seq = proof.seq;
-    auth.checkpoint_root = proof.root;
-    auth.siblings = proof.siblings;
-    payout.signature = fixture.current.sign_payout(&payout).unwrap();
-    fixture.entries.push(LogEntry::Withdrawal(payout));
-    write_file(&fixture.path, &fixture.entries);
-    let error = replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), Default::default())
-        .await
-        .err()
-        .expect("a valid current signature cannot substitute an unaccepted local proof root");
-    assert!(format!("{error:#}").contains("not accepted in the finalized prefix"), "{error:#}");
-    assert!(matches!(fixture.entries.pop(), Some(LogEntry::Withdrawal(_))));
-    let LogEntry::Checkpoint(tail) = fixture.entries.last_mut().unwrap() else { unreachable!() };
-    tail.signer = fixture.old.address_hex();
-    tail.signature = fixture.old.sign_checkpoint_v2(
-        fixture.domain.chain_id,
-        &fixture.domain.vault.0,
-        tail.seq,
-        &tail.root.parse::<engine_core::eip712::B256>().unwrap().0,
-        tail.parent.unwrap(),
-    );
-    write_file(&fixture.path, &fixture.entries);
-    assert!(
-        replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), Default::default())
+        let auth = payout.authorization.as_mut().unwrap();
+        auth.signer = fixture.signer();
+        auth.signer_epoch = 2;
+        auth.checkpoint_seq = proof.seq;
+        auth.checkpoint_root = proof.root;
+        auth.siblings = proof.siblings;
+        payout.signature = fixture.current.sign_payout(&payout).unwrap();
+        fixture.entries.push(LogEntry::Withdrawal(payout));
+        write_file(&fixture.path, &fixture.entries);
+        let error = replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), seals)
             .await
-            .is_err()
-    );
+            .err()
+            .expect("a valid current signature cannot substitute an unaccepted local proof root");
+        assert!(format!("{error:#}").contains("not accepted in the finalized prefix"), "{error:#}");
+        assert!(matches!(fixture.entries.pop(), Some(LogEntry::Withdrawal(_))));
+        let LogEntry::Checkpoint(tail) = fixture.entries.last_mut().unwrap() else { unreachable!() };
+        tail.signer = fixture.old.address_hex();
+        tail.signature = fixture.old.sign_checkpoint_v2(
+            fixture.domain.chain_id,
+            &fixture.domain.vault.0,
+            tail.seq,
+            &tail.root.parse::<engine_core::eip712::B256>().unwrap().0,
+            tail.parent.unwrap(),
+        );
+        write_file(&fixture.path, &fixture.entries);
+        assert!(
+            replay_with_chain(&fixture.path, &fixture.chain, fixture.domain, fixture.signer(), seals).await.is_err()
+        );
+    }
 }
 
 #[tokio::test]
@@ -374,22 +368,23 @@ async fn a_checkpoint_signer_outside_the_vault_epoch_history_is_refused() {
 
 #[tokio::test]
 async fn segmented_log_audit_never_repairs_an_incomplete_manifest_tail() {
-    let fixture = Fixture::new("audit-segments-source");
-    let dir = scratch_dir("audit-segments-readonly");
-    let segmented = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
-    let mut writer = segmented.into_writer(100, watch::channel(Manifest::default()).0).unwrap();
-    for entry in &fixture.entries {
-        writer.append(entry).unwrap();
+    for seals in seal_modes() {
+        let fixture = Fixture::new("audit-segments-source");
+        let dir = scratch_dir("audit-segments-readonly");
+        let segmented = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
+        let mut writer = segmented.into_writer(100, watch::channel(Manifest::default()).0).unwrap();
+        for entry in &fixture.entries {
+            writer.append(entry).unwrap();
+        }
+        writer.sync().unwrap();
+        drop(writer);
+        fs::write(dir.join("manifest.jsonl"), b"{partial").unwrap();
+        let before = fs::read(dir.join("manifest.jsonl")).unwrap();
+        let replayed = replay_with_chain(&dir, &fixture.chain, fixture.domain, fixture.signer(), seals).await.unwrap();
+        assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
+        assert_eq!(fs::read(dir.join("manifest.jsonl")).unwrap(), before);
+        assert!(!dir.join("checkpoint-submission.json").exists());
     }
-    writer.sync().unwrap();
-    drop(writer);
-    fs::write(dir.join("manifest.jsonl"), b"{partial").unwrap();
-    let before = fs::read(dir.join("manifest.jsonl")).unwrap();
-    let replayed =
-        replay_with_chain(&dir, &fixture.chain, fixture.domain, fixture.signer(), Default::default()).await.unwrap();
-    assert_eq!((replayed.commands, replayed.checkpoints), (6, 2));
-    assert_eq!(fs::read(dir.join("manifest.jsonl")).unwrap(), before);
-    assert!(!dir.join("checkpoint-submission.json").exists());
 }
 
 #[tokio::test]
