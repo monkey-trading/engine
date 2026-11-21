@@ -159,8 +159,8 @@ impl Sequencer {
     }
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
-    /// status may have moved on since; with a capture in flight, keeps it for shutdown instead, and
-    /// the capture stays due. No command has been applied since the checkpoint, and no withdrawal
+    /// status may have moved on since; with a capture in flight or the history owner's queue full, keeps it for
+    /// shutdown instead, and the capture stays due. No command has been applied since the checkpoint, and no withdrawal
     /// entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
@@ -183,6 +183,8 @@ impl Sequencer {
                 endpoint
                     .write_alert
                     .failed(|| warn!(alert = "snapshot_write_failed", "checkpoint remains in log: {reason:#}"));
+                // Shutdown captures it once the queue drains if no later checkpoint follows.
+                self.captures.uncaptured = Some(deferred);
                 return Ok(());
             }
         };

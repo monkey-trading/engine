@@ -95,6 +95,40 @@ async fn a_capture_the_history_owner_cannot_take_stays_due() {
     assert!(failed >= 3, "every checkpoint past the interval tries the capture again: {failed} refusals");
 }
 
+/// The queue refuses the capture of the last command's checkpoint, then drains with no further command:
+/// shutdown still caches that checkpoint.
+#[tokio::test]
+async fn shutdown_caches_a_checkpoint_whose_capture_the_full_queue_refused() {
+    let mut cfg = configuration("paired-cadence-refused-shutdown");
+    cfg.snapshots.as_mut().unwrap().interval = INTERVAL;
+    let (collector, router) = collect_alerts();
+    let clock = Arc::new(TestClock::at(SystemClock.now_ms()));
+    let node = Node::start_at(cfg, clock.clone()).await.unwrap();
+    deposits(&node, "first", 3).await;
+    let before = caches(&node);
+    clock.advance(INTERVAL);
+    // Commands up to a checkpoint, its capture due, while the history owner's queue has no free slot.
+    let held = node.sealing.hold_queue();
+    assert!(!held.is_empty(), "the queue had free slots to take");
+    let every = node.cfg.node.checkpoint_every;
+    let mut n = 0;
+    while n == 0 || (node.manifest.borrow().flushed.expect("commands are logged").seq + 1) % every != 0 {
+        node.submit(deposit(1, &format!("refused-{n}"))).await;
+        n += 1;
+    }
+    let last = node.manifest.borrow().flushed.expect("commands are logged").seq;
+    assert_eq!(caches(&node), before, "the full queue refused the capture");
+    drop(held);
+    node.history_caught_up().await;
+    let (cfg, reader) = node.stop().await;
+    drop((reader, collector));
+    let refused = write_alert_lines(router).into_iter().filter(|line| line.severity.is_some()).count();
+    assert!(refused >= 1, "the refused capture alerts: {refused}");
+    let stopped = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
+    assert_eq!(stopped.len(), before.len() + 1, "the shutdown capture: {stopped:?}");
+    assert_eq!(seq_of(&stopped[0]), last, "the shutdown cache covers the refused checkpoint");
+}
+
 #[tokio::test]
 async fn a_handover_takes_no_capture_of_the_log_it_sealed() {
     let mut cfg = configuration("paired-cadence-handover");
