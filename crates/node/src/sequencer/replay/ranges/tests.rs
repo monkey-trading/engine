@@ -10,7 +10,8 @@ fn a_ranges_references_resolve_once_against_the_ranges_before_it() {
     let (account, amount) = (AccountId([4; 20]), Fixed::from_int(7));
     let roots: BTreeMap<u64, B256> = [(3, B256::repeat_byte(1)), (9, B256::repeat_byte(2))].into();
     let approval = (9, account, amount, 1);
-    let refs = Refs { start: Some(12), payouts: vec![(3, B256::repeat_byte(1))], deferred: vec![approval] };
+    let refs =
+        Refs { start: Some(12), payouts: vec![(3, B256::repeat_byte(1))], deferred: vec![approval], ..Refs::default() };
     let mut deferred = vec![(3, account, amount, 0), approval];
     resolve(&refs, &roots, &mut deferred).unwrap();
     assert_eq!(deferred, [(3, account, amount, 0)], "the release took its approval out");
