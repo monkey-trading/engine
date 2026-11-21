@@ -377,17 +377,17 @@ pub(super) fn proof_children(existing: u16, nibble: u8) -> u16 {
 
 /// The children, as a bitmap of nibbles, an update of keys through the `touched` nibbles of an internal
 /// node with the `existing` children can read from the old tree: every touched child, and every untouched
-/// child alone among the untouched ones in the whole node, or in a range holding a touched nibble or in
-/// that range's sibling at any of the node's four heights. The update reads an old child only where it
-/// descends, where it takes a sibling alone in its range, where it descends to the child alone in an
-/// absent child's range, and where one child is left to coalesce with. A touched child may be rewritten
-/// or removed before then, but an untouched one is still there, so a range holding one old child then
-/// holds no other untouched child.
+/// child alone among the untouched ones in a range holding a touched nibble, or in that range's sibling, at
+/// any of the node's four heights. The update reads an old child only where it descends, where it takes a
+/// sibling alone in its range, where it descends to the child alone in an absent child's range, and where
+/// one child is left to coalesce with, which is alone in its half of the node. A touched child may be
+/// rewritten or removed before then, but an untouched one is still there, so a range holding one old child
+/// then holds no other untouched child.
 pub(super) fn update_children(existing: u16, touched: u16) -> u16 {
     let untouched = existing & !touched;
     let lone = |within: u16| Some(untouched & within).filter(|lone| lone.count_ones() == 1).unwrap_or(0);
     (0..16u8)
         .filter(|nibble| touched & (1 << nibble) != 0)
         .flat_map(ranges)
-        .fold((existing & touched) | lone(u16::MAX), |wanted, within| wanted | lone(within))
+        .fold(existing & touched, |wanted, within| wanted | lone(within))
 }

@@ -9,7 +9,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use crate::authenticated::blobs::chunk_key;
-use crate::authenticated::reader::{Checked, Reader};
+use crate::authenticated::reader::{Checked, Reader, update_children};
 use crate::authenticated::tests::{fresh, put, raw};
 use crate::authenticated::{Hasher, Root, key_hash};
 
@@ -62,4 +62,16 @@ fn an_update_loads_every_child_upstreams_update_reads() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// An update loads the children its keys pass through and the untouched ones alone in a range of theirs,
+/// and no others: through one nibble of a full node it loads that child and its one-wide sibling, two of
+/// sixteen.
+#[test]
+fn an_update_loads_only_the_children_upstreams_update_can_read() {
+    assert_eq!(update_children(u16::MAX, 1), 0b11, "a full node through nibble 0");
+    assert_eq!(update_children(0b1111, 0b0011), 0b0011, "the untouched pair beside two touched children");
+    let sparse = (1 << 0) | (1 << 5) | (1 << 9);
+    assert_eq!(update_children(sparse, 1), sparse, "each untouched child alone in its range");
+    assert_eq!(update_children(0b0110, 1 << 8), 0, "a key through an empty half, beside a pair");
 }

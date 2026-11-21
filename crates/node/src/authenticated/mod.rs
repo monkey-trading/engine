@@ -1,7 +1,7 @@
 //! Proof-verified, host-backed JMT versions with authenticated persistent retirement receipts.
 //! `open_existing` is strictly read-only; the parent authorizes writes only after recovery preflight.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{Result, ensure};
 use jmt::SimpleHasher;
+use rusqlite::Connection;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -26,7 +27,10 @@ pub use versions::{Lease, Session};
 mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
-/// The exact packed representation and upstream proof interpretation bound by cache signatures.
+/// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
+/// 2 stores each node as its JSON or as upstream's compact borsh form, which its first byte tells apart, and
+/// this release reads both; a release before compact nodes reads JSON alone, so it refuses a store holding a
+/// compact node at the first one it meets, and its recovery falls back as for any unreadable cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -92,10 +96,9 @@ struct Inner {
     /// journal, until `enable_writes` rolls the journal back.
     crash_image: AtomicBool,
     files: Mutex<Option<WriteFiles>>,
-    /// Serializes writes, and keeps the writer's connection between them, so its page cache stays warm:
-    /// SQLite clears it at a transaction's start when another connection has committed since. A write
-    /// that does not end cleanly drops it.
-    writer: Mutex<Option<rusqlite::Connection>>,
+    /// Serializes writes, and keeps the writer's connection, with its prepared statements, from one committed
+    /// write to the next; each write empties its page cache first, and any other outcome drops it.
+    writer: Mutex<Option<Connection>>,
     runtime: Mutex<Runtime>,
     /// The syncs this store has made, for a test that counts them.
     #[cfg(test)]
@@ -111,7 +114,7 @@ struct WriteFiles {
 struct Runtime {
     namespaces: BTreeMap<[u8; 32], Namespace>,
     /// The namespaces whose new nodes are written compact.
-    compact: std::collections::BTreeSet<[u8; 32]>,
+    compact: BTreeSet<[u8; 32]>,
     poisoned: bool,
 }
 

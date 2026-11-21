@@ -101,8 +101,8 @@ fn every_stored_node_reads_back_from_its_compact_form() -> Result<()> {
     Ok(())
 }
 
-/// A compact node is read only when it is exactly one node: an unknown tag, a byte too few or too many,
-/// or a count past its node's is refused.
+/// A compact node is read only when it is exactly one node: an unknown child tag or child type, a byte too
+/// few or too many, or a count past its node's is refused.
 #[test]
 fn a_compact_node_is_refused_unless_it_is_exactly_one_node() -> Result<()> {
     let (dir, store) = fresh()?;
@@ -119,8 +119,8 @@ fn a_compact_node_is_refused_unless_it_is_exactly_one_node() -> Result<()> {
     let damaged = [
         [compact.as_slice(), &[0]].concat(),
         compact[..compact.len() - 1].to_vec(),
-        [&[3], &compact[1..]].concat(),
         [&compact[..first_child], &[2], &compact[first_child + 1..]].concat(),
+        [&compact[..first_child + 41], &[2], &compact[first_child + 42..]].concat(),
         [&compact[..compact.len() - 16], &u64::MAX.to_le_bytes(), &compact[compact.len() - 8..]].concat(),
     ];
     for bytes in damaged {

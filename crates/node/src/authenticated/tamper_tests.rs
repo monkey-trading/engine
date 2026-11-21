@@ -166,6 +166,27 @@ fn host_lengths_cannot_request_unbounded_node_or_value_decoding() -> Result<()> 
     Ok(())
 }
 
+/// Damage written into the file's bytes between two writes, with SQLite's header and change counter left as
+/// they were, is refused by the next write that reads the damaged node: the writer's connection, kept from
+/// the first write, reads every page from the file again, as a fresh connection would.
+#[test]
+fn raw_damage_that_keeps_the_header_is_refused_by_the_next_write() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let root = store.update(&Root::empty([19; 32]), vec![put(b"a", b"A"), put(b"b", b"B")])?;
+    let key = codec::root_key(root.version.expect("a version"))?;
+    let node: Vec<u8> =
+        raw(&dir)?.query_row("SELECT data FROM nodes WHERE path = ?1", [codec::path(&key)?], |row| row.get(0))?;
+    let path = dir.path.join("store.sqlite");
+    let mut file = std::fs::read(&path)?;
+    let header = file[..100].to_vec();
+    let at = file.windows(node.len()).position(|window| window == node.as_slice()).expect("the root node's bytes");
+    file[at + node.len() / 2] ^= 0x55;
+    std::fs::write(&path, &file)?;
+    assert_eq!(std::fs::read(&path)?[..100], header, "the header is unchanged");
+    assert!(store.update(&root, vec![put(b"a", b"next")]).is_err(), "the damaged root node is refused");
+    Ok(())
+}
+
 /// Finds distinct first nibbles so the fixture has two independently stored root children.
 /// Error cases:
 /// - key hashing fails; the finite fixture search failing is a test failure
