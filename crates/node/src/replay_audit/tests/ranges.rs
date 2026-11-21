@@ -11,7 +11,7 @@ use engine_core::protocol::ProtocolVersion;
 use engine_core::{Engine, Fixed};
 
 use super::*;
-use crate::daily_snapshots::{Job, publish_now};
+use crate::daily_snapshots::{Job, Signing, publish_now};
 use crate::log::{Offset, SegmentedLog};
 use crate::sequencer::SignedWithdrawal;
 use crate::sequencer::replay::Audited;
@@ -133,6 +133,7 @@ impl Ranged {
             checkpoint: third.clone(),
             ts: engine.now(),
             engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()),
+            signing: Signing::for_tests(),
         };
         entries.push(LogEntry::Withdrawal(release(legacy, &key, domain)));
         entries.push(LogEntry::Withdrawal(typed));

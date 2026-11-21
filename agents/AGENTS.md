@@ -254,7 +254,9 @@ an index: load only the rule whose hint matches the current action.
   daily snapshots under `[daily_snapshots]` (`daily_snapshots/`: the engine's state at the first checkpoint the node
   writes on each UTC day by sequenced time, encoded by the stats worker's copy once its checkpoint is durable and
   published by a writer thread, each file then its manifest line synced, every day's kept, a day the writer is still
-  busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; served unsigned at
+  busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; each signed by the enclave key over
+  the deployment, its checkpoint's offset and root and the SHA-256 of the engine's encoding (`daily_snapshots/signature.rs`,
+  schema 2 in the file, the manifest line unchanged, schema 1 still read); served at
   `/v1/archive/snapshots/{file}`, two checks at once apart from the stream's backfills, Warning
   `daily_snapshot_unreadable`, `api/archive.rs`) and `engine replay --snapshots <dir> --jobs <n>`
   (`sequencer/replay/ranges/`: the log split at each snapshot's checkpoint the log holds and the ranges replayed at
@@ -322,7 +324,17 @@ an index: load only the rule whose hint matches the current action.
   life (`node/member.rs`, #593: between its turns it follows the operator in effect, resolved from
   the registry's registered hostname and the vault's signer at the latest block each turn and after a failed
   stint, 1 s after the first and doubling to a stint, `standby/operator.rs`, into a copy with a live replica
-  built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`; from a
+  built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`, or, for an empty
+  copy it backfills under `[daily_snapshots]`, from the newest daily snapshot, of those it holds and those its origins
+  list, whose checkpoint the copy holds and the vault finalized, the three newest tried in turn and a refused fetch
+  removed (`daily_snapshots/fetch.rs`, `daily_snapshots/start.rs`, `node/member/turn/open.rs`), signed over its
+  state's bytes by that checkpoint's recorded signer, checked before the state is decoded: a pass over the copy before
+  it applies nothing, checks every link, seal, checkpoint signature and root agreement and authorization and folds the
+  command prefix, accounting, payout order, takings and the rest (`sequencer/replay/live/before.rs`), the replica
+  replays on from the snapshot, its root checked at its checkpoint, counting no full replay, its own boundary check
+  counting only a range after the snapshot and answering none (`log_check::own_check`), a thread of its own derives
+  the financing rows before the snapshot while it follows (`standby/replica/rows.rs`), and any failure pages Warning
+  `snapshot_start_refused` and replays the whole copy (`standby/replica/build.rs`); from a
   minute before its own turn's boundary it holds its keyless venue connections open with their quotes held
   back, which its start lets through to its sequencer, while a connection that carries a key (`VenueConnection::warms`,
   `warm` in config) opens only as the turn starts, the launch operators sharing one account per keyed vendor
@@ -1016,7 +1028,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels and spreads), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots and member snapshot start), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
@@ -1160,6 +1172,13 @@ Run from the repo root:
   the first and last of each run; `--snapshots <dir>` replays a log directory in ranges from a directory of daily
   snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two physical cores,
   `default_jobs`)
+- Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
+  launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
+  its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole
+  replay to what a whole replay gives, takes the node's turn through the tail handover and stamps its first command,
+  and an altered snapshot is passed over with Warning `snapshot_start_refused`); the member's start from a snapshot
+  against a whole replay on a kept log of launch flow: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
+  sequencer::recovery_scale::bench::member_start_bench -- --ignored --nocapture`
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
   flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
   it replays to whole, under a pinned and an attested signer, a snapshot past the log's last checkpoint, or of a

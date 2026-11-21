@@ -421,6 +421,7 @@ fn folded(dir: &std::path::Path) -> (Option<u64>, Option<(Vec<crate::history::ma
         [enclave()].into(),
         kept,
         (None, &[]),
+        None,
         |_| Ok(()),
     )
     .unwrap_or_else(|e| panic!("the replica refused the copy: {e:#}"));

@@ -67,7 +67,8 @@ fn ranges_bench() {
         let every = env("RANGES_BENCH_MINUTES", 10i64) * 60_000;
         let mut last = None;
         let started = Instant::now();
-        let written = snapshot_log(base.engine(), &dir.join("log"), &snapshots, |_, ts| {
+        let signing = crate::daily_snapshots::Signing::for_tests();
+        let written = snapshot_log(base.engine(), &dir.join("log"), (&snapshots, &signing), |_, ts| {
             let due = last.is_none_or(|last| ts.div_euclid(every) > last);
             last = due.then_some(ts.div_euclid(every)).or(last);
             due
@@ -118,6 +119,108 @@ fn ranges_bench() {
             cpu * 1e6 / audited.commands as f64
         );
     }
+}
+
+#[test]
+#[ignore = "a member's start from a daily snapshot against a whole replay, on a kept log, for profiling"]
+fn member_start_bench() {
+    use crate::daily_snapshots::{Signing, open_signed};
+    use crate::log::{LogEntry, Offset, SegmentedLog, Stop, offset_of};
+    use crate::sequencer::recovery_scale::flow::SEGMENT_COMMANDS;
+    use crate::sequencer::recovery_scale::handover::copy_log;
+    use crate::sequencer::recovery_scale::restart::DOMAIN;
+    use crate::sequencer::replay::Before;
+    use crate::sequencer::replay::ranges::fixture::snapshot_log;
+    use crate::standby::Follower;
+
+    let dir = std::path::PathBuf::from(std::env::var("REPLAY_BENCH_DIR").expect("REPLAY_BENCH_DIR"));
+    let key = Arc::new(EnclaveKey::test_key());
+    let signer = AccountId(key.address());
+    if !dir.join("base.json").exists() {
+        write(&dir, key.clone());
+    }
+    let base = Base { encoded: std::fs::read_to_string(dir.join("base.json")).expect("the book's encoding") };
+    // The member's copy, its completed segments linked, and a snapshot `MEMBER_BENCH_PERCENT` of the way through
+    // it, as a member's newest is a day into thirty, each written once.
+    let copy = dir.join("member-copy");
+    if !copy.exists() {
+        copy_log(&dir.join("log"), &copy).expect("the member's copy");
+    }
+    let percent = env("MEMBER_BENCH_PERCENT", 90u64);
+    let snapshots = dir.join(format!("member-snapshots-{percent}"));
+    if !snapshots.exists() {
+        let last = crate::log::last_checkpoint(&copy).expect("the copy reads").expect("a checkpoint").seq;
+        let (target, mut taken) = (last * percent / 100, false);
+        let signing = Signing { key: key.clone(), domain: DOMAIN };
+        snapshot_log(base.engine(), &copy, (&snapshots, &signing), |checkpoint, _| {
+            let due = !taken && checkpoint.seq >= target;
+            taken |= due;
+            due
+        })
+        .expect("the snapshot is written");
+    }
+    let cores = std::thread::available_parallelism().expect("the cores this process may use");
+    let workers = ReplayWorkers::from(env("RECOVERY_REPLAY_WORKERS", cores));
+    let open = |snapshot| {
+        let ids = (DOMAIN, signer, [signer].into());
+        let follower = Follower::open_seeded(
+            (&copy, SEGMENT_COMMANDS, workers),
+            ids,
+            (None, None, None, None),
+            (|| base.engine(), snapshot),
+            |_| Ok(()),
+        );
+        follower.expect("the replica builds")
+    };
+    let (started, cpu) = (Instant::now(), cpu_secs());
+    let whole = open(None);
+    let (took, cpu) = (started.elapsed(), cpu_secs() - cpu);
+    let (commands, head) = (whole.replica().last_seq().expect("a command") + 1, whole.replica().head_link());
+    println!(
+        "BENCH member_whole commands={commands} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1}",
+        took.as_secs_f64(),
+        commands as f64 / took.as_secs_f64()
+    );
+    drop(whole);
+
+    let (started, cpu) = (Instant::now(), cpu_secs());
+    let (_, newest) = crate::daily_snapshots::list(&snapshots).expect("the snapshots").pop().expect("a snapshot");
+    let signed = open_signed(&newest, DOMAIN, &[signer].into()).expect("a usable snapshot");
+    let (at, loaded) = (signed.snapshot.offset, started.elapsed());
+    let from = open(Some(signed));
+    let (took, cpu) = (started.elapsed(), cpu_secs() - cpu);
+    assert_eq!((from.replays(), from.replica().head_link()), (0, head), "the replica from the snapshot");
+    drop(from);
+    println!(
+        "BENCH member_snapshot snapshot_seq={} load_s={:.1} s={:.1} cpu_s={cpu:.1}",
+        at.seq,
+        loaded.as_secs_f64(),
+        took.as_secs_f64()
+    );
+
+    // The pass alone, over the copy before the snapshot's checkpoint.
+    let snapshot = crate::daily_snapshots::load(&snapshots.join(crate::snapshot::name(at))).expect("the snapshot");
+    let mut pass = Before::new(DOMAIN, [signer].into(), &snapshot.engine, &[]);
+    drop(snapshot);
+    pass.check_seals_ahead(&copy, workers);
+    let (started, cpu, mut previous, mut passed) = (Instant::now(), cpu_secs(), None::<Offset>, 0u64);
+    SegmentedLog::read_span_ahead(&copy, 0, |entry: LogEntry| {
+        let offset = offset_of(previous, &entry)?;
+        previous = Some(offset);
+        if offset == at {
+            return Err(Stop.into());
+        }
+        passed += u64::from(matches!(entry, LogEntry::Command(_)));
+        pass.entry(&entry)
+    })
+    .expect("the pass");
+    let (took, cpu) = (started.elapsed(), cpu_secs() - cpu);
+    println!(
+        "BENCH member_pass commands={passed} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1} cpu_us_per_command={:.1}",
+        took.as_secs_f64(),
+        passed as f64 / took.as_secs_f64(),
+        cpu * 1e6 / passed as f64
+    );
 }
 
 /// Writes the book's encoding and `RECOVERY_LAUNCH_SECS` of launch flow on it into `dir`, through a node

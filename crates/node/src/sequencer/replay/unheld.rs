@@ -107,6 +107,12 @@ impl Replay {
         self.unheld.last_sealer
     }
 
+    /// Takes `sealer` as the signer of the last command's seal, for a replay that goes on from a state it did
+    /// not apply the log to, past commands whose seals another pass checked.
+    pub(super) fn seed_last_sealer(&mut self, sealer: Option<AccountId>) {
+        self.unheld.last_sealer = sealer;
+    }
+
     /// Refuses a recovery whose log ends in a superseded key's checkpoint the vault never accepted
     /// with no command a later key sealed after it: a promotion's copy continues past such a checkpoint
     /// under the promoted key, while a log a rotation left behind ends there.

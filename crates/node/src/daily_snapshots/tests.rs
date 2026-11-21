@@ -54,6 +54,35 @@ fn a_restart_keeps_only_listed_snapshots_of_checkpoints_the_log_holds() {
     assert_eq!(read_manifest(&dir).unwrap(), [listing]);
 }
 
+/// A published snapshot carries the SHA-256 of its engine's encoding, which is that engine's state digest, and
+/// the writer's signature over its deployment, offset, root and that digest, which recovers to the writer's key
+/// there and to no key in another deployment; its manifest line is the format before signatures, which an earlier
+/// release reads.
+#[test]
+fn a_published_snapshot_is_signed_over_its_state() {
+    let dir = scratch_dir("daily-signed");
+    let job = job(Offset { seq: 5, index: 1 }, 0);
+    let (domain, key) = (job.signing.domain, job.signing.key.address());
+    let listing = publish_now(&dir, job).unwrap();
+    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(&listing.file)).unwrap()).unwrap();
+    assert_eq!(written["schema"], 2);
+    let engine: Engine = serde_json::from_value(written["engine"].clone()).unwrap();
+    let state = state_digest(&engine).unwrap();
+    assert_eq!(written["state"].as_str(), Some(hex::encode(state).as_str()));
+    let signature: engine_core::eip712::Signature = written["signature"].as_str().unwrap().parse().unwrap();
+    let root: engine_core::eip712::B256 = listing.root.parse().unwrap();
+    let offset = Offset { seq: listing.seq, index: listing.index };
+    let recovered =
+        |domain| engine_core::eip712::recover(&signature::digest(domain, offset, root, state).into(), &signature);
+    assert_eq!(recovered(domain), Some(engine_core::types::AccountId(key)));
+    let other = crate::log::CheckpointDomain { chain_id: domain.chain_id + 1, ..domain };
+    assert_ne!(recovered(other), Some(engine_core::types::AccountId(key)), "another deployment");
+    let line: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(dir.join(MANIFEST)).unwrap().trim()).unwrap();
+    let fields: Vec<&str> = line.as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(fields, ["bytes", "file", "index", "root", "seq", "sha256", "ts"], "the manifest line's fields");
+}
+
 /// `load` refuses a snapshot of another format, one whose name, offset, checkpoint and engine disagree,
 /// and one of a state before `V27` or custody finality.
 #[test]
@@ -65,9 +94,9 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     let error = format!("{:#}", load(&path).err().expect("an engine at V0 is refused"));
     assert!(error.contains("predates V27"), "{error}");
     let cases: [(&str, Alter); 3] = [
-        ("of format 2", |snapshot| snapshot["schema"] = 2.into()),
+        ("of format 3", |snapshot| snapshot["schema"] = 3.into()),
         ("names offset", |snapshot| snapshot["offset"] = "5:2".into()),
-        ("stand at seqs", |snapshot| snapshot["checkpoint"]["seq"] = 6.into()),
+        ("stands at seq", |snapshot| snapshot["checkpoint"]["seq"] = 6.into()),
     ];
     for (said, alter) in cases {
         let mut snapshot = written.clone();
@@ -123,7 +152,8 @@ fn job(offset: Offset, ts: Millis) -> Job {
         domain: None,
         deferred_withdrawals: false,
     };
-    Job { offset, checkpoint, ts, engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()) }
+    let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
+    Job { offset, checkpoint, ts, engine, signing: Signing::for_tests() }
 }
 
 /// A staged file whose rename fails is removed, so the next write can stage it again.

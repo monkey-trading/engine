@@ -255,17 +255,7 @@ pub(crate) fn replay_ranges_from(
 /// - the log cannot be read up to `offset` (`SegmentedLog::read_span_ahead`)
 fn holds(path: &Path, offset: Offset, file: &Path) -> anyhow::Result<bool> {
     let Ok(named) = daily_snapshots::checkpoint_of(file) else { return Ok(false) };
-    let (mut at, mut found) = (None, None);
-    SegmentedLog::read_span_ahead(path, offset.seq, |entry| {
-        let here = log::offset_of(at, &entry)?;
-        at = Some(here);
-        if here < offset {
-            return Ok(());
-        }
-        found = (here == offset).then_some(entry);
-        Err(Stop.into())
-    })?;
-    Ok(matches!(found, Some(LogEntry::Checkpoint(held)) if held == named))
+    Ok(matches!(daily_snapshots::entry_at(path, offset)?, Some(LogEntry::Checkpoint(held)) if held == named))
 }
 
 /// Runs `replay` over each of `ranges`, told whether it is the last, on `jobs` threads, each taking the next
