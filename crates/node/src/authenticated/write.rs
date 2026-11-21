@@ -33,7 +33,7 @@ impl Store {
     /// As `update`, but leaves the store's sync of the database file and its directory, which makes the
     /// rollback journal's deletion durable, to its next synced write. SQLite's own commit syncs still run:
     /// the root commits atomically and reads at once, and survives a crash once a later synced write
-    /// returns. For a root nothing acknowledges, such as a private stage a synced update completes.
+    /// returns. For a root no head names, such as a private stage a synced update completes.
     /// Error cases:
     /// - as `update`
     pub fn update_unsynced(&self, root: &Root, changes: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Result<Root> {

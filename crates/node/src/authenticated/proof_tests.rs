@@ -12,9 +12,9 @@ use crate::authenticated::tests::{fresh, put};
 use crate::authenticated::{Hasher, Root, codec};
 
 /// For every set of two or more children and every nibble, upstream's own proof of a key through that
-/// nibble asks only for children `proof_children` names. Every child is a leaf, the case in which
-/// upstream reads the most: it reads a sibling alone in its range only when that sibling is a leaf or
-/// the range is one wide.
+/// nibble finishes, verifies against the root's hash, and asks only for children `proof_children` names.
+/// Every child is a leaf, the case in which upstream reads the most: it reads a sibling alone in its
+/// range only when that sibling is a leaf or the range is one wide.
 #[test]
 fn a_proof_loads_every_child_upstreams_proof_asks_for() -> Result<()> {
     for existing in (1..=u16::MAX).filter(|bits| bits.count_ones() >= 2) {
@@ -93,9 +93,9 @@ impl TreeReader for Leaves {
         Ok(self.children.get(key).cloned())
     }
 
-    /// Any value: the proof's reads, not its value, are under test.
+    /// Never asked for: no queried key is a leaf's, so every proof is of absence.
     fn get_value_option(&self, _: u64, _: KeyHash) -> Result<Option<Vec<u8>>> {
-        Ok(Some(Vec::new()))
+        anyhow::bail!("unused")
     }
 
     /// Never asked for by a proof.
