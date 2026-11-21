@@ -201,6 +201,9 @@ and data, and this procedure gives the steps.
 
 4. Have the executor run the call:
 
+   **Changes the live system.** The owner must approve the execution, which can be a separate yes
+   from the approval to schedule the call.
+
    ```shell
    cast send $TIMELOCK 'execute(address,uint256,bytes,bytes32,bytes32)' $TARGET 0 $DATA $ZERO $SALT --rpc-url $RPC --account <executor>
    ```
@@ -218,7 +221,9 @@ and data, and this procedure gives the steps.
    runbook names. The trading server acts on the call only once the block that holds it is
    `finalized`.
 
-To withdraw a scheduled call before it runs, the proposer cancels it:
+To withdraw a scheduled call before it runs, the proposer cancels it.
+
+**Changes the live system.** The owner must approve the cancellation.
 
 ```shell
 cast send $TIMELOCK 'cancel(bytes32)' $OP --rpc-url $RPC --account <proposer>
@@ -302,6 +307,8 @@ The image mounts one data disk at `/data`, and nothing else persists.
 | `/data/config.toml` | The configuration. Its SHA-256 hash is bound into the attestation. | Yes. It is also the release's configuration. |
 | `/data/log` | The event log and `manifest.jsonl`, with `checkpoint-submission.json`, `log-head-submission.json` and their `.lock` files beside the segments. | Yes, continuously, as described below. |
 | `/data/history` | The account history index and the marks cache, both rebuilt from the log. | No. |
+| `/data/snapshots` | With `[snapshots]`, the recovery caches, the authenticated account history index and the segment catalog. | No. |
+| `/data/daily-snapshots` | With `[daily_snapshots]`, the engine's state at the first checkpoint of each UTC day, and its manifest. | Optional. [Daily snapshots](restart-and-recovery.md#daily-snapshots) describes them. |
 | `/data/alerts` | The alert outbox, which holds pages not yet delivered. | Yes, together with the log. |
 | `/data/keys` | The sealed enclave keys, one file for each release and generation, and the delivered secrets, one `<release id>.secrets.json` for each release. | A copy is useless on another chip. Keep one anyway, as proof of what was sealed. |
 | `/data/custody-cursor.json`, `/data/staking-cursor.json` | The points from which the deposit and staking scans resume. | Optional. Without a cursor, the scan starts at `custody.evm.start_block`. |

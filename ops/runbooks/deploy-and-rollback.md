@@ -564,6 +564,10 @@ snapshots.
 
 1. On a host of its own, with `OPERATOR_KEY_FILE` set for this process alone, start the worker:
 
+   **Changes the live system.** The worker signs benchmark rates with the operator's key and
+   sequences them into the live engine, so the owner must approve starting it and the key that it
+   signs with.
+
    ```shell
    $ENGINE admin --config node.toml --node $API --pin $PIN sync-benchmarks --watch
    ```

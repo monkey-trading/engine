@@ -19,6 +19,7 @@ variables and the checks that the other runbooks use.
 | Write the trading server's configuration | [production-node.toml](production-node.toml) |
 | Stop new positions in one market or in all of them | [Make markets reduce-only](reduce-only.md) |
 | Bring a stopped or crashed trading server back | [Restart and recovery](restart-and-recovery.md) |
+| Act when `daily_snapshot_failed` or `daily_snapshot_unreadable` fires | [Daily snapshots](restart-and-recovery.md#daily-snapshots) |
 | Replace, rotate or recover a key, or deliver the trading server's secrets | [Key recovery](key-recovery.md) |
 | Schedule a dividend or a split | [Corporate actions](corporate-actions.md) |
 | Respond to an unfamiliar alert, or to anything that looks like an attack | [Incident response](incident-response.md) |
