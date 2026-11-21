@@ -394,7 +394,7 @@ impl Sequencer {
             snapshot_work: recovery_work.clone(),
             snapshot_anchor_work: recovery_anchor_work.clone(),
             snapshot_signers: checkpoint_signers,
-            captures: Default::default(),
+            captures: snapshots::Captures::publishing(cfg.daily_snapshots.as_deref(), dedup_checkpoint_seq),
             marks: Default::default(),
             pipeline: None,
             after_sync: Vec::new(),

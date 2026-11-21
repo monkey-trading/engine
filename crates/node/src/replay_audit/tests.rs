@@ -14,6 +14,7 @@ use crate::test_support::{TRADER, dev_config, scratch_dir};
 
 mod attested;
 mod fixture;
+mod ranges;
 use fixture::{Fixture, accepted, append_command, checkpoint, checkpoint_parent, write_file};
 
 #[tokio::test]

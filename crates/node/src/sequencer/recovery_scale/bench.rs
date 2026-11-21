@@ -52,6 +52,70 @@ fn replay_bench() {
     }
 }
 
+#[test]
+#[ignore = "the replay's cost in ranges from snapshots of a kept log, for profiling"]
+fn ranges_bench() {
+    use crate::sequencer::replay::ranges::fixture::snapshot_log;
+    use crate::sequencer::replay::ranges::{Trust, replay_ranges_from};
+
+    let dir = std::path::PathBuf::from(std::env::var("REPLAY_BENCH_DIR").expect("REPLAY_BENCH_DIR"));
+    let signer = AccountId(EnclaveKey::test_key().address());
+    let base = Base { encoded: std::fs::read_to_string(dir.join("base.json")).expect("the book's encoding") };
+    // A snapshot every `RANGES_BENCH_MINUTES` of sequenced time, where a node takes one a day, written once.
+    let snapshots = dir.join(format!("snapshots-{}m", env("RANGES_BENCH_MINUTES", 10)));
+    if !snapshots.exists() {
+        let every = env("RANGES_BENCH_MINUTES", 10i64) * 60_000;
+        let mut last = None;
+        let started = Instant::now();
+        let written = snapshot_log(base.engine(), &dir.join("log"), &snapshots, |_, ts| {
+            let due = last.is_none_or(|last| ts.div_euclid(every) > last);
+            last = due.then_some(ts.div_euclid(every)).or(last);
+            due
+        })
+        .expect("the log snapshots");
+        println!("BENCH snapshots written={written} s={:.1}", started.elapsed().as_secs_f64());
+    }
+    // What starting a range costs: a snapshot's load, with its resting-order index rebuilt, and its root
+    // computed over every key.
+    let (_, last) = crate::daily_snapshots::list(&snapshots).expect("the snapshots").pop().expect("a snapshot");
+    let (started, cpu) = (Instant::now(), cpu_secs());
+    let mut start = crate::daily_snapshots::load(&last).expect("a snapshot loads");
+    let loaded = started.elapsed();
+    start.engine.state_root();
+    println!(
+        "BENCH snapshot bytes={} load_s={:.2} root_s={:.2} cpu_s={:.2}",
+        std::fs::metadata(&last).expect("the snapshot").len(),
+        loaded.as_secs_f64(),
+        (started.elapsed() - loaded).as_secs_f64(),
+        cpu_secs() - cpu
+    );
+    drop(start);
+    // What a replay with `--custody-config` adds before its ranges: one whole read of the log on one thread
+    // for its checkpoints (`replay_audit::checkpoint_candidates`).
+    let started = Instant::now();
+    crate::log::SegmentedLog::open(&dir.join("log"), &mut |_| Ok(())).expect("the log reads");
+    println!("BENCH whole_read s={:.1}", started.elapsed().as_secs_f64());
+    let cores = std::thread::available_parallelism().expect("the cores this process may use");
+    let jobs = std::num::NonZeroUsize::new(env("RANGES_BENCH_JOBS", (cores.get() / 2).max(1))).expect("jobs");
+    for _ in 0..env("REPLAY_BENCH_RUNS", 1) {
+        let (started, cpu) = (Instant::now(), cpu_secs());
+        let trust = Trust::Pinned { domain: None, signer: Some(signer) };
+        let audited = replay_ranges_from(&|| base.engine(), &dir.join("log"), &snapshots, trust, jobs)
+            .expect("the log replays in ranges");
+        let (took, cpu) = (started.elapsed(), cpu_secs() - cpu);
+        println!(
+            "BENCH ranges ranges={} jobs={jobs} commands={} checkpoints={} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1} \
+             cpu_us_per_command={:.1}",
+            audited.ranges,
+            audited.commands,
+            audited.checkpoints,
+            took.as_secs_f64(),
+            audited.commands as f64 / took.as_secs_f64(),
+            cpu * 1e6 / audited.commands as f64
+        );
+    }
+}
+
 /// Writes the book's encoding and `RECOVERY_LAUNCH_SECS` of launch flow on it into `dir`, through a node
 /// started as the scenario starts one, which captures no cache in that time.
 fn write(dir: &Path, key: Arc<EnclaveKey>) {

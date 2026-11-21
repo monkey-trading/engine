@@ -15,7 +15,7 @@ use anyhow::Context;
 use tracing::warn;
 
 use crate::log::segments::list_segments;
-use crate::log::{LogEntry, SegmentedLog, Stop, read_file};
+use crate::log::{LogEntry, SegmentedLog, Stop, read_file, span};
 
 /// How many entries the reading thread may hold that the caller has not taken.
 const AHEAD: usize = 1024;
@@ -35,6 +35,31 @@ impl SegmentedLog {
         let read: Read<Self> = Box::new(move |each| SegmentedLog::open_listed(&dir, files, false, each));
         // `open_listed` gives an error from reading a segment this context.
         ahead(read, visit, |at| format!("segment {}", paths[at].display()))
+    }
+}
+
+impl SegmentedLog {
+    /// Hands `visit` each entry of the log in `dir` from the first of the segment holding the command at
+    /// `from` to the log's end, in order, until `visit` ends the read early with `Stop`, which is no error:
+    /// a replay's read of one range of a log (`span`), read, checked and parsed on a thread of its own while
+    /// `visit` takes each entry on this one.
+    /// Error cases:
+    /// - the directory or the manifest cannot be read, or a segment read fails or differs from its listing
+    ///   (`span::span`)
+    /// - `visit` fails with anything but `Stop`
+    pub fn read_span_ahead(
+        dir: &Path,
+        from: u64,
+        visit: impl FnMut(LogEntry) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let files = span::files(dir)?;
+        let paths: Vec<_> = files.iter().map(|(_, path)| path.clone()).collect();
+        let dir = dir.to_owned();
+        let read: Read<()> = Box::new(move |each| span::span(&dir, &files, from, each));
+        match ahead(read, visit, |at| format!("segment {}", paths[at].display())) {
+            Err(e) if e.is::<Stop>() => Ok(()),
+            read => read,
+        }
     }
 }
 

@@ -393,6 +393,7 @@ impl Node {
             payouts_enabled: true,
             clock: api_clock,
             log_dir: dir.into(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::new(&dev_config().api)),

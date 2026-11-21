@@ -69,3 +69,33 @@ fn rebuilding_indexes_after_every_command_preserves_events_serialization_and_roo
     assert!(cached.accounts()[&a].orders.is_empty());
     assert!(!cached.accounts()[&a].positions.contains_key(&BTC));
 }
+
+/// A state decoded with an order missing from its market's index of resting orders still hashes to the
+/// same root, since the market leaf leaves the index out and the order's own leaf holds the order:
+/// rebuilding the index from the accounts' orders gives the state back, and the order fills as before.
+#[test]
+fn an_index_of_resting_orders_a_decoded_state_lost_is_rebuilt_from_its_orders() {
+    let mut h = Harness::v17();
+    let a = acct(1);
+    h.deposit(a, "100000");
+    h.price(BTC, "100");
+    h.order(a, BTC, Side::Buy, "1", OrderKind::Stop { price: f("110") });
+    h.order(a, ETH, Side::Buy, "1", OrderKind::Limit { price: f("90") });
+    assert!(h.engine.resting_matches_orders());
+    let order_id = *h.engine.markets()[&BTC].resting.keys().next().unwrap();
+    let root = h.engine.state_root();
+    let mut encoded = serde_json::to_value(&h.engine).unwrap();
+    let resting = encoded["markets"][BTC.to_string()]["resting"].as_object_mut().unwrap();
+    assert!(resting.remove(&order_id.to_string()).is_some(), "the index held the order");
+    let mut decoded: Engine = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.state_root(), root, "the root does not bind the index");
+    assert!(!decoded.resting_matches_orders());
+
+    decoded.rebuild_resting();
+    assert!(decoded.resting_matches_orders());
+    decoded.restore_indexes();
+    assert_eq!(serde_json::to_vec(&decoded).unwrap(), serde_json::to_vec(&h.engine).unwrap());
+    let events = h.price(BTC, "110");
+    assert_eq!(fills(&events).iter().map(|fill| fill.order_id).collect::<Vec<_>>(), [order_id]);
+    assert_eq!(decoded.apply(h.log.last().unwrap()).unwrap(), events);
+}

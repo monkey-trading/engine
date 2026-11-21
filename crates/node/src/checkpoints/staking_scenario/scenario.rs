@@ -270,6 +270,7 @@ impl Scenario {
             // The sequencer's clock, as the node gives both: kept screening decisions age with it.
             clock: self.clock.clone(),
             log_dir: self.dir.clone(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),

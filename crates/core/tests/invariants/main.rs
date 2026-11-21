@@ -282,14 +282,19 @@ fn funded(mut h: Harness, session: &Session) -> Harness {
 }
 
 /// Fails unless client balances plus house cash equal the cash that has entered and left, and every
-/// market's aggregate qty and cost equal the sum over its accounts' positions.
+/// market's aggregate qty and cost equal the sum over its accounts' positions, and each market's index of
+/// resting orders is its accounts' orders, as a daily snapshot's state rebuilds it.
 /// Error cases:
 /// - cash is not conserved
 /// - a market's aggregates differ from its positions, or a position is in an unlisted market
+/// - a market's index of resting orders differs from its accounts' orders
 fn check(engine: &Engine, inflow: Fixed) -> Result<(), String> {
     let balances: Fixed = engine.accounts().values().map(|acct| acct.balance).sum();
     if balances + engine.house_cash() != inflow {
         return Err(format!("cash not conserved: balances {balances} + house {} != {inflow}", engine.house_cash()));
+    }
+    if !engine.resting_matches_orders() {
+        return Err("a market's index of resting orders differs from its accounts' orders".into());
     }
     let mut held: BTreeMap<MarketId, (Fixed, Fixed)> = BTreeMap::new();
     for (market, pos) in engine.accounts().values().flat_map(|acct| &acct.positions) {

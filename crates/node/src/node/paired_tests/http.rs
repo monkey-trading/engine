@@ -53,6 +53,7 @@ impl Http {
             payouts_enabled: false,
             clock: Arc::new(SystemClock),
             log_dir: PathBuf::new(),
+            daily_snapshots: None,
             manifest: watch::channel(Manifest::default()).1,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::new(&cfg.api)),

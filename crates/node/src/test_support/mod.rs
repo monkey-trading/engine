@@ -349,6 +349,7 @@ pub fn sequencer_config(dir: &Path, manifest: watch::Sender<Manifest>) -> Sequen
         checkpoint_parent: Default::default(),
         checkpoints: None,
         history_sealing: None,
+        daily_snapshots: None,
         checkpoint_signing: None,
         registry_operator: None,
         promoted_operator: None,

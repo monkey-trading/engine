@@ -101,6 +101,39 @@ impl Engine {
             self.refresh_session(market_id, events);
         }
     }
+
+    /// Rebuilds each market's index of resting orders, `MarketState::resting`, from its accounts' orders,
+    /// which the state root holds as order leaves while the market leaf leaves the index out. A state the
+    /// root alone vouches for, such as a daily snapshot's, takes its index from here, so a source that
+    /// dropped an order from the index, or added one, cannot change what the state does. Call it before
+    /// `restore_indexes`, whose trigger index reads it.
+    pub fn rebuild_resting(&mut self) {
+        let mut rebuilt: BTreeMap<MarketId, BTreeMap<OrderId, AccountId>> = BTreeMap::new();
+        for (account, held) in self.accounts.iter() {
+            for (order_id, order) in &held.orders {
+                rebuilt.entry(order.market).or_default().insert(*order_id, *account);
+            }
+        }
+        for (id, market) in self.markets.iter_mut() {
+            market.resting = rebuilt.remove(id).unwrap_or_default();
+        }
+    }
+
+    /// Whether each market's index of resting orders is the one `rebuild_resting` gives: a check for tests.
+    #[doc(hidden)]
+    pub fn resting_matches_orders(&self) -> bool {
+        let mut indexed: BTreeMap<OrderId, (AccountId, MarketId)> = BTreeMap::new();
+        for (id, market) in self.markets.iter() {
+            indexed.extend(market.resting.iter().map(|(order_id, account)| (*order_id, (*account, *id))));
+        }
+        let held = self.accounts.iter().flat_map(|(account, held)| {
+            held.orders
+                .iter()
+                .filter(|(_, order)| self.markets.contains_key(&order.market))
+                .map(move |(order_id, order)| (*order_id, (*account, order.market)))
+        });
+        indexed.into_iter().eq(held.collect::<BTreeMap<_, _>>())
+    }
 }
 
 impl Engine {

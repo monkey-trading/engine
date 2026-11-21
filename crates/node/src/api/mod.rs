@@ -14,6 +14,7 @@ use actions::{
 };
 mod admin;
 mod archive;
+pub use archive::ServedSnapshots;
 mod attestation;
 mod benchmark_schedule;
 mod distributions;
@@ -141,6 +142,9 @@ pub struct ApiState {
     /// one to stamp commands with.
     pub clock: Arc<dyn Clock>,
     pub log_dir: PathBuf,
+    /// The daily snapshots `[daily_snapshots]` publishes, which `/v1/archive/snapshots/` serves; `None`
+    /// answers it 404.
+    pub daily_snapshots: Option<Arc<ServedSnapshots>>,
     /// The log writer's manifest, held in enclave memory.
     pub manifest: watch::Receiver<Manifest>,
     /// Permits for stream subscribers reading from disk.
@@ -316,6 +320,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/dev/deposit", post(dev_deposit))
         .route("/v1/stream", get(stream::stream))
         .route("/v1/archive/{file}", get(archive::archive))
+        .route("/v1/archive/snapshots/{file}", get(archive::snapshot))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::max(limits.max_body_bytes))
         .layer(from_fn_with_state(state, signing::sign_responses))
@@ -412,6 +417,8 @@ async fn emissions(State(s): State<ApiState>, Path(address): Path<String>) -> Ap
 mod access_tests;
 #[cfg(test)]
 mod admin_tests;
+#[cfg(test)]
+mod archive_tests;
 #[cfg(test)]
 mod auth_tests;
 #[cfg(test)]

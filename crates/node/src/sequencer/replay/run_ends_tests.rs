@@ -196,6 +196,32 @@ fn a_runs_failed_seal_is_reported_ahead_of_any_later_fault() {
     assert!(refused.contains("the seal at seq 0 by") && refused.contains("ends the run"), "a repeated seq: {refused}");
 }
 
+/// A read that fails while a run is open reports the run's failed seal first, which `settled` checks before
+/// the read's own fault; with the run's seals intact, the read's fault is the one reported.
+#[test]
+fn a_read_that_fails_with_a_run_open_reports_the_runs_failed_seal_first() {
+    let key = EnclaveKey::test_key();
+    let signer = Some(AccountId(key.address()));
+    for (case, wrong, refused) in [("a wrong seal", true, "the seal at seq 3 by"), ("intact seals", false, "log line")]
+    {
+        let mut entries = ticks(4, &[1], |_| Some((&key, DOMAIN)));
+        if wrong {
+            command(&mut entries, 3).seal = Some(key.seal_command(DOMAIN, B256::repeat_byte(9)));
+        }
+        let dir = crate::test_support::scratch_dir(&format!("run-ends-read-fault-{wrong}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("log.jsonl");
+        let lines: String = entries.iter().map(|entry| serde_json::to_string(entry).unwrap() + "\n").collect();
+        std::fs::write(&file, lines + "{not an entry\n").unwrap();
+        let error = replay_path_with_trust(&file, Some(DOMAIN), signer, SealChecks::RunEnds).err().expect("refused");
+        let error = format!("{error:#}");
+        assert!(error.contains(refused), "{case}: {error}");
+        if wrong {
+            assert!(error.contains("the run from seq 2") && !error.contains("log line"), "{case}: {error}");
+        }
+    }
+}
+
 // ── Helpers ──
 
 /// A change to a command's seal.

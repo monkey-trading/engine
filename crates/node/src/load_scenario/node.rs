@@ -147,6 +147,7 @@ impl Node {
             payouts_enabled: false,
             clock,
             log_dir: dir.to_owned(),
+            daily_snapshots: None,
             manifest,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: limits.clone(),

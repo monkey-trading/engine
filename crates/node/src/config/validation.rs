@@ -258,6 +258,17 @@ impl NodeConfig {
             marks.validate(PRODUCTION_BUILD).context("history.marks")?;
         }
         self.stats.validate()?;
+        if let Some(daily) = &self.daily_snapshots {
+            // A start removes the files in it named as snapshots but unlisted, as recovery caches are named, and
+            // a snapshot's publication replaces its `manifest.jsonl`, as the log's is named.
+            let dir = resolved(&daily.dir)?;
+            let snapshots = self.snapshots.as_ref().map(|snapshots| &snapshots.dir);
+            for other in [&self.node.log_dir, &self.history.dir, &self.alerts.outbox.dir].into_iter().chain(snapshots) {
+                if resolved(other)? == dir {
+                    bail!("[daily_snapshots] dir must be a directory of its own, but is {}", other.display());
+                }
+            }
+        }
         self.validate_custody()?;
         self.validate_checkpoints()?;
         self.validate_log_heads()?;
@@ -338,4 +349,21 @@ fn repeated<T: Ord + Copy>(items: impl IntoIterator<Item = T>) -> Option<T> {
 /// Whether `address` is a non-empty host, a colon, and a port number.
 fn is_host_port(address: &str) -> bool {
     address.rsplit_once(':').is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok())
+}
+
+/// `path` made absolute, with every symbolic link in the part of it that exists resolved: the directory a
+/// write to it lands in, whether or not the rest of it exists yet.
+/// Error cases:
+/// - the working directory cannot be read, or a part of `path` that exists cannot be resolved
+fn resolved(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    let absolute = std::path::absolute(path)?;
+    let mut existing = absolute.as_path();
+    let mut rest = Vec::new();
+    while !existing.try_exists()? {
+        let Some((parent, name)) = existing.parent().zip(existing.file_name()) else { break };
+        rest.push(name);
+        existing = parent;
+    }
+    let real = existing.canonicalize().with_context(|| format!("resolving {}", existing.display()))?;
+    Ok(rest.iter().rev().fold(real, |path, name| path.join(name)))
 }

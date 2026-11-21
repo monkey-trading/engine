@@ -348,6 +348,7 @@ impl TestNode {
             mock_custody: true,
             payouts_enabled: true,
             log_dir: PathBuf::new(),
+            daily_snapshots: None,
             manifest: watch::channel(Manifest::default()).1,
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: limits.clone(),

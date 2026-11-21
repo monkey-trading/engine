@@ -155,7 +155,7 @@ impl Manifest {
     /// one, and is listed again when the next segment starts.
     /// Error cases:
     /// - the file exists but cannot be read, or a whole line is not a valid listing
-    fn read(dir: &Path) -> anyhow::Result<(Self, u64)> {
+    pub(super) fn read(dir: &Path) -> anyhow::Result<(Self, u64)> {
         let path = dir.join(MANIFEST);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -238,10 +238,7 @@ impl SegmentedLog {
                 None => open = Some(segment),
             }
         }
-        if let Some(segment) = open.as_ref().filter(|s| s.commands == 0) {
-            let next_seq = last.map_or(0, |last: Offset| last.seq + 1);
-            ensure!(segment.first_seq == next_seq, "empty last segment is not named for the next seq {next_seq}");
-        }
+        Segment::check_open(open.as_ref(), last)?;
         manifest.authority = Some(ReadAuthority(()));
         manifest.flushed = last;
         manifest.active =

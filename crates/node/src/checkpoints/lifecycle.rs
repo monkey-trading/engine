@@ -64,7 +64,7 @@ pub(crate) struct AcceptedCheckpoint {
 }
 
 /// Independently pinned checkpoint identities and immutable payout signer epochs.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct SignerHistory {
     pub checkpoints: Vec<AcceptedCheckpoint>,
     pub epochs: BTreeMap<u64, AccountId>,

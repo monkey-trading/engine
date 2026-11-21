@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use anyhow::{Context, ensure};
@@ -11,6 +12,8 @@ use crate::checkpoints::{CheckpointChain, CheckpointRpc, SignerHistory, View, ac
 use crate::config::{CustodyProvider, NodeConfig};
 use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SealChecks, SegmentedLog};
 use crate::sequencer::Replayed;
+use crate::sequencer::replay::Audited;
+use crate::sequencer::replay::ranges::{Trust, replay_ranges};
 
 /// The independently authenticated finalized prefix used by one complete replay pass.
 #[derive(Debug)]
@@ -30,6 +33,30 @@ pub async fn replay_path_with_custody(
     signer: AccountId,
     seals: SealChecks,
 ) -> anyhow::Result<Replayed> {
+    let (chain, domain) = custody_chain(cfg)?;
+    replay_with_chain(path, &chain, domain, signer, seals).await
+}
+
+/// `replay_path_with_custody` in ranges from the daily snapshots in `snapshots`, `jobs` at once, no range
+/// starting after the vault's finalized checkpoint (`replay_ranges`).
+/// Error cases:
+/// - as `replay_path_with_custody`, or the replay in ranges fails (`replay_ranges`)
+pub async fn replay_ranges_with_custody(
+    path: &Path,
+    snapshots: &Path,
+    cfg: &NodeConfig,
+    signer: AccountId,
+    jobs: NonZeroUsize,
+) -> anyhow::Result<Audited> {
+    let (chain, domain) = custody_chain(cfg)?;
+    let AuditTrust { parent, authorities } = build_trust(path, &chain, domain, signer).await?;
+    replay_ranges(path, snapshots, Trust::Custody { domain, signer, parent, authorities }, jobs)
+}
+
+/// The read-only checkpoint chain and deployment `cfg`'s custody names.
+/// Error cases:
+/// - the config names no EVM custody or no `[checkpoints]`, or an invalid vault, or the chain client fails
+fn custody_chain(cfg: &NodeConfig) -> anyhow::Result<(CheckpointRpc, CheckpointDomain)> {
     ensure!(cfg.custody.provider == CustodyProvider::Evm, "custody-backed audit requires EVM custody");
     let checkpoints = cfg.checkpoints.as_ref().context("custody-backed audit requires [checkpoints]")?;
     let evm = cfg.custody.evm.as_ref().context("custody-backed audit requires [custody.evm]")?;
@@ -38,7 +65,7 @@ pub async fn replay_path_with_custody(
         vault: cfg.custody.vault.parse().context("custody audit vault address")?,
     };
     let chain = CheckpointRpc::read_only(checkpoints, domain, evm.usdc, evm.finality_tag, evm.confirmations)?;
-    replay_with_chain(path, &chain, domain, signer, seals).await
+    Ok((chain, domain))
 }
 
 /// Builds independently authenticated trust before applying the log through ordinary strict replay,
