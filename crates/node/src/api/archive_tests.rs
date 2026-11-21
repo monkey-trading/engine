@@ -9,7 +9,7 @@ use tokio::sync::Semaphore;
 
 use crate::api::ServedSnapshots;
 use crate::api::tests::{api_state, get, serve_state};
-use crate::daily_snapshots::{Job, MANIFEST, publish_now};
+use crate::daily_snapshots::{Job, MANIFEST, Signing, publish_now};
 use crate::log::{Checkpoint, Offset};
 use crate::snapshot::sealing::Encoding;
 use crate::test_support::scratch_dir;
@@ -62,5 +62,5 @@ fn tick_snapshot() -> Job {
         deferred_withdrawals: false,
     };
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    Job { offset: Offset { seq: 0, index: 1 }, checkpoint, ts: 0, engine }
+    Job { offset: Offset { seq: 0, index: 1 }, checkpoint, ts: 0, engine, signing: Signing::for_tests() }
 }

@@ -50,6 +50,7 @@ mod following;
 mod moved;
 mod moving;
 mod rollback;
+mod snapshot;
 mod stop;
 mod take;
 mod warm;
@@ -164,6 +165,8 @@ struct Registry {
     prior: Arc<Mutex<Option<HandoverSource>>>,
     /// A transient failure of the vault read after the next one.
     flaky: take::Flaky,
+    /// The vault's finalized checkpoint, if it holds one.
+    finalized: Arc<Mutex<Option<(u64, String)>>>,
 }
 
 impl Registry {
@@ -214,7 +217,7 @@ impl CheckpointChain for Registry {
         Ok(VaultState {
             height: 1,
             signer: moving.unwrap_or(AccountId(EnclaveKey::test_key().address())),
-            checkpoint: None,
+            checkpoint: self.finalized.lock().unwrap().clone(),
             balance: Fixed::ZERO,
             deposits: 0,
             deposited: Fixed::ZERO,

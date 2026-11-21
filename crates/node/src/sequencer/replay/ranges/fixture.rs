@@ -6,20 +6,20 @@ use std::path::Path;
 use engine_core::Engine;
 use engine_core::types::Millis;
 
-use crate::daily_snapshots::{Job, publish_now};
+use crate::daily_snapshots::{Job, Signing, publish_now};
 use crate::log::{self, Checkpoint, LogEntry, SegmentedLog};
 use crate::sequencer::replay::Replay;
 use crate::snapshot::sealing::Encoding;
 
 /// Replays the log directory at `path` whole from `base`'s state, and at each checkpoint at which `due`,
 /// given the checkpoint and its sequenced time, says one is due, publishes the engine there into `out` as a
-/// daily snapshot; how many it published.
+/// daily snapshot, signed with `signing`; how many it published.
 /// Error cases:
 /// - the log does not replay, or a snapshot cannot be encoded or published
 pub(crate) fn snapshot_log(
     base: Engine,
     path: &Path,
-    out: &Path,
+    (out, signing): (&Path, &Signing),
     mut due: impl FnMut(&Checkpoint, Millis) -> bool,
 ) -> anyhow::Result<usize> {
     let mut replay = Replay { engine: base, ..Replay::default() };
@@ -34,7 +34,7 @@ pub(crate) fn snapshot_log(
             let ts = replay.engine.now();
             if due(&checkpoint, ts) {
                 let engine = Encoding::Encoded(serde_json::to_string(&replay.engine)?);
-                publish_now(out, Job { offset, checkpoint, ts, engine })?;
+                publish_now(out, Job { offset, checkpoint, ts, engine, signing: signing.clone() })?;
                 published += 1;
             }
         }

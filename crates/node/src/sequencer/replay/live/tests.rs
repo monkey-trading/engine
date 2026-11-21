@@ -246,7 +246,7 @@ async fn a_copy_lacking_the_vaults_checkpoint_entry_anchors_at_its_own_state_wit
     let mut kept = fed();
     kept.keep(accepted.seq);
     kept.capture_tip();
-    assert!(kept.kept_checkpoints.contains_key(&accepted.seq), "a kept seq's captured checkpoint is kept");
+    assert!(kept.retained.kept_checkpoints.contains_key(&accepted.seq), "a kept seq's captured checkpoint is kept");
     let mut anchored = fed();
     anchored.capture_tip();
     anchored.anchor(vault(root), None).unwrap();

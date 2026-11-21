@@ -1481,13 +1481,19 @@ snapshot:
 
 `seq` and `index` are the offset of the checkpoint's entry in the log, which names the file, `ts` is
 its sequenced time and `root` its state root. `GET /v1/archive/snapshots/{file}` returns one listed
-snapshot as a JSON object: `schema` (1), `offset`, `checkpoint`, the checkpoint entry as the log
-holds it, and `engine`, the engine's state. A file the manifest does not list answers 404, and so
-does every request to a server without `[daily_snapshots]`. The server checks each snapshot's length
-and hash against the manifest before serving it, but nothing signs a snapshot:
-`engine replay --snapshots` takes one only at a checkpoint the log holds, equal to the snapshot's,
-once the root of the snapshot's state is that checkpoint's, and only where the replay of the log
-before it ends in that state; it skips, and names, one of a checkpoint the log does not hold.
+snapshot as a JSON object: `schema` (2), `offset`, `checkpoint`, the checkpoint entry as the log
+holds it, `engine`, the engine's state, `state`, the SHA-256 of `engine`'s bytes as the file holds
+them, and `signature`, the enclave key's 65-byte signature over the keccak-256 of
+`engine.daily-snapshot.v1`, the chain id as 8 bytes and the vault's 20 bytes, `seq` as 8 bytes and
+`index` as 4, all big-endian, the root's 32 bytes and `state`'s. A snapshot of schema 1, written
+before snapshots were signed, has neither `state` nor `signature`. A file the manifest does not list
+answers 404, and so does every request to a server without `[daily_snapshots]`. The server checks
+each snapshot's length and hash against the manifest before serving it. `engine replay --snapshots`
+takes one only at a checkpoint the log holds, equal to the snapshot's, once the root of the
+snapshot's state is that checkpoint's, and only where the replay of the log before it ends in that
+state; it skips, and names, one of a checkpoint the log does not hold. A rotation member with an
+empty copy starts its replica from one only when its signature covers its state and is by the key
+that signed its checkpoint, which the vault recorded.
 
 ## The stream
 
