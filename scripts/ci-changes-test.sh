@@ -64,10 +64,16 @@ for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/tur
 done
 for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
   crates/node/src/withdrawals.rs crates/node/src/sequencer/payouts.rs; do
-  case_ pull_request "rust vault_deposits scenario_tests production_secrets log_heads recovery_scale engine_build" \
+  case_ pull_request \
+    "rust vault_deposits scenario_tests production_secrets log_heads snapshot_restart recovery_scale engine_build" \
     "$custody"
 done
-case_ pull_request "rust vault_deposits $api" crates/node/src/access.rs crates/node/src/api/state.rs
+case_ pull_request "rust vault_deposits snapshot_restart $api" crates/node/src/access.rs crates/node/src/api/state.rs
+for example in crates/node/examples/access_source.rs crates/core/examples/sign_request.rs; do
+  case_ pull_request \
+    "rust vault_deposits dashboard_data proxy_protocol batch_orders production_secrets snapshot_restart engine_build" \
+    "$example"
+done
 case_ pull_request "rust vault_deposits $api" crates/node/src/api/stream/quotes/mod.rs crates/node/src/limits/mod.rs
 case_ pull_request "rust $api" crates/node/src/api/account.rs crates/node/src/tls/mod.rs
 case_ pull_request "rust attestation_verifier $api" crates/node/src/api/attestation.rs
