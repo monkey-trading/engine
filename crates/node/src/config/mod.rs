@@ -279,7 +279,7 @@ pub struct HistorySection {
     pub marks: Option<MarksSection>,
 }
 
-/// Where the node writes the engine's state at the first checkpoint of each UTC day by sequenced time,
+/// Where the node writes the engine's state at the first checkpoint it writes on each UTC day by sequenced time,
 /// which `GET /v1/archive/snapshots/{file}` serves for a replay's ranges.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

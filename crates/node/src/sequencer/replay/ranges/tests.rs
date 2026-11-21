@@ -76,3 +76,45 @@ fn each_range_starts_from_the_checkpoint_and_state_the_one_before_ends_in() {
         assert!(error.to_string().contains("range 2 of 2 starts from another checkpoint or state"), "{case}: {error}");
     }
 }
+
+/// A custody finality activation a range from a snapshot holds must list the legacy credits of the first
+/// range's ledger, which holds every credit from before custody finality, as a whole replay requires.
+#[test]
+fn a_ranges_custody_activation_lists_the_first_ranges_ledger() {
+    use engine_core::deposits::DepositBeneficiary;
+
+    let credit = LegacyDeposit {
+        chain_ref: "0xcredit".into(),
+        beneficiary: DepositBeneficiary::House,
+        amount: Fixed::from_int(5),
+    };
+    let boundary = || Boundary {
+        checkpoint: Checkpoint {
+            parent: None,
+            seq: 4,
+            root: format!("0x{}", hex::encode([7; 32])),
+            signature: "0x01".into(),
+            signer: "0x02".into(),
+            domain: None,
+            deferred_withdrawals: false,
+        },
+        state: [1; 32],
+    };
+    let range = |first: bool, ledger: Vec<LegacyDeposit>, ledgers: Vec<Vec<LegacyDeposit>>| {
+        let mut replayed = Replay::default().finish();
+        replayed.checkpoints = 1;
+        replayed.legacy_deposits = ledger.into_iter().map(|credit| (credit.chain_ref.clone(), credit)).collect();
+        let refs = Some(Refs { start: (!first).then_some(4), ledgers, ..Refs::default() });
+        let (start, end) = if first { (None, Some(boundary())) } else { (Some(boundary()), None) };
+        Ok(RangeReplayed { replayed, refs, anchored: false, start, end })
+    };
+    let trust = Trust::Pinned { domain: None, signer: None };
+    let stitched = |ledgers| {
+        stitch::stitch(vec![range(true, vec![credit.clone()], vec![]), range(false, vec![], ledgers)], 2, &trust)
+    };
+    stitched(vec![vec![credit.clone()]]).unwrap();
+    for (case, ledgers) in [("none", vec![vec![]]), ("another", vec![vec![credit.clone()], vec![]])] {
+        let error = stitched(ledgers).err().unwrap_or_else(|| panic!("{case} was stitched"));
+        assert!(error.to_string().contains("legacy custody activation differs"), "{case}: {error}");
+    }
+}

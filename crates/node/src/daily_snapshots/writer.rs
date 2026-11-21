@@ -1,15 +1,19 @@
-//! The node's writer of daily snapshots. The sequencer hands it each one once its checkpoint is durable,
-//! with the engine's encoding the stats worker gives, and a thread of its own publishes it: the file under
-//! its name, then its line in the manifest, each synced before the next, so a crash leaves a listed
-//! snapshot whole, or an unlisted file the next start removes. A failed write pages Warning
-//! `daily_snapshot_failed` and loses only that day's snapshot, which merges two of an audit's ranges; the
-//! log stays the authority. The node keeps every day's snapshot.
+//! The node's writer of daily snapshots. The sequencer hands it each one with the engine's encoding, which
+//! the stats worker gives only once the checkpoint's batch is durable, or encoded on the sequencer's thread
+//! after a sync of the log, and a thread of its own publishes it: the file under its name, then its line in
+//! the manifest, each synced before the next, so a crash leaves a listed snapshot whole, or an unlisted file
+//! the next start removes. A day whose snapshot the thread cannot take, or fails to write, pages Warning
+//! `daily_snapshot_failed` and has none, which merges two of an audit's ranges; the log stays the authority.
+//! The node keeps every day's snapshot.
 
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, channel, sync_channel};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use anyhow::Context;
 use engine_core::types::Millis;
@@ -30,12 +34,21 @@ pub(crate) struct Job {
     pub engine: Encoding,
 }
 
+/// The longest a writer's drop waits for its thread to finish the snapshot it holds, so a slow write never
+/// holds the sequencer's stop, a handover's included; a snapshot left to finish after it is an unlisted file
+/// the next start removes if the process ends first.
+const DROP_WAIT: Duration = Duration::from_secs(2);
+
 /// The sequencer's end of the writer.
 pub(crate) struct Writer {
     /// Closed when the writer is dropped, which ends the thread once it has published what it holds.
     jobs: Option<SyncSender<Job>>,
-    /// The sequenced time of the newest snapshot listed or handed over.
+    /// The sequenced time of the newest snapshot listed, handed over, or of a day skipped.
     last_ts: Option<Millis>,
+    /// Whether the thread waits for a snapshot: cleared as it takes one, set once that is written or fails.
+    idle: Arc<AtomicBool>,
+    /// Disconnected once the thread has ended.
+    ended: Receiver<()>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -47,9 +60,14 @@ pub(super) struct Hashed<W> {
 }
 
 impl Drop for Writer {
-    /// Closes the queue and joins the thread, which publishes the snapshot it holds first.
+    /// Closes the queue and joins the thread, which publishes the snapshot it holds first, or, after
+    /// `DROP_WAIT`, leaves it to finish.
     fn drop(&mut self) {
         self.jobs = None;
+        if let Err(RecvTimeoutError::Timeout) = self.ended.recv_timeout(DROP_WAIT) {
+            warn!("the daily snapshot writer is still writing; it is left to finish");
+            return;
+        }
         if let Some(thread) = self.thread.take() {
             // A thread that panicked has paged nothing more to report here; the log stays the authority.
             let _ = thread.join();
@@ -104,12 +122,17 @@ impl Writer {
         sync_dir(dir)?;
         let last_ts = listed.last().map(|listing| listing.ts);
         let (jobs, taken) = sync_channel(1);
-        let owned = dir.to_owned();
+        let (ending, ended) = channel();
+        let idle = Arc::new(AtomicBool::new(true));
+        let (owned, set) = (dir.to_owned(), idle.clone());
         let thread = thread::Builder::new()
             .name("daily-snapshots".into())
-            .spawn(move || run(&owned, listed, taken))
+            .spawn(move || {
+                let _ending = ending;
+                run(&owned, listed, taken, &set);
+            })
             .context("starting the daily snapshot writer")?;
-        Ok(Self { jobs: Some(jobs), last_ts, thread: Some(thread) })
+        Ok(Self { jobs: Some(jobs), last_ts, idle, ended, thread: Some(thread) })
     }
 
     /// Whether a snapshot is due at a checkpoint stamped `ts`: none is taken yet, or the newest is on an
@@ -118,8 +141,13 @@ impl Writer {
         self.last_ts.is_none_or(|last| day(ts) > day(last))
     }
 
-    /// Hands `job` to the thread, which takes its day. A thread still writing the last one, or stopped,
-    /// takes nothing, which pages Warning `daily_snapshot_failed`, and the day's next checkpoint tries again.
+    /// Whether the thread can take a snapshot now: it runs, and is not writing the last one. The caller asks
+    /// before it has the engine encoded, and skips the day (`skip`) when not.
+    pub(crate) fn ready(&self) -> bool {
+        self.jobs.is_some() && self.idle.load(Ordering::Acquire)
+    }
+
+    /// Hands `job` to the thread, which takes its day. A thread that cannot take it skips the day.
     pub(crate) fn take(&mut self, job: Job) {
         let (seq, ts) = (job.offset.seq, job.ts);
         let refused = match self.jobs.as_ref() {
@@ -133,15 +161,23 @@ impl Writer {
             },
             None => "the writer has stopped",
         };
-        warn!(alert = "daily_snapshot_failed", seq, "no daily snapshot at this checkpoint: {refused}");
+        self.skip(seq, ts, refused);
+    }
+
+    /// Takes no snapshot on the UTC day of the checkpoint at `seq`, stamped `ts`, for `reason`, which pages
+    /// Warning `daily_snapshot_failed` once that day; the next day's first checkpoint tries again.
+    pub(crate) fn skip(&mut self, seq: u64, ts: Millis, reason: &str) {
+        self.last_ts = Some(ts);
+        warn!(alert = "daily_snapshot_failed", "no daily snapshot today, at seq {seq}: {reason}");
     }
 }
 
-/// The thread: publishes each snapshot it is handed in `dir`, whose manifest lists `listed`, until the
-/// sequencer's end closes.
-fn run(dir: &Path, mut listed: Vec<Listed>, jobs: Receiver<Job>) {
+/// The thread: publishes each snapshot it is handed in `dir`, whose manifest lists `listed`, `idle` cleared
+/// while it does, until the sequencer's end closes.
+fn run(dir: &Path, mut listed: Vec<Listed>, jobs: Receiver<Job>, idle: &AtomicBool) {
     let mut failing = false;
     for job in jobs {
+        idle.store(false, Ordering::Release);
         let seq = job.offset.seq;
         match publish(dir, &mut listed, job) {
             Ok(listing) => {
@@ -152,9 +188,10 @@ fn run(dir: &Path, mut listed: Vec<Listed>, jobs: Receiver<Job>) {
             }
             Err(e) => {
                 failing = true;
-                warn!(alert = "daily_snapshot_failed", seq, "no daily snapshot at this checkpoint: {e:#}");
+                warn!(alert = "daily_snapshot_failed", "no daily snapshot today, at seq {seq}: {e:#}");
             }
         }
+        idle.store(true, Ordering::Release);
     }
 }
 

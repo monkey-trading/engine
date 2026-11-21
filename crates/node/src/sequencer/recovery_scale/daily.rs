@@ -1,8 +1,8 @@
 //! Daily snapshots on a log of launch flow across a UTC midnight, published by the node that writes the log,
 //! and the log's replay in ranges from them, which `scripts/dev-daily-snapshots.sh` runs: the ranges replay
 //! to what the whole log replays to, under a pinned and an attested signer, a snapshot past the log's last
-//! checkpoint starts no range, a snapshot whose resting-order index lost an order replays the same, and one
-//! whose state or checkpoint the log's signed root does not vouch for is refused.
+//! checkpoint or of a checkpoint the log does not hold starts no range, a snapshot whose resting-order index
+//! lost an order replays the same, and one whose state the log's signed root does not vouch for is refused.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
@@ -90,28 +90,25 @@ fn dev_scenario_daily_snapshots() {
     });
     agree(&whole, &ranges(&base, &log, &snapshots, signer).expect("a lost resting order is rebuilt"));
 
-    // A balance the root does not vouch for, and a checkpoint the log does not hold there, are refused.
-    let refusals: [(&str, Alter); 2] = [
-        ("state root mismatch at seq", |snapshot| {
-            let accounts = snapshot["engine"]["accounts"].as_object_mut().unwrap();
-            let account = accounts.values_mut().next().unwrap();
-            account["balance"] = serde_json::json!("1");
-        }),
-        ("the log holds another entry at", |snapshot| {
-            snapshot["checkpoint"]["root"] = serde_json::json!(format!("0x{}", hex::encode([3; 32])));
-        }),
-    ];
-    for (refused, alter) in refusals {
-        edit(&later, &written, alter);
-        let error = format!("{:#}", ranges(&base, &log, &snapshots, signer).err().expect("refused"));
-        assert!(error.contains(refused), "{error}");
-    }
+    // One of a checkpoint the log does not hold there, as a node's in a tail it set aside, starts no range.
+    edit(&later, &written, |snapshot| {
+        snapshot["checkpoint"]["root"] = serde_json::json!(format!("0x{}", hex::encode([3; 32])));
+    });
+    let in_ranges = ranges(&base, &log, &snapshots, signer).expect("the snapshot is skipped");
+    assert_eq!((in_ranges.ranges, in_ranges.skipped.as_slice()), (2, [later.clone()].as_slice()));
+    agree(&whole, &in_ranges);
+
+    // A balance the root does not vouch for is refused.
+    edit(&later, &written, |snapshot| {
+        let accounts = snapshot["engine"]["accounts"].as_object_mut().unwrap();
+        let account = accounts.values_mut().next().unwrap();
+        account["balance"] = serde_json::json!("1");
+    });
+    let error = format!("{:#}", ranges(&base, &log, &snapshots, signer).err().expect("refused"));
+    assert!(error.contains("state root mismatch at seq"), "{error}");
 }
 
 // ── Helpers ──
-
-/// A change to a daily snapshot's JSON.
-type Alter = fn(&mut serde_json::Value);
 
 /// The log in `log`, written from `base`, replayed in ranges from the daily snapshots in `snapshots`, two
 /// at once, under `signer`.

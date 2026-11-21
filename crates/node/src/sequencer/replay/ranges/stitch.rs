@@ -3,6 +3,7 @@
 //! nothing and reads nothing from a snapshot.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
@@ -27,6 +28,8 @@ pub struct Audited {
     pub pending: usize,
     /// How many ranges the log was replayed in: one for a whole-log replay.
     pub ranges: usize,
+    /// The daily snapshots that started no range, since the log does not hold the checkpoint each names.
+    pub skipped: Vec<PathBuf>,
 }
 
 impl From<Replayed> for Audited {
@@ -40,17 +43,20 @@ impl From<Replayed> for Audited {
             checkpoint_signers: replayed.checkpoint_signers,
             pending: replayed.unsigned.len() + replayed.deferred.len(),
             ranges: 1,
+            skipped: Vec::new(),
         }
     }
 }
 
 /// The `ranges` ranges' `results`, in log order, added up under `trust`, the results of the ranges after the
 /// first that failed left out: the first that failed fails the whole, as does a range that starts from
-/// another checkpoint or state than the one before it ends in, or whose entry named a checkpoint or a
-/// deferred approval no earlier range holds, at that range, before any later range's fault.
+/// another checkpoint or state than the one before it ends in, whose entry named a checkpoint or a deferred
+/// approval no earlier range holds, or whose custody finality activation lists other legacy credits than the
+/// first range's ledger, which holds every credit from before custody finality, at that range, before any
+/// later range's fault.
 /// Error cases:
 /// - a range failed, or starts from another checkpoint or state than the range before it ends in
-/// - a range's entry named what no earlier range holds
+/// - a range's entry named what no earlier range holds, or listed other legacy credits
 /// - under custody trust, no range held the vault's finalized anchor
 pub(super) fn stitch(
     results: Vec<anyhow::Result<RangeReplayed>>,
@@ -61,7 +67,7 @@ pub(super) fn stitch(
     let mut deferred: Vec<(u64, AccountId, Fixed, u64)> = Vec::new();
     let (mut commands, mut checkpoints, mut anchored) = (0, 0, false);
     let (mut activations, mut checkpoint_signers) = (Vec::new(), BTreeSet::new());
-    let (mut last, mut ended) = (None, None);
+    let (mut last, mut ended, mut ledger) = (None, None, Vec::new());
     for (at, result) in results.into_iter().enumerate() {
         let RangeReplayed { replayed, refs, anchored: held, start, end } =
             result.with_context(|| format!("replaying range {} of {ranges}", at + 1))?;
@@ -72,8 +78,18 @@ pub(super) fn stitch(
             at + 1
         );
         ended = end;
+        if at == 0 {
+            ledger = replayed.legacy_deposits.values().cloned().collect();
+        }
         if let Some(refs) = refs {
             resolve(&refs, &roots, &mut deferred).with_context(|| format!("range {} of {ranges}", at + 1))?;
+            for listed in &refs.ledgers {
+                ensure!(
+                    *listed == ledger,
+                    "range {} of {ranges}: legacy custody activation differs from the verified credit ledger",
+                    at + 1
+                );
+            }
         }
         roots.extend(replayed.checkpoint_roots.iter().map(|(seq, root)| (*seq, *root)));
         deferred.extend(replayed.deferred.iter().copied());
@@ -97,6 +113,7 @@ pub(super) fn stitch(
         activations,
         checkpoint_signers,
         ranges,
+        skipped: Vec::new(),
     })
 }
 

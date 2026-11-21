@@ -78,6 +78,30 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     }
 }
 
+/// A writer busy with a snapshot is not ready, a day it cannot take is skipped, and its drop waits for its
+/// thread a bounded time, whatever the thread waits for.
+#[test]
+fn a_busy_writer_skips_the_day_and_its_drop_waits_a_bounded_time() {
+    let dir = scratch_dir("daily-busy");
+    let mut writer = Writer::start(&dir, None).unwrap();
+    assert!(writer.ready() && writer.due(0));
+    // An encoding that never comes holds the thread.
+    let (_encoder, pending) = std::sync::mpsc::channel::<crate::stats::background::Encoded>();
+    writer.take(Job { engine: Encoding::Pending(pending), ..job(Offset { seq: 5, index: 1 }, 0) });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while writer.ready() {
+        assert!(std::time::Instant::now() < deadline, "the thread took the snapshot");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(!writer.due(1), "the day is taken");
+    assert!(writer.due(DAY_MS) && !writer.ready());
+    writer.skip(6, DAY_MS, "the writer is still writing the last one");
+    assert!(!writer.due(DAY_MS + 1), "a skipped day is taken");
+    let dropping = std::time::Instant::now();
+    drop(writer);
+    assert!(dropping.elapsed() < std::time::Duration::from_secs(10), "the drop waited {:?}", dropping.elapsed());
+}
+
 // ── Helpers ──
 
 /// A change to a daily snapshot's JSON.

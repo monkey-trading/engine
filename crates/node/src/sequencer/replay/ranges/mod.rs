@@ -1,5 +1,6 @@
 //! `engine replay --snapshots`: a log replayed in ranges at once, split at the checkpoints its daily
-//! snapshots name. The first range starts from an empty engine at the log's start; every other starts
+//! snapshots name, those of a checkpoint past the log's last, or one the log does not hold at the snapshot's
+//! offset, left out. The first range starts from an empty engine at the log's start; every other starts
 //! from a snapshot (`daily_snapshots::load`), its resting-order index rebuilt from the accounts' orders, at
 //! the checkpoint the log holds at the snapshot's offset, which must be the snapshot's own. Each range
 //! applies that checkpoint first, which computes the snapshot's root over every key and compares it with
@@ -14,7 +15,8 @@
 //! seal chain, the last command's unmatched approvals and, under a trusted signer, the unauthenticated
 //! tail), or recomputed by the pass over the ranges' results in log order (`stitch`), which applies
 //! nothing and reads nothing from a snapshot: a typed payout's checkpoint and a deferred approval that an
-//! entry names before its range (`Refs`), the counts, the checkpoint signers and the activations. The ranges
+//! entry names before its range, and a custody finality activation's legacy credits (`Refs`), the counts,
+//! the checkpoint signers and the activations. The ranges
 //! fold neither the command prefix nor checkpoint accounting, which only a node's start and checkpoint work
 //! read; an audit's verdict reads neither.
 
@@ -31,6 +33,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::ensure;
+use engine_core::deposits::LegacyDeposit;
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
@@ -50,6 +53,9 @@ pub(crate) struct Refs {
     pub(crate) payouts: Vec<(u64, B256)>,
     /// The deferred approvals withdrawal entries released that a checkpoint at or before the start deferred.
     pub(crate) deferred: Vec<(u64, AccountId, Fixed, u64)>,
+    /// The legacy credits each custody finality activation lists, which a whole replay checks against the
+    /// ledger the commands before custody finality built.
+    pub(crate) ledgers: Vec<Vec<LegacyDeposit>>,
 }
 
 /// Whom a replay trusts, as `engine replay`'s flags say.
@@ -203,13 +209,20 @@ pub(crate) fn replay_ranges_from(
 ) -> anyhow::Result<Audited> {
     ensure!(path.is_dir(), "{} is not a log directory: a replay in ranges reads a segmented log", path.display());
     // A snapshot past the log's last checkpoint, as a node's newest is past an archive of its completed
-    // segments, starts no range.
+    // segments, starts no range; nor does one of a checkpoint the log does not hold at its offset, as one a
+    // node wrote in a tail it later set aside.
     let held = log::last_checkpoint(path)?.map(|checkpoint| checkpoint.seq);
-    let mut starts: Vec<(Offset, PathBuf)> = Vec::new();
-    for (offset, file) in daily_snapshots::list(snapshots)? {
-        let later = starts.last().is_none_or(|(last, _)| offset.seq > last.seq);
-        let start = trust.last_start().map_or(held, |last| held.map(|held| held.min(last)));
-        if later && start.is_some_and(|start| offset.seq <= start) {
+    let bound = trust.last_start().map_or(held, |last| held.map(|held| held.min(last)));
+    let candidates: Vec<(Offset, PathBuf)> = daily_snapshots::list(snapshots)?
+        .into_iter()
+        .filter(|(offset, _)| bound.is_some_and(|bound| offset.seq <= bound))
+        .collect();
+    let usable = run(&candidates, jobs, |(offset, file), _| holds(path, *offset, file));
+    let (mut starts, mut skipped): (Vec<(Offset, PathBuf)>, Vec<PathBuf>) = (Vec::new(), Vec::new());
+    for (usable, (offset, file)) in usable.into_iter().zip(candidates) {
+        if !usable? {
+            skipped.push(file);
+        } else if starts.last().is_none_or(|(last, _)| offset.seq > last.seq) {
             starts.push((offset, file));
         }
     }
@@ -221,19 +234,38 @@ pub(crate) fn replay_ranges_from(
         .map(|(start, end)| Range { start, end })
         .collect();
     let results = run(&ranges, jobs, |range, last| replay_range(path, (range, last), &trust, base));
-    let replayed = stitch::stitch(results, ranges.len(), &trust)?;
+    let replayed = Audited { skipped, ..stitch::stitch(results, ranges.len(), &trust)? };
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
     Ok(replayed)
 }
 
-/// Runs `replay` over each of `ranges` on `jobs` threads, each taking the next range not yet taken, and
-/// gives their results in log order, ending at the first that failed: once a range fails, no thread takes
-/// a later one, whose result the earlier fault makes moot.
-fn run<T: Send>(
-    ranges: &[Range],
+/// Whether the log directory at `path` holds at `offset` the checkpoint the daily snapshot at `file` names;
+/// a file whose checkpoint does not read names none.
+/// Error cases:
+/// - the log cannot be read up to `offset` (`SegmentedLog::read_span_ahead`)
+fn holds(path: &Path, offset: Offset, file: &Path) -> anyhow::Result<bool> {
+    let Ok(named) = daily_snapshots::checkpoint_of(file) else { return Ok(false) };
+    let (mut at, mut found) = (None, None);
+    SegmentedLog::read_span_ahead(path, offset.seq, |entry| {
+        let here = log::offset_of(at, &entry)?;
+        at = Some(here);
+        if here < offset {
+            return Ok(());
+        }
+        found = (here == offset).then_some(entry);
+        Err(Stop.into())
+    })?;
+    Ok(matches!(found, Some(LogEntry::Checkpoint(held)) if held == named))
+}
+
+/// Runs `replay` over each of `ranges`, told whether it is the last, on `jobs` threads, each taking the next
+/// not yet taken, and gives their results in order, ending at the first that failed: once one fails, no
+/// thread takes a later one, whose result the earlier fault makes moot.
+fn run<R: Sync, T: Send>(
+    ranges: &[R],
     jobs: NonZeroUsize,
-    replay: impl Fn(&Range, bool) -> anyhow::Result<T> + Sync,
+    replay: impl Fn(&R, bool) -> anyhow::Result<T> + Sync,
 ) -> Vec<anyhow::Result<T>> {
     let next = AtomicUsize::new(0);
     let failed = AtomicUsize::new(usize::MAX);

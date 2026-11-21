@@ -77,26 +77,33 @@ impl Sequencer {
     }
 
     /// Hands the daily snapshot writer the engine at this checkpoint, whose entry is at `offset`, when a
-    /// snapshot is due: at the first checkpoint of a UTC day by sequenced time, once genesis has applied
-    /// in full. The log is synced first, so a snapshot never names a checkpoint a crash could lose.
+    /// snapshot is due: at the first checkpoint of a UTC day by sequenced time, once genesis has applied in
+    /// full. A writer still busy with the last one skips the day before the engine is encoded. The stats
+    /// worker encodes the engine only once the batch holding this checkpoint is durable; encoded here, the log
+    /// is synced first. So a snapshot never names a checkpoint a crash could lose.
     /// Error cases:
     /// - the authoritative log cannot be synced
     fn daily_snapshot(&mut self, checkpoint: &Checkpoint, offset: Offset) -> anyhow::Result<()> {
-        let ts = self.engine.now();
-        let due = self.captures.daily.as_ref().is_some_and(|daily| daily.due(ts));
-        if !due || self.progress.genesis.ensure_closed().is_err() {
-            return Ok(());
+        let (ts, seq) = (self.engine.now(), checkpoint.seq);
+        let genesis = self.progress.genesis.ensure_closed().is_ok();
+        match self.captures.daily.as_mut() {
+            Some(daily) if genesis && daily.due(ts) && !daily.ready() => {
+                daily.skip(seq, ts, "the writer is still writing the last one, or has stopped");
+                return Ok(());
+            }
+            Some(daily) if genesis && daily.due(ts) => {}
+            _ => return Ok(()),
         }
-        self.sync_log(false)?;
-        let (engine, job) = match self.encoding(checkpoint.seq) {
+        let (engine, job) = match self.encoding(seq) {
             Ok(encoding) => encoding,
             Err(e) => {
-                warn!(alert = "daily_snapshot_failed", seq = checkpoint.seq, "no daily snapshot: {e:#}");
+                warn!(alert = "daily_snapshot_failed", "no daily snapshot at seq {seq}: {e:#}");
                 return Ok(());
             }
         };
-        if let (Some(job), Some(stats)) = (job, self.marks.stats()) {
-            stats.stage_job(job);
+        match (job, self.marks.stats()) {
+            (Some(job), Some(stats)) => stats.stage_job(job),
+            _ => self.sync_log(false)?,
         }
         if let Some(daily) = self.captures.daily.as_mut() {
             daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine });

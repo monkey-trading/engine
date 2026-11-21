@@ -432,7 +432,9 @@ splits the log at each snapshot's checkpoint, and starts a range from a snapshot
 holds a checkpoint at the snapshot's offset equal to the snapshot's, which it checks as it checks
 every checkpoint, and only once the root it computes over the snapshot's state, each market's index
 of resting orders rebuilt from the accounts' orders, is that checkpoint's; a snapshot of a state
-before `V27`, or before custody finality, is refused. Each range then replays as a whole replay
+before `V27`, or before custody finality, is refused. A snapshot of a checkpoint the log does not
+hold, as one a trading server wrote in a tail it later set aside, starts no range, and the replay
+names it. Each range then replays as a whole replay
 does, through the checkpoint where the next range starts. The replay accepts the ranges only where
 each starts at the checkpoint the range before it ended at and from the state that range ended in,
 compared by the SHA-256 of the whole state's encoding, which binds the parts of the state the root
@@ -443,7 +445,8 @@ typed withdrawal authorizations name and the approvals deferred before a range. 
 ranges applies the log as one history from genesis, as a whole replay does, barring a SHA-256
 collision, and reports the fault of the earliest range that holds one. It does not compute the
 running digest of every instruction, or the checkpoint accounting, which only a trading server's
-start reads.
+start reads. A snapshot crafted so that building its indexes or its root overflows the engine's
+arithmetic stops the replay with a panic rather than an error; it never passes.
 
 What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
 signer it pins, the attested signers, or the vault's signer history, and computes everything else

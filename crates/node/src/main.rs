@@ -323,6 +323,9 @@ fn main() -> anyhow::Result<()> {
             if replayed.ranges > 1 {
                 println!("replayed in {} ranges from the daily snapshots", replayed.ranges);
             }
+            for file in &replayed.skipped {
+                println!("skipped {}: the log does not hold the checkpoint it names", file.display());
+            }
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }

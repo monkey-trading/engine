@@ -117,7 +117,7 @@ fn an_outbox_symlink_into_the_public_log_is_refused() {
 }
 
 /// A start removes the files in the daily snapshots' directory that its manifest does not list, so it shares
-/// none with the log, the history index, the alert outbox or the recovery caches.
+/// none with the log, the history index, the alert outbox or the recovery caches, by name or through a link.
 #[test]
 fn the_daily_snapshots_directory_is_one_of_its_own() {
     let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
@@ -136,5 +136,17 @@ fn the_daily_snapshots_directory_is_one_of_its_own() {
         assert!(refused.to_string().contains("[daily_snapshots] dir must be a directory of its own"), "{refused:#}");
     }
     cfg.daily_snapshots = Some(DailySnapshotsSection { dir: "data/dev/daily-snapshots".into() });
+    cfg.validate().unwrap();
+
+    // A symbolic link to one of them is refused as it is.
+    let root = crate::test_support::scratch_dir("daily-snapshots-alias");
+    let log = root.join("log");
+    std::fs::create_dir_all(&log).unwrap();
+    std::os::unix::fs::symlink(&log, root.join("alias")).unwrap();
+    (cfg.node.log_dir, cfg.alerts.outbox.dir) = (log, root.join("alerts"));
+    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: root.join("alias") });
+    let refused = cfg.validate().expect_err("an alias of the log directory");
+    assert!(refused.to_string().contains("[daily_snapshots] dir must be a directory of its own"), "{refused:#}");
+    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: root.join("daily-snapshots") });
     cfg.validate().unwrap();
 }

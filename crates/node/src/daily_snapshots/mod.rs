@@ -1,4 +1,4 @@
-//! Daily snapshots: the engine's state at the first checkpoint of each UTC day by sequenced time,
+//! Daily snapshots: the engine's state at the first checkpoint the node writes on each UTC day by sequenced time,
 //! published beside the log's archive, so that a replay can start a range of the log there rather than
 //! from genesis. Nothing signs a snapshot: a replay takes one only at a checkpoint the log holds, equal to
 //! the snapshot's and signed by a signer the replay trusts, once the root of the decoded state, its
@@ -149,6 +149,21 @@ pub(crate) fn load(path: &Path) -> anyhow::Result<DailySnapshot> {
     engine.rebuild_resting();
     engine.restore_indexes();
     Ok(snapshot)
+}
+
+/// The checkpoint the daily snapshot at `path` names, read without decoding its engine.
+/// Error cases:
+/// - the file cannot be read, or is not a snapshot's JSON
+pub(crate) fn checkpoint_of(path: &Path) -> anyhow::Result<Checkpoint> {
+    /// A snapshot's checkpoint, its other fields read past.
+    #[derive(Deserialize)]
+    struct Named {
+        checkpoint: Checkpoint,
+    }
+    let file = File::open(path).with_context(|| format!("opening daily snapshot {}", path.display()))?;
+    let named: Named = serde_json::from_reader(BufReader::new(file))
+        .with_context(|| format!("reading daily snapshot {}'s checkpoint", path.display()))?;
+    Ok(named.checkpoint)
 }
 
 /// The SHA-256 of `engine`'s encoding, which binds every part of its state, those its root leaves out

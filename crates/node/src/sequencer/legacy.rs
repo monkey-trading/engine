@@ -26,13 +26,21 @@ pub(super) fn check_activation_ledger(
     command: &Command,
     ledger: &BTreeMap<String, LegacyDeposit>,
 ) -> anyhow::Result<()> {
-    if let Command::Admin(AdminCommand::ActivateCustodyFinality { legacy_deposits, .. }) = command {
+    if let Some(legacy_deposits) = activation_ledger(command) {
         ensure!(
             *legacy_deposits == ledger.values().cloned().collect::<Vec<_>>(),
             "legacy custody activation differs from the verified credit ledger"
         );
     }
     Ok(())
+}
+
+/// The legacy credits a custody finality activation lists, for a command that is one.
+pub(super) fn activation_ledger(command: &Command) -> Option<&Vec<LegacyDeposit>> {
+    match command {
+        Command::Admin(AdminCommand::ActivateCustodyFinality { legacy_deposits, .. }) => Some(legacy_deposits),
+        _ => None,
+    }
 }
 
 /// A cache carries neither the legacy credit ledger nor inherited approval provenance; only full

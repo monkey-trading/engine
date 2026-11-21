@@ -1468,8 +1468,10 @@ server checks each segment against the manifest before serving it.
 
 ### Daily snapshots
 
-A server configured with `[daily_snapshots]` keeps the engine's state at the first checkpoint of
-each UTC day, by the sequenced time of the instruction the checkpoint covers.
+A server configured with `[daily_snapshots]` keeps the engine's state at the first checkpoint it
+writes on each UTC day, by the sequenced time of the instruction the checkpoint covers. A server that
+sequences only on some days, as a member of a rotation does, keeps those days' only; an auditor can
+combine the snapshots of several servers, since a replay checks each against the log.
 `GET /v1/archive/snapshots/manifest.jsonl` returns their manifest, with one JSON line for each
 snapshot:
 
@@ -1485,7 +1487,7 @@ does every request to a server without `[daily_snapshots]`. The server checks ea
 and hash against the manifest before serving it, but nothing signs a snapshot:
 `engine replay --snapshots` takes one only at a checkpoint the log holds, equal to the snapshot's,
 once the root of the snapshot's state is that checkpoint's, and only where the replay of the log
-before it ends in that state.
+before it ends in that state; it skips, and names, one of a checkpoint the log does not hold.
 
 ## The stream
 

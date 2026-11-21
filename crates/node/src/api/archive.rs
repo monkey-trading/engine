@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::Semaphore;
 use tokio::task::spawn_blocking;
 use tracing::field::display;
-use tracing::{Span, error};
+use tracing::{Span, error, warn};
 
 use crate::api::{ApiError, ApiState};
 use crate::daily_snapshots;
@@ -22,20 +22,21 @@ use crate::log::{MANIFEST, open_segment_archive, segment_seq};
 const JSON_LINES: &str = "application/x-ndjson";
 const JSON: &str = "application/json";
 const ARCHIVE_CHUNK_BYTES: usize = 64 * 1024;
-/// How many daily snapshot requests may read their files at once.
-const SNAPSHOT_READS: usize = 2;
+/// How many daily snapshot requests may check their files against their listings at once; the streams that
+/// follow are bounded as the segments' are, by the API's connection limits.
+const SNAPSHOT_CHECKS: usize = 2;
 
-/// The daily snapshots the archive serves: their directory, and the reads of them under way, held apart
+/// The daily snapshots the archive serves: their directory, and the checks of them under way, held apart
 /// from the stream's backfills, since a snapshot's check reads all of a file of hundreds of megabytes.
 #[derive(Debug)]
 pub struct ServedSnapshots {
     pub dir: PathBuf,
-    reads: Arc<Semaphore>,
+    checks: Arc<Semaphore>,
 }
 
 impl ServedSnapshots {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir, reads: Arc::new(Semaphore::new(SNAPSHOT_READS)) }
+        Self { dir, checks: Arc::new(Semaphore::new(SNAPSHOT_CHECKS)) }
     }
 }
 
@@ -87,17 +88,22 @@ pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Res
     .ok_or(ApiError::NotFound)?;
     let (listed, reader) = opened;
     let headers = [(CONTENT_TYPE, JSON_LINES.to_owned()), (CONTENT_LENGTH, listed.bytes.to_string())];
-    Ok((headers, chunked(reader, "checked segment")).into_response())
+    Ok((headers, chunked(reader, "checked segment", false)).into_response())
 }
 
-/// A body streaming `reader`'s bytes in chunks, each read on the blocking pool, paging `archive_unreadable`
-/// for a read of `what` that fails.
-fn chunked(reader: impl Read + Send + 'static, what: &'static str) -> Body {
+/// A body streaming `reader`'s bytes in chunks, each read on the blocking pool, paging for a read of `what`
+/// that fails: Critical `archive_unreadable` for a segment, or Warning `daily_snapshot_unreadable` for a
+/// daily snapshot (`snapshot`).
+fn chunked(reader: impl Read + Send + 'static, what: &'static str, snapshot: bool) -> Body {
     Body::from_stream(try_unfold(reader, move |mut reader| async move {
         spawn_blocking(move || {
             let mut bytes = vec![0; ARCHIVE_CHUNK_BYTES];
             let n = reader.read(&mut bytes).map_err(|e| {
-                error!(alert = "archive_unreadable", "reading {what}: {e}");
+                if snapshot {
+                    warn!(alert = "daily_snapshot_unreadable", "reading {what}: {e}");
+                } else {
+                    error!(alert = "archive_unreadable", "reading {what}: {e}");
+                }
                 e
             })?;
             if n == 0 {
@@ -112,7 +118,7 @@ fn chunked(reader: impl Read + Send + 'static, what: &'static str) -> Body {
 }
 
 /// Serves the daily snapshots' manifest, or one daily snapshot it lists, once its length and SHA-256 are the
-/// listing's, `SNAPSHOT_READS` at a time. A replay checks a snapshot against the checkpoint the log holds and
+/// listing's, `SNAPSHOT_CHECKS` checks at a time. A replay checks a snapshot against the checkpoint the log holds and
 /// the replay of the log before it (`daily_snapshots`), so the check here only keeps a damaged file from being
 /// served.
 /// Error cases:
@@ -121,7 +127,7 @@ fn chunked(reader: impl Read + Send + 'static, what: &'static str) -> Body {
 pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Result<Response, ApiError> {
     Span::current().record("id", display(&file));
     let served = s.daily_snapshots.clone().ok_or(ApiError::NotFound)?;
-    let permit = served.reads.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
+    let permit = served.checks.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
     let dir = served.dir.clone();
     let opened = spawn_blocking(move || {
         let _held = permit;
@@ -149,12 +155,12 @@ pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Re
             bytes == listed.bytes && hex::encode(hash.finalize()) == listed.sha256,
             "daily snapshot {file} differs from its listing"
         );
-        let body = chunked(std::fs::File::open(&path)?, "daily snapshot");
+        let body = chunked(std::fs::File::open(&path)?, "daily snapshot", true);
         Ok(Some((JSON, listed.bytes, body)))
     })
     .await
-    .map_err(|e| unreadable(format!("daily snapshot task: {e}")))?
-    .map_err(|e| unreadable(format!("daily snapshot: {e:#}")))?;
+    .map_err(|e| snapshot_unreadable(format!("daily snapshot task: {e}")))?
+    .map_err(|e| snapshot_unreadable(format!("daily snapshot: {e:#}")))?;
     let (kind, bytes, body) = opened.ok_or(ApiError::NotFound)?;
     Ok(([(CONTENT_TYPE, kind.to_owned()), (CONTENT_LENGTH, bytes.to_string())], body).into_response())
 }
@@ -162,5 +168,12 @@ pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Re
 /// Logs an archive integrity or IO failure before returning the existing API error.
 fn unreadable(message: String) -> ApiError {
     error!(alert = "archive_unreadable", "{message}");
+    ApiError::Internal
+}
+
+/// A daily snapshot request that failed, paging Warning `daily_snapshot_unreadable`: the log and its archive
+/// are untouched, and a replay in ranges takes the day from the snapshot before.
+fn snapshot_unreadable(message: String) -> ApiError {
+    warn!(alert = "daily_snapshot_unreadable", "{message}");
     ApiError::Internal
 }

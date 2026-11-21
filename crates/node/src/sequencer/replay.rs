@@ -14,7 +14,7 @@ use crate::checkpoints::Work;
 use crate::checkpoints::accounting::Accounting;
 use crate::history::derived::Derived;
 use crate::log::{self, CheckpointDomain, LogEntry};
-use crate::sequencer::{GenesisProgress, SignedWithdrawal};
+use crate::sequencer::{GenesisProgress, SignedWithdrawal, legacy};
 use crate::snapshot::RecoveryBase;
 
 /// Re-applies a log entry by entry, as it is read, and checks every checkpoint root, logged event,
@@ -189,7 +189,11 @@ impl Replay {
                 }
                 let version = engine.protocol_version();
                 self.origin.command(c, version)?;
-                crate::sequencer::legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?;
+                match self.range.as_mut().filter(|range| range.start.is_some()) {
+                    // A range from a snapshot holds no legacy credit ledger: the pass checks the first range's.
+                    Some(range) => range.ledgers.extend(legacy::activation_ledger(&c.sequenced.cmd).cloned()),
+                    None => legacy::check_activation_ledger(&c.sequenced.cmd, &self.legacy_deposits)?,
+                }
                 let events = engine.apply(&c.sequenced).with_context(|| format!("applying seq {seq}"))?;
                 self.roots.after_command(engine)?;
                 self.genesis.command(&c.sequenced, &events);
