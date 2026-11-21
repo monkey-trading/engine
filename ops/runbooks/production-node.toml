@@ -294,7 +294,7 @@ symbols = [
 # the life of the log, so keep every venue and contract it needs even after a relisting lowers
 # min_sources or the market rolls past a contract. Only a source reached over TLS may set a price.
 # Markets 20 to 22, 25 and 30 to 32 trade on CME Group's exchanges and price from Massive's futures
-# feed alone, with min_sources = 1 (owner's decision of 2026-11-20): Massive's futures data derives
+# feed alone, with min_sources = 1: Massive's futures data derives
 # from CME's, so these markets pause while Massive is down and a bad Massive print has no second
 # source to check it. The Eurex and ICE markets (DE40,
 # UK100 and BRENT) are not in the launch genesis.

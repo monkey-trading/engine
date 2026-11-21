@@ -18,15 +18,14 @@
 # - Fees (#9, launch fee schedule): a 10% profit fee, and financing markups
 #   over the benchmark of 2.5% for indices, commodities and shares, 1% for FX,
 #   and 5% for crypto. From protocol V55 the profit fee falls with holding
-#   time (#614, decisions D3 and D7, revised 2026-11-13): the whole gain on a
+#   time (#614, decisions D3 and D7): the whole gain on a
 #   hold up to 10 s, falling to the 10% at 15 minutes along profit_fee_curve.
 # - Size spreads (#614, decisions D1, D2 and D6): #623's calibrated tiers
 #   (research/spread-calibration/results/spread_tiers.toml), in tenths of a bp
 #   from protocol V52, each band twice the one before, paid by every fill on
 #   the slice it opens or closes. FX and index first bands are the tenths D6
 #   derives from #623's 3s moves (0.4bp on EUR-USD and GBP-USD, 0.5 on USD-JPY
-#   and AUD-USD, 0.7 on US500 and US30, 0.9 on US100, 1.0 on JP225), confirmed
-#   by the owner on 2026-11-18.
+#   and AUD-USD, 0.7 on US500 and US30, 0.9 on US100, 1.0 on JP225).
 # - Stress levels and the other protocol parameters are config/dev.toml's
 #   (#9). A market dev.toml does not list takes its asset class's slippage
 #   bound, price rules, margin tables and house cap, except SOL-USD's house
@@ -45,8 +44,7 @@
 #   with the time the index rolls onto each, through early 2028; a relisting
 #   adds the next before the last becomes the front. A contract's name is its
 #   exchange root and month code: CME ES, NQ, YM, NIY, GC, SI and CL. The roll
-#   rules, decided by
-#   the owner on 2026-10-25, follow exchange conventions:
+#   rules follow exchange conventions:
 #   - Index futures roll 8 calendar days before quarterly expiry, at 14:30
 #     UTC on the Thursday before the third Friday of March, June, September
 #     and December. Japan 225 prices from CME's yen Nikkei (NIY), which
@@ -61,7 +59,7 @@
 #     Its last trade is 3 business days before the 25th of the month before
 #     delivery, or 4 when the 25th is not a business day.
 #   Business days are the exchange's: CME's exclude US holidays.
-# - Sources (owner's decision of 2026-11-20): the seven CME-traded markets (ids
+# - Sources: the seven CME-traded markets (ids
 #   20-22, 25 and 30-32) price from Massive's futures feed alone, with
 #   min_sources = 1. CME Group's WebSocket API needs a licence agreement and
 #   business-level fees, and Massive's futures data derives from CME's. These
@@ -71,7 +69,7 @@
 # - Benchmark rates are supplied by the separate signed publisher worker (#33).
 #   Complete the node config with config/benchmark-publishers.toml and run the worker
 #   before serving. With no rate, a market accrues no financing and raises a Critical alert.
-# - Weekend margins (#913, owner decision of 2026-11-19): margins are
+# - Weekend margins (#913): margins are
 #   constant, so no market carries a weekend_margin_bps. A market's margin is
 #   the same before, during and after a weekend gap, nothing restricts new risk
 #   or withdrawals ahead of one, and no account is closed out when one starts.
@@ -86,7 +84,7 @@
 #   cash and marks genesis done, so the vault holds only trader deposits.
 # - Each exposure cap is the larger of its share of house NAV and a dollar
 #   floor (house_cap_floor per market, house_total_cap_floor in total), so
-#   trading starts from a zero house (#15 §2). The floors are the owner's
+#   trading starts from a zero house (#15 §2). The floors are
 #   (#614, decision D8) from the launch-caps study (#500, research/launch-caps,
 #   results/proposal.toml), rounded to three figures: BTC-USD $31.6M; ETH-USD,
 #   US500 and US100 $17.8M; EUR-USD, GBP-USD, USD-JPY, AUD-USD, US30, JP225,
@@ -217,8 +215,8 @@ max_resting_orders = 100
 # curve's fee at the hold of the slice it closes (hold_ms from the position's
 # open time, fee_bps of the gain): the whole gain to 10 s, falling to 10% at 15
 # minutes, linear between points with the fee rounded up to the bp, and zero
-# from the last hold, where profit_fee_bps alone applies (#614's decision of
-# 2026-11-13; #697's 10 s curve, eleven holds spaced evenly in its logarithm).
+# from the last hold, where profit_fee_bps alone applies (#614's decision;
+# #697's 10 s curve, eleven holds spaced evenly in its logarithm).
 profit_fee_curve = [
   { hold_ms = 10000, fee_bps = 10000 },
   { hold_ms = 15683, fee_bps = 9100 },
@@ -259,12 +257,12 @@ volume_tiers = [
 ]
 
 # From protocol V81 close-outs read the account's portfolio requirement under this grid, and the
-# account read serves its breakdown. Portfolio margin's launch values, confirmed 2026-11-18 on #913:
+# account read serves its breakdown. Portfolio margin's launch values (#913):
 # #914's E1 (research/portfolio-margin/results/proposal.toml), its shocks in tenths of a basis point
 # rounded up to whole bps, its loadings in thousandths. Crypto and the shares are not grouped (their
 # offsets save too little at their floor shares) and stay on per-position margin. Each group's floor
 # share is the least share of its matched exposure's per-position requirement it keeps. The
-# requirement is the same at every time, a weekend gap included (#913, 2026-11-19), so E1's weekend
+# requirement is the same at every time, a weekend gap included (#913), so E1's weekend
 # shocks are not used. A notice or a vote may raise the residual shocks to their
 # max_residual_shock_bps, #914's stricter bounds (99.9% over 5 minutes, rounded up to whole bps),
 # and the floor share to 100%; the groups, members and loadings never move.
@@ -358,8 +356,8 @@ memory = "11259036"
 # at the launch pricing and floors in research/launch-caps (#500). See the research READMEs.
 # From protocol V62 level 2 also rises in every market once the house has lost
 # money to its clients over the trailing day: house_loss is the marked loss in
-# USD, net of fees and spreads, met when the loss is above it (#614's decision
-# of 2026-11-13; research/loss-rate-trigger). A change keeps it at level 2 or
+# USD, net of fees and spreads, met when the loss is above it (#614's decision;
+# research/loss-rate-trigger). A change keeps it at level 2 or
 # above, at zero or below.
 [[genesis.params.stress_levels]]
 size_spread_multiplier_bps = 10000
@@ -389,7 +387,7 @@ spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", ten
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 markout_floor_bps = "1.68" # the year's markout spread (#699)
-min_level_distance_bps = 30 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 30 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 [[genesis.markets]]
@@ -404,7 +402,7 @@ spread_tiers = [{ up_to = "1000000", tenth_bps = 30 }, { up_to = "5000000", tent
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 markout_floor_bps = "2.53" # the year's markout spread (#699)
-min_level_distance_bps = 35 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 35 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 [[genesis.markets]]
@@ -419,7 +417,7 @@ spread_tiers = [{ up_to = "1000000", tenth_bps = 20 }, { up_to = "5000000", tent
 schedule = { kind = "always_open" }
 price_rules = { max_age_ms = 1000, max_divergence_bps = 25, min_sources = 2 }
 markout_floor_bps = "2.53" # the year's markout spread (#699)
-min_level_distance_bps = 35 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 35 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 500, day_basis = 365 }
 
 # --- FX majors: Cboe FX ---------------------------------------------------
@@ -435,7 +433,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "10000000", tenth_bps = 4 }, { up_to = "50000000", tenth_bps = 8 }, { tenth_bps = 16 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 markout_floor_bps = "0.28" # the year's markout spread (#699)
-min_level_distance_bps = 17 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 17 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "ESTR", markup_bps = 100, day_basis = 360 }
 
 # FX: Cboe FX spot week, New York time.
@@ -462,7 +460,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "10000000", tenth_bps = 4 }, { up_to = "50000000", tenth_bps = 8 }, { tenth_bps = 16 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 markout_floor_bps = "0.27" # the year's markout spread (#699)
-min_level_distance_bps = 17 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 17 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SONIA", markup_bps = 100, day_basis = 365 }
 
 # FX: Cboe FX spot week, New York time.
@@ -490,7 +488,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "10000000", tenth_bps = 5 }, { up_to = "50000000", tenth_bps = 10 }, { tenth_bps = 20 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 markout_floor_bps = "0.38" # the year's markout spread (#699)
-min_level_distance_bps = 17 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 17 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 100, day_basis = 360 }
 
 # FX: Cboe FX spot week, New York time.
@@ -517,7 +515,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "10000000", tenth_bps = 5 }, { up_to = "50000000", tenth_bps = 10 }, { tenth_bps = 20 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 5, min_sources = 2 }
 markout_floor_bps = "0.36" # the year's markout spread (#699)
-min_level_distance_bps = 17 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 17 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "AONIA", markup_bps = 100, day_basis = 365 }
 
 # FX: Cboe FX spot week, New York time.
@@ -546,7 +544,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.70" # the year's markout spread (#699)
-min_level_distance_bps = 18 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 18 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "ESZ6", from = "2026-09-10T14:30:00Z" },
@@ -596,7 +594,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 9 }, { up_to = "25000000", tenth_bps = 18 }, { tenth_bps = 36 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.91" # the year's markout spread (#699)
-min_level_distance_bps = 19 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 19 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "NQZ6", from = "2026-09-10T14:30:00Z" },
@@ -646,7 +644,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 7 }, { up_to = "25000000", tenth_bps = 14 }, { tenth_bps = 28 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "0.65" # the year's markout spread (#699)
-min_level_distance_bps = 18 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 18 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "YMZ6", from = "2026-09-10T14:30:00Z" },
@@ -697,7 +695,7 @@ margin_tiers = [{ up_to = "5000000", bps = 50 }, { up_to = "25000000", bps = 100
 spread_tiers = [{ up_to = "5000000", tenth_bps = 10 }, { up_to = "25000000", tenth_bps = 20 }, { tenth_bps = 40 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "1.05" # the year's markout spread (#699)
-min_level_distance_bps = 19 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 19 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "TONA", markup_bps = 250, day_basis = 365 }
 contracts = [
   { contract = "NIYZ6", from = "2026-09-03T01:00:00Z" },
@@ -744,7 +742,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "1.22" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "GCZ6", from = "2026-09-28T14:30:00Z" },
@@ -797,7 +795,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "2.24" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "SIZ6", from = "2026-08-27T14:30:00Z" },
@@ -849,7 +847,7 @@ margin_tiers = [{ up_to = "2000000", bps = 100 }, { bps = 500 }]
 spread_tiers = [{ up_to = "2000000", tenth_bps = 20 }, { up_to = "10000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 1 }
 markout_floor_bps = "2.04" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 contracts = [
   { contract = "CLZ6", from = "2026-10-16T14:30:00Z" },
@@ -912,7 +910,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.83" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -958,7 +956,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.65" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1004,7 +1002,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.71" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1050,7 +1048,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.03" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1096,7 +1094,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.03" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1142,7 +1140,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.28" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1188,7 +1186,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "3.47" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1234,7 +1232,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "3.03" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1280,7 +1278,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.24" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1326,7 +1324,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.69" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1372,7 +1370,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.51" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1418,7 +1416,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.55" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1464,7 +1462,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.33" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1510,7 +1508,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.38" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1556,7 +1554,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.65" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1602,7 +1600,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.59" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1648,7 +1646,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "1.48" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1694,7 +1692,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 20 }, { up_to = "2000000", tenth_bps = 40 }, { tenth_bps = 80 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "2.14" # the year's markout spread (#699)
-min_level_distance_bps = 23 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 23 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1740,7 +1738,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "3.44" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.
@@ -1786,7 +1784,7 @@ margin_tiers = [{ up_to = "500000", bps = 1000 }, { up_to = "2000000", bps = 200
 spread_tiers = [{ up_to = "500000", tenth_bps = 30 }, { up_to = "2000000", tenth_bps = 60 }, { tenth_bps = 120 }]
 price_rules = { max_age_ms = 1000, max_divergence_bps = 10, min_sources = 2 }
 markout_floor_bps = "3.10" # the year's markout spread (#699)
-min_level_distance_bps = 27 # its close-spread ceiling (#633, D6), confirmed 2026-11-18
+min_level_distance_bps = 27 # its close-spread ceiling (#633, D6)
 financing = { benchmark = "SOFR", markup_bps = 250, day_basis = 360 }
 
 # US shares: NYSE and Nasdaq core session, New York time.

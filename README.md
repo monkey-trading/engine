@@ -135,8 +135,8 @@ version, so that an old log still replays under the rules that applied when it w
 
 ## Getting it
 
-You need Rust 1.96 or later, on Linux or macOS. The local-chain example also needs Foundry 1.8.3,
-`curl`, `jq` and Python 3. The browser verifier needs rustup with Rust 1.99.1 and its
+You need the latest stable Rust toolchain, on Linux or macOS. The local-chain example also needs
+Foundry 1.8.3, `curl`, `jq` and Python 3. The browser verifier needs rustup with Rust 1.99.1 and its
 `wasm32-unknown-unknown` target, wasm-bindgen-cli 0.2.129, and Node 18 or later.
 
 ```shell
