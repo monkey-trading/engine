@@ -10,7 +10,7 @@ use engine_core::types::AccountId;
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, SignerHistory, View, accepted_history};
 use crate::config::{CustodyProvider, NodeConfig};
-use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SealChecks, SegmentedLog};
+use crate::log::{self, Checkpoint, CheckpointDomain, CheckpointParent, LogEntry, SealChecks};
 use crate::sequencer::Replayed;
 use crate::sequencer::replay::Audited;
 use crate::sequencer::replay::ranges::{Trust, replay_ranges};
@@ -120,9 +120,11 @@ async fn build_trust(
     Ok(AuditTrust { parent, authorities })
 }
 
-/// Reads candidate identities without opening a writer, repairing a manifest, or trusting the log.
+/// Reads candidate identities without opening a writer, repairing a manifest, or trusting the log: from a
+/// log directory its segments several at once, each parsing only its entries that are not commands
+/// (`log::uncommanded`), since the replay that follows checks the whole log.
 /// Error cases:
-/// - the path or manifest cannot be read, or the exact finalized checkpoint is absent
+/// - the path or a segment cannot be read, or the exact finalized checkpoint is absent
 fn checkpoint_candidates(
     path: &Path,
     parent: CheckpointParent,
@@ -153,11 +155,29 @@ fn checkpoint_candidates(
         }
         Ok(())
     };
+    let mut scanned = Vec::new();
     if found.is_dir() {
-        SegmentedLog::open(path, &mut visit)?;
+        // The scan keeps each candidate and each withdrawal's signer epoch, nothing more, as it reads them.
+        let jobs = std::thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        let keep = |entry| match entry {
+            LogEntry::Checkpoint(checkpoint)
+                if checkpoint.parent.is_some() && parent.has_checkpoint && checkpoint.seq <= parent.seq =>
+            {
+                Some(Ok(checkpoint))
+            }
+            LogEntry::Withdrawal(withdrawal) => withdrawal.authorization.map(|auth| Err(auth.signer_epoch)),
+            _ => None,
+        };
+        for found in log::uncommanded(path, jobs, keep)? {
+            match found {
+                Ok(checkpoint) => visit(LogEntry::Checkpoint(checkpoint))?,
+                Err(epoch) => scanned.push(epoch),
+            }
+        }
     } else {
         log::read_file(path, &mut visit)?;
     }
+    epochs.extend(scanned);
     ensure!(anchor_found, "public log is shorter than or omits the finalized vault anchor");
     Ok(candidates)
 }

@@ -150,6 +150,14 @@ impl Trust {
     }
 }
 
+/// How many ranges `engine replay --snapshots` replays at once when not told: one for every two physical
+/// cores, since a range keeps about one and a half busy (its apply, read and root threads) and holds an
+/// engine of its own, and no more than one for every two cores this process may use; at least one.
+pub fn default_jobs() -> NonZeroUsize {
+    let usable = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    NonZeroUsize::new(num_cpus::get_physical().min(usable) / 2).unwrap_or(NonZeroUsize::MIN)
+}
+
 /// `engine replay --snapshots`: replays the log directory at `path` in ranges, from the daily snapshots in
 /// `snapshots`, `jobs` at once, under one pinned signer or none, as `replay_path_with_trust` replays a whole log.
 /// Error cases:

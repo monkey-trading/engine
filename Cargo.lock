@@ -2082,6 +2082,7 @@ dependencies = [
  "k256 0.14.0",
  "loom",
  "nix",
+ "num_cpus",
  "percent-encoding",
  "ppp",
  "prometheus-client",

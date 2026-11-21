@@ -52,6 +52,8 @@ k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 # Model checking of the root worker's handshakes with the sequencer, in tests only.
 loom = "0.7.2"
 nix = { version = "0.31.3", default-features = false, features = ["sched"] }
+# The physical cores, for how many ranges a replay from daily snapshots runs at once; in the tree already.
+num_cpus = "1.17"
 # ECDSA on P-384: the attestation report's signature and the test chain's certificates. Pure Rust,
 # so the native and browser verifiers run the same implementation. Without `std`, which would pull
 # in an OS random source that does not build for the browser and that verification never uses.

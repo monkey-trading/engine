@@ -415,7 +415,7 @@ pub(crate) use live::LiveReplay;
 mod marks;
 mod paths;
 pub(crate) mod ranges;
-pub use ranges::{Audited, replay_ranges_with_attested, replay_ranges_with_trust};
+pub use ranges::{Audited, default_jobs, replay_ranges_with_attested, replay_ranges_with_trust};
 mod replayed;
 pub use replayed::Replayed;
 mod replayed_log;
