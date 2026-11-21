@@ -145,12 +145,12 @@ impl Store {
         durability: Durability,
     ) -> Result<Root> {
         root.validate()?;
-        let mut writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
+        let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
         self.writable()?;
         let _lease = self.lease(root)?;
         let old_floor = self.check_head(root)?;
         geometry::check(&self.inner.path)?;
-        let mut conn = self.writer_connection(&mut writer)?;
+        let mut conn = db::connect(&self.inner.path, true)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
         let written = match work(&tx).and_then(|written| {
@@ -183,7 +183,6 @@ impl Store {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);
         }
-        *writer = Some(conn);
         self.publish(&written)?;
         Ok(written)
     }
@@ -197,11 +196,11 @@ impl Store {
     /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {
         root.validate()?;
-        let mut writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
+        let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
         self.writable()?;
         self.check_head(root)?;
         geometry::check(&self.inner.path)?;
-        let mut conn = self.writer_connection(&mut writer)?;
+        let mut conn = db::connect(&self.inner.path, true)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
         let after = root.version.map_or(Ok(-1), i64::try_from)?;
@@ -226,7 +225,6 @@ impl Store {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);
         }
-        *writer = Some(conn);
         self.publish(root)
     }
 
@@ -250,20 +248,6 @@ impl Store {
             .map_err(|_| anyhow::anyhow!("lease registry poisoned"))?
             .compact
             .contains(namespace))
-    }
-
-    /// The writer's connection: the one the last committed write left, its page cache emptied so that every
-    /// page the write reads comes from the file, as a fresh connection's would, or a fresh one.
-    /// Error cases:
-    /// - SQLite cannot open the file, apply its settings or release the cache
-    fn writer_connection(&self, kept: &mut Option<Connection>) -> Result<Connection> {
-        match kept.take() {
-            Some(conn) => {
-                conn.execute_batch("PRAGMA shrink_memory")?;
-                Ok(conn)
-            }
-            None => db::connect(&self.inner.path, true),
-        }
     }
 
     /// Whether a commit's outcome was uncertain, so this store refuses writes until it is reopened.

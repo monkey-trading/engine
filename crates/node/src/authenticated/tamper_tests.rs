@@ -167,8 +167,8 @@ fn host_lengths_cannot_request_unbounded_node_or_value_decoding() -> Result<()> 
 }
 
 /// Damage written into the file's bytes between two writes, with SQLite's header and change counter left as
-/// they were, is refused by the next write that reads the damaged node: the writer's connection, kept from
-/// the first write, reads every page from the file again, as a fresh connection would.
+/// they were, is refused by the next write that reads the damaged node: each write opens its own connection,
+/// which reads its pages and schema from the file.
 #[test]
 fn raw_damage_that_keeps_the_header_is_refused_by_the_next_write() -> Result<()> {
     let (dir, store) = fresh()?;

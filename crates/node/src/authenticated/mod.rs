@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{Result, ensure};
 use jmt::SimpleHasher;
-use rusqlite::Connection;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -96,9 +95,7 @@ struct Inner {
     /// journal, until `enable_writes` rolls the journal back.
     crash_image: AtomicBool,
     files: Mutex<Option<WriteFiles>>,
-    /// Serializes writes, and keeps the writer's connection, with its prepared statements, from one committed
-    /// write to the next; each write empties its page cache first, and any other outcome drops it.
-    writer: Mutex<Option<Connection>>,
+    writer: Mutex<()>,
     runtime: Mutex<Runtime>,
     /// The syncs this store has made, for a test that counts them.
     #[cfg(test)]

@@ -132,7 +132,7 @@ impl Store {
                 path,
                 crash_image: AtomicBool::new(crash_image),
                 files: Mutex::new(files),
-                writer: Mutex::new(None),
+                writer: Mutex::new(()),
                 runtime: Mutex::new(Runtime::default()),
                 #[cfg(test)]
                 syncs: Default::default(),
@@ -244,7 +244,8 @@ fn open_sql(path: &Path, mode: Mode) -> Result<Connection> {
     conn.pragma_update(None, "cell_size_check", true)?;
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "mmap_size", 0)?;
-    // A writer's connection stays open between writes, so its larger cache holds the tree's upper nodes.
+    // A writer's connection lives for one write, which reads more pages than a reader, so its larger cache
+    // holds the pages the write reads again.
     conn.pragma_update(None, "cache_size", if writable { WRITER_CACHE_KIB } else { -2048 })?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     Ok(conn)
