@@ -1,28 +1,46 @@
-//! The staking mirror's quorum reads: a window's events over its block range, bound to the endpoint
-//! the watcher proved, and events read at each block by its hash.
+//! The staking mirror's quorum reads: a window's events over its block range, bound to the hash of its
+//! last block, and events read at each block by its hash.
 
-use anyhow::{Context, ensure};
+use anyhow::ensure;
 use futures_util::future::join_all;
 
 use super::{Quorum, last_header};
 use crate::custody::evm::{BlockRef, StakingEvent, VaultReader};
 
 impl<R: VaultReader + Sync> Quorum<R> {
-    /// Identical staking event sets anchored to the range endpoint the watcher already proved.
+    /// Identical staking event sets over `from..=to.number`, each provider's read after its own header at
+    /// the range's last block and, with `release` above the range, before its header there, all voted as
+    /// one answer, anchored to `to`'s hash and `release`'s.
     /// Error cases:
-    /// - no quorum, or the winning endpoint differs from that proof, even for an empty response
-    pub(super) async fn ranged_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        let to = blocks.last().context("staking range is empty")?;
+    /// - no quorum, or the winning endpoint differs from `to`, or its release block from `release`, even
+    ///   for an empty response
+    pub(super) async fn ranged_staking_events(
+        &self,
+        from: u64,
+        to: BlockRef,
+        release: Option<BlockRef>,
+    ) -> anyhow::Result<Vec<StakingEvent>> {
+        let release = release.filter(|release| release.number > to.number);
         let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| async move {
             self.qualified(i)?;
             let header = last_header(r.headers(to.number, to.number).await?, to.number)?;
-            let mut events = r.staking_events(blocks).await?;
+            let mut events = r.staking_events(from, to).await?;
             events.sort_by_key(|event| (event.block, event.log_index));
-            Ok((header.hash, events))
+            let released = match release {
+                Some(release) => {
+                    Some(last_header(r.headers(release.number, release.number).await?, release.number)?.hash)
+                }
+                None => None,
+            };
+            Ok((header.hash, events, released))
         }))
         .await;
-        let ((hash, events), _) = self.vote("staking_events", answers)?;
-        ensure!(hash == to.hash, "staking event range endpoint differs from its proven canonical hash");
+        let ((hash, events, released), _) = self.vote("staking_events", answers)?;
+        ensure!(hash == to.hash, "staking event range endpoint differs from its canonical hash");
+        ensure!(
+            released == release.map(|release| release.hash),
+            "staking event range's release block differs from the release tag's"
+        );
         Ok(events)
     }
 

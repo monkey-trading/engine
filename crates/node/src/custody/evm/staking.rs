@@ -11,18 +11,6 @@ use crate::custody::stall::PollError;
 use crate::sequencer::Request;
 
 impl<V: VaultReader> DepositWatcher<V> {
-    /// Retained staking anchors, exposed only for resource-bound regressions.
-    #[cfg(test)]
-    pub(crate) fn staking_anchor_count(&self) -> usize {
-        self.confirmed.staking_chain.len()
-    }
-
-    /// Full hashes retained by a completed staking proof, bounded by its requested chunk.
-    #[cfg(test)]
-    pub(crate) fn staking_hash_window_peak(&self) -> usize {
-        self.confirmed.staking_chain.window_peak()
-    }
-
     /// The staking range now in force, for the adaptive-size regressions.
     #[cfg(test)]
     pub(crate) fn staking_range_for_test(&self) -> u64 {
@@ -35,27 +23,23 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.log_range.get()
     }
 
-    /// Exercises retained proof cancellation and quorum invalidation without advancing custody.
-    #[cfg(test)]
-    pub(crate) async fn prove_staking_for_test(&mut self, from: u64, to: u64) -> Result<bool, PollError> {
-        self.vault.identity().await.map_err(PollError::rpc)?;
-        self.staking_window(from, to).await.map(|proof| proof.is_some())
-    }
-
     /// Mirrors the configured staking contract's events, and the operator registry's with them,
-    /// through the Ethereum-finalised boundary
-    /// this poll proved (`release_at`), never the merely confirmed scan end: a staking mirror has
-    /// no reversal, so a reorged event must never become a permanent engine balance. Catch-up
-    /// runs in bounded chunks whose proofs are retained on the staking mirror's own slot, so it
-    /// finishes across polls however deposits advance. Without a staking contract, a finalised
-    /// boundary, or before `InitStaking` has applied, nothing is read or sequenced and the cursor
-    /// holds (see `staking::mirror`).
+    /// through the Ethereum-finalised boundary this poll read (`release_at`), never the merely confirmed
+    /// scan end: a staking mirror has no reversal, so a reorged event must never become a permanent engine
+    /// balance. A window that ends at the block the release tag names, `release`, must end on the hash the
+    /// quorum voted with the tag; one that ends below it, in a catch-up, is read with each provider's
+    /// header there in the same voted answer, so it is bound to the tag's chain too. The authenticated
+    /// frontier a window records is read again each poll. Catch-up runs in bounded chunks, the cursor
+    /// advancing per chunk. Without a staking contract, a finalised boundary, or before `InitStaking` has
+    /// applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`).
     /// Error cases:
-    /// - stalled: a staking read fails, an event is on an unproven block, or the engine refuses a mirror
+    /// - stalled: a staking read fails, an event is not on the canonical block there, or the engine refuses
+    ///   a mirror
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
     pub(super) async fn mirror_staking(
         &mut self,
         tx: &mpsc::Sender<Request>,
+        release: Option<BlockRef>,
         release_at: Option<u64>,
     ) -> Result<(), PollError> {
         let Some(mut to) = release_at else { return Ok(()) };
@@ -77,37 +61,28 @@ impl<V: VaultReader> DepositWatcher<V> {
         else {
             return Ok(());
         };
-        self.confirmed.staking_chain.prune_below(from);
-        if let Some(anchor) = anchor {
-            let links = self.headers(anchor.block, anchor.block).await?;
-            if links.len() != 1 || links[0].number != anchor.block || links[0].hash != anchor.block_hash {
-                return Err(PollError::inconsistent(anyhow!("finalized staking anchor changed")));
-            }
-            self.chain.insert(anchor.block, anchor.block_hash);
+        if let Some(anchor) = anchor
+            && self.header_at(anchor.block).await?.hash != anchor.block_hash
+        {
+            return Err(PollError::inconsistent(anyhow!("finalized staking anchor changed")));
         }
         if from > to {
             return Ok(());
         }
-        // Bound the chunk so its proof completes within header batches and the retained run
-        // survives deposit proofs; the cursor advances per completed chunk until it reaches the
-        // release tag, so catch-up reports progress instead of restarting against a moving end.
-        // A proof in progress keeps its window: a moving release tag or a resized range must not
-        // discard its headers. Event-read failures shrink the range (see `staking::mirror`).
-        to = match self.staking_window_end(from) {
-            Some(end) if end <= to => end,
-            _ => to.min(from.saturating_add(self.staking_range.get() - 1)),
-        };
-        let Some(proven) = self.staking_window(from, to).await? else {
-            info!(from, to, "staking mirror is proving a bounded catch-up window");
-            return Ok(());
-        };
-        let hashes = &proven.hashes;
+        // The cursor advances per completed chunk until it reaches the release tag, so catch-up reports
+        // progress instead of restarting against a moving end. Event-read failures shrink the range (see
+        // `staking::mirror`).
+        to = to.min(from.saturating_add(self.staking_range.get() - 1));
+        let end = self.header_at(to).await?;
+        if release.is_some_and(|release| release.number == to && release.hash != end.hash) {
+            return Err(PollError::unsettled(anyhow!("the staking window's end is not the release tag's block")));
+        }
         // The registry whose elections mirror must be the one that deployed the staking contract.
         // A window ending before the contract's deployment has no code to read and nothing that
         // could name another registry, so the binding is checked again at the end of a later
         // window instead of trapping the catch-up on the same range.
         if let Some((registry, false)) = self.registry {
-            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let hash = end.hash;
             match self.vault.staking_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
                 None => info!(to, "the staking contract is not deployed at this window's end"),
                 Some(recorded) => {
@@ -123,7 +98,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         // The schedule mirrored must be the one the registry names, once it names one: a node that
         // mirrors another, or none, would never apply the turns that name the operator.
         if let Some((_, true)) = self.registry {
-            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let hash = end.hash;
             let named = self.vault.registry_schedule(BlockRef { number: to, hash }).await.map_err(PollError::rpc)?;
             let configured = self.schedule.map(|(schedule, _)| schedule);
             if !named.is_zero() && configured != Some(named) {
@@ -136,7 +111,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         // Its turns must be this build's too: a schedule of another length names turn numbers whose
         // boundaries the engine would place elsewhere.
         if let (Some((schedule, false)), Some((registry, _))) = (self.schedule, self.registry) {
-            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let hash = end.hash;
             let at = BlockRef { number: to, hash };
             match self.vault.schedule_registry(at).await.map_err(PollError::rpc)? {
                 None => info!(to, "the schedule is not deployed at this window's end"),
@@ -157,7 +132,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         }
         // So must the vote contract's schedule: its proposals vote by the schedule's sets.
         if let (Some((vote, false)), Some((schedule, _))) = (self.vote, self.schedule) {
-            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let hash = end.hash;
             let out = self
                 .vault
                 .contract_call(BlockRef { number: to, hash }, vote, crate::custody::registry::vote_schedule_call())
@@ -175,7 +150,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         }
         // The fault proof contract must check proofs against this vault's signer history.
         if let Some((fault_proof, false)) = self.fault_proof {
-            let hash = *hashes.get(&to).ok_or_else(|| PollError::unsettled(anyhow!("staking window lacks its end")))?;
+            let hash = end.hash;
             let out = self
                 .vault
                 .contract_call(BlockRef { number: to, hash }, fault_proof, crate::custody::registry::fault_vault_call())
@@ -215,15 +190,13 @@ impl<V: VaultReader> DepositWatcher<V> {
         // The registry's own state says which drawn turn, of the schedule it names, names the operator.
         let turns = self.registry.and_then(|(registry, bound)| bound.then_some(registry));
         let fault_bound = self.fault_proof.is_none_or(|(_, bound)| bound);
-        let window = from..=to;
         staking::mirror(
             &self.vault,
             tx,
             cursor,
             path,
             &mut self.staking_range,
-            window,
-            &proven,
+            (from, end, release),
             (bound, schedule_bound, vote_bound, fault_bound),
             turns,
         )

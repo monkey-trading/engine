@@ -26,7 +26,9 @@ use tracing::debug;
 
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl, redact};
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader};
+use crate::custody::evm::{
+    BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
+};
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
 sol! {
@@ -34,6 +36,8 @@ sol! {
     event HouseDeposited(uint256 indexed id, address indexed from, uint256 amount);
     event SurplusBooked(uint256 indexed id, uint256 amount);
     function depositCount() external view returns (uint256);
+    function depositRecords(uint256 id) external view returns (address payer, uint96 amount);
+    function depositAccounts(uint256 id) external view returns (address account);
     function usdc() external view returns (address);
     function signerEpoch() external view returns (uint64);
 }
@@ -106,13 +110,7 @@ pub(super) fn decode_header(header: Option<Header>, number: u64) -> anyhow::Resu
         return Err(anyhow::Error::new(InvalidRpcResponse)
             .context(format!("asked for block {number}, got block {}", header.number)));
     }
-    Ok(BlockLink {
-        number,
-        hash: header.hash,
-        parent_hash: header.parent_hash,
-        timestamp: header.timestamp,
-        staking_logs: false,
-    })
+    Ok(BlockLink { number, hash: header.hash, parent_hash: header.parent_hash, timestamp: header.timestamp })
 }
 
 impl VaultReader for VaultRpc {
@@ -143,12 +141,10 @@ impl VaultReader for VaultRpc {
         self.read_finality(self.withdrawal_finality_tag).await
     }
 
-    /// The headers of blocks `from..=to`, read in one JSON-RPC batch, each with whether its logs bloom
-    /// admits an event the staking mirror reads.
+    /// The headers of blocks `from..=to`, read in one JSON-RPC batch.
     /// Error cases:
     /// - the batch fails or times out, or a block is missing or answers for another height
     async fn headers(&self, from: u64, to: u64) -> anyhow::Result<Vec<BlockLink>> {
-        let mirrored = self.mirror_filter();
         let mut batch = self.client.new_batch();
         let waiters = (from..=to)
             .map(|number| {
@@ -160,11 +156,7 @@ impl VaultReader for VaultRpc {
         let mut links = Vec::with_capacity(waiters.len());
         for (number, waiter) in (from..=to).zip(waiters) {
             let header = self.deadline("eth_getBlockByNumber", waiter).await?;
-            let staking_logs = header
-                .as_ref()
-                .zip(mirrored.as_ref())
-                .is_some_and(|(header, filter)| filter.matches_bloom(header.logs_bloom));
-            links.push(BlockLink { staking_logs, ..decode_header(header, number)? });
+            links.push(decode_header(header, number)?);
         }
         Ok(links)
     }
@@ -201,6 +193,20 @@ impl VaultReader for VaultRpc {
                 format!("reading depositCount at block {}; the endpoint must serve past state", at.number)
             })?;
         decode_count(&out)
+    }
+
+    /// `depositRecords(id)` and `depositAccounts(id)`, each executed in block `at`, which the endpoint must
+    /// hold as canonical.
+    /// Error cases:
+    /// - a call fails or times out, or its result does not decode
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        let (block, id) = (BlockId::hash_canonical(at.hash), U256::from(id));
+        let out = self.call(depositRecordsCall { id }.abi_encode(), block).await.context("reading a deposit record")?;
+        let record = depositRecordsCall::abi_decode_returns(&out).context("decoding a deposit record")?;
+        let out =
+            self.call(depositAccountsCall { id }.abi_encode(), block).await.context("reading a deposit's account")?;
+        let account = depositAccountsCall::abi_decode_returns(&out).context("decoding a deposit's account")?;
+        Ok(VaultRecord { payer: record.payer, units: U256::from(record.amount.to::<u128>()), account })
     }
 
     /// The registry the configured staking contract records as its deployer, read in the
@@ -304,9 +310,9 @@ impl VaultReader for VaultRpc {
         Ok((header.number, header.hash))
     }
 
-    /// Every event the staking mirror reads over the window's block range, in one log read (`staking`).
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        self.ranged_staking_events(blocks).await
+    /// Every event the staking mirror reads over the range, in one log read (`staking`).
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        self.ranged_staking_events(from, to.number).await
     }
 
     /// Every event the staking mirror reads, at each block by its hash (`staking`).

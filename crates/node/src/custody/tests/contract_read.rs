@@ -47,8 +47,8 @@ impl VaultReader for Provider {
         self.chain.deposit_count(at).await
     }
 
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
-        self.chain.staking_events(blocks).await
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
+        self.chain.staking_events(from, to).await
     }
 
     async fn contract_call(&self, at: BlockRef, _to: Address, _data: Bytes) -> anyhow::Result<Bytes> {

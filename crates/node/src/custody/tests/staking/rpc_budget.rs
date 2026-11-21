@@ -11,9 +11,9 @@ use alloy::primitives::{Address, B256, Bytes, U256};
 
 use super::*;
 use crate::custody::QuorumBlock;
-use crate::custody::evm::PostedHead;
+use crate::custody::evm::{PostedHead, VaultRecord};
 use crate::custody::stall::Polled;
-use crate::liveness::chain::{LivenessDomain, members, pending_fallback, view};
+use crate::liveness::chain::{LivenessDomain, members, pending_fallback, promotable, view};
 use crate::liveness::fake::{ChainState, DOMAIN, LOG_HEADS, VAULT as LIVENESS_VAULT, answer};
 use crate::standby_key::chain::{StandbyChain, StandbyDomain};
 
@@ -77,9 +77,13 @@ impl<R: VaultReader + Sync> VaultReader for Counted<R> {
         self.1.add("eth_call", 1);
         self.0.deposit_count(at).await
     }
-    async fn staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn deposit_record(&self, at: BlockRef, id: u64) -> anyhow::Result<VaultRecord> {
+        self.1.add("eth_call", 2);
+        self.0.deposit_record(at, id).await
+    }
+    async fn staking_events(&self, from: u64, to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         self.1.add("eth_getLogs", 1);
-        self.0.staking_events(blocks).await
+        self.0.staking_events(from, to).await
     }
     async fn pinned_staking_events(&self, blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
         self.1.add("eth_getLogs", blocks.len() as u64);
@@ -143,7 +147,6 @@ impl VaultReader for Liveness {
                 hash: Self::hash(number),
                 parent_hash: Self::hash(number.saturating_sub(1)),
                 timestamp: time,
-                staking_logs: false,
             })
             .collect())
     }
@@ -153,7 +156,7 @@ impl VaultReader for Liveness {
     async fn deposit_count(&self, _at: BlockRef) -> anyhow::Result<u64> {
         Ok(0)
     }
-    async fn staking_events(&self, _blocks: &[BlockRef]) -> anyhow::Result<Vec<StakingEvent>> {
+    async fn staking_events(&self, _from: u64, _to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         Ok(Vec::new())
     }
     async fn account_balance(&self, _at: BlockRef, _account: Address) -> anyhow::Result<U256> {
@@ -285,6 +288,17 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
     out.insert("fallback read", take());
     crate::log_heads::posted(&quorum, LOG_HEADS, DOMAIN.standby.chain_id).await.unwrap();
     out.insert("log-head read", take());
+    // A following member's stint: whether a promotion names its standby key and whether the schedule still
+    // lists the key as promotable, each at the latest agreed block, then the posted head it pins its copy
+    // to, as a log-head read.
+    let (candidate, key) = (AccountId([0xa1; 20]), AccountId([0xb1; 20]));
+    crate::standby_key::chain::standby_state(&reader, &DOMAIN.standby, candidate, key).await.unwrap();
+    promotable(&reader.latest().await.unwrap(), &DOMAIN.standby, candidate).await.unwrap();
+    crate::log_heads::posted(&quorum, LOG_HEADS, DOMAIN.standby.chain_id).await.unwrap();
+    out.insert("member stint", take());
+    // The operator's standby renewal: whether the schedule still lists its standby key as promotable.
+    promotable(&reader.latest().await.unwrap(), &DOMAIN.standby, candidate).await.unwrap();
+    out.insert("standby renewal", take());
     // The poster's turn read follows its posted read, at the block that read agreed.
     let (_, at) = quorum.posted_head(LOG_HEADS).await.unwrap();
     view(&QuorumBlock::at(&quorum, at).await.unwrap(), &DOMAIN).await.unwrap();
@@ -326,7 +340,7 @@ fn add(into: &mut ByMethod, calls: &ByMethod, times: f64) {
 #[ignore = "prints the RPC budget; run by hand"]
 async fn rpc_budget() {
     let mut watcher = ByMethod::new();
-    for per_poll in [4, 20] {
+    for per_poll in [4, 60] {
         watcher = watcher_per_poll(per_poll).await;
         println!("== deposit watcher at {per_poll} new blocks a poll: per poll, per provider");
         for (method, calls) in &watcher {
@@ -340,24 +354,27 @@ async fn rpc_budget() {
         println!("   {reader}: {}", calls.values().sum::<f64>());
     }
     // A day of each node's readers while a turn of a set of three names the operator: the operator's
-    // watcher at 5 s on Arbitrum One (20 blocks a poll), its rule's reads at 15 s and members at 60 s, its
-    // poster's reads every 10 s with a turn read before each post every 20 s, and its relayer's balance
-    // at 5 minutes; each member's caller at 15 s; and every node's fixer at 30 s.
+    // watcher at 15 s on Arbitrum One (60 blocks a poll), its rule's reads at 15 s and members at 60 s, its
+    // poster's reads every 10 s with a turn read before each post every 20 s, its relayer's balance at 5
+    // minutes, and its standby renewal every minute; each member's caller at 15 s and follow stint every
+    // 16 s (a 15 s stint and its 1 s pause); and every node's fixer at 30 s.
     let in_turn: Readers = vec![
-        ("operator's deposit watcher", &watcher, DAY / 5.0),
+        ("operator's deposit watcher", &watcher, DAY / 15.0),
         ("operator's liveness rule", &reads["rule read"], DAY / 15.0),
         ("operator's liveness rule's members", &reads["rule members read"], DAY / 60.0),
         ("operator's log-head reads", &reads["log-head read"], DAY / 10.0),
         ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 20.0),
         ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
+        ("operator's standby renewal", &reads["standby renewal"], DAY / 60.0),
         ("liveness callers, two members", &reads["caller read"], 2.0 * DAY / 15.0),
+        ("follow stints, two members", &reads["member stint"], 2.0 * DAY / 16.0),
         ("fallback fixers, three nodes", &reads["fallback read"], 3.0 * DAY / 30.0),
     ];
     day("one operator and two members while a turn names the operator", &in_turn);
     // Before the registry names a schedule, as at launch: the rule reads at 15 s, and the poster reads the
     // posted head and the turn every 30 s; three nodes' fixers read at 30 s.
     let unscheduled: Readers = vec![
-        ("operator's deposit watcher", &watcher, DAY / 5.0),
+        ("operator's deposit watcher", &watcher, DAY / 15.0),
         ("operator's liveness rule", &reads["rule read, no schedule"], DAY / 15.0),
         ("operator's log-head reads", &reads["log-head read"], DAY / 30.0),
         ("operator's log-head turn reads", &reads["log-head turn read, no schedule"], DAY / 30.0),

@@ -1,12 +1,9 @@
 //! Mirroring staking events through `staking::mirror`: ordering against `InitStaking`, once-only
-//! credit under the engine's references, and refusal to trust an event on an unproven block.
+//! credit under the engine's references, and refusal to trust an event off its canonical block.
 
-use std::collections::BTreeSet;
 use std::path::Path;
-use std::time::Duration;
 
 use alloy::primitives::{B256, U256};
-use tokio::time::timeout;
 
 use super::*;
 use engine_core::command::{AdminCommand, Command};
@@ -16,7 +13,7 @@ use engine_core::staking::StakingConfig;
 use engine_core::types::AccountId;
 
 use crate::config::EvmCustodySection;
-use crate::custody::chain::{BlockLink, ProvenWindow};
+use crate::custody::chain::BlockLink;
 use crate::custody::evm::DepositWatcher;
 use crate::custody::evm::{BlockRef, Finality, StakingEvent, StakingEventKind, VaultReader};
 use crate::custody::quorum::Quorum;
@@ -34,11 +31,13 @@ fn event(block: u64, tx: u8, kind: StakingEventKind) -> StakingEvent {
     StakingEvent { block, block_hash: canonical_hash(block), tx_hash: B256::repeat_byte(tx), log_index: 0, kind }
 }
 
-/// Blocks `0..=to` proven, with no header's bloom admitting a staking event.
-fn hashes_through(to: u64) -> ProvenWindow {
-    ProvenWindow {
-        hashes: (0..=to).map(|number| (number, canonical_hash(number))).collect(),
-        staking_logs: BTreeSet::new(),
+/// Canonical block `to`'s header, as the watcher reads it for a window's end.
+fn end_at(to: u64) -> BlockLink {
+    BlockLink {
+        number: to,
+        hash: canonical_hash(to),
+        parent_hash: canonical_hash(to.saturating_sub(1)),
+        timestamp: to * 12,
     }
 }
 
@@ -82,8 +81,7 @@ async fn mirror_range(
         cursor,
         &dir.join("staking-cursor.json"),
         &mut range,
-        from..=to,
-        &hashes_through(to),
+        (from, end_at(to), None),
         (true, true, true, true),
         None,
     )
@@ -130,8 +128,8 @@ async fn mirrors_hold_until_init_staking_applies() {
 }
 
 #[tokio::test]
-async fn an_event_on_an_unproven_block_stalls_the_mirror() {
-    let dir = scratch("staking-unproven");
+async fn an_event_off_its_canonical_block_stalls_the_mirror() {
+    let dir = scratch("staking-off-canonical");
     let node = Node::start_confirmed(&dir);
     init_staking(&node).await;
     let account = AccountId([9; 20]);
@@ -280,7 +278,7 @@ async fn authenticated_progress_overrides_a_forged_cursor_and_replays_a_partial_
 }
 
 #[tokio::test]
-async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
+async fn staking_catchup_reaches_advancing_deposit_finality_reading_a_fixed_number_of_headers_a_poll() {
     for backlog in [64u64, 256, 1024] {
         let dir = scratch(&format!("staking-moving-finality-{backlog}"));
         let node = Node::start_confirmed(&dir);
@@ -300,8 +298,7 @@ async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
             state.header_reads.clear();
             state.staking.extend([staked(2, 23, account, 500), unstaked(backlog - 1, 24, account, 500)]);
         }
-        let mut caught_up = false;
-        let mut peak = 0;
+        let (mut caught_up, mut polls) = (false, 0u64);
         for poll in 0..backlog * 4 {
             if poll % 4 == 0 {
                 for chain in &chains {
@@ -312,9 +309,7 @@ async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
                 }
             }
             watcher.poll(&node.tx).await.unwrap();
-            peak = peak.max(watcher.staking_anchor_count());
-            assert!(peak <= 66, "hierarchical anchors must have a fixed memory bound");
-            assert!(watcher.staking_hash_window_peak() <= 4, "full hashes cannot exceed the configured chunk");
+            polls += 1;
             let target = chains[0].0.lock().unwrap().head;
             if node
                 .read(move |engine| engine.staking().unwrap().completed_through.is_some_and(|p| p.block == target))
@@ -327,14 +322,14 @@ async fn staking_catchup_keeps_its_anchor_while_deposit_finality_advances() {
         assert!(caught_up, "full staking frontier must catch advancing deposit finality: backlog {backlog}");
         assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(0));
         assert!(node.read(|engine| engine.is_staking_credited(&format!("{}:0", B256::repeat_byte(24)))).await);
-        let levels = u64::from(backlog.ilog2()) + 1;
         for chain in &chains {
-            let work: u64 = chain.0.lock().unwrap().header_reads.iter().map(|(from, to)| to - from + 1).sum();
-            println!("backlog={backlog} headers={work} peak_anchors={peak}");
-            assert!(work <= 8 * backlog * levels, "header work must be O(N log N), not quadratic: {work}");
+            let state = chain.0.lock().unwrap();
+            let work: u64 = state.header_reads.iter().map(|(from, to)| to - from + 1).sum();
+            println!("backlog={backlog} polls={polls} headers={work}");
+            // The finality votes, the frontier, the boundary, the window's end, the staking anchor and its
+            // window's end each poll, and the headers linking each of the two events to its window's end.
+            assert!(work <= 12 * polls + 2 * 4, "header work must not grow with the blocks a window spans: {work}");
         }
-        watcher.poll(&node.tx).await.unwrap();
-        assert!(watcher.staking_anchor_count() <= 1, "completed anchors are pruned with authenticated progress");
         node.stop().await;
     }
 }
@@ -389,74 +384,8 @@ async fn staking_reads_narrow_after_size_failures_while_deposit_finality_advance
     node.stop().await;
 }
 
-#[tokio::test]
-async fn a_staking_window_in_progress_keeps_its_end_while_the_release_tag_advances() {
-    let dir = scratch("staking-window-retained");
-    let node = Node::start_confirmed(&dir);
-    let chains = poll_chains(6);
-    let mut watcher = staking_watcher_with_range(&chains, &dir, 100);
-    watcher.poll(&node.tx).await.unwrap();
-    init_staking(&node).await;
-    for chain in &chains {
-        chain.0.lock().unwrap().header_batch_cap = Some(2);
-    }
-    let mut done = None;
-    for _ in 0..40 {
-        for chain in &chains {
-            let mut state = chain.0.lock().unwrap();
-            state.head += 1;
-            state.final_block = Some(state.head);
-            state.withdrawal_block = Some(state.head);
-        }
-        let _ = watcher.poll(&node.tx).await;
-        done = node.read(|engine| engine.staking().unwrap().completed_through).await;
-        if done.is_some() {
-            break;
-        }
-    }
-    let done = done.expect("a proof in progress must finish although the release tag moves every poll");
-    assert!(done.block < 46, "the first window ended at {}, not at the moving tag", done.block);
-    node.stop().await;
-}
-
-#[tokio::test]
-async fn staking_hierarchy_survives_cancellation_and_rejects_changed_cached_anchor() {
-    let dir = scratch("staking-hierarchical-proof");
-    let chains = poll_chains(64);
-    let mut watcher = staking_watcher_with_range(&chains, &dir, 4);
-    watcher.chain.insert(64, canonical_hash(64));
-    assert!(!watcher.prove_staking_for_test(0, 3).await.unwrap());
-    for chain in &chains {
-        chain.0.lock().unwrap().header_latency = Some(Duration::from_secs(1));
-    }
-    assert!(timeout(Duration::from_millis(10), watcher.prove_staking_for_test(0, 3)).await.is_err());
-    for chain in &chains {
-        chain.0.lock().unwrap().header_latency = None;
-    }
-    let mut complete = false;
-    for _ in 0..64 {
-        if watcher.prove_staking_for_test(0, 3).await.unwrap() {
-            complete = true;
-            break;
-        }
-    }
-    assert!(complete);
-    for chain in &chains {
-        let state = chain.0.lock().unwrap();
-        assert_eq!(state.header_reads.iter().filter(|range| **range == (0, 3)).count(), 1);
-    }
-    assert!(watcher.staking_anchor_count() > 0);
-    // The first completed proof retained midpoint 32. It must be revalidated before reuse.
-    for chain in &chains {
-        chain.0.lock().unwrap().forks.insert(32, B256::repeat_byte(0x77));
-    }
-    let error = watcher.prove_staking_for_test(4, 7).await.unwrap_err();
-    assert!(format!("{error:?}").contains("staking proof anchor changed"));
-    assert_eq!(watcher.staking_anchor_count(), 0, "conflicting cached anchors must be discarded");
-}
-
 mod anchor;
-mod blooms;
+mod event_blocks;
 mod stub;
 use stub::StubReader;
 mod faults;

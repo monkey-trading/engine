@@ -42,7 +42,8 @@ async fn a_pending_receipt_under_frozen_finality_reads_each_window_once_across_q
 }
 
 #[tokio::test]
-async fn reorg_and_restart_under_frozen_finality_rescan_from_the_frontier_once_and_move_a_reincluded_deposit() {
+async fn reorg_and_restart_under_frozen_finality_rescan_once_above_the_last_matching_end_and_move_a_reincluded_deposit()
+{
     let dir = scratch("confirmed-frozen-reorg");
     let (logs, _guard) = Logs::capture();
     let node = Node::start_confirmed(&dir);
@@ -71,7 +72,11 @@ async fn reorg_and_restart_under_frozen_finality_rescan_from_the_frontier_once_a
         (node.balance(TRADER).await, node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await),
         (Some(usdc("300")), usdc("300"))
     );
-    assert_each_block_read_once(&chains[0].reads()[before..], 3, 46);
+    // The window whose answer shows the boundary at block 44 moved, then each block above the last
+    // window end the reorganisation left, block 28, once.
+    let reads = &chains[0].reads()[before..];
+    assert_eq!(reads[0], (45, 46), "{reads:?}");
+    assert_each_block_read_once(&reads[1..], 29, 46);
     assert_eq!(logs.lines_with("alert=\"deposit_reversed\"").len(), 1);
     node.stop().await;
     let node = Node::start_confirmed(&dir);
