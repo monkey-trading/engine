@@ -10,9 +10,10 @@
 //! only once its boundary holds. On a mismatch the scan walks back through the stored window ends to the
 //! highest that still matches, and reads again from there.
 //!
-//! Finalisation reads the frontier's blocks once they are final, which no reorganisation can change: the
-//! header of every block a receipt it releases is in, and the vault's count at the frontier, so nothing a
-//! reorganisation between a poll's reads let through is ever released.
+//! Finalisation moves only to the block the release tag names, or to a scan end the headers link to it, and
+//! first reads, in that block by its hash, the vault's count and its record of every deposit it releases,
+//! and the header of every block such a deposit is in, so nothing that differs from the chain the release
+//! tag commits to is ever released.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -23,6 +24,7 @@ use engine_core::types::AccountId;
 use futures_util::future::try_join_all;
 use tracing::info;
 
+use crate::custody::chain::LinkedRun;
 use crate::custody::evm::lifecycle::receipt;
 use crate::custody::evm::{BlockRef, DepositWatcher, VaultReader, VaultRecord, check_complete};
 use crate::custody::quorum::last_header;
@@ -301,8 +303,42 @@ impl<V: VaultReader> DepositWatcher<V> {
         self.chain.insert(window.end.number, window.end.hash);
     }
 
-    /// Checks the scan against the block the release tag names, `released`, before receipts through it are
-    /// released, with reads executed in that block by its hash, which the quorum voted with the tag: the
+    /// The block the finalised frontier may move to: `released`, the block the release tag names, once the
+    /// scan covers it, or else the scan's end `end` once the headers above it link it to `released`, read
+    /// only while the gap is within one block range, as when the release tag runs close behind the head.
+    /// `None` waits for the scan to reach the release tag. A scan end the headers do not link to the release
+    /// tag's block starts the scan again from the finalised frontier, `from`, and returns `None`.
+    /// Error cases:
+    /// - stalled: a header read fails or lacks a quorum
+    pub(super) async fn frontier(
+        &mut self,
+        from: u64,
+        end: BlockRef,
+        released: BlockRef,
+    ) -> Result<Option<BlockRef>, PollError> {
+        if released.number <= end.number {
+            return Ok(Some(released));
+        }
+        if released.number - end.number > self.max_block_range {
+            return Ok(None);
+        }
+        let links = self.vault.headers(end.number + 1, released.number).await.map_err(PollError::rpc)?;
+        let mut run = LinkedRun::new(Some((end.number, end.hash)), end.number + 1);
+        let linked = run.extend(released.number, &links, |_| false, |_| false).is_ok();
+        if linked && run.last() == Some((released.number, released.hash)) {
+            return Ok(Some(end));
+        }
+        info!(
+            end = end.number,
+            released = released.number,
+            "the scan's end is not on the release tag's chain; reading again from the finalised frontier"
+        );
+        self.reset_confirmed_chain(from);
+        Ok(None)
+    }
+
+    /// Checks the scan against `released`, the block the release tag names or a scan end proven to lead to it,
+    /// before receipts through it are released, with reads executed in that block by its hash: the
     /// vault's count there, and its record of every deposit a released receipt is, its payer, amount and
     /// beneficiary. The scan's windows were each read with the boundary below them as one answer, but
     /// nothing else binds them to the release tag's chain, so these reads do: a scan that a reorganisation

@@ -793,11 +793,13 @@ the custody providers must agree on it together with their header at the window'
 ends at the block the release tag names must end on the hash the quorum voted with the tag. One that
 ends below it, in a catch-up, is read with each provider's header at the release tag's block in the same
 voted answer, which must hold the tag's hash, so either way the window is bound to the release tag's
-chain. The frontier the mirror records is read again each poll. The header of every block an event is in is read through the quorum,
-and the event must be on that block. Each such block is also read again by its hash, and the mirror
-stops if those reads disagree with the range read. A provider whose log backend holds another fork
-therefore cannot add an event. A log backend that lags cannot drop one from a block where it returns
-another.
+chain. The frontier the mirror records is read again each poll. The headers from the lowest block an
+event is in up to the window's end are read through the quorum and must each name the one below as its
+parent, ending on the window's end, and each event must be on its block there. Every event block is
+therefore on the release tag's chain, whatever backends answered. Each such block is also read again by
+its hash, and the mirror stops if those reads disagree with the range read. A provider whose log backend
+holds another fork therefore cannot add an event. A log backend that lags cannot drop one from a block
+where it returns another.
 
 Epochs close in turn. When the mirror falls behind and then catches up, each epoch whose end it has
 passed closes in order, at the stake set the mirror held when it passed that end, and no epoch is

@@ -67,6 +67,8 @@ pub(super) struct ChainState {
     pub(super) tag_hash: Option<B256>,
     /// Header reads to fail before they answer again.
     pub(super) header_failures: u32,
+    /// Refuse headers above the finality tag, as a provider whose `latest` lags does.
+    pub(super) headers_to_tag: bool,
     pub(super) bad_headers: Option<BadHeaders>,
     /// Refuse header batches of more blocks than this, like a provider's batch limit.
     pub(super) header_batch_cap: Option<u64>,
@@ -82,8 +84,7 @@ pub(super) struct ChainState {
     pub(super) deposits: Vec<VaultDeposit>,
     /// Staking events served by `staking_events`.
     pub(super) staking: Vec<StakingEvent>,
-    /// Staking events, by transaction, that range reads leave out, as a log backend that lags would,
-    /// while hash-pinned reads still hold them.
+    /// Staking events, by transaction, that range reads leave out while hash-pinned reads hold them.
     pub(super) omit_ranged_staking: BTreeSet<B256>,
     /// Refuse hash-pinned staking reads, as log backends that do not hold the blocks would.
     pub(super) refuse_pinned_staking: bool,
@@ -97,8 +98,7 @@ pub(super) struct ChainState {
     pub(super) header_latency: Option<Duration>,
     /// The latest block to report, when a test lags this provider behind the majority.
     pub(super) latest: Option<(u64, B256)>,
-    /// The posted log head this endpoint's LogHeads contract holds, the vault's signer epoch, and
-    /// the block the post landed at: the head is only visible at and after that block.
+    /// The posted log head this endpoint's LogHeads contract holds, the signer epoch, and the post's block.
     pub(super) posted: Option<(u64, B256)>,
     pub(super) epoch: u64,
     pub(super) posted_block: Option<u64>,
@@ -175,7 +175,8 @@ impl VaultReader for FakeChain {
         let mut chain = self.0.lock().unwrap();
         let call = chain.header_calls;
         chain.header_calls += 1;
-        let over_cap = chain.header_batch_cap.is_some_and(|cap| to - from + 1 > cap);
+        let over_cap = chain.header_batch_cap.is_some_and(|cap| to - from + 1 > cap)
+            || (chain.headers_to_tag && chain.final_block.is_some_and(|tag| to > tag));
         if chain.header_failures > 0 || chain.fail_header_reads.contains(&call) || over_cap {
             chain.header_failures = chain.header_failures.saturating_sub(1);
             bail!("rate limited");

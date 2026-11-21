@@ -27,8 +27,8 @@ pub struct BlockLink {
     pub timestamp: u64,
 }
 
-/// Proven hashes at sparse heights, the top being the tagged block last proven, and every hash
-/// read for the blocks the watcher reads next.
+/// Proven hashes at sparse heights, the top being the tagged block last proven, or under the confirmed
+/// rules the last window end, and every hash read for the blocks the watcher reads next.
 #[derive(Default)]
 pub(super) struct ProvenChain {
     anchors: BTreeMap<u64, B256>,

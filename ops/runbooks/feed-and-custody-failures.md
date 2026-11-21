@@ -662,8 +662,9 @@ It reads no header for each block. A block's hash commits to every block below i
 header, read again each poll, detects any reorganisation of the blocks the scan has read
 (`docs/security-model.md`). A deposit costs one more header when its block is scanned, and, before its
 principal is released, another header and two `eth_call` that read the vault's record of it in the
-release tag's block. A block that holds a mirrored event costs one more header and one more
-`eth_getLogs`, which reads it again by its hash.
+release tag's block. A staking window that holds mirrored events also reads the headers from its
+lowest event block up to its end, to link each event to the release tag's chain, and one more
+`eth_getLogs` for each event block, which reads it again by its hash.
 
 A member's follow stint reads, at the latest agreed block, whether a promotion names its standby key and
 whether the schedule still lists the key as promotable. It also reads the posted log head it pins its

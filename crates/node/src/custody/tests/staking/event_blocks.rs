@@ -171,3 +171,30 @@ async fn a_staking_range_read_bound_to_another_release_block_is_refused() {
         quorum.released_staking_events(0, to, Some(BlockRef { hash: B256::repeat_byte(0x16), ..to })).await.is_ok()
     );
 }
+
+#[tokio::test]
+async fn a_staking_window_whose_headers_do_not_link_its_event_to_its_end_stalls() {
+    let dir = scratch("staking-event-unlinked");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([0x54; 20]);
+    let chains = poll_chains(10);
+    for chain in &chains {
+        let mut state = chain.0.lock().unwrap();
+        state.staking.push(staked(2, 0x54, account, 500));
+        // Block 3's header names a parent off the chain block 2 is on, as backends answering block 2's
+        // header from another branch than the window's end would show.
+        state.broken_link = Some(3);
+    }
+    let mut watcher = staking_watcher(&chains, &dir);
+    let error = watcher.poll(&node.tx).await.unwrap_err();
+    assert!(matches!(error, PollError::Stalled(Stall::Unsettled(_))), "{error:?}");
+    assert!(node.read(|engine| engine.staked_balances().is_empty()).await);
+    assert!(node.read(|engine| engine.staking().unwrap().completed_through.is_none()).await, "progress passed it");
+    for chain in &chains {
+        chain.0.lock().unwrap().broken_link = None;
+    }
+    watcher.poll(&node.tx).await.unwrap();
+    assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));
+    node.stop().await;
+}

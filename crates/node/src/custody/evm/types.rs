@@ -74,7 +74,8 @@ pub trait VaultReader {
     }
 
     /// Every staking and operator registry event in blocks `from..=to.number`, in chain order, from one
-    /// log read over the range. A reader that reports `to` with another hash refuses.
+    /// log read over the range. A quorum takes each provider's header at `to` with its log read, in one
+    /// voted answer, and refuses one that reports another hash.
     fn staking_events(&self, from: u64, to: BlockRef)
     -> impl Future<Output = anyhow::Result<Vec<StakingEvent>>> + Send;
 

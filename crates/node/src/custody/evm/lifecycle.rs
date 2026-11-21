@@ -88,6 +88,11 @@ impl<V: VaultReader> DepositWatcher<V> {
         // alone, as a reorganisation below it can be why.
         let floor = checkpoint.map(|p| p.block);
         let boundary = self.chain.top().filter(|(top, _)| floor.is_none_or(|floor| *top > floor));
+        // A lagging quorum tag below the boundary leaves nothing to read, and lagging providers may not
+        // serve the boundary at all, so the poll waits out the tag without arming the lag watchdog.
+        if boundary.is_some_and(|(top, _)| top > eligible) {
+            return Ok(Polled::Waiting);
+        }
         let window = self.read_window(eligible, boundary.map(|(number, _)| number)).await;
         let observed = window.as_ref().ok().and_then(Option::as_ref).and_then(|window| window.boundary);
         if !self.check_boundary(floor, boundary, observed).await? {
@@ -108,15 +113,28 @@ impl<V: VaultReader> DepositWatcher<V> {
         if pending.iter().any(|record| record.receipt.block > to) {
             return Ok(self.behind(from, eligible));
         }
+        // A pending receipt in a block no window returned a deposit in has its block's hash read apart from
+        // the windows. That read is used for this poll only, and while it still names the receipt's own hash
+        // for a receipt the windows omit, which a backend still on the receipt's branch can answer, the poll
+        // waits rather than reading the omission as a contradiction.
+        let scan = self.confirmed.scan.as_ref().expect("scan retained");
         let uncovered: BTreeSet<u64> = pending
             .iter()
             .map(|record| record.receipt.block)
-            .filter(|block| !self.confirmed.scan.as_ref().expect("scan retained").hashes.contains_key(block))
+            .filter(|block| !scan.hashes.contains_key(block))
             .collect();
-        let hashes = self.block_hashes(&uncovered).await?;
-        self.confirmed.scan.as_mut().expect("scan retained").hashes.extend(hashes);
+        let apart = self.block_hashes(&uncovered).await?;
         let scan = self.confirmed.scan.as_ref().expect("scan retained");
-        let orphans = reconcile(&pending, &scan.canonical, &scan.hashes, to == eligible)?;
+        if pending.iter().any(|record| {
+            apart.get(&record.receipt.block) == Some(&record.receipt.block_hash)
+                && !scan.canonical.contains(&record.receipt)
+        }) {
+            return Err(PollError::unsettled(anyhow!(
+                "a pending receipt the windows omit is still in its block as a read apart from them names it"
+            )));
+        }
+        let hashes: BTreeMap<u64, B256> = scan.hashes.iter().map(|(n, h)| (*n, *h)).chain(apart).collect();
+        let orphans = reconcile(&pending, &scan.canonical, &hashes, to == eligible)?;
         let deferred = orphans.iter().any(|(_, orphaned)| *orphaned == Orphaned::Deferred);
         // From V83 the scan's transitions wait until every orphan is paired with its replacement or, at
         // the eligible head, disproved, and its moves go as one command: a move or a credit landing on a
@@ -150,13 +168,22 @@ impl<V: VaultReader> DepositWatcher<V> {
         if deferred {
             return Ok(self.behind(from, eligible));
         }
-        // The frontier moves only to the block the release tag names, once the scan covers it, so every read
-        // that releases principal is bound to the hash the quorum voted with the tag.
-        if let Some(released) = release.tagged.filter(|released| released.number >= from && released.number <= to) {
-            if !self.verify_final(from, released).await? {
-                return Ok(self.behind(from, eligible));
+        // The frontier moves only to the block the release tag names, or to a scan end the headers link to it,
+        // so every read that releases principal is bound to the hash the quorum voted with the tag.
+        if let Some(released) = release.tagged.filter(|released| released.number >= from) {
+            let end = self.confirmed.scan.as_ref().expect("scan retained").end.expect("a complete window exists");
+            match self.frontier(from, end, released).await? {
+                Some(finalised) => {
+                    if !self.verify_final(from, finalised).await? {
+                        return Ok(self.behind(from, eligible));
+                    }
+                    self.finalise_confirmed_scan(tx, finalised.number, finalised.hash).await?;
+                }
+                // The scan's end is not on the release tag's chain, and the scan starts again.
+                None if self.confirmed.scan.is_none() => return Ok(self.behind(from, eligible)),
+                // The scan has yet to come within a block range of the release tag.
+                None => {}
             }
-            self.finalise_confirmed_scan(tx, released.number, released.hash).await?;
         }
         self.mirror_staking(tx, release.tagged, release_at).await?;
         self.finish_confirmed_read(tx, to, eligible).await

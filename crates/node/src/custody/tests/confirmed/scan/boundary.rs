@@ -250,3 +250,28 @@ async fn a_receipt_the_vault_records_otherwise_at_the_release_block_is_never_rel
     assert_eq!(finalised.await, Some(false), "the credited receipt is not released");
     node.stop().await;
 }
+
+#[tokio::test]
+async fn a_pending_receipts_block_read_apart_from_the_windows_waits_and_is_not_kept() {
+    let (logs, _guard) = Logs::capture();
+    let dir = scratch("boundary-apart-read");
+    let node = Node::start_confirmed(&dir);
+    let dropped = confirmed_deposit(0, 9, 100);
+    let (chains, mut scan) = scanned(&dir, &node, std::slice::from_ref(&dropped)).await;
+    // The deposit goes, and the windows from block 10 change, but block 9's header still reads as it was,
+    // as a backend on the receipt's branch answers it.
+    for chain in &chains {
+        chain.remove(&dropped);
+        fork(chain, 10, 14);
+    }
+    let error = poll_until_error(&mut scan, &node.tx).await;
+    assert!(matches!(error, PollError::Stalled(Stall::Unsettled(_))), "{error:?}");
+    assert!(matches!(scan.poll(&node.tx).await, Err(PollError::Stalled(Stall::Unsettled(_)))), "the read is not kept");
+    for chain in &chains {
+        fork(chain, 9, 9);
+    }
+    catch_up(&mut scan, &node.tx).await;
+    assert_eq!(node.balance(TRADER).await, Some(usdc("0")), "the dropped deposit is reversed");
+    assert_eq!(logs.lines_with("alert=\"deposit_reversed\"").len(), 1);
+    node.stop().await;
+}

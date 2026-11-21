@@ -1,9 +1,10 @@
 //! Mirroring the staking contract's finalised events, and from `V37` the operator registry's, into
 //! the engine. The deposit watcher calls `mirror` once per confirmed poll, and only through the
-//! Ethereum-finalised boundary the poll read: a staking mirror has no reversal, so a merely confirmed event must never become a permanent engine balance or
-//! election. Events hold until `InitStaking` has applied, credit once under `tx:logIndex`, and
-//! advance the engine's authenticated mirrored-through frontier, so a host cursor cannot skip an
-//! event and a restart that re-reads a range mirrors nothing twice.
+//! Ethereum-finalised boundary the poll read: a staking mirror has no reversal, so a merely confirmed
+//! event must never become a permanent engine balance or election. Events hold until `InitStaking` has
+//! applied, credit once under `tx:logIndex`, and advance the engine's authenticated mirrored-through
+//! frontier, so a host cursor cannot skip an event and a restart that re-reads a range mirrors nothing
+//! twice.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,7 +25,7 @@ use tokio::sync::mpsc;
 use tracing::Instrument;
 use tracing::{debug, info, info_span};
 
-use crate::custody::chain::BlockLink;
+use crate::custody::chain::{BlockLink, LinkedRun};
 use crate::custody::credit::{query, submit, sync};
 use crate::custody::evm::{BlockRef, VaultReader};
 use crate::custody::sizing::AdaptiveSize;
@@ -215,10 +216,11 @@ impl StakingCursor {
 /// Events hold, with the cursor, until `InitStaking` has applied: a mirror the engine would refuse as
 /// premature is never sequenced, and a cursor that has not moved only makes the next poll read the same
 /// blocks again. The events come from one read over the range, which must match `end`'s hash even when
-/// empty. The header of every block an event is in is read through the quorum, and the event must be on
-/// that block, so an event from another fork stalls. Each such block is then read again by its hash, so a
-/// log backend that lags cannot drop an event from a block it returned another in: pinned reads that
-/// differ from the range read in those blocks stall, as do pinned reads that fail.
+/// empty. The headers from the lowest block an event is in up to `end` are read through the quorum and
+/// must link up to `end`, and each event must be on its block there, so an event from another fork stalls
+/// whatever the backends that answered. Each such block is then read again by its hash, so a log backend
+/// that lags cannot drop an event from a block it returned another in: pinned reads that differ from the
+/// range read in those blocks stall, as do pinned reads that fail.
 /// `bound` is whether the poll has verified the configured registry as the staking contract's
 /// deployer: while it is false the poll read no staking code at `to`, and since the registry
 /// deploys the staking contract atomically no event can legitimately exist in the window, so any
@@ -325,27 +327,38 @@ pub(super) async fn mirror<V: VaultReader>(
     Ok(())
 }
 
-/// Reads the header of every block in `events` through the reader and requires each event's block to be
-/// the one there, then reads those blocks again, each by its hash, and requires the same events as the
-/// range read holds there. `end`, the range's last block, needs no header read.
+/// Reads the headers from the lowest block in `events` up to `end`, the range's last block, through the
+/// reader, and requires each to name the one below it as its parent and the last to be `end`: a block's
+/// hash commits to its parent's, so every event block is then on the chain `end` is on, whatever the
+/// backends that answered. Requires each event's block to be the one there, then reads those blocks again,
+/// each by its hash, and requires the same events as the range read holds there.
 /// Error cases:
-/// - stalled: a read fails, an event is not on the canonical block there, or the reads by hash differ
+/// - stalled: a read fails, the headers do not link up to `end`, an event is not on the block there, or the
+///   reads by hash differ
 async fn confirm_event_blocks<V: VaultReader>(
     reader: &V,
     end: BlockLink,
     events: &[StakingEvent],
 ) -> Result<(), PollError> {
+    let Some(lowest) = events.iter().map(|event| event.block).min() else { return Ok(()) };
+    let hashes = if lowest == end.number {
+        BTreeMap::from([(end.number, end.hash)])
+    } else {
+        let links = reader.headers(lowest, end.number).await.map_err(PollError::rpc)?;
+        let mut run = LinkedRun::new(None, lowest);
+        run.extend(end.number, &links, |_| false, |_| true).map_err(PollError::unsettled)?;
+        if run.last() != Some((end.number, end.hash)) {
+            return Err(PollError::unsettled(anyhow!(
+                "the headers from staking block {lowest} do not lead to the window's end {} {}",
+                end.number,
+                end.hash
+            )));
+        }
+        run.window(lowest, end.number)
+    };
     let mut blocks = BTreeMap::new();
     for event in events {
-        let hash = match blocks.get(&event.block) {
-            Some(hash) => *hash,
-            None if event.block == end.number => end.hash,
-            None => {
-                let headers = reader.headers(event.block, event.block).await.map_err(PollError::rpc)?;
-                crate::custody::quorum::last_header(headers, event.block).map_err(PollError::rpc)?.hash
-            }
-        };
-        if hash != event.block_hash {
+        if hashes.get(&event.block) != Some(&event.block_hash) {
             return Err(PollError::unsettled(anyhow!(
                 "staking event {} is reported in block {} {}, which is not the canonical block there",
                 event.chain_ref(),
@@ -353,10 +366,7 @@ async fn confirm_event_blocks<V: VaultReader>(
                 event.block_hash
             )));
         }
-        blocks.insert(event.block, hash);
-    }
-    if blocks.is_empty() {
-        return Ok(());
+        blocks.insert(event.block, event.block_hash);
     }
     let pinned: Vec<_> = blocks.into_iter().map(|(number, hash)| BlockRef { number, hash }).collect();
     let read = reader.pinned_staking_events(&pinned).await.map_err(PollError::rpc)?;

@@ -1,11 +1,11 @@
-//! A lagging quorum tag: the poll waits out the tag when it drops below the proven scan end or
+//! A lagging quorum tag: the poll waits out the tag when it drops below the scan end or
 //! an already credited receipt, instead of re-polling at once and arming the lag watchdog.
 
 use super::*;
 use crate::custody::stall::Polled;
 
 #[tokio::test]
-async fn a_lagging_tag_below_the_proven_scan_end_waits_instead_of_repolling_at_once() {
+async fn a_lagging_tag_below_the_scan_end_waits_without_reading_above_it() {
     let dir = scratch("confirmed-tag-drop");
     let node = Node::start_confirmed(&dir);
     assert!(node.read(|e| e.deposit_finality_enabled()).await);
@@ -15,9 +15,10 @@ async fn a_lagging_tag_below_the_proven_scan_end_waits_instead_of_repolling_at_o
     let mut watcher = watcher(&chains, &dir, 100, None);
     catch_up(&mut watcher, &node.tx).await;
     assert_eq!(node.balance(TRADER).await, Some(usdc("100")));
-    // A lagging provider pulls the agreed tag back below the scan end the watcher proved.
+    // Lagging providers pull the agreed tag back below the scan end, and serve no header above it.
     for chain in &chains {
         chain.set_final(Some(6));
+        chain.0.lock().unwrap().headers_to_tag = true;
     }
     assert!(matches!(watcher.poll(&node.tx).await, Ok(Polled::Waiting)));
     tokio::time::pause();

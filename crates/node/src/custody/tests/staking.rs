@@ -326,10 +326,9 @@ async fn staking_catchup_reaches_advancing_deposit_finality_reading_a_fixed_numb
             let state = chain.0.lock().unwrap();
             let work: u64 = state.header_reads.iter().map(|(from, to)| to - from + 1).sum();
             println!("backlog={backlog} polls={polls} headers={work}");
-            assert!(state.header_reads.iter().all(|(from, to)| from == to), "every header is read on its own");
             // The finality votes, the frontier, the boundary, the window's end, the staking anchor and its
-            // window's end, and the blocks holding the two events.
-            assert!(work <= 12 * polls, "header work must not grow with the blocks a window spans: {work}");
+            // window's end each poll, and the headers linking each of the two events to its window's end.
+            assert!(work <= 12 * polls + 2 * 4, "header work must not grow with the blocks a window spans: {work}");
         }
         node.stop().await;
     }
