@@ -458,7 +458,9 @@ fn a_scanned_directory_gives_the_candidates_and_epochs_a_whole_read_gives() {
         let dir = scratch_dir(&format!("audit-scan-{segment_commands}"));
         let segmented = SegmentedLog::open(&dir, |_| Ok(())).unwrap();
         let mut writer = segmented.into_writer(segment_commands, watch::channel(Manifest::default()).0).unwrap();
-        fixture.entries.iter().for_each(|entry| writer.append(entry).unwrap());
+        for entry in &fixture.entries {
+            writer.append(entry).unwrap();
+        }
         writer.sync().unwrap();
         let mut epochs = BTreeSet::new();
         let scanned = checkpoint_candidates(&dir, fixture.parent(), &mut epochs).unwrap();
