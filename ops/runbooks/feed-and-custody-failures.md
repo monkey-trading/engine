@@ -753,7 +753,8 @@ but while posts fail, the part of the log that could be cut back undetected is t
 tail. A rotating trading server, one with `operator.rotation_enabled`, must have `[log_heads]`. It
 raises `log_head_stalled` after two posting intervals without an advance, not three, because its
 successor checks the tail's head against the posted head at each handover, and a stalled anchor
-widens the tail that the successor cannot check.
+widens the tail that the successor cannot check. While a turn names the operator, a posting interval
+is half a heartbeat interval, so the alert fires after one heartbeat interval.
 
 1. Check that the endpoint answers:
 

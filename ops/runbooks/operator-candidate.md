@@ -953,10 +953,11 @@ posts is its heartbeat. A member whose operator misses the heartbeat is promoted
 
 ### What the operator's trading server does
 
-The operator's trading server posts an `engine.log-head.v2` head at least twice per
-`heartbeatInterval`, through the relayer of `[log_heads]`. The interval is the schedule's
-`liveness()`, 60 seconds by default. **The `[log_heads]` relayer must hold enough for two posts a
-minute.**
+The operator's trading server posts an `engine.log-head.v2` head through the relayer of
+`[log_heads]`, normally twice per `heartbeatInterval`. It posts less often only after a slow chain
+read, which delays a post to the next read, at most a sixth of an interval later. The interval is the
+schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer must hold enough for two
+posts per interval.**
 
 With another member in the turn's set, the trading server signs a head or a checkpoint only at a seq
 that another member's enclave confirmed holding. It therefore sequences only while a member follows
@@ -994,8 +995,9 @@ With `[liveness]`, the trading server also does all of these from the caller acc
 
 - It witnesses each slot.
 - It skips a turn once `skipDueAt()` passes, and promotes once `promotionDueAt()` passes.
-- It relays the operator's signed heads from its stream when the chain's head is older than two
-  thirds of an interval.
+- It relays the operator's signed heads from its stream when the chain's head is older than five
+  sixths of an interval. The operator's own heads are due every half interval, so the caller relays a
+  head only when the operator's posts fail or are slow to land.
 - For the trading server's whole life, whether following or holding a turn, it fixes the fallback of
   a turn whose draw deadline passed with no relayed seed. The fix is `SeedReceiver.fixFallback`,
   sent as two calls 5 seconds apart, and lets the turn be drawn for the rest of its window.

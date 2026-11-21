@@ -3,8 +3,8 @@
 //! - signs a log head, or a checkpoint, only at a seq another member's enclave has confirmed holding
 //!   (`operator`), and stops taking commands while its log runs more than one heartbeat interval of
 //!   sequenced time past the newest confirmation;
-//! - posts a v2 head at least twice per heartbeat interval (`log_heads`), held through a
-//!   benchmark-sync hold or a trusted-time halt, so the heads are its heartbeat;
+//! - posts a v2 head twice per heartbeat interval (`log_heads`), held through a benchmark-sync hold or
+//!   a trusted-time halt, so the heads are its heartbeat;
 //! - fences itself by its own clock (`fence`): from each read of the chain it knows `E`, the earliest
 //!   block time a promotion could pass, and stops taking commands, signing answers and signing heads
 //!   once its upper bound on true time reaches `E - DELTA`;

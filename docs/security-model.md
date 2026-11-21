@@ -573,8 +573,8 @@ Known limits:
   instructions that it had already answered and streamed. With `[log_heads]`, a cut goes undetected
   only if it removes nothing at or below the latest posted head.
 - Heads are posted at most once per `log_heads.interval`, which is an hour by default, and only when
-  the head has moved. While a turn names the operator, heads are posted at least twice per heartbeat
-  interval instead, as [liveness and promotion](#liveness-and-promotion) describes. To pass
+  the head has moved. While a turn names the operator, heads are posted twice per heartbeat interval
+  instead, as [liveness and promotion](#liveness-and-promotion) describes. To pass
   unnoticed, a cut must land within about one posting interval, plus the time to include a post on
   chain, of the log's end. A host that stalls or withholds the poster's submissions extends that
   window by however long the tail stays unposted.
@@ -584,7 +584,8 @@ Known limits:
   its posts fail (`log_head_post_failed`) and the head stalls (`log_head_stalled`) until a restart
   checks the posted head against the whole log.
 - `log_head_stalled` is raised once the head has not advanced for three posting intervals, or for
-  two with `operator.rotation_enabled`. The count runs in trusted time from a stamp that recovery
+  two with `operator.rotation_enabled`. While a turn names the operator, a posting interval is half a
+  heartbeat interval, so the alert is raised after one heartbeat interval. The count runs in trusted time from a stamp that recovery
   authenticates, which is the stamp of the head that startup checked or, while no signer epoch of
   this key holds a head, the stamp of the checkpoint the vault has finalized. The count starts once
   the restarted poster's first post has had a posting interval to be included.
@@ -1183,10 +1184,19 @@ so that the vault can make that key its signer in a promotion. Block time on Arb
 into slots of one heartbeat interval, and anyone may mark a slot as witnessed while it runs.
 
 **Heartbeats.** While a turn names the operator, the operator's enclave posts an
-`engine.log-head.v2` head at least twice per heartbeat interval, as its heartbeat. The schedule's
-deployment sets the heartbeat interval, the number of missed slots before a promotion
-(`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract enforces.
-The proposed values are 60 seconds, five slots and two slots.
+`engine.log-head.v2` head as its heartbeat, normally twice per heartbeat interval. The trading
+server posts a head only after one of its reads of the chain, which come at least six times per
+interval. A read slow enough to pass the time a post is due delays that post to the next read. One
+failed or late head leaves at most one slot without a head, and a promotion needs
+`heartbeatMisses` such slots in a row.
+
+When the chain's newest head is older than five sixths of an interval, each member relays the
+newest head that the operator signed. The operator's own heads are due every half interval, so
+members relay a head only when the operator's posts fail or are slow to land.
+
+The schedule's deployment sets the heartbeat interval, the number of missed slots before a
+promotion (`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract
+enforces. The proposed values are 60 seconds, five slots and two slots.
 
 While the turn's set has another member, the enclave signs a head or a checkpoint only at a sequence
 number that another member's enclave confirmed holding. The operator therefore runs, and posts

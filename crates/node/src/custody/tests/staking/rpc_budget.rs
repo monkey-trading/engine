@@ -355,7 +355,7 @@ async fn rpc_budget() {
     }
     // A day of each node's readers while a turn of a set of three names the operator: the operator's
     // watcher at 15 s on Arbitrum One (60 blocks a poll), its rule's reads at 15 s and members at 60 s, its
-    // poster's reads every 10 s with a turn read before each post every 20 s, its relayer's balance at 5
+    // poster's reads every 10 s with a turn read before each post every 30 s, its relayer's balance at 5
     // minutes, and its standby renewal every minute; each member's caller at 15 s and follow stint every
     // 16 s (a 15 s stint and its 1 s pause); and every node's fixer at 30 s.
     let in_turn: Readers = vec![
@@ -363,7 +363,7 @@ async fn rpc_budget() {
         ("operator's liveness rule", &reads["rule read"], DAY / 15.0),
         ("operator's liveness rule's members", &reads["rule members read"], DAY / 60.0),
         ("operator's log-head reads", &reads["log-head read"], DAY / 10.0),
-        ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 20.0),
+        ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 30.0),
         ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
         ("operator's standby renewal", &reads["standby renewal"], DAY / 60.0),
         ("liveness callers, two members", &reads["caller read"], 2.0 * DAY / 15.0),

@@ -6,8 +6,8 @@
 //!   next member in the turn's order;
 //! - skips the turn in effect's current assignment once the block time reaches `skipDueAt`
 //!   (`OperatorSchedule.skip`, #596), naming the next member in the turn's order;
-//! - relays the operator's newest signed head from its stream when the chain's head is older than two
-//!   thirds of an interval, so a head the operator's own relayer fails to post still counts for the
+//! - relays the operator's newest signed head from its stream when the chain's head is older than five
+//!   sixths of an interval, so a head the operator's own relayer fails to post still counts for the
 //!   enclave that signed it.
 //!
 //! The same account fixes turn fallbacks for the node's whole life (`liveness::fallback`), one call at a
@@ -335,7 +335,8 @@ impl crate::clock::Clock for Reached {
 /// newest signed head the operator's stream carried, judging time by the later of `now` and the block's:
 /// none while no turn names the operator; a witness while the current slot is not the latest marked
 /// one; a promotion once that time reaches `promotionDueAt`; a skip once it reaches `skipDueAt`; a relay while the chain's head of the
-/// epoch is older than two thirds of an interval and `signed` is newer. The latest mark counts only
+/// epoch is older than five sixths of an interval, past the half interval at which the operator's own
+/// heads are due, and `signed` is newer. The latest mark counts only
 /// when it names the current slot itself: a mark made under an earlier interval names a slot in that
 /// interval's units, which no comparison of order can relate to this one.
 pub(crate) fn calls(view: &View, signed: Option<SignedHead>, now: u64) -> Vec<Call> {
@@ -353,7 +354,7 @@ pub(crate) fn calls(view: &View, signed: Option<SignedHead>, now: u64) -> Vec<Ca
     if time >= view.skip_due_at {
         calls.push(Call::Skip);
     }
-    let stale = view.head.posted_at.saturating_add(view.rule.interval * 2 / 3) <= time;
+    let stale = view.head.posted_at.saturating_add(view.rule.interval * 5 / 6) <= time;
     if let Some(signed) =
         signed.filter(|signed| stale && signed.epoch == view.epoch && signed.head.head.seq >= view.head.seq)
         && (signed.head.head.seq > view.head.seq || signed.head.signed_at > view.head.signed_at)

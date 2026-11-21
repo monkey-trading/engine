@@ -412,7 +412,7 @@ an index: load only the rule whose hint matches the current action.
   names another prefix at a seq it retains (`log_rollback`); the check is per signer epoch, so a standby takeover dropping the outgoing
   key's tail is not refused, while a key `setSigner` reinstalls is checked against the newest head of
   its earlier epochs. Minute-scale liveness (#595, `liveness/`): while a turn names the operator the
-  poster posts `engine.log-head.v2` heads (`log_heads/v2.rs`) at least twice per heartbeat interval,
+  poster posts `engine.log-head.v2` heads (`log_heads/v2.rs`) twice per heartbeat interval,
   held through a benchmark-sync hold or trusted-time halt; with another member in the turn's set the
   operator's rule (`liveness/operator.rs`) asks the members' handover endpoints for their copies'
   signed statuses (`liveness/link.rs`), taking a member's status on its promotable standby key or, with

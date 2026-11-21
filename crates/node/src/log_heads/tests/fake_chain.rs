@@ -32,6 +32,8 @@ struct FakeState {
     /// block following the v2 heads posted.
     turn: Option<TurnHeads>,
     posts_v2: Vec<(u64, HeadV2)>,
+    /// When each v2 head was posted, by the runtime's clock.
+    posted_v2_at: Vec<tokio::time::Instant>,
     /// How long each turn read takes.
     turn_latency: std::time::Duration,
 }
@@ -128,6 +130,11 @@ impl FakeChain {
         self.0.lock().unwrap().posts_v2.clone()
     }
 
+    /// When each v2 head was posted, by the runtime's clock.
+    pub(super) fn posted_v2_at(&self) -> Vec<tokio::time::Instant> {
+        self.0.lock().unwrap().posted_v2_at.clone()
+    }
+
     /// The reorg removes the epoch's head entirely: the quorum sees an empty epoch.
     pub(super) fn clear_posted(&self) {
         self.0.lock().unwrap().posted = None;
@@ -208,6 +215,7 @@ impl HeadsChain for FakeChain {
             anyhow::ensure!(head.signed_at > turn.signed_at, "SigningTimeNotNewer");
         }
         state.posts_v2.push((epoch, *head));
+        state.posted_v2_at.push(tokio::time::Instant::now());
         state.posted = Some(head.head);
         state.posted_epoch = epoch;
         let turn = state.turn.as_mut().expect("checked above");
