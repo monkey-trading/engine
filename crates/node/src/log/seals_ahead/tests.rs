@@ -185,7 +185,8 @@ fn reads_that_part_stop_the_checks_ahead() {
 }
 
 /// A replay that stops early drops the checks while the reader and the workers are mid-log, in a log
-/// longer than the reader may run ahead: the drop closes their channels and joins them all.
+/// longer than the reader may run ahead: the drop closes their channels and joins them all, so the reader
+/// has ended when it returns.
 #[test]
 fn dropping_mid_log_stops_and_joins_the_threads() {
     let path = log_file("seals-ahead-bound");
@@ -196,7 +197,12 @@ fn dropping_mid_log_stops_and_joins_the_threads() {
     let (seq, seal, link) = seals_with_links(&entries, B256::default()).remove(0);
     ahead.verify(seq, &seal, link).unwrap();
     assert_eq!(ahead.ahead, 1);
+    // The reader's closure holds the stop flag until its thread ends, so once the drop has joined it
+    // nothing holds the flag; a drop that left it running would still be wound down, past the drop's return.
+    let flag = Arc::downgrade(&ahead.live.as_ref().expect("the checks are live").stop);
+    assert_eq!(flag.strong_count(), 2, "the replay's end and the reader's");
     drop(ahead);
+    assert_eq!(flag.strong_count(), 0, "the reader has ended by the time the drop returns");
 }
 
 // ── Helpers ──
