@@ -585,10 +585,11 @@ Known limits:
   checks the posted head against the whole log.
 - `log_head_stalled` is raised once the head has not advanced for three posting intervals, or for
   two with `operator.rotation_enabled`. While a turn names the operator, a posting interval is half a
-  heartbeat interval, so the alert is raised after one heartbeat interval. The count runs in trusted time from a stamp that recovery
-  authenticates, which is the stamp of the head that startup checked or, while no signer epoch of
-  this key holds a head, the stamp of the checkpoint the vault has finalized. The count starts once
-  the restarted poster's first post has had a posting interval to be included.
+  heartbeat interval, so the alert is raised after one heartbeat interval. The count runs in trusted
+  time from a stamp that recovery authenticates, which is the stamp of the head that startup checked
+  or, while no signer epoch of this key holds a head, the stamp of the checkpoint the vault has
+  finalized. The count starts once the restarted poster's first post has had a posting interval to
+  be included.
 - Neither cutting the log back nor restarting less often than once per posting interval therefore
   keeps the alarm quiet. A host that restarts the trading server more often, with each stop shorter
   than the minute after which the alert for a stopped trading server fires, does keep
