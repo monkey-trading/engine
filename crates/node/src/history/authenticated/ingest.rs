@@ -34,9 +34,9 @@ impl Index {
     }
 
     /// Ingests consecutive commands as one published update, so a batch costs one synced commit, its
-    /// complete stage's, plus one unsynced commit per full private stage, instead of one per command. Each command's derived rows are
-    /// stored after its logged events. Commands the head already covers are skipped; a retry of the
-    /// head's command must match it exactly.
+    /// complete stage's, plus one unsynced commit per full private stage, instead of one per command.
+    /// Each command's derived rows are stored after its logged events. Commands the head already covers
+    /// are skipped; a retry of the head's command must match it exactly.
     /// Error cases:
     /// - invalid order/retry, failed proof/stage/durability, or a writer requiring fresh generation,
     ///   for any command in the batch; the published head is unchanged on error

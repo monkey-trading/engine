@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
-use jmt::{JellyfishMerkleTree, KeyHash, ValueHash};
+use jmt::{JellyfishMerkleTree, KeyHash, RootHash, ValueHash};
 
 use crate::authenticated::reader::proof_children;
 use crate::authenticated::tests::{fresh, put};
@@ -23,7 +23,8 @@ fn a_proof_loads_every_child_upstreams_proof_asks_for() -> Result<()> {
             let mut key = [0x5a; 32];
             key[0] = nibble << 4 | 0x5;
             reader.asked.set(0);
-            let _ = JellyfishMerkleTree::<_, Hasher>::new(&reader).get_with_proof(KeyHash(key), 0);
+            let (value, proof) = JellyfishMerkleTree::<_, Hasher>::new(&reader).get_with_proof(KeyHash(key), 0)?;
+            proof.verify(RootHash(codec::hash(&reader.root)), KeyHash(key), value.as_deref())?;
             assert_eq!(reader.asked.get() & !proof_children(existing, nibble), 0, "{existing:016b} at {nibble}");
         }
     }

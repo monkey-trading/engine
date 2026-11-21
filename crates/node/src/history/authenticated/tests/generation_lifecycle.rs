@@ -61,7 +61,7 @@ fn failed_first_private_ingest_replaces_live_actor_owners_and_preserves_cancelle
                 let pending: State = serde_json::from_slice(&bytes)?;
                 assert!(!pending.complete);
                 assert!(pending.head(root.clone()).is_err(), "a partial stage cannot become complete H");
-                anyhow::bail!("first command failed after its first durable private stage")
+                anyhow::bail!("first command failed after its first private stage")
             })
             .is_err()
     );

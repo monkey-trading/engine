@@ -137,7 +137,7 @@ fn midstage_append_failure_leaves_old_complete_head_pinned_and_refuses_any_stale
                 assert_eq!(visible.page(query(A))?, expected(std::slice::from_ref(&original), &query(A), 100));
                 if stages == 3 {
                     failed_root = Some(root.clone());
-                    anyhow::bail!("injected failure after three real durable private commits");
+                    anyhow::bail!("injected failure after three real private commits");
                 }
                 Ok(())
             })

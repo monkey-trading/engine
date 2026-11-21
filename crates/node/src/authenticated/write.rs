@@ -1,4 +1,4 @@
-//! Large logical updates share one durable SQL commit over bounded upstream proof batches.
+//! Large logical updates share one SQL commit over bounded upstream proof batches.
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
@@ -242,7 +242,7 @@ impl Store {
         Ok(runtime.namespaces.get(&root.namespace).map_or(0, |namespace| namespace.floor))
     }
 
-    /// Advances the private live root only after its durable acknowledgement boundary.
+    /// Advances the private live root only after its commit and, for a synced write, its sync.
     /// Error cases:
     /// - poisoned runtime lock
     pub(super) fn publish(&self, root: &Root) -> Result<()> {

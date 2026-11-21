@@ -186,7 +186,7 @@ fn a_touched_missing_expiry_piece_blocks_publication_and_requires_verified_rebui
             })
             .is_err()
     );
-    assert!(commits > 0, "failure follows actual durable private expiry work");
+    assert!(commits > 0, "failure follows actual private expiry commits");
     assert!(index.requires_rebuild());
     assert_eq!(index.head(), before);
     assert!(index.ingest(command(1, 2, None)).is_err());
