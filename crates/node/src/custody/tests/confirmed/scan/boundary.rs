@@ -110,13 +110,14 @@ async fn a_provider_that_lies_about_the_boundary_header_but_not_the_range_is_out
     let dir = scratch("boundary-lying-provider");
     let node = Node::start_confirmed(&dir);
     let (chains, mut scan) = scanned(&dir, &node, &[confirmed_deposit(0, 9, 100)]).await;
+    // The head moves on, so each poll reads a window, whose answer carries the boundary (block 14) too.
+    set_head(&chains, 18);
     let before = chains[0].reads().len();
     // One provider reports another hash for the boundary block only; its logs and other headers are true.
     chains[0].0.lock().unwrap().forks.insert(14, B256::repeat_byte(0x14));
-    for _ in 0..3 {
-        assert_eq!(scan.poll(&node.tx).await.unwrap(), Polled::Read { caught_up: true });
-    }
-    assert!(reads_since(&chains[0], before).is_empty(), "the majority's boundary holds, so nothing is read again");
+    catch_up(&mut scan, &node.tx).await;
+    assert_eq!(reads_since(&chains[0], before), [(15, 18)], "the window is read once, and the scan does not walk back");
+    assert_eq!(scan.chain.top().map(|(number, _)| number), Some(18), "the window joins the scan");
     assert_eq!(node.balance(TRADER).await, Some(usdc("100")));
     assert_eq!(node.read(|e| e.accounts()[&TRADER].unfinalised_deposits).await, usdc("100"));
     assert!(!logs.lines_with("alert=\"custody_rpc_provider_disagreed\"").is_empty(), "the dissent pages");
