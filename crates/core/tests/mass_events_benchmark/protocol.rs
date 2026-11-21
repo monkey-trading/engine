@@ -14,7 +14,7 @@ use engine_core::types::MarketId;
 use crate::common::BTC;
 use crate::common::launch_book::{Book, Mix, NamedCounts, build, price_command};
 use crate::report::timed;
-use crate::support::{accounts, finish, report, report_accepted, roll_to};
+use crate::support::{accounts, finish, held, report, report_accepted, roll_to};
 
 const NAMED: NamedCounts = NamedCounts { adders: 1, openers: 0, closeouts: 0 };
 /// Tier 0's resting-order limit, and every tier's (#614 D11), which the one-market books fill.
@@ -123,6 +123,10 @@ fn rekey(book: &mut Book, market: MarketId, case: &str) {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_rekey_launch_book() {
+    held("mass_rekey_launch_book", mass_rekey_launch_book_measured);
+}
+
+fn mass_rekey_launch_book_measured() {
     let mut book = build(&Mix::proposal(accounts()), NAMED);
     let busiest = *book.h.engine.markets().iter().max_by_key(|(_, market)| market.resting.len()).expect("markets").0;
     rekey(&mut book, busiest, "launch_book");
@@ -135,6 +139,10 @@ fn mass_rekey_launch_book() {
 #[test]
 #[ignore = "2.5M-order benchmark: run in an isolated CPU window"]
 fn mass_rekey_at_each_tier_limit() {
+    held("mass_rekey_at_each_tier_limit", mass_rekey_at_each_tier_limit_measured);
+}
+
+fn mass_rekey_at_each_tier_limit_measured() {
     let orders = std::env::var("MASS_ORDERS").ok().map_or(ORDERS, |n| n.parse().expect("a count"));
     for (tier, limit) in LIMITS.into_iter().enumerate() {
         let accounts = orders.div_ceil(limit);

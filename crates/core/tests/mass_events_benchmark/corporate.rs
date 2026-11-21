@@ -9,7 +9,7 @@ use engine_core::types::{MarketId, Millis};
 use crate::common::launch_book::{Mix, NamedCounts, build};
 use crate::common::{f, ny};
 use crate::report::timed;
-use crate::support::{accounts, finish, report, roll_to};
+use crate::support::{accounts, finish, held, report, roll_to};
 
 const NAMED: NamedCounts = NamedCounts { adders: 1, openers: 0, closeouts: 0 };
 /// AAPL, which half the accounts hold in this book.
@@ -69,6 +69,10 @@ fn corporate(case: &str, adjustment: Adjustment, previous_close: Millis, ex_open
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_split_two_for_one() {
+    held("mass_split_two_for_one", mass_split_two_for_one_measured);
+}
+
+fn mass_split_two_for_one_measured() {
     corporate(
         "split",
         Adjustment::Split { new_units: 2, old_units: 1 },
@@ -80,6 +84,10 @@ fn mass_split_two_for_one() {
 #[test]
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_cash_dividend() {
+    held("mass_cash_dividend", mass_cash_dividend_measured);
+}
+
+fn mass_cash_dividend_measured() {
     let dividend = Adjustment::Dividend { gross_per_unit: f("0.25"), withholding_rate: f("0.15") };
     corporate("dividend", dividend, ny(2026, 11, 18, 16, 0), ny(2026, 11, 19, 9, 30));
 }
