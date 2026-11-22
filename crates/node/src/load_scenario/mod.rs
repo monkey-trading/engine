@@ -334,8 +334,8 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 let excused = reading.as_ref().and_then(|reading| storage::excuse(&breaches, reading));
                 if reading.is_none() && !probe_off_said {
                     println!(
-                        "LOAD storage probe off: the host counts no thread's time or names no disk, so no window \
-                         is excused"
+                        "LOAD storage probe off: the host counts no thread's time, names no disk or takes no direct \
+                         write, so no window is excused"
                     );
                     probe_off_said = true;
                 }
@@ -344,12 +344,7 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                     || "n/a".to_owned(),
                     |reading| {
                         let (block, window) = (reading.block, reading.window);
-                        format!(
-                            "[blocked_ms={} span_ms={} {}] window=[{window}]",
-                            block.blocked.as_millis(),
-                            block.span.as_millis(),
-                            block.host
-                        )
+                        format!("[blocked_ms={} {}] window=[{window}]", block.blocked.as_millis(), block.host)
                     },
                 );
                 println!(
