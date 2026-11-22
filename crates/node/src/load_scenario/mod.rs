@@ -9,7 +9,7 @@
 //! price-to-stamp at p50, p99 and p999, the sequencer's batch time, stream lag, the sequencer's busy
 //! share, and the process's CPU and resident memory, judged against #904's launch bar (`report`),
 //! and the ramp the first multiple at which each budget broke. Each window prints its batch time at
-//! p99 and the sequencer's busy share beside its breaches, and each window and leg how long the
+//! p99 and p999 and the sequencer's busy share beside its breaches, and each window and leg how long the
 //! host's tasks waited on storage and for a CPU where the host reports it, so a window broken by a
 //! disk or a core stall says so. The screening source answers each call after a remote source's
 //! round trip (`SOURCE_DELAY_MS`), and the bar holds the market orders of traders that sent a
