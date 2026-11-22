@@ -6,6 +6,7 @@ mod behind;
 mod cme;
 pub(crate) mod cme_support;
 mod coinbase_support;
+mod declaration;
 mod delay;
 mod emission;
 pub(crate) mod fake;
