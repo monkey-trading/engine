@@ -16,6 +16,7 @@ use tracing::info;
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, TimeSection};
 use crate::handover::assigned::Assigned;
+use crate::handover::evidence::{CollateralCache, PREFETCH_REUSE};
 use crate::history::HistoryPlan;
 use crate::log_check::answer::{Answering, CheckedHeads};
 use crate::log_heads::{Head, PostedHeads};
@@ -203,6 +204,9 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     time: T,
     sealer: Box<dyn Sealer>,
     attestor: Box<dyn Attestor>,
+    /// The collateral of its quotes, fetched before each take of its turn connects and reused across
+    /// its attempts.
+    collateral: CollateralCache,
     release: Release,
     sample: Option<Sample>,
     /// The operator's start flags, which open the sealed certificate as a start does.
@@ -256,6 +260,7 @@ impl<'a> Member<'a> {
             time,
             sealer,
             attestor,
+            collateral: CollateralCache::new(PREFETCH_REUSE),
             release,
             sample: None,
             start: start.clone(),
@@ -302,6 +307,7 @@ impl<'a, T: Sampling> Member<'a, CheckpointRpc, PostedHeads, T> {
             time,
             sealer,
             attestor,
+            collateral: CollateralCache::new(PREFETCH_REUSE),
             release,
             sample: None,
             start,

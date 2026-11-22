@@ -178,7 +178,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             info!(turn = turn.turn, predecessor = %source.handover_endpoint, "taking this member's turn with the tail");
             let (sealer, attestor) = (self.sealer.as_ref(), self.attestor.as_ref());
             let endpoint = &source.handover_endpoint;
-            match take_tail(self.cfg, endpoint, sealer, attestor, &prepared, (follower, operator)).await {
+            let quoting = (attestor, &self.collateral);
+            match take_tail(self.cfg, endpoint, sealer, quoting, &prepared, (follower, operator)).await {
                 Ok(taken) => return Ok((taken, ready)),
                 Err(e) => {
                     page_refusal(turn, &e);

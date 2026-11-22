@@ -863,8 +863,8 @@ vault's record, so a receipt that a reorganisation removed is not paid from othe
 
 Known limits:
 
-- While operator rotation runs, the enclave also signs a withdrawal only once a check by another
-  member covers its approval, as
+- While a daily turn is in effect whose set names two or more members, the enclave also signs a
+  withdrawal only once a check by another member covers its approval, as
   [the log check before withdrawals](#the-log-check-before-withdrawals) describes.
 
 ## The vault's governance
@@ -998,7 +998,13 @@ manifest's entries the same way. The keys travel encrypted to the new release's
 attested one-time key, and the new release takes them only if the vault already names their signing
 key. A release that has stopped in order to hand over its keys serves new releases until one
 confirms. A trading server that the vault does not name as signer signs nothing and serves only its
-attestation.
+attestation. The handover endpoint is public, so the holder sends each connection its challenge at
+once and serves the requests one at a time. One address holds at most two of its 64 connections. A
+connection that sends no request within five seconds of its challenge is dropped. With every place
+taken, or both of the new connection's address, the oldest connection there that has not sent its
+request gives its place up to the new one. The new release fetches its quote's vendor collateral
+before it connects, so its request follows the challenge by one quote. The delivery listener holds
+connections the same way, and quotes for at most eight of them at once.
 
 The trading server's credentials reach it only encrypted to a one-time key whose quote proves that
 an enclave of the release holds it. They are its RPC provider keys, its market-data vendor keys and
@@ -1042,6 +1048,9 @@ Known limits:
   it stops, its signed API answers still verify.
 - A release taking over the keys checks the running release's certificates against the host's clock.
   The vault's naming of the key bounds this.
+- Peers on many addresses that open new connections faster than a new release quotes can still keep
+  it from the keys, and from a delivery, for as long as they keep it up. Where the host's forwarding
+  hides peers' addresses, so that the guest sees them all as one, a single peer can.
 - A superseded release refuses its own sealed copy only by reading the vault's current release
   through the checkpoint RPC endpoint, which the trading server trusts for the vault's state. A
   superseded release that is still running keeps signing until it hands over its keys, and raises
@@ -1055,7 +1064,8 @@ Known limits:
 - Until the log is recovered, the operator key in effect for a delivery is the one the attested
   configuration names, which can be a key the log has since rotated away from. Once the trading
   server serves, it is the key the log records. While the registry elects operators, each trading
-  server takes bundles only from its own configured key.
+  server takes bundles only from its own configured key, and under daily turns, until an installation
+  ends them, whether or not rotation is still on.
 - The image's kernel takes input from the host that the launch measurement does not cover, and does
   not yet bound it: the data disk's filesystem, the ACPI tables, the emulated devices and the
   network configuration.
@@ -1220,9 +1230,11 @@ Known limits:
 
 ## The log check before withdrawals
 
-While rotation is on, and a turn is in effect whose set names two or more members, the enclave signs
-a withdrawal only for an approval at or below the head of the log that the last boundary's check
-verified. A check is another member's verification of the log through a checkpoint:
+While a turn is in effect whose set names two or more members, the enclave signs a withdrawal only
+for an approval at or below the head of the log that the last boundary's check verified. Turning
+rotation off leaves the drawn turns in effect, as the vault's `rotationEnabled()` counts them, so they
+still hand the keys on at their boundaries and the check applies until an installation ends them. A
+check is another member's verification of the log through a checkpoint:
 
 - At a handover, the check is the successor's own replay of the log through the checkpoint it was
   handed.
@@ -1268,8 +1280,11 @@ Known limits:
   to take no turns signs no withdrawal while the check applies, and raises `log_check_unavailable`.
 - Instructions other than withdrawals stay exposed to a branch that the host withholds, for at most
   one heartbeat interval past the newest sequence number that another member confirmed.
-- With a one-member set, with rotation off, or with no turn in effect, only the posted roots gate
-  payouts.
+- With a one-member set, or with no turn in effect, as once an installation ends the turns, only the
+  posted roots gate payouts.
+- After rotation is turned off, no turn is drawn past those already drawn, so an approval made during
+  the last drawn turn waits for the installation that ends the turns, and is then signed with no check
+  of its range. `log_check_awaiting_installation` pages while one waits.
 
 ## Liveness and promotion
 

@@ -48,13 +48,13 @@ needs its own approval, and an approval for one step does not cover the next.
 - **While the boundary's log check applies, the keys carry the head that the check verified.** The
   keys also carry each release that handed them on past that head. A release whose build does not
   carry the log check, or does not record those releases, refuses keys that carry them. Its
-  handover stops the running release, and then fails. The check applies only while rotation is on.
-  It also needs the set of the turn in effect to name two or more members. Once the check no longer
-  applies, the trading server drops the head and those releases from its sealed keys, and it
-  refuses a handover until it has done so. With rotation off, an upgrade or a rollback to such a
-  build therefore hands over as usual. While rotation is on, upgrade and roll back only between
-  releases that carry the log check and record the releases that handed the keys on, as
-  [Daily turns](operator-candidate.md#daily-turns) describes.
+  handover stops the running release, and then fails. The check applies only while a turn is in
+  effect whose set names two or more members, which turning rotation off leaves in place until an
+  installation ends the turns. Once the check no longer applies, the trading server drops the head
+  and those releases from its sealed keys, and it refuses a handover until it has done so. Once the
+  turns have ended, an upgrade or a rollback to such a build therefore hands over as usual. Until
+  then, upgrade and roll back only between releases that carry the log check and record the releases
+  that handed the keys on, as [Daily turns](operator-candidate.md#daily-turns) describes.
 - **No staging environment exists.** Run each procedure against a testnet vault first. The steps
   are the same.
 

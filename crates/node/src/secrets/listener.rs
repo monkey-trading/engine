@@ -1,26 +1,33 @@
 //! The enclave's side of a delivery, each connection with its own one-time key. Runs through the
 //! node's whole life: alone while it holds for its required secrets, and from then on beside whatever
-//! else the node is doing, however long the vault takes to name its key. A few connections run at
-//! once, so an idle peer cannot make the operator wait; the sealed store serializes what they seal.
+//! else the node is doing, however long the vault takes to name its key. Many connections run at
+//! once, so an idle peer cannot make the operator wait, and at most `QUOTES` of them quote at a time;
+//! the sealed store serializes what they seal. One address (an IPv6 /64) holds at most `PER_PEER` of
+//! them, and with every place taken, or every place of the new connection's address, the oldest
+//! connection there waiting on its peer, for its hello or its delivery, gives its place to it.
 
+use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, ensure};
-use engine_core::types::AccountId;
+use engine_core::Engine;
+use engine_core::types::{AccountId, Millis};
 use hpke::{Kem, Serializable};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::{sleep, timeout};
-use tracing::{Instrument, info, info_span, warn};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::checkpoints::RegistryOperator;
 use crate::config::{NamedSecret, NodeConfig, TeeProvider, is_published_operator};
 use crate::handover::evidence::{self, Quoting};
 use crate::handover::{Kx, MESSAGE_TIMEOUT, receive, send};
+use crate::liveness::link::slots::{PeerSlot, Silent, SilentPlace, peer_key};
 use crate::log::CheckpointDomain;
 use crate::secrets::delivery::{
     self, Delivery, Hello, Offer, Receipt, Reply, Status, offer_report_data, receipt_report_data,
@@ -34,10 +41,16 @@ use crate::trusted_time::TrustedClock;
 
 /// How long the accept loop waits after a failed accept, such as a full file table.
 const ACCEPT_RETRY: Duration = Duration::from_secs(1);
-/// How many connections run at once. It bounds the quotes and vendor fetches strangers can cause.
-const MAX_CONNECTIONS: usize = 8;
+/// How many connections run at once.
+const CONNECTIONS: usize = 64;
+/// How many of them quote at once. It bounds the quotes and vendor fetches strangers can cause.
+const QUOTES: usize = 8;
+/// How many of them one peer address may hold.
+const PER_PEER: usize = 2;
 /// How long a peer gets to say hello: the tool does so at once, and nothing is quoted before it.
-const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+const HELLO_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long a new connection waits for the place of the waiting one it told to leave.
+const EVICTION_WAIT: Duration = Duration::from_millis(500);
 
 /// Who may deliver now.
 #[derive(Clone)]
@@ -63,6 +76,9 @@ pub(crate) struct Listener {
     listener: TcpListener,
     authority: watch::Receiver<Authority>,
     deliveries: Arc<Deliveries>,
+    /// How many connections each peer address holds, and how many it may.
+    peers: Arc<Mutex<BTreeMap<IpAddr, usize>>>,
+    per_peer: usize,
 }
 
 /// What a connection delivers into.
@@ -80,6 +96,12 @@ struct Deliveries {
     /// The newest version whose connection has finished answering, receipt sent or not.
     answered: watch::Sender<Option<u64>>,
     connections: AtomicU64,
+    /// The places connections run in, and those waiting on their peer, which give theirs up to a new
+    /// connection once every place is taken, each under the number it waits as.
+    places: Arc<Semaphore>,
+    waiting: Silent,
+    waits: AtomicU64,
+    quotes: Semaphore,
 }
 
 impl Authority {
@@ -95,33 +117,7 @@ impl Authority {
                 let (now, configured, installed) = (trusted.now_ms(), *configured, *installed);
                 let (reply, answered) = oneshot::channel();
                 tx.send(Request::Query(Box::new(move |engine| {
-                    let recorded = engine.operator().map_or(configured, |operator| operator.address);
-                    // Under elections each operator's secrets are its own, so a key the registry
-                    // elects reaches into no other operator's enclave. That narrowing holds only
-                    // while an election that governs the key is in force: one still handing the
-                    // key over (the pending rotation is its), or one whose key the log records.
-                    // An election the log moved on from is historical and narrows nothing, and
-                    // with none recorded the key the log records stays in effect. A pending
-                    // rotation to this node's own key names this node's operator the successor,
-                    // as recovery reads it: during a promotion's notice the outgoing key still
-                    // signs admin commands, but it reaches into no successor's enclave. So does
-                    // the registry's installation of this node's key, before the log's scan passes it.
-                    let election = engine.operator_election();
-                    let governing = election.last.filter(|last| !last.cancelled).is_some_and(|last| {
-                        engine
-                            .operator_bounds()
-                            .rotation
-                            .is_some_and(|r| r.address == last.admin_key && r.effective_at == last.effective_at)
-                            || last.admin_key == recorded
-                    });
-                    // Under daily turns each member's node takes its own operator's delivery only.
-                    let turns = election.rotation_enabled && !engine.daily_turns().sets.is_empty();
-                    let own_key_only = (election.rotation_enabled && governing)
-                        || turns
-                        || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured)
-                        || installed.and_then(|seated| seated.unscanned(engine)) == Some(configured);
-                    let due = now.and_then(|now| engine.due_key(now)).is_some_and(|r| r.address == signer);
-                    let _ = reply.send(if own_key_only { signer == configured } else { signer == recorded || due });
+                    let _ = reply.send(log_admits(engine, signer, configured, installed, now));
                 })))
                 .await
                 .map_err(|_| anyhow!("the node is stopping"))?;
@@ -160,8 +156,13 @@ impl Listener {
             running: OnceLock::new(),
             answered: watch::Sender::new(None),
             connections: AtomicU64::new(0),
+            places: Arc::new(Semaphore::new(CONNECTIONS)),
+            waiting: Silent::default(),
+            waits: AtomicU64::new(0),
+            quotes: Semaphore::new(QUOTES),
         };
-        Ok(Self { listener, authority, deliveries: Arc::new(deliveries) })
+        let deliveries = Arc::new(deliveries);
+        Ok(Self { listener, authority, deliveries, peers: Arc::default(), per_peer: PER_PEER })
     }
 
     /// The newest version whose connection has finished answering: a node about to exit waits on it,
@@ -174,6 +175,14 @@ impl Listener {
     #[cfg(test)]
     pub(crate) fn local_addr(&self) -> std::net::SocketAddr {
         self.listener.local_addr().unwrap()
+    }
+
+    /// The listener, letting one address hold any number of connections, as peers on as many addresses
+    /// would: a test's connections all come from loopback.
+    #[cfg(test)]
+    pub(crate) fn loopback(mut self) -> Self {
+        self.per_peer = usize::MAX;
+        self
     }
 
     /// Marks the start complete, running with `version`, so a later bundle says it needs a restart,
@@ -189,9 +198,34 @@ impl Listener {
     /// race it against its retries.
     pub(crate) async fn step(&self, serving: &mut JoinSet<()>) {
         tokio::select! {
-            accepted = self.listener.accept(), if serving.len() < MAX_CONNECTIONS => match accepted {
+            accepted = self.listener.accept() => match accepted {
                 Ok((stream, peer)) => {
-                    serving.spawn(self.deliveries.clone().serve_connection(stream, peer, self.authority.clone()));
+                    let (deliveries, key) = (self.deliveries.clone(), peer_key(peer.ip()));
+                    let Some((slot, evicted)) =
+                        PeerSlot::take_or_evict(&self.peers, key, self.per_peer, &deliveries.waiting)
+                    else {
+                        let holds = self.per_peer;
+                        debug!(%peer, "closed a secrets delivery connection: its address's {holds} are busy");
+                        return;
+                    };
+                    // A full listener: the oldest connection waiting on its peer gives its place up, unless
+                    // the address's own oldest just did, and the new one waits for that place.
+                    let permit = match deliveries.places.clone().try_acquire_owned() {
+                        Ok(permit) => Some(permit),
+                        Err(_) if deliveries.waiting.make_room(evicted) => None,
+                        Err(_) => {
+                            debug!(%peer, "closed a secrets delivery connection: {CONNECTIONS} are being served");
+                            return;
+                        }
+                    };
+                    // Waiting for its hello from the start, so a newer connection from its address finds it.
+                    let place = deliveries.waiting_place(key);
+                    let authority = self.authority.clone();
+                    let connection = deliveries.serve_connection(stream, (peer, key, place), permit, authority);
+                    serving.spawn(async move {
+                        let _held = slot;
+                        connection.await;
+                    });
                 }
                 Err(e) => {
                     warn!("accepting a secrets delivery failed: {e}");
@@ -214,22 +248,54 @@ impl Listener {
 }
 
 impl Deliveries {
-    /// One connection, in its own span. Whatever it ends in, the listener goes on.
+    /// One connection, from `peer` counted under `key` and waiting for its hello in `waiting_hello`, in its
+    /// own span, in its place, or, with none (`place`), in the one a connection told to leave as it
+    /// arrived gives up. Whatever it ends in, the listener goes on.
     async fn serve_connection(
         self: Arc<Self>,
         mut stream: TcpStream,
-        peer: std::net::SocketAddr,
+        (peer, key, waiting_hello): (std::net::SocketAddr, IpAddr, SilentPlace),
+        place: Option<OwnedSemaphorePermit>,
         authority: watch::Receiver<Authority>,
     ) {
         let id = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
         let span = info_span!("secrets_delivery", id, peer = %peer);
         async {
-            if let Err(e) = self.serve(&mut stream, &authority).await {
+            // Without a place yet, it waits for the one it freed, unless a newer connection tells it to leave.
+            let freed = timeout(EVICTION_WAIT, self.places.clone().acquire_owned());
+            let permit = match place {
+                Some(permit) => Some(permit),
+                None => tokio::select! {
+                    freed = freed => freed.ok().and_then(Result::ok),
+                    () = waiting_hello.evicted() => None,
+                },
+            };
+            let Some(_permit) = permit else {
+                debug!("closed a secrets delivery connection: {CONNECTIONS} are being served");
+                return;
+            };
+            if let Err(e) = self.serve(&mut stream, (key, waiting_hello), &authority).await {
                 warn!("a secrets delivery connection ended: {e:#}");
             }
         }
         .instrument(span)
         .await;
+    }
+
+    /// A place among the connections waiting on their peer, for one counted under `key`.
+    fn waiting_place(&self, key: IpAddr) -> SilentPlace {
+        self.waiting.enter(self.waits.fetch_add(1, Ordering::Relaxed), key)
+    }
+
+    /// `wait`'s outcome, the connection holding `place` among those waiting on their peer meanwhile;
+    /// `None` once a new connection takes it, which it may once every place, or its address's share, is
+    /// taken.
+    async fn waiting_on_peer<T>(place: SilentPlace, wait: impl Future<Output = T>) -> Option<T> {
+        let waited = tokio::select! {
+            waited = wait => Some(waited),
+            () = place.evicted() => None,
+        };
+        waited.filter(|_| place.leave())
     }
 
     /// What this enclave reports it holds.
@@ -246,15 +312,32 @@ impl Deliveries {
         }
     }
 
-    /// One tool's hello, this enclave's offer, and, if it goes on, its delivery and the answer.
+    /// One tool's hello, this enclave's offer, and, if it goes on, its delivery and the answer. A peer
+    /// that sends no hello or no delivery ends it quietly.
     /// Error cases:
-    /// - the hello is unreadable or late, the quote fails, or the peer stops reading
+    /// - the hello's nonce is malformed, the quote fails, or the peer stops reading
     async fn serve(
         &self,
         stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+        (key, waiting_hello): (IpAddr, SilentPlace),
         authority: &watch::Receiver<Authority>,
     ) -> anyhow::Result<()> {
-        let hello: Hello = timeout(HELLO_TIMEOUT, receive(stream)).await.context("no hello in time")??;
+        // Any stranger can end a connection before its hello, so those endings are logged quietly.
+        let hello: Hello = match Self::waiting_on_peer(waiting_hello, timeout(HELLO_TIMEOUT, receive(stream))).await {
+            Some(Ok(Ok(hello))) => hello,
+            Some(Ok(Err(e))) => {
+                debug!("the peer sent no hello: {e:#}");
+                return Ok(());
+            }
+            Some(Err(_)) => {
+                debug!("the peer sent no hello in time");
+                return Ok(());
+            }
+            None => {
+                debug!("a new connection took the place of this one, waiting for its hello");
+                return Ok(());
+            }
+        };
         let nonce: [u8; 32] = hex::decode(&hello.nonce)
             .ok()
             .and_then(|nonce| nonce.try_into().ok())
@@ -269,17 +352,22 @@ impl Deliveries {
             Offer { public_key: hex::encode(&public_key), config_sha256: hex::encode(config_sha256), status, evidence };
         send(stream, &offer).await?;
         // A status read ends here, with the peer closing the connection.
-        let delivery: Delivery = match timeout(MESSAGE_TIMEOUT, receive(stream)).await {
-            Ok(Ok(delivery)) => delivery,
-            Ok(Err(e)) => {
-                info!("the peer sent no delivery: {e:#}");
-                return Ok(());
-            }
-            Err(_) => {
-                info!("the peer sent no delivery in time");
-                return Ok(());
-            }
-        };
+        let delivery: Delivery =
+            match Self::waiting_on_peer(self.waiting_place(key), timeout(MESSAGE_TIMEOUT, receive(stream))).await {
+                Some(Ok(Ok(delivery))) => delivery,
+                Some(Ok(Err(e))) => {
+                    info!("the peer sent no delivery: {e:#}");
+                    return Ok(());
+                }
+                Some(Err(_)) => {
+                    info!("the peer sent no delivery in time");
+                    return Ok(());
+                }
+                None => {
+                    debug!("a new connection took the place of this one, waiting for its delivery");
+                    return Ok(());
+                }
+            };
         match self.seal_delivery(&secret, &nonce, &delivery, authority).await {
             Ok(receipt) => {
                 let version = receipt.version;
@@ -348,8 +436,49 @@ impl Deliveries {
     async fn quote(&self, report_data: [u8; 64]) -> anyhow::Result<crate::handover::Evidence> {
         let quoting =
             Quoting { provider: self.provider, processor: self.processor.as_deref(), kds_base: &self.kds_base };
+        let _permit = self.quotes.acquire().await.expect("the quote limit is never closed");
         evidence::produce(&quoting, self.attestor.as_ref(), &self.platform, report_data).await
     }
+}
+
+/// Whether `signer` may deliver to a node whose config names `configured`, by `engine`'s log at trusted
+/// time `now` (`Authority::Log`).
+fn log_admits(
+    engine: &Engine,
+    signer: AccountId,
+    configured: AccountId,
+    installed: Option<RegistryOperator>,
+    now: Option<Millis>,
+) -> bool {
+    let recorded = engine.operator().map_or(configured, |operator| operator.address);
+    // Under elections each operator's secrets are its own, so a key the registry
+    // elects reaches into no other operator's enclave. That narrowing holds only
+    // while an election that governs the key is in force: one still handing the
+    // key over (the pending rotation is its), or one whose key the log records.
+    // An election the log moved on from is historical and narrows nothing, and
+    // with none recorded the key the log records stays in effect. A pending
+    // rotation to this node's own key names this node's operator the successor,
+    // as recovery reads it: during a promotion's notice the outgoing key still
+    // signs admin commands, but it reaches into no successor's enclave. So does
+    // the registry's installation of this node's key, before the log's scan passes it.
+    let election = engine.operator_election();
+    let governing = election.last.filter(|last| !last.cancelled).is_some_and(|last| {
+        engine
+            .operator_bounds()
+            .rotation
+            .is_some_and(|r| r.address == last.admin_key && r.effective_at == last.effective_at)
+            || last.admin_key == recorded
+    });
+    // Under daily turns each member's node takes its own operator's delivery only, for as long as the
+    // turns hand the keys between members: drawn turns stand after rotation is turned off, until an
+    // installation ends them.
+    let turns = engine.rotation_by_election() && !engine.daily_turns().sets.is_empty();
+    let own_key_only = (election.rotation_enabled && governing)
+        || turns
+        || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured)
+        || installed.and_then(|seated| seated.unscanned(engine)) == Some(configured);
+    let due = now.and_then(|now| engine.due_key(now)).is_some_and(|r| r.address == signer);
+    if own_key_only { signer == configured } else { signer == recorded || due }
 }
 
 #[cfg(test)]

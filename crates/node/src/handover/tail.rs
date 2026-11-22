@@ -35,6 +35,7 @@ use tracing::{info, warn};
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
 use crate::handover::assigned::{Assigned, Assignments, Bound};
+use crate::handover::evidence::CollateralCache;
 use crate::handover::successor::{Answered, ask, confirm};
 use crate::handover::{padded, receive_bytes, send_bytes};
 use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, offset_of};
@@ -314,7 +315,8 @@ async fn receive_tail(stream: &mut TcpStream, listing: &TailListing) -> anyhow::
 
 /// Takes the keys from the predecessor whose handover listener is at `address`, asking for the
 /// entries past `follower`'s tip alone, with what `prepared` read before connecting, following
-/// `operator`, if any, until the predecessor answers. The tail must
+/// `operator`, if any, until the predecessor answers, quoting with `attestor` and the collateral
+/// `collateral` holds or fetches before connecting, which later attempts reuse. The tail must
 /// extend the copy's seal chain entry by entry and replay onto its replica, end at the handed-over
 /// checkpoint, and leave the replica holding the latest posted log head. The keys are then sealed in
 /// the prepared generation and the handover confirmed.
@@ -331,7 +333,7 @@ pub(crate) async fn take_tail(
     cfg: &NodeConfig,
     address: &str,
     sealer: &dyn Sealer,
-    attestor: &dyn Attestor,
+    (attestor, collateral): (&dyn Attestor, &CollateralCache),
     prepared: &Prepared,
     (follower, operator): (&mut Follower, Option<&Followed>),
 ) -> anyhow::Result<Taken> {
@@ -342,7 +344,8 @@ pub(crate) async fn take_tail(
     let tip = Tip { seq, link };
     follower.sync()?;
     // The tip alone names what the copy holds: its segment files are its own writer's.
-    let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), prepared.bound.binding.as_ref());
+    let binding = prepared.bound.binding.as_ref();
+    let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), binding, collateral);
     let answered = match operator {
         Some(operator) => {
             let (answered, followed) = follower.follow_during(cfg, operator, FOLLOW_WHILE_ASKED, asked).await;

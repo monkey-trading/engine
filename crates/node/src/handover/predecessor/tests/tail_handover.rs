@@ -328,11 +328,12 @@ impl Tailed {
     /// The successor's tail handover.
     async fn take(&mut self, prepared: &Prepared) -> anyhow::Result<Taken> {
         let sealer = MockSealer { launch_digest: UPGRADE };
+        let collateral = crate::handover::evidence::CollateralCache::new(crate::handover::evidence::PREFETCH_REUSE);
         take_tail(
             &self.exchange.successor,
             &self.exchange.address,
             &sealer,
-            &MockAttestor,
+            (&MockAttestor, &collateral),
             prepared,
             (&mut self.follower, None),
         )

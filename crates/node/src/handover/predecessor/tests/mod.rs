@@ -6,6 +6,7 @@ mod copies;
 mod entries;
 use entries::{checkpoint, command, publish};
 mod fold;
+mod listener;
 mod secrets;
 mod stop;
 mod successor;
@@ -302,6 +303,9 @@ impl Exchange {
         let assignments = Arc::new(crate::handover::assigned::tests::FakeAssignments::default());
         let predecessor = Predecessor {
             listener,
+            // Every connection here comes from loopback: one address holds any number, as peers on as many
+            // addresses would.
+            per_peer: usize::MAX,
             domain: CheckpointDomain {
                 chain_id: successor.custody.chain_id,
                 vault: successor.custody.vault.parse().unwrap(),

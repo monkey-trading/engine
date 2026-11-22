@@ -339,7 +339,7 @@ async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_s
 /// A listener handing over `store`'s keys from the successor's log, against `exchange`'s vault, trusted
 /// time and latest assignments, checking turns against `engine`'s log: the listener and its stop
 /// requests.
-async fn listener_over(
+pub(super) async fn listener_over(
     exchange: &Exchange,
     store: Arc<KeyStore>,
     engine: Option<mpsc::Sender<Request>>,
@@ -350,6 +350,7 @@ async fn listener_over(
     let samples = exchange.samples.subscribe();
     let listener = Predecessor {
         listener: TcpListener::bind("127.0.0.1:0").await.unwrap(),
+        per_peer: crate::handover::predecessor::listener::PER_PEER,
         domain: exchange.domain(),
         provider: TeeProvider::Mock,
         cpu_models: Vec::new(),

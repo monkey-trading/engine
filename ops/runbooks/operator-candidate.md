@@ -881,10 +881,11 @@ handed over, even when a later trusted time sample falls just before the boundar
 Use this section when `log_check_pending`, `log_check_unattributable` or `log_check_unavailable`
 fires.
 
-While rotation is on and a turn is in effect whose set names two or more members, the operator's
-trading server signs a withdrawal only once a check has verified the log through the withdrawal's
-approval. An approval therefore waits for the next boundary. A one-member set, or rotation off,
-needs no check.
+While a turn is in effect whose set names two or more members, the operator's trading server signs
+a withdrawal only once a check has verified the log through the withdrawal's approval. An approval
+therefore waits for the next boundary. A one-member set needs no check, and neither does a log whose
+turns an installation has ended. Turning rotation off leaves the drawn turns, and the check, in
+place until that installation.
 
 - **At a handover,** the successor's start is the check, because its replica verified the log
   through the checkpoint that it was handed.
@@ -907,7 +908,7 @@ that finds that its log does not hold the sealed head asks for the check again.
 
 **Before rotation is turned on, every member must run a release that has the log check and that
 names the releases that hand the keys on.** Keys that carry a verified head, or those releases, do
-not open on an older release. With rotation off, the keys carry neither, as
+not open on an older release. Once an installation has ended the turns, the keys carry neither, as
 [Know before you start](deploy-and-rollback.md#know-before-you-start) describes.
 
 1. For `log_check_pending`, check that each member that may answer follows the operator, with no

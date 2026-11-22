@@ -22,8 +22,10 @@ use tokio::time::timeout;
 use tracing::info;
 
 use crate::config::{NamedSecret, NodeConfig};
-use crate::handover::evidence::{self, Quoting};
-use crate::handover::{Challenge, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, padded, receive, send};
+use crate::handover::evidence::{self, CollateralCache, Quoting};
+use crate::handover::{
+    CHALLENGE_TIMEOUT, Challenge, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, padded, receive, send,
+};
 use crate::log::CheckpointDomain;
 use crate::secrets::SignedBundle;
 use crate::secrets::delivery;
@@ -86,18 +88,22 @@ pub(crate) async fn fetch_secrets(
     let platform = sealer.platform()?;
     let (secret, public) = Kx::gen_keypair();
     let public = public.to_bytes().to_vec();
+    // The collateral comes first: the predecessor gives the request a few seconds from its challenge.
+    let (quoting, collateral) = (Quoting::from(&cfg.tee), CollateralCache::new(evidence::PREFETCH_REUSE));
+    let collateral = evidence::prefetch(&quoting, attestor, &platform, &collateral).await?;
     let mut stream = timeout(MESSAGE_TIMEOUT, TcpStream::connect(address))
         .await
         .context("connecting to the predecessor timed out")?
         .with_context(|| format!("connecting to the predecessor at {address}"))?;
-    let challenge: Challenge =
-        timeout(MESSAGE_TIMEOUT, receive(&mut stream)).await.context("the predecessor sent no challenge in time")??;
+    let challenge: Challenge = timeout(CHALLENGE_TIMEOUT, receive(&mut stream))
+        .await
+        .context("the predecessor sent no challenge in time")??;
     let challenge: [u8; 32] = hex::decode(&challenge.nonce)
         .ok()
         .and_then(|nonce| nonce.try_into().ok())
         .context("the predecessor's challenge is not 32 bytes of hex")?;
     let request = request_report_data(domain, &challenge, &public, &cfg.file_sha256);
-    let evidence = evidence::produce(&Quoting::from(&cfg.tee), attestor, &platform, request).await?;
+    let evidence = evidence::produce_with(&quoting, attestor, &platform, request, Some(&collateral)).await?;
     let message = Request {
         public_key: hex::encode(&public),
         config_sha256: hex::encode(cfg.file_sha256),

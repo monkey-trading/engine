@@ -1171,8 +1171,11 @@ until one is signed. A withdrawal authorisation holds `account`, `amount`, `nonc
 checkpoint. An authorisation is valid for 24 hours.
 
 While the server runs daily operator turns with more than one member, an approval whose next
-signature waits for the turn boundary's log check also carries `check`, with the `turn` and its
-`boundary_ms`.
+signature waits for the log check also carries `check`. With `waits` set to `boundary`, it names the
+`turn` whose boundary's check will cover the approval, and that boundary's `boundary_ms`. With
+`waits` set to `installation`, rotation is off and no turn after the last drawn `turn` is assigned,
+so no boundary checks the approval: it waits for the timelock's installation of an operator, which
+ends the turns.
 
 An approval stays listed until the server observes the vault's payment, so an approval that the
 client has already submitted can still appear. The vault's `usedNonces` shows whether it has been

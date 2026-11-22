@@ -150,6 +150,10 @@ qemu-system-x86_64 -enable-kvm -cpu EPYC-v4 -smp 4 -m 4G -nographic -no-reboot \
   -device virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on,romfile=
 ```
 
+This forwards only the API's port. A node with `[tee.sealing.handover]` or `[tee.sealing.secrets]`
+needs those ports to reach the guest with each peer's own address, for example over a bridged tap
+device: their listeners count connections per address, and `hostfwd` shows every peer as one.
+
 The following commands read the policy, launch digest and report data from the server's report,
 without checking its signature:
 

@@ -10,12 +10,11 @@ use anyhow::{Context, anyhow, ensure};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
 use engine_verify::CpuModel;
-use ring::rand::{SecureRandom, SystemRandom};
 use sha2::Digest as _;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::timeout;
-use tracing::{Instrument, error, info, info_span, warn};
+use tracing::{error, info, warn};
 
 use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
@@ -23,8 +22,8 @@ use crate::handover::assigned::{Assigned, Assignments};
 use crate::handover::evidence::{self, Quoting, same_policy};
 use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
-    Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
-    confirmed_digest, keys_report_data, receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
+    Confirm, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest, confirmed_digest, keys_report_data,
+    receive, request_report_data, seal_keys, send, send_bytes, vault_reader,
 };
 use crate::log::{CheckpointDomain, Manifest, SegmentInfo};
 use crate::tee::keys::Head;
@@ -42,6 +41,8 @@ pub(crate) type DrainReply = oneshot::Sender<anyhow::Result<Head>>;
 /// The handover listener and what it hands over, reading the vault's current release through `C`.
 pub(crate) struct Predecessor<C = CheckpointRpc> {
     listener: TcpListener,
+    /// How many connections one peer address may hold.
+    per_peer: usize,
     domain: CheckpointDomain,
     provider: TeeProvider,
     /// The CPU models a successor's quote may come from, each at its own minimum TCB.
@@ -110,6 +111,7 @@ impl Predecessor {
         info!(listen = %listener.local_addr()?, "handover listener up");
         Ok(Some(Self {
             listener,
+            per_peer: listener::PER_PEER,
             domain,
             provider: cfg.tee.provider,
             cpu_models: cfg.tee.cpu_models.clone(),
@@ -146,64 +148,26 @@ impl<C: CheckpointChain> Predecessor<C> {
         self
     }
 
-    /// Serves successors one connection at a time until one confirms a handover, which ends the
-    /// node's run with the assignment the successor bound, if any (#596). Once sequencing has stopped
-    /// it goes on serving them, under `handover_unconfirmed`: the vault names the successor's release,
-    /// so this release's own copy of the keys no longer opens, and only a confirmed handover or the
-    /// operator ends it.
-    /// Error cases:
-    /// - the node cannot stop sequencing, or has no final checkpoint to hand over
-    pub(crate) async fn run(self) -> anyhow::Result<Option<Assigned>> {
-        let mut head = None;
-        let mut connection = 0_u64;
-        loop {
-            let (stream, peer) = match self.listener.accept().await {
-                Ok(accepted) => accepted,
-                Err(e) => {
-                    warn!("accepting a handover connection failed: {e}");
-                    continue;
-                }
-            };
-            connection += 1;
-            let span = info_span!("handover", id = connection, peer = %peer);
-            match self.serve(stream, &mut head).instrument(span).await? {
-                Served::Confirmed(bound) => return Ok(bound),
-                Served::Unconfirmed if head.is_some() => error!(
-                    alert = "handover_unconfirmed",
-                    "sequencing has stopped and no successor holds the keys yet: this release goes on serving \
-                     successors, and stopping it loses the keys, since its own copy no longer opens"
-                ),
-                Served::Unconfirmed => {}
-            }
-        }
-    }
-
-    /// One successor's request, which binds the challenge this sends first: refused with its
-    /// reason, or answered with the keys and, on its confirmation, ended. A refusal or a broken
-    /// connection leaves the node as it was.
+    /// One successor's request, which binds `challenge`, the one this connection was sent: refused
+    /// with its reason, or answered with the keys and, on its confirmation, ended. A refusal or a
+    /// broken connection leaves the node as it was.
     /// Error cases:
     /// - the node cannot stop sequencing or has no final checkpoint, which ends the node
-    async fn serve(&self, mut stream: TcpStream, head: &mut Option<Head>) -> anyhow::Result<Served> {
-        let mut challenge = [0u8; 32];
-        if SystemRandom::new().fill(&mut challenge).is_err() {
-            return Ok(unconfirmed("the RNG failed"));
-        }
-        if let Err(e) = send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await {
-            return Ok(unconfirmed(&format!("sending the challenge failed: {e:#}")));
-        }
-        let request: Request = match timeout(MESSAGE_TIMEOUT, receive(&mut stream)).await {
-            Ok(Ok(request)) => request,
-            Ok(Err(e)) => return Ok(unconfirmed(&format!("an unreadable request: {e:#}"))),
-            Err(_) => return Ok(unconfirmed("no request in time")),
-        };
+    async fn serve(
+        &self,
+        stream: &mut TcpStream,
+        challenge: [u8; 32],
+        request: Request,
+        head: &mut Option<Head>,
+    ) -> anyhow::Result<Served> {
         let parsed = hex::decode(&request.public_key)
             .ok()
             .zip(hex::decode(&request.config_sha256).ok().and_then(|config| <[u8; 32]>::try_from(config).ok()));
         let Some((public_key, config_sha256)) = parsed else {
-            return Ok(refuse(&mut stream, anyhow!("the public key or config hash is not hex of its length")).await);
+            return Ok(refuse(stream, anyhow!("the public key or config hash is not hex of its length")).await);
         };
         if request.secrets_only {
-            self.serve_secrets(&mut stream, &request, &challenge, &public_key, config_sha256).await;
+            self.serve_secrets(stream, &request, &challenge, &public_key, config_sha256).await;
             return Ok(Served::Unconfirmed);
         }
         let reads = &request.reads;
@@ -217,13 +181,13 @@ impl<C: CheckpointChain> Predecessor<C> {
         };
         let release = match self.admit(&request, &report_data, config_sha256).await {
             Ok(release) => release,
-            Err(e) => return Ok(refuse(&mut stream, e).await),
+            Err(e) => return Ok(refuse(stream, e).await),
         };
         info!(successor_release = %hex::encode(release.id()), "the vault names the successor's release");
         // A successor whose build cannot read the log's protocol version could not replay what it
         // takes: it is refused here, before the stop, tail or not.
         if let Err(e) = self.ensure_successor_reads(reads).await {
-            return Ok(refuse(&mut stream, e).await);
+            return Ok(refuse(stream, e).await);
         }
         // A following successor gets the entries past its tip, once the tip is on this log and the
         // tail fits its bound, judged before the stop with a segment frame's room for what is
@@ -233,12 +197,10 @@ impl<C: CheckpointChain> Predecessor<C> {
         let after = match &request.tail {
             Some(tip) => match self.tail_after(tip).await {
                 Ok(after) if checks::tail_over(&self.log_dir, after, room) => {
-                    return Ok(
-                        miss(&mut stream, TailMiss::OverBound, "the tail past the tip may be over its bound").await
-                    );
+                    return Ok(miss(stream, TailMiss::OverBound, "the tail past the tip may be over its bound").await);
                 }
                 Ok(after) => Some(after),
-                Err(missed) => return Ok(miss(&mut stream, missed, "the successor's tip is not one it can tail").await),
+                Err(missed) => return Ok(miss(stream, missed, "the successor's tip is not one it can tail").await),
             },
             None => None,
         };
@@ -249,7 +211,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         if after.is_none()
             && let Err(e) = self.transfer_bounds(request.log_tip)
         {
-            return Ok(refuse(&mut stream, e).await);
+            return Ok(refuse(stream, e).await);
         }
         let head = match head {
             Some(head) => head.clone(),
@@ -261,12 +223,12 @@ impl<C: CheckpointChain> Predecessor<C> {
                         "checkpoint signing is withheld, so this release could not sign a final checkpoint: it \
                          goes on sequencing until the checkpoint_withheld alert clears"
                     );
-                    return Ok(refuse(&mut stream, withheld).await);
+                    return Ok(refuse(stream, withheld).await);
                 }
                 // A skip or a promotion since the admission cancels the transfer before the stop: this
                 // release goes on sequencing (#596).
                 if let Err(e) = self.revalidate(request.binding.as_ref(), &release).await {
-                    return Ok(refuse(&mut stream, e).await);
+                    return Ok(refuse(stream, e).await);
                 }
                 self.retain_turns().await;
                 self.retain_version().await;
@@ -275,7 +237,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                     // The checkpoint gate refused the final checkpoint: the node goes on sequencing,
                     // so this release refuses the successor and keeps serving.
                     Err(e) if e.downcast_ref::<crate::sequencer::HandoverRefused>().is_some() => {
-                        return Ok(refuse(&mut stream, anyhow!("{e:#}")).await);
+                        return Ok(refuse(stream, anyhow!("{e:#}")).await);
                     }
                     Err(e) => {
                         error!(
@@ -284,7 +246,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                              so this release's keys no longer open: the successor needs new keys, which the timelock \
                              registers: {e:#}"
                         );
-                        refuse(&mut stream, anyhow!("{e:#}")).await;
+                        refuse(stream, anyhow!("{e:#}")).await;
                     }
                     Ok(_) => {}
                 }
@@ -295,7 +257,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         // (#596).
         let bound = match self.revalidate(request.binding.as_ref(), &release).await {
             Ok(bound) => bound,
-            Err(e) => return Ok(refuse(&mut stream, e).await),
+            Err(e) => return Ok(refuse(stream, e).await),
         };
         // The log past the successor's tip travels with the keys: the listings are bound inside
         // the ciphertext, and each segment's bytes are read, verified, and sent one at a time, so
@@ -309,7 +271,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                 Vec::new()
             }
         };
-        match self.hand_over(&mut stream, &public_key, &report_data, head.clone(), tails, after).await {
+        match self.hand_over(stream, &public_key, &report_data, head.clone(), tails, after).await {
             Ok(()) => {
                 info!(alert_resolved = "handover_unconfirmed", "the successor holds the keys; this release exits");
                 Ok(Served::Confirmed(bound))
@@ -472,6 +434,7 @@ fn unconfirmed(why: &str) -> Served {
 
 mod assignment;
 pub(super) mod checks;
+mod listener;
 mod secrets;
 mod tail;
 

@@ -116,6 +116,7 @@ impl Fixture {
             time: self.time.clone(),
             sealer: Box::new(sealer),
             attestor: Box::new(MockAttestor),
+            collateral: crate::handover::evidence::CollateralCache::new(crate::handover::evidence::PREFETCH_REUSE),
             release: self.release(),
             sample: None,
             start: crate::node::KeyStart { mock_launch_digest: Some(DIGEST), ..Default::default() },

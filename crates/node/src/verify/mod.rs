@@ -26,7 +26,7 @@ pub use fetch::KDS_BASE_URL;
 mod refresh;
 pub use refresh::{Relay, Served};
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 /// Where the quote's certificate chain comes from, and which processor's chain it is.
 pub struct Options<'a> {

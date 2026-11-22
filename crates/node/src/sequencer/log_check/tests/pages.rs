@@ -1,6 +1,7 @@
-//! The pages a held check raises: no member can be asked for it, or this node can take no part in it;
-//! the run loop's withdrawal of a check rotation ends; and an upgrade that keeps asking for the check
-//! its member's earlier release left due.
+//! The pages a held check raises: no member can be asked for it, this node can take no part in it, or
+//! approvals wait for the installation after the last drawn turn; the run loop's withdrawal of a check
+//! the turns' end lifts; and an upgrade that keeps asking for the check its member's earlier release
+//! left due.
 
 use super::*;
 
@@ -53,32 +54,116 @@ fn a_node_that_takes_no_turns_pages_while_the_gate_holds_its_payouts() {
     assert!(named(&mut alerts, "alert", "log_check_unavailable").is_empty(), "the alert paged again");
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval no check covers was signed");
-    // Rotation off lifts the gate and ends the episode.
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
+    // The turns' end lifts the gate and ends the episode.
+    node.end_turns();
     node.seq.refresh_log_check();
     assert_eq!(named(&mut resolved, "alert_resolved", "log_check_unavailable").len(), 1);
     node.release();
     assert_eq!(node.signed.try_recv().expect("#14's gate alone signs it").nonce, 1);
 }
 
+/// After the last drawn turn's own check, with rotation off and no later turn assigned, an approval
+/// waits for the installation that ends the turns: the payouts read says so, and a Warning pages once,
+/// until the installation lifts the gate.
+#[test]
+fn approvals_after_the_last_drawn_turn_wait_for_the_installation_and_page() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let mut node = Node::start("log-check-installation", &[other()]);
+    node.approve(1);
+    let (turn, _) = node.take_turn();
+    let head = node.due.borrow().clone().expect("no check came due").head;
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
+    node.approve(2);
+    node.seq.refresh_log_check();
+    assert!(named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(), "paged with rotation on");
+    node.turn_rotation_off();
+    node.seq.refresh_log_check();
+    assert_eq!(node.check_of(2), Some(CheckWait::Installation { turn }), "the read names a boundary that never comes");
+    let paged = named(&mut alerts, "alert", "log_check_awaiting_installation");
+    assert_eq!(paged.len(), 1, "{paged:?}");
+    assert_eq!(paged[0]["turn"], turn.to_string());
+    node.seq.refresh_log_check();
+    assert!(named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(), "the alert paged again");
+    node.end_turns();
+    node.seq.refresh_log_check();
+    assert_eq!(node.check_of(2), None, "the installation left the approval waiting");
+    let ended = named(&mut resolved, "alert_resolved", "log_check_awaiting_installation");
+    assert_eq!(ended.len(), 1, "{ended:?}");
+}
+
+/// The approvals waiting for the installation are counted at most once a minute of sequenced time, so
+/// the batches between pay for no scan of them.
+#[test]
+fn waiting_approvals_are_counted_at_most_once_a_minute() {
+    let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
+    let mut node = Node::start("log-check-installation-count", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    let head = node.due.borrow().clone().expect("no check came due").head;
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
+    node.approve(2);
+    node.turn_rotation_off();
+    node.seq.refresh_log_check();
+    assert_eq!(named(&mut alerts, "alert", "log_check_awaiting_installation").len(), 1, "no page");
+    // Forgotten as if never raised, the alert pages again only at the next count.
+    node.seq.log_check.awaiting_installation = None;
+    node.seq.refresh_log_check();
+    assert!(
+        named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(),
+        "counted again within the minute"
+    );
+    node.clock.advance(Duration::from_secs(61));
+    node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
+    node.seq.sequence(Command::Tick).unwrap().expect("admitted");
+    node.seq.refresh_log_check();
+    assert_eq!(named(&mut alerts, "alert", "log_check_awaiting_installation").len(), 1, "not counted a minute on");
+}
+
+/// A turn drawn after the one in effect keeps its boundary in the payouts read after rotation is turned
+/// off, and nothing pages.
+#[test]
+fn a_later_drawn_turn_keeps_its_boundary_after_rotation_is_turned_off() {
+    let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
+    let mut node = Node::start("log-check-later-drawn", &[other()]);
+    node.approve(1);
+    let (turn, _) = node.take_turn();
+    let head = node.due.borrow().clone().expect("no check came due").head;
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
+    node.approve(2);
+    let (candidate, admin_key, next) = (other().candidate, other().admin_key, turn + 1);
+    let (reason, block, chain_ref) = (TurnReason::Draw, 15, "0x05:0".to_owned());
+    let assignment = RegistryTurn { turn: next, set: 1, position: 0, reason, candidate, admin_key, block, chain_ref };
+    let events = node.seq.sequence(Command::AssignTurn(assignment)).unwrap().expect("admitted");
+    assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
+    node.turn_rotation_off();
+    node.seq.refresh_log_check();
+    let boundary_ms = engine_core::turns::boundary(next).unwrap();
+    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: next, boundary_ms }));
+    assert!(named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(), "paged with a later turn drawn");
+}
+
 #[tokio::test]
-async fn the_run_loop_withdraws_a_check_once_rotation_turns_off() {
+async fn the_run_loop_withdraws_a_check_once_the_turns_end() {
     let mut node = Node::start("log-check-run-loop", &[other()]);
     node.approve(1);
     node.take_turn();
+    node.turn_rotation_off();
+    node.seq.refresh_log_check();
     let mut due = node.due.clone();
-    assert!(due.borrow_and_update().is_some(), "no check came due");
+    assert!(due.borrow_and_update().is_some(), "no check came due, or it was withdrawn with rotation off");
     let Node { seq, signed: _signed, _queued: _queued_work, .. } = node;
     let (tx, rx) = mpsc::channel(4);
     let run = tokio::spawn(seq.run(rx));
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
+    let installation = engine_core::election::RegistryInstallation {
+        candidate: AccountId([0xc9; 20]),
+        admin_key: AccountId([0xd9; 20]),
+        block: 16,
+        chain_ref: "0x06:0".into(),
+    };
     let (reply, events) = oneshot::channel();
-    tx.send(Request::Submit { cmd: off, reply: Some(reply) }).await.unwrap();
+    tx.send(Request::Submit { cmd: Command::InstallOperator(installation), reply: Some(reply) }).await.unwrap();
     let events = events.await.unwrap();
-    assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
+    assert!(events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })), "{events:?}");
     // No checkpoint follows: the batch itself withdraws the check.
     wait_for("the asker to see the check withdrawn", async {
         while due.borrow_and_update().is_some() {

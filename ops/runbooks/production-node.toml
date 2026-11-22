@@ -101,7 +101,9 @@ dir = "/data/keys"
 listen = "0.0.0.0:9472"
 
 [tee.sealing.handover]
-# Where a successor release asks this one for the keys. Reachable by the successor, not the public.
+# Where another member's release asks this one for the keys, and members ask for statuses and log
+# checks. Reachable from every member's trading server, so forward it with each peer's own address:
+# its limits count connections per address.
 listen = "0.0.0.0:9471"
 # Archive mirrors of the incumbent's log, for when this node takes the keys over an election.
 mirrors = ["https://mirror-a.example.com", "https://mirror-b.example.com"] # REPLACE

@@ -116,8 +116,10 @@ impl Enclave {
         let listen = "127.0.0.1:0".parse().unwrap();
         let named = cfg.named_secrets().unwrap();
         let (authority, taking) = watch::channel(Authority::Configured(cfg.operator().unwrap().address));
-        let listener =
-            Listener::bind(&cfg, listen, platform, Box::new(MockAttestor), store.clone(), named, taking).await.unwrap();
+        let listener = Listener::bind(&cfg, listen, platform, Box::new(MockAttestor), store.clone(), named, taking)
+            .await
+            .unwrap()
+            .loopback();
         if let Some(version) = running {
             listener.started(version);
         }

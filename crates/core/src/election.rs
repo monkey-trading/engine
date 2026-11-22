@@ -392,7 +392,7 @@ impl Engine {
     /// Whether elections, or from `V51` daily turns, move the operator key, which refuses
     /// `RotateOperator`: while rotation is on, and while drawn turns still name the operator after it
     /// turns off, as the registry's `rotationEnabled()` says, until an installation ends them.
-    pub(crate) fn rotation_by_election(&self) -> bool {
+    pub fn rotation_by_election(&self) -> bool {
         self.operator_election.rotation_enabled || self.turns_run()
     }
 

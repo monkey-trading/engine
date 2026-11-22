@@ -375,7 +375,10 @@ A real enclave accepts a bundle only under the signature of the operator key in 
 - once the trading server runs, the key that the log records;
 - while rotation is on and an election that governs the key is in force, either handing over or
   with its key recorded in the log, only the key that its own configuration names. An elected key
-  has no business in another operator's enclave.
+  has no business in another operator's enclave;
+- under daily turns, until an installation ends them, whether or not rotation is still on, only the
+  key that its own configuration names. A turn's admin key has no business in another member's
+  enclave.
 
 A rotated operator's old key therefore stays the one that the enclave accepts at a restart, until a
 release's configuration names the new key. An upgrade's new release accepts a moved bundle only

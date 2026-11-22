@@ -193,7 +193,7 @@ impl Leg {
         let payout = self.payout(node, nonce).await;
         assert_eq!(payout["withdrawal"], Value::Null, "signed before the boundary's check: {payout}");
         let boundary = engine_core::turns::boundary(turn).unwrap();
-        assert_eq!(payout["check"], json!({ "turn": turn, "boundary_ms": boundary }), "{payout}");
+        assert_eq!(payout["check"], json!({ "waits": "boundary", "turn": turn, "boundary_ms": boundary }), "{payout}");
     }
 
     /// Requires approval `nonce` still unsigned on `node`.
