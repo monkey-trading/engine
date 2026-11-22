@@ -411,7 +411,7 @@ async fn a_connection_that_quoted_and_then_goes_silent_after_the_open_is_replace
 // ── Helpers ──
 
 /// The dev genesis's crypto markets and `markets`.
-fn genesis(markets: Vec<MarketSpec>) -> Genesis {
+pub(super) fn genesis(markets: Vec<MarketSpec>) -> Genesis {
     let mut genesis = dev_config().genesis;
     genesis.markets.retain(|market| [1, 2].contains(&market.id));
     genesis.close_spread_ceilings.retain(|ceiling| [1, 2].contains(&ceiling.market));

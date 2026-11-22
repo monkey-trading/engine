@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Instant, interval, sleep, timeout, timeout_at};
 
 use crate::admin::sign;
-use crate::clock::now_ms;
+use crate::clock::{Clock, SystemClock, now_ms};
 use crate::config::{Genesis, Venue};
 use crate::feeds::tests::fake::{
     WAIT, accept, bitstamp_book, coinbase_levels, fast, kraken_book, listen, next_alert, send, spawn_feed_into, stream,
@@ -31,7 +31,7 @@ use crate::feeds::venue::Timing;
 use crate::log::Manifest;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, StreamBody, StreamMsg};
 use crate::tee::EnclaveKey;
-use crate::test_support::{Alert, capture_alerts, dev_config, scratch_dir, sequencer_config, trusted_now};
+use crate::test_support::{Alert, capture_alerts, dev_config, sample_around, scratch_dir, sequencer_config};
 use crate::trusted_time::Sample;
 
 /// Each fake venue's book: BTC-USD 81250 / 81251 and ETH-USD 2377 / 2377.1.
@@ -157,22 +157,29 @@ impl Node {
     /// `boot`, activating `version`: tests of listing and quoting paths that predate the rules
     /// `version` adds run under those rules.
     pub(super) async fn boot_at(name: &str, genesis: &Genesis, version: ProtocolVersion) -> Self {
-        Self::boot_with(name, genesis, version, None).await
+        Self::boot_with(name, genesis, version, None, Arc::new(SystemClock)).await
     }
 
     /// `boot`, with a drift bound of `max_drift` and trusted time at `sample`: how a test runs the
     /// host clock away from true time.
     pub(super) async fn boot_lagged(name: &str, genesis: &Genesis, max_drift: Duration, sample: Sample) -> Self {
-        Self::boot_with(name, genesis, ProtocolVersion::LATEST, Some((max_drift, sample))).await
+        Self::boot_with(name, genesis, ProtocolVersion::LATEST, Some((max_drift, sample)), Arc::new(SystemClock)).await
     }
 
-    /// Boots a fresh log at `version`, with trusted time on the system clock unless `lagged` gives a
+    /// `boot`, with the sequencer stamping on `clock` and trusted time around it: how a test moves
+    /// time between two commands without waiting.
+    pub(super) async fn boot_clocked(name: &str, genesis: &Genesis, clock: Arc<dyn Clock>) -> Self {
+        Self::boot_with(name, genesis, ProtocolVersion::LATEST, None, clock).await
+    }
+
+    /// Boots a fresh log at `version` on `clock`, with trusted time around it unless `lagged` gives a
     /// drift bound and first sample.
     async fn boot_with(
         name: &str,
         genesis: &Genesis,
         version: ProtocolVersion,
         lagged: Option<(Duration, Sample)>,
+        clock: Arc<dyn Clock>,
     ) -> Self {
         let dir = scratch_dir(&format!("feeds-{name}"));
         let (stream_tx, stream) = broadcast::channel(65_536);
@@ -187,10 +194,14 @@ impl Node {
             checkpoints: None,
             ..sequencer_config(&dir, manifest)
         };
-        let sample = lagged.map_or_else(trusted_now, |(max_drift, sample)| {
-            seq_cfg.max_drift = max_drift;
-            sample
-        });
+        let sample = lagged.map_or_else(
+            || sample_around(&*clock),
+            |(max_drift, sample)| {
+                seq_cfg.max_drift = max_drift;
+                sample
+            },
+        );
+        seq_cfg.clock = clock;
         let mut seq = Sequencer::recover(seq_cfg, Arc::new(EnclaveKey::generate()), stream_tx, withdrawals_tx)
             .expect("fresh sequencer");
         // As the node runs it: a batch's fsync is off the thread that stamps the next price.
@@ -201,7 +212,7 @@ impl Node {
             seq.activate_protocol_at(version).expect("protocol activation");
         }
         seq.genesis(genesis).expect("genesis");
-        // Trusted time admits stamps on the system clock, so the queued genesis goes in now.
+        // Trusted time admits stamps on the clock, so the queued genesis goes in now.
         seq.trust(sample).expect("genesis");
         let (tx, rx) = mpsc::channel(65_536);
         tokio::spawn(seq.run(rx));
@@ -246,9 +257,10 @@ impl Node {
     /// Credits the test account.
     pub(super) async fn deposit(&self) {
         let declaration = self.access_command(|engine| crate::test_support::access::declaration(engine, 1)).await;
+        // Its stamp may cross a market's open or close since the last command, whose events come first.
         assert!(
-            matches!(declaration.as_slice(), [Event::EligibilityAttested { .. }]),
-            "the declaration was refused: {declaration:?}"
+            declaration.iter().any(|event| matches!(event, Event::EligibilityAttested { .. })),
+            "the declaration was not attested: {declaration:?}"
         );
         let events = self
             .access_command(|engine| {
