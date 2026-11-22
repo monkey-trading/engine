@@ -123,8 +123,8 @@ fn sysfs_device(path: &Path) -> Option<std::path::PathBuf> {
     std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok()
 }
 
-/// The major and minor numbers of Linux's device number `device`: the major in its bits 8 to 19 and 32
-/// to 63, the minor in bits 0 to 7 and 20 to 31.
+/// The major and minor numbers of Linux's device number `device`: the major in its bits 8 to 19 and 44
+/// to 63, the minor in bits 0 to 7 and 20 to 43.
 fn major_minor(device: u64) -> (u64, u64) {
     let major = ((device >> 8) & 0xfff) | ((device >> 32) & 0xffff_f000);
     let minor = (device & 0xff) | ((device >> 12) & 0xffff_ff00);
@@ -204,9 +204,11 @@ mod tests {
             assert_eq!(major_minor(device), numbers, "{device:#x}");
         }
         #[cfg(target_os = "linux")]
-        for (major, minor) in [(8, 1), (259, 0), (8, 300), (0x1004, 0), (0xf_ffff, 0xffff_ffff)] {
-            let device = nix::libc::makedev(major, minor);
-            assert_eq!(major_minor(device), (u64::from(major), u64::from(minor)), "libc's {major}:{minor}");
+        {
+            for (major, minor) in [(8, 1), (259, 0), (8, 300), (0x1004, 0), (0xf_ffff, 0xffff_ffff)] {
+                let device = nix::libc::makedev(major, minor);
+                assert_eq!(major_minor(device), (u64::from(major), u64::from(minor)), "libc's {major}:{minor}");
+            }
         }
     }
 
@@ -257,7 +259,7 @@ mod tests {
         }
         let listed = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).expect("sysfs lists it");
         assert_eq!(sysfs_device(dir), Some(listed.clone()), "the device under {dir:?}");
-        let disk = if listed.join("partition").exists() { listed.parent().expect("a disk") } else { &listed };
+        let disk = if listed.join("partition").exists() { listed.parent().expect("a disk") } else { listed.as_path() };
         let name = disk.file_name().expect("a name").to_string_lossy();
         match backing_disks(dir) {
             Some(disks) => assert!(!disks.is_empty(), "the disks under {dir:?}"),

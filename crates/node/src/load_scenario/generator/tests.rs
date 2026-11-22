@@ -1,5 +1,5 @@
 use super::*;
-use crate::load_scenario::storage::Block;
+use crate::load_scenario::storage::{Block, MARGIN};
 
 #[test]
 fn a_trader_gets_only_what_it_can_act_on_and_no_more_than_its_rate() {
@@ -129,16 +129,20 @@ fn a_block_that_ends_while_a_windows_samples_are_taken_counts_in_neither_window(
     let probe = Arc::new(Probe::idle(since));
     let client = Recorder::new(Samples { order_to_fill_us: vec![9_000], ..Samples::default() }.into());
     let subscriber = Recorder::new(Samples { stream_lag_ms: vec![12], ..Samples::default() }.into());
-    // The subscriber's recorder is held 300 ms, and a write of 240 ms ends 50 ms in, so the samples are
-    // taken well over `MARGIN` after it.
+    // Holding the subscriber's recorder, a write ends once the client's has been taken, and the samples
+    // are done over `MARGIN` later.
     let (locked, holding) = std::sync::mpsc::channel();
-    let (held, writing) = (subscriber.clone(), probe.clone());
+    let (taken, held, writing) = (client.clone(), subscriber.clone(), probe.clone());
     let holder = std::thread::spawn(move || {
         let _held = held.lock().expect("the subscriber's recorder");
         locked.send(()).expect("the window waits");
-        std::thread::sleep(Duration::from_millis(50));
+        let waiting = Instant::now();
+        while !taken.lock().expect("the client's recorder").order_to_fill_us.is_empty() {
+            assert!(waiting.elapsed() < Duration::from_secs(10), "the client's recorder was never taken");
+            std::thread::yield_now();
+        }
         writing.record(Block { blocked: Duration::from_millis(240), ..Block::default() }, Instant::now());
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(MARGIN + MARGIN / 2);
     });
     holding.recv().expect("the recorder held");
     let (samples, storage) =

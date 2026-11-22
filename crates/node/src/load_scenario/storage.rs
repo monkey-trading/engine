@@ -26,6 +26,7 @@
 
 use std::collections::BTreeSet;
 use std::fs::File;
+use std::io::ErrorKind;
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +49,7 @@ const STALLED: Duration = Duration::from_millis(50);
 /// How long before the generator begins taking a window's samples a block must have ended to count in
 /// it: the orders and frames a stall held leave once it ends, and reach the generator within a few
 /// milliseconds.
-const MARGIN: Duration = Duration::from_millis(100);
+pub(super) const MARGIN: Duration = Duration::from_millis(100);
 /// The budgets a stall of the storage holds: an order's fill and a stream frame leave only once the
 /// log's sync is done.
 const HELD_BY_THE_SYNC: [&str; 2] = ["order_to_fill_us", "stream_lag_ms"];
@@ -101,15 +102,21 @@ impl Probe {
     /// whose scheduler counts no thread's time, that names no disk under the file or whose filesystem
     /// takes no direct writes.
     /// Error cases:
-    /// - the thread cannot start
+    /// - the file cannot be created or first written but for want of direct writes, or the thread
+    ///   cannot start
     pub(super) fn start(dir: &Path) -> std::io::Result<Option<Self>> {
         let path = dir.join("storage-probe");
-        // A page at the alignment a direct write needs; the heap block stays put as the buffer moves.
-        let mut buffer = vec![0u8; 2 * PAGE];
+        // A page at the alignment a direct write needs, the heap block staying put as the buffer moves,
+        // and of bytes no layer below could take for a hole.
+        let mut buffer = vec![0xa5u8; 2 * PAGE];
         let at = buffer.as_ptr().align_offset(PAGE);
         // The first write gives the page its place on the disk, so each later one only overwrites it.
-        let written = open_direct(&path).and_then(|file| file.write_all_at(&buffer[at..at + PAGE], 0).map(|()| file));
-        let Ok(file) = written else { return Ok(None) };
+        let file = match open_direct(&path).and_then(|file| file.write_all_at(&buffer[at..at + PAGE], 0).map(|()| file))
+        {
+            Ok(file) => file,
+            Err(error) if matches!(error.kind(), ErrorKind::InvalidInput | ErrorKind::Unsupported) => return Ok(None),
+            Err(error) => return Err(error),
+        };
         let Some(disks) = backing_disks(&path).filter(|_| scheduled_ns().is_some()) else { return Ok(None) };
         let shared = Arc::new(Shared::new(disks, Instant::now()));
         let probe = shared.clone();
@@ -130,6 +137,7 @@ impl Probe {
                     return;
                 }
                 probe.record(Block { blocked: blocked(took, scheduled), host }, ended);
+                // Each write carries bytes the last did not, so no layer below can pass it by.
                 page[0] = page[0].wrapping_add(1);
                 std::thread::sleep(PERIOD);
             }
@@ -175,8 +183,8 @@ impl Shared {
     }
 }
 
-/// `path` opened for direct, synchronous writes, each done once the device has it; refused where the
-/// filesystem takes none, as one in memory.
+/// `path` opened for direct, synchronous writes, each done once the device has it; refused as invalid
+/// where the filesystem takes none.
 #[cfg(target_os = "linux")]
 fn open_direct(path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -190,7 +198,7 @@ fn open_direct(path: &Path) -> std::io::Result<File> {
 /// Direct writes are Linux's.
 #[cfg(not(target_os = "linux"))]
 fn open_direct(_path: &Path) -> std::io::Result<File> {
-    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "direct writes are Linux's"))
+    Err(std::io::Error::new(ErrorKind::Unsupported, "direct writes are Linux's"))
 }
 
 #[cfg(test)]
