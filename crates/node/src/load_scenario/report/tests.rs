@@ -57,11 +57,12 @@ fn a_window_prints_its_batch_tail_busy_share_and_host_waits() {
     let earlier = Snapshot::take(&metrics);
     metrics.batch_seconds.observe(0.25);
     let window = Snapshot::take(&metrics).since(&earlier);
-    let window = Delta { busy_share: 0.5, host: Waited { io_ms: Some(12.0), cpu_ms: None }, ..window };
+    let window = Delta { busy_share: 0.5, host: Waited { io_ms: Some(12.0), ..Waited::default() }, ..window };
     // Each quantile is interpolated within the bucket from 0.2048 s to 0.4096 s, as Prometheus does.
     assert_eq!(
         window_figures(&window),
-        "batch_p99_us=407552 batch_p999_us=409395 busy_share=0.500 host_io_wait_ms=12 host_cpu_wait_ms=n/a"
+        "batch_p99_us=407552 batch_p999_us=409395 busy_share=0.500 host_io_wait_ms=12 host_cpu_wait_ms=n/a \
+         host_disk_io=n/a"
     );
 }
 
@@ -87,10 +88,16 @@ fn a_windows_batch_p999_names_one_sync_stall_its_p99_misses() {
 
 #[test]
 fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
-    let earlier =
-        Snapshot { waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000) }, ..Snapshot::take(&Metrics::new()) };
-    let later = Snapshot { waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500) }, ..earlier.clone() };
-    assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5) });
+    let earlier = Snapshot {
+        waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000), disk_io: Some((10, 4_096)) },
+        ..Snapshot::take(&Metrics::new())
+    };
+    let later = Snapshot {
+        waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500), disk_io: Some((15, 8_192)) },
+        ..earlier.clone()
+    };
+    let waited = Waited { io_ms: Some(50.0), cpu_ms: Some(0.5), disk_io: Some((5, 4_096)) };
+    assert_eq!(later.since(&earlier).host, waited);
 }
 
 #[test]

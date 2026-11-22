@@ -10,9 +10,11 @@
 # Each leg prints order-to-fill and price-to-stamp at p50, p99 and p999, the sequencer's
 # batch time, stream lag, the sequencer's busy share, and the process's CPU and resident memory,
 # against the launch bar, and, as each window does, how long the host's tasks waited on storage and for a
-# CPU where the host reports it; the run's log then replays to its roots. It fails if either measured leg
-# breaks the bar, with a loaded runner's tolerance, or did not measure what it claims: a request
-# refused, rejected or unanswered, a subscriber that took no frame, lost its connection or had not
+# CPU and the I/O its disks completed, where the host reports them; each window also prints a storage
+# probe's longest block and whether a stall of the runner's own storage excuses it. The run's log then
+# replays to its roots. It fails if either measured leg breaks the bar, with a loaded runner's
+# tolerance, also in the windows such a stall does not excuse, or did not measure what it claims: a
+# request refused, rejected or unanswered, a subscriber that took no frame, lost its connection or had not
 # taken the leg's last commands, or no fill or stamped price. The 5 ms order-to-fill p50 bar is held on
 # CI's Linux runners; on macOS each batch's sync is a full flush of about 3.5 ms, which puts a Mac's p50
 # near the bar.

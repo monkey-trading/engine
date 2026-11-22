@@ -1,7 +1,7 @@
 //! The node's side of each leg's figures: its metrics read before and after, as an operator's
 //! Prometheus reads them, the CPU and resident memory of the process, which holds the node, the venue
-//! stand-ins and the screening source, the host's storage and CPU waits, and the leg judged against
-//! #904's launch bar together with what the generator saw.
+//! stand-ins and the screening source, the host's storage and CPU waits and its disks' I/O, and the
+//! leg judged against #904's launch bar together with what the generator saw.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
