@@ -6,7 +6,7 @@
 //! cache and the commands past it.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
@@ -40,6 +40,9 @@ const INSPECT: Duration = Duration::from_secs(5);
 pub(super) struct Durable {
     pub cfg: NodeConfig,
     pub key: Arc<EnclaveKey>,
+    /// The newest checkpoint reported final, which a chain that keeps up would give a restart as the vault's
+    /// finalized one: the parent a recovery reads its log under.
+    pub finalized: Arc<Mutex<CheckpointParent>>,
 }
 
 impl Durable {
@@ -48,7 +51,7 @@ impl Durable {
     pub(super) fn new(run: &Path, interval: Duration) -> Self {
         let key = Arc::new(EnclaveKey::generate());
         let cfg = node_config(run, interval, (AccountId(key.address()), ReplayWorkers::available()));
-        Durable { cfg, key }
+        Durable { cfg, key, finalized: Arc::default() }
     }
 
     /// The sequencer's config for a node on `dir`, as `recovery_scale`'s node has it, and the queue
@@ -154,13 +157,22 @@ pub(super) fn open(
     withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
 ) -> anyhow::Result<(Sequencer, Pending)> {
     let signer = AccountId(durable.key.address());
-    // A gated log's first read, as `Sequencer::recover` reads one: from genesis, with no checkpoint.
+    // A fresh log's first read is from genesis, with no checkpoint; a recovery's is under the last one
+    // reported final, as a start reads it under the vault's, and its sequencer is gated on it.
     let (parent, read_stats) = match recovering {
-        true => (None, Some(stats.clone())),
-        false => (Some(CheckpointParent::default()), None),
+        true => (*durable.finalized.lock().unwrap_or_else(PoisonError::into_inner), Some(stats.clone())),
+        false => (CheckpointParent::default(), None),
     };
-    let (log, plan) =
-        Sequencer::read_paired_log(&durable.cfg, Some(signer), parent, Default::default(), read_stats, None, |_| {})?;
+    cfg.checkpoint_parent = parent;
+    let (log, plan) = Sequencer::read_paired_log(
+        &durable.cfg,
+        Some(signer),
+        Some(parent),
+        Default::default(),
+        read_stats,
+        None,
+        |_| {},
+    )?;
     ensure!(
         log.snapshot_sequence().is_some() == recovering,
         "a recovery starts from a cache, and a fresh run from none"
@@ -187,21 +199,46 @@ fn shut_down(ended: anyhow::Result<()>) -> anyhow::Result<()> {
 /// Reports each checkpoint final to the sequencer as it is written, and takes the work of those it writes
 /// while it drains, until the sequencer drops its queue: a receiver gone sooner would raise
 /// `checkpoint_post_failed` at the drain's final checkpoint.
-pub(super) fn report_final(mut reports: Reports, tx: mpsc::WeakSender<Request>) {
+pub(super) fn report_final(
+    mut reports: Reports,
+    tx: mpsc::WeakSender<Request>,
+    finalized: Arc<Mutex<CheckpointParent>>,
+) {
+    // A restarted node's gate starts with its collateral unvalidated and withholds every checkpoint until
+    // custody says it is not: the check a node's poster makes at its start, which the parent's passes.
+    let revalidation = revalidation(&finalized.lock().unwrap_or_else(PoisonError::into_inner));
     tokio::spawn(async move {
-        while let Some(work) = reports.0.recv().await {
-            // Once the node's senders are gone the drain's own checkpoint arrives: it is taken, not reported.
-            let Some(tx) = tx.upgrade() else { continue };
-            let status = Request::CheckpointStatus {
-                posted: Some(work.checkpoint.seq),
-                latest: None,
-                health: Some(Health::Healthy),
-                lifecycle: None,
-            };
-            // A sequencer that has stopped answers nothing; the loop ends when its queue does.
+        if let (Some(status), Some(tx)) = (revalidation, tx.upgrade()) {
             let _ = tx.send(status).await;
         }
+        while let Some(work) = reports.0.recv().await {
+            note_final(&finalized, work.checkpoint.seq, &work.checkpoint.root);
+            // Once the node's senders are gone the drain's own checkpoint arrives: it is taken, not reported.
+            let Some(tx) = tx.upgrade() else { continue };
+            // A sequencer that has stopped answers nothing; the loop ends when its queue does.
+            let _ = tx.send(final_status(work.checkpoint.seq)).await;
+        }
     });
+}
+
+/// What a restart reports before anything else: its parent final and the collateral healthy, when it has one.
+fn revalidation(parent: &CheckpointParent) -> Option<Request> {
+    parent.has_checkpoint.then(|| final_status(parent.seq))
+}
+
+/// The report that the checkpoint at `seq` is final and custody's collateral healthy.
+fn final_status(seq: u64) -> Request {
+    Request::CheckpointStatus { posted: Some(seq), latest: None, health: Some(Health::Healthy), lifecycle: None }
+}
+
+/// Records the checkpoint at `seq` with state root `root` as the newest final, if it is newer than the one
+/// held and its root parses.
+fn note_final(finalized: &Mutex<CheckpointParent>, seq: u64, root: &str) {
+    let Ok(root) = root.parse() else { return };
+    let mut held = finalized.lock().unwrap_or_else(PoisonError::into_inner);
+    if !held.has_checkpoint || seq > held.seq {
+        *held = CheckpointParent { has_checkpoint: true, seq, root };
+    }
 }
 
 #[cfg(test)]
@@ -218,5 +255,36 @@ mod tests {
         assert!(shut_down(closed).is_ok());
         let failed = Err::<(), _>(anyhow!("the index could not be written")).context("indexing");
         assert!(shut_down(failed).is_err());
+    }
+
+    #[test]
+    fn a_restart_revalidates_under_its_parent_and_a_fresh_run_has_none_to_report() {
+        assert!(revalidation(&CheckpointParent::default()).is_none());
+        let parent = CheckpointParent { has_checkpoint: true, seq: 5, root: Default::default() };
+        let Some(Request::CheckpointStatus { posted, health, .. }) = revalidation(&parent) else { panic!("a report") };
+        assert_eq!((posted, health), (Some(5), Some(Health::Healthy)));
+    }
+
+    #[test]
+    fn a_status_names_its_checkpoint_final_and_the_collateral_healthy() {
+        let Request::CheckpointStatus { posted, health, .. } = final_status(7) else { panic!("a status") };
+        assert_eq!((posted, health), (Some(7), Some(Health::Healthy)));
+    }
+
+    #[test]
+    fn the_newest_final_checkpoint_is_the_recoverys_parent_and_never_goes_back() {
+        let root = |byte: u8| format!("0x{}", format!("{byte:02x}").repeat(32));
+        let finalized = Mutex::new(CheckpointParent::default());
+        note_final(&finalized, 1_000, &root(1));
+        note_final(&finalized, 2_000, &root(2));
+        note_final(&finalized, 1_500, &root(3));
+        note_final(&finalized, 3_000, "not a root");
+        let held = *finalized.lock().unwrap();
+        assert_eq!(
+            (held.has_checkpoint, held.seq),
+            (true, 2_000),
+            "a later one replaces, an older or unreadable one not"
+        );
+        assert_eq!(held.root.to_string(), root(2));
     }
 }

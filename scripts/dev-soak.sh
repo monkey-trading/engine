@@ -26,9 +26,8 @@
 #   link, a quiet product, both venues down, and trusted time down;
 # (SOAK_SHORT=1, which CI sets, is for a run that tests the harness: its events come too close together
 # to leave a quiet window and its intervals are too short for memory to settle, so neither fails one.)
-# SOAK_KNOWN_ALERTS=<names> lists alerts the run is told to expect whatever it does (CI's lists
-# snapshot_write_failed, #1114): an alert outside it fails an interval unless an event that explains its name
-# was under way.
+# SOAK_KNOWN_ALERTS=<names> lists alerts the run is told to expect whatever it does, each a known issue: an
+# alert outside it fails an interval unless an event that explains its name was under way.
 # - every SOAK_RESTART_HOURS (2, 0 for none) the node stops and starts again from its newest cache, on
 #   the same API address, the generator's clients reconnecting.
 # After each interval it prints the load scenario's figures, then a `SOAK` report: the windows judged

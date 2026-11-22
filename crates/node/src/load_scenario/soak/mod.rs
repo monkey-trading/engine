@@ -63,7 +63,7 @@ use crate::load_scenario::soak::hours::{
     Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure, workload_gaps,
 };
 use crate::load_scenario::soak::support::{Reaper, memory_mib, newest_cache, rebind};
-use crate::load_scenario::soak::timeline::{FEED_ALERTS, Timeline, WINDOW_SETTLE, restart_alerts, start_alerts};
+use crate::load_scenario::soak::timeline::{Timeline, WINDOW_SETTLE, restart_alerts, start_alerts, stop_alerts};
 use crate::load_scenario::venues::{self, Venues};
 use crate::load_scenario::{
     ACCOUNTS, ACCOUNTS_PER_CLIENT, Generator, LINE_WITHIN, QUOTING_PER_CENT, book_mix, env, moves, spawn_generator,
@@ -477,7 +477,7 @@ impl Soak {
 
     /// Stops the node, and returns its signer and log, to replay.
     async fn finish(&mut self) -> (AccountId, PathBuf) {
-        let place = self.timeline.begin("stop", &FEED_ALERTS);
+        let place = self.timeline.begin("stop", &stop_alerts());
         let node = self.node.take().expect("a node");
         let (signer, log_dir) = (node.signer, node.log_dir.clone());
         node.stop(false).await.expect("the node drains");

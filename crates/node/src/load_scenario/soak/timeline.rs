@@ -22,6 +22,13 @@ pub(super) fn start_alerts() -> Vec<&'static str> {
     [&FEED_ALERTS[..], &["house_deficit", "house_loss_stress", "prices_rejected"]].concat()
 }
 
+/// The alerts the run's final stop may raise: a feed's, and the history owner's `snapshot_write_failed` when the stop
+/// cuts it while it waits for the shutdown capture's encoding. The final stop does not wait for that capture, since a
+/// slow owner would hold the run (#1114) and nothing starts after the stop; the log's replay is its check.
+pub(super) fn stop_alerts() -> Vec<&'static str> {
+    [&FEED_ALERTS[..], &["snapshot_write_failed"]].concat()
+}
+
 /// The alerts a restart may raise: a feed reconnecting, the stand-ins' contracts again, and the house's
 /// loss, which a new process pages again while it stands.
 pub(super) fn restart_alerts() -> Vec<&'static str> {
@@ -108,6 +115,14 @@ mod tests {
         assert_eq!(timeline.excuse(later, later, ALERT_SETTLE), Some("restart"));
         timeline.end(place);
         assert_eq!(timeline.excuse(later + ALERT_SETTLE * 2, later + ALERT_SETTLE * 3, ALERT_SETTLE), None);
+    }
+
+    #[test]
+    fn the_final_stop_explains_a_cut_capture_and_the_start_and_a_restart_do_not() {
+        assert!(stop_alerts().contains(&"snapshot_write_failed"));
+        assert!(!start_alerts().contains(&"snapshot_write_failed"));
+        assert!(!restart_alerts().contains(&"snapshot_write_failed"), "a drained restart waits for its capture");
+        assert!(stop_alerts().contains(&"market_no_price"), "a stop still explains the feed's alerts");
     }
 
     #[test]

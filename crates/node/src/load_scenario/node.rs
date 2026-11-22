@@ -162,7 +162,7 @@ impl Node {
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let sequencer = Worker::start(seq.run(rx), None).expect("the sequencer's thread");
         if let Some(reports) = reports {
-            durable::report_final(reports, tx.downgrade());
+            durable::report_final(reports, tx.downgrade(), durable.expect("a durable node").finalized.clone());
         }
 
         let time_out = Arc::new(AtomicBool::new(false));
