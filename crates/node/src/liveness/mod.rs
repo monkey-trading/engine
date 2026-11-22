@@ -45,9 +45,9 @@ pub(crate) const MAX_SLOW_PPM: u64 = 500;
 pub(crate) const HEAD_ROUND_TRIP: Duration = Duration::from_secs(30);
 /// The domain a member's status digest starts with.
 const STATUS_DOMAIN: &[u8] = b"engine.liveness.status.v1";
-/// The fewest chain reads the operator's rule and a liveness caller make per heartbeat interval. A
-/// rule's read leaves its fence `heartbeatMisses - 1` intervals less `DELTA` past its block while heads
-/// land, and a caller witnesses each slot with this many chances.
+/// The chain reads the operator's rule and a liveness caller make per heartbeat interval. A rule's read
+/// leaves its fence `heartbeatMisses - 1` intervals less `DELTA` past its block while heads land, and a
+/// caller witnesses each slot with this many chances.
 const READS_PER_INTERVAL: u32 = 4;
 
 /// What sequencing, signed answers and heads wait on while the liveness rule applies. Open by
@@ -354,12 +354,12 @@ impl Status {
     }
 }
 
-/// How long the operator's rule or a liveness caller waits between chain reads: the `configured` read
-/// interval, or a `READS_PER_INTERVAL`th of the heartbeat `interval` in seconds if that is shorter.
+/// How long the operator's rule or a liveness caller waits between chain reads: a `READS_PER_INTERVAL`th
+/// of the heartbeat `interval` in seconds, or the `configured` read interval while no interval is known.
 pub(crate) fn read_every(configured: Duration, interval: u64) -> Duration {
     match Duration::from_secs(interval) / READS_PER_INTERVAL {
         part if part.is_zero() => configured,
-        part => configured.min(part),
+        part => part,
     }
 }
 

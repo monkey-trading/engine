@@ -270,7 +270,8 @@ async fn a_fix_waits_on_no_liveness_read() {
 }
 
 /// The member's liveness caller and its fixer send from one account: with each send taking a second and
-/// both sending at every poll, no two sends are ever in flight at once, and both go out.
+/// both sending at every read, the caller's a quarter of the fake chain's 60 s interval apart, no two sends
+/// are ever in flight at once, and both go out.
 #[tokio::test(start_paused = true)]
 async fn the_caller_and_the_fixer_send_one_call_at_a_time() {
     let (state, fix) = pending(ChainState::default());
@@ -280,7 +281,7 @@ async fn the_caller_and_the_fixer_send_one_call_at_a_time() {
         tokio::spawn(caller(chain.clone(), slow.clone(), sends.clone()).run()),
         tokio::spawn(fixer(chain, slow.clone(), sends).run()),
     ];
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    tokio::time::sleep(Duration::from_secs(20)).await;
     tasks.iter().for_each(tokio::task::JoinHandle::abort);
     assert_eq!(slow.most.load(Ordering::SeqCst), 1, "never two sends in flight");
     assert!(slow.sent.count(&fix) >= 2, "{:?}", slow.sent.calls());
@@ -407,6 +408,20 @@ async fn the_caller_reads_four_times_a_heartbeat_interval_however_long_its_read_
     let sent = Sent::default();
     let mut caller = caller(chain, sent.clone(), Arc::default());
     caller.poll = Duration::from_secs(60);
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(Duration::from_millis(10_500)).await;
+    task.abort();
+    assert_eq!(sent.polls(), 11, "reads at 0 s to 10 s");
+}
+
+/// The share of the interval holds however short the read interval: a 4 s heartbeat interval reads every
+/// second, though the read interval is a tenth of that.
+#[tokio::test(start_paused = true)]
+async fn the_caller_reads_four_times_a_heartbeat_interval_however_short_its_read_interval() {
+    let chain = Arc::new(FakeChain::new(ChainState { interval: 4, ..Default::default() }));
+    let sent = Sent::default();
+    let mut caller = caller(chain, sent.clone(), Arc::default());
+    caller.poll = Duration::from_millis(100);
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(Duration::from_millis(10_500)).await;
     task.abort();

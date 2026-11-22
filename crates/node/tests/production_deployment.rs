@@ -1,6 +1,7 @@
 //! The launch deployment's inputs, `ops/runbooks/production-deployment.toml`, hold the owner's decision
-//! of 2026-11-14 on #436 for the contracts' constructors and the operator's two initialisations, the
-//! contracts would accept them, and the deploy runbook's commands carry them.
+//! of 2026-11-14 on #436 for the contracts' constructors and the operator's two initialisations, and on
+//! #1175 for the operator schedule's and the parameter vote's, the contracts would accept them, and the
+//! deploy runbook's commands carry them.
 
 use std::fs;
 
@@ -20,6 +21,8 @@ struct Inputs {
     vault: Vault,
     staking: Staking,
     init_staking: InitStaking,
+    schedule: Schedule,
+    parameter_vote: ParameterVote,
 }
 
 #[derive(Deserialize)]
@@ -50,7 +53,54 @@ struct InitStaking {
     liquidity_floor: Fixed,
 }
 
+/// `OperatorSchedule`'s constructor values.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Schedule {
+    switch_budget: u64,
+    block_millis: u64,
+    liveness: Liveness,
+    liveness_minimums: Liveness,
+    liveness_maximums: Liveness,
+    take_window: TakeWindow,
+}
+
+/// `OperatorSchedule.Liveness`, in seconds but for `head_blocks`.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Liveness {
+    heartbeat_interval: u64,
+    head_tolerance: u64,
+    heartbeat_misses: u64,
+    head_blocks: u64,
+}
+
+/// `OperatorSchedule.TakeWindow`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TakeWindow {
+    slots: u64,
+    minimum: u64,
+    maximum: u64,
+}
+
+/// `ParameterVote`'s windows, in seconds.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParameterVote {
+    normal_window: u64,
+    fast_window: u64,
+}
+
 const DAY: u64 = 86_400;
+/// `OperatorSchedule`'s longest detection, `(heartbeatMisses + 1) x heartbeatInterval + headTolerance`, the
+/// most blocks `arbBlockHash` reaches, and the time before a promotion at which the operator's node stops
+/// signing (`STOP_MARGIN`).
+const MAX_DETECTION: u64 = 600;
+const MAX_HEAD_BLOCKS: u64 = 256;
+const STOP_MARGIN: u64 = 15;
+/// `ParameterVote.MAX_WINDOW`.
+const MAX_VOTE_WINDOW: u64 = 30 * DAY;
 
 fn text() -> String {
     fs::read_to_string(INPUTS).unwrap()
@@ -122,4 +172,87 @@ fn the_runbooks_commands_carry_the_inputs() {
         assert!(runbook.lines().any(|line| line.trim() == command), "the runbook lacks `{command}`");
     }
     assert!(runbook.contains(&format!("START={start} ")), "the runbook's $START is the inputs' start");
+}
+
+#[test]
+fn every_schedule_and_vote_value_is_the_owners_decision_on_1175() {
+    let Inputs { schedule, parameter_vote, .. } = inputs();
+    let Schedule { switch_budget, block_millis, liveness, liveness_minimums, liveness_maximums, take_window } =
+        schedule;
+    let rule = |rule: Liveness| (rule.heartbeat_interval, rule.head_tolerance, rule.heartbeat_misses, rule.head_blocks);
+    // A promotion passes `heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head's slot:
+    // 7 to 9.3 minutes, and at most ten with the tolerance.
+    assert_eq!(rule(liveness), (140, 40, 3, 200));
+    assert_eq!((rule(liveness_minimums), rule(liveness_maximums)), ((90, 30, 3, 120), (140, 60, 5, 256)));
+    assert_eq!((take_window.slots, take_window.minimum, take_window.maximum), (2, 2, 4));
+    assert_eq!((switch_budget, block_millis), (20, 250));
+    assert_eq!((parameter_vote.normal_window, parameter_vote.fast_window), (3 * DAY, 3_600));
+}
+
+#[test]
+fn the_schedule_accepts_the_values() {
+    let Schedule { switch_budget, block_millis, liveness, liveness_minimums: lo, liveness_maximums: hi, take_window } =
+        inputs().schedule;
+    // `_checkLiveness`, on the rule in force: within the bounds, detection within ten minutes, the
+    // tolerance under the interval, the held-head window within `arbBlockHash`'s reach and under one
+    // interval, and the missed slots longer than the switch budget.
+    let field =
+        |rule: Liveness| [rule.heartbeat_interval, rule.head_tolerance, rule.heartbeat_misses, rule.head_blocks];
+    let (rule, lo, hi) = (field(liveness), field(lo), field(hi));
+    assert!((0..4).all(|i| lo[i] <= rule[i] && rule[i] <= hi[i]), "{rule:?} within {lo:?} and {hi:?}");
+    let [interval, tolerance, misses, blocks] = rule;
+    assert!(misses >= 2 && (misses + 1) * interval + tolerance <= MAX_DETECTION);
+    assert!(tolerance < interval && blocks <= MAX_HEAD_BLOCKS && blocks * block_millis < interval * 1000);
+    assert!(misses * interval > switch_budget);
+    // The constructor's take window: a minimum one slot past which the shortest interval exceeds the switch
+    // budget and the longest tolerance, the window within its bounds, and the longest window at most a turn
+    // at the shortest interval.
+    let TakeWindow { slots, minimum, maximum } = take_window;
+    assert!(minimum > 0 && minimum <= slots && slots <= maximum);
+    assert!((minimum - 1) * lo[0] > switch_budget + hi[1]);
+    assert!(maximum * lo[0] <= DAY);
+    // `_skipsFirst`: the first skip's member can take the turn before the untaken-turn promotion.
+    assert!(misses > slots && (misses - slots) * interval > switch_budget + tolerance.max(STOP_MARGIN));
+    // Every rule the bounds allow keeps a held head's block window under one interval at this block time.
+    assert!(hi[3] <= MAX_HEAD_BLOCKS && hi[3] * block_millis < lo[0] * 1000);
+}
+
+#[test]
+fn the_parameter_vote_accepts_its_windows() {
+    let ParameterVote { normal_window, fast_window } = inputs().parameter_vote;
+    assert!((1..=MAX_VOTE_WINDOW).contains(&normal_window) && (1..=MAX_VOTE_WINDOW).contains(&fast_window));
+}
+
+#[test]
+fn the_runbooks_schedule_deployment_carries_the_inputs() {
+    let Schedule { switch_budget, block_millis, liveness, liveness_minimums, liveness_maximums, take_window } =
+        inputs().schedule;
+    let tuple = |rule: Liveness| {
+        format!(
+            "\"({},{},{},{})\"",
+            rule.heartbeat_interval, rule.head_tolerance, rule.heartbeat_misses, rule.head_blocks
+        )
+    };
+    let window = format!("\"({},{},{})\"", take_window.slots, take_window.minimum, take_window.maximum);
+    let schedule = format!(
+        "--constructor-args $REGISTRY $SEED_RECEIVER $LOG_HEADS {} {} {} {window} {switch_budget} {block_millis}",
+        tuple(liveness),
+        tuple(liveness_minimums),
+        tuple(liveness_maximums)
+    );
+    let ParameterVote { normal_window, fast_window } = inputs().parameter_vote;
+    let vote = format!("--constructor-args $SCHEDULE {normal_window} {fast_window}");
+    let runbook = fs::read_to_string(RUNBOOK).unwrap();
+    for args in [&schedule, &vote] {
+        assert!(runbook.lines().any(|line| line.trim().ends_with(args.as_str())), "the runbook lacks `{args}`");
+    }
+    // The checks after the schedule's deployment print the file's rule and window.
+    let Liveness { heartbeat_interval, head_tolerance, heartbeat_misses, head_blocks } = liveness;
+    let prints = format!(
+        "`{heartbeat_interval}`, `{head_tolerance}`, `{heartbeat_misses}` and `{head_blocks}`, and the third `{}`, `{}` \
+         and `{}`.",
+        take_window.slots, take_window.minimum, take_window.maximum
+    );
+    let prose = runbook.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(prose.contains(&prints), "the runbook's schedule checks lack `{prints}`");
 }

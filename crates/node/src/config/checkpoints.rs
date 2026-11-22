@@ -58,7 +58,7 @@ fn default_log_heads_read_interval() -> Duration {
     Duration::from_secs(30)
 }
 
-/// The liveness reads' default cadence: four a 60-second heartbeat interval.
+/// The liveness reads' default cadence while no heartbeat interval is known.
 pub(crate) fn default_liveness_read_interval() -> Duration {
     Duration::from_secs(15)
 }
@@ -103,8 +103,8 @@ pub struct LivenessSection {
     /// The balance below which `liveness_caller_unfunded` fires, in ether, e.g. `"0.01"`.
     #[serde(deserialize_with = "ether")]
     pub min_balance: U256,
-    /// How often the caller reads the chain, and the operator's rule reads it while it asks the members
-    /// every second; each reads at least four times a heartbeat interval whatever this says.
+    /// How often the caller and the operator's rule read the chain while they know no heartbeat interval,
+    /// as before a schedule is named; with one, each reads four times an interval whatever this says.
     #[serde(with = "humantime_serde", default = "default_liveness_read_interval")]
     pub read_interval: Duration,
     /// How often the fallback fixer reads the seed receiver, and every 5 s once a fix is under way, until

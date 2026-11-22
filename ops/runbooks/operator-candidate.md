@@ -984,7 +984,7 @@ The operator's trading server posts an `engine.log-head.v2` head through the rel
   heads that the trading server signs meanwhile, as [Configure the liveness caller](#configure-the-liveness-caller)
   describes.
 
-The interval is the schedule's `liveness()`, 60 seconds by default. **The `[log_heads]` relayer
+The interval is the schedule's `liveness()`, 140 seconds at launch. **The `[log_heads]` relayer
 must hold enough for two posts per interval.**
 
 With another member in the turn's set, the trading server signs a head or a checkpoint only at a seq
@@ -1025,18 +1025,21 @@ With `[liveness]`, the trading server also does all of these from the caller acc
 - It skips a turn once `skipDueAt()` passes, and promotes once `promotionDueAt()` passes.
 - It relays the operator's signed heads from its stream when the chain's head is older than five
   sixths of an interval. The operator's own heads are due every half interval, so the caller relays a
-  head only when the operator's posts fail or are slow to land.
+  head only when the operator's posts fail or are slow to land. A head the stream brings after that
+  point is relayed at once, with a read of its own, rather than at the caller's next read.
 - For the trading server's whole life, whether following or holding a turn, it fixes the fallback of
   a turn whose draw deadline passed with no relayed seed. The fix is `SeedReceiver.fixFallback`,
   sent as two calls 5 seconds apart, and lets the turn be drawn for the rest of its window.
 
-The caller reads the chain every `liveness.read_interval`, 15 seconds by default, and at least four
-times a heartbeat interval whatever that says. The operator's trading server reads the chain for the
-liveness rule at the same cadence, and asks the members for their copies every second. The fallback
-fixer reads the seed receiver every `liveness.fallback_interval`, 30 seconds by default and at most
-that in a production build, and every 5 seconds once anyone has fixed a turn's block, so it records the
-block's hash within the 256 blocks it can. The RPC budget in
-[feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads cost.
+The caller reads the chain four times a heartbeat interval, every 35 seconds at the launch interval
+of 140 seconds. While it knows no interval, as before a schedule is named, it reads every
+`liveness.read_interval`, 15 seconds by default. The operator's trading server reads the chain for
+the liveness rule at the same cadence, and asks the members for their copies every second. The
+fallback fixer reads the seed receiver every `liveness.fallback_interval`, 30 seconds by default and
+at most that in a production build, and every 5 seconds once anyone has fixed a turn's block, so it
+records the block's hash within the 256 blocks it can. The RPC budget in
+[feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads
+cost.
 
 1. Add the section to the configuration:
 
@@ -1044,7 +1047,7 @@ block's hash within the 256 blocks it can. The RPC budget in
    [liveness]
    caller = "0x..."        # an account the checkpoint endpoint signs for, apart from every relayer
    min_balance = "0.01"
-   read_interval = "15s"      # optional; the default
+   read_interval = "15s"      # optional; the default, while no heartbeat interval is known
    fallback_interval = "30s"  # optional; the default
    ```
 
@@ -1137,7 +1140,7 @@ the new key to register before the epoch's close.
 
 ### A promotion
 
-Once `heartbeatMisses` witnessed slots, 5 by default, pass with no head, anyone's `promote()` names
+Once `heartbeatMisses` witnessed slots, 3 at launch, pass with no head, anyone's `promote()` names
 the next qualified member. The vault moves its signer to that member's standby key, in a new signer
 epoch. The promotion names the next member in the turn's order that never received the keys of the
 turn, whether or not it was drawn or skipped to, and takes the key holder last. A member that held
@@ -1177,7 +1180,7 @@ server has stopped signing.
 A member takes its turn with its first head under its assignment, which `LogHeads` latches. **Post
 the first head as soon as the trading server holds the keys.**
 
-`takeWindow` witnessed slots, 2 by default, after the latest of the boundary's slot, the
+`takeWindow` witnessed slots, 2 at launch, after the latest of the boundary's slot, the
 assignment's slot and the last signer change's slot, are the window for that latch. To read the
 window, run:
 

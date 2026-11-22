@@ -31,7 +31,7 @@ pub(super) fn lagging(tip: Released, confirmed: Option<Signable>, since: Option<
 /// Why the node refuses to sequence under `rule` with a ticker every `tick`: a detection window at or
 /// below `DELTA` plus twice the head round trip, or a ticker slower than half an interval, which would
 /// leave a live head no newer seq to sign.
-pub(super) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
+pub(crate) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
     let window = Duration::from_secs(rule.interval.saturating_mul(u64::from(rule.misses)));
     if window <= DELTA + 2 * HEAD_ROUND_TRIP {
         return Some("heartbeatMisses x heartbeatInterval is at or below the stop margin plus two head round trips");
@@ -43,10 +43,10 @@ pub(super) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
 }
 
 /// Whether the chain is due a read, `since` after the last one and with `reached` trusted time's lower
-/// bound in milliseconds: before the first, `read_every` after the last (the `configured` read interval
-/// or a quarter of the last read's heartbeat interval), or once trusted time reaches the turn boundary
-/// after the last read's block, from which another set may apply. `last` is that read's block time and
-/// heartbeat interval, in seconds.
+/// bound in milliseconds: before the first, `read_every` after the last (a quarter of the last read's
+/// heartbeat interval, or the `configured` read interval while it names none), or once trusted time
+/// reaches the turn boundary after the last read's block, from which another set may apply. `last` is
+/// that read's block time and heartbeat interval, in seconds.
 pub(super) fn read_due(
     configured: Duration,
     since: Option<Duration>,
@@ -70,10 +70,13 @@ mod tests {
         let secs = |s| Some(Duration::from_secs(s));
         assert!(read_due(every, None, None, None), "the first read is due at once");
         assert!(!read_due(every, secs(14), Some((time, 60)), Some(ms)));
-        assert!(read_due(every, secs(15), Some((time, 60)), Some(ms)), "60 s slots: the configured 15 s");
+        assert!(read_due(every, secs(15), Some((time, 60)), Some(ms)), "60 s slots: four reads a slot");
         assert!(!read_due(every, secs(4), Some((time, 20)), Some(ms)));
         assert!(read_due(every, secs(5), Some((time, 20)), Some(ms)), "20 s slots: four reads a slot");
-        assert!(!read_due(every, secs(14), Some((time, 0)), None), "no schedule: the configured interval");
+        assert!(!read_due(every, secs(34), Some((time, 140)), Some(ms)), "140 s slots: not at the configured 15 s");
+        assert!(read_due(every, secs(35), Some((time, 140)), Some(ms)), "140 s slots: four reads a slot");
+        assert!(!read_due(every, secs(14), Some((time, 0)), None));
+        assert!(read_due(every, secs(15), Some((time, 0)), None), "no schedule: the configured interval");
         assert!(!read_due(every, secs(1), Some((time, 60)), Some(boundary - 1)));
         assert!(read_due(every, secs(1), Some((time, 60)), Some(boundary)), "at the turn boundary, at once");
     }

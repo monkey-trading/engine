@@ -1258,17 +1258,22 @@ trading server finds the turn up to 30 seconds and a read after the boundary. Un
 tolerance near the interval, a failed first head at that turn reaches the chain in time only
 through the members' relays.
 
-When the chain's newest head is older than five sixths of an interval, each member relays the
-newest head that the operator signed. The operator's own heads are due every half interval, so
-members relay a head only when the operator's posts fail or are slow to land. A send that the
-relayer's endpoint accepts but that never lands holds the operator's later posts for one heartbeat
-interval from the send, and up to one and a half intervals until the next post due after that
-replaces it at its nonce. Through that time the operator still signs its heads, and the members'
-relays carry them.
+When the chain's newest head is older than five sixths of an interval, each member relays the newest
+head that the operator signed. A head that a member's stream brings after that point is relayed at
+once rather than at the member's next read, which could come after the head's signing time has left
+the head tolerance. The operator's own heads are due every half interval, so members relay a head
+only when the operator's posts fail or are slow to land. A send that the relayer's endpoint accepts
+but that never lands holds the operator's later posts for one heartbeat interval from the send, and
+up to one and a half intervals until the next post due after that replaces it at its nonce. Through
+that time the operator still signs its heads, and the members' relays carry them.
 
 The schedule's deployment sets the heartbeat interval, the number of missed slots before a
 promotion (`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract
-enforces. The proposed values are 60 seconds, five slots and two slots.
+enforces. At launch the interval is 140 seconds, a live head's signing time may differ from its
+block's by up to 40 seconds, a promotion needs three missed slots, and the take window is two
+slots. The deployment fixes the bounds that the timelock can later move these values within: 90 to
+140 seconds for the interval, 30 to 60 seconds for the tolerance, three to five slots for the
+misses, and two to four slots for the take window, under a switch budget of 20 seconds.
 
 While the turn's set has another member, the enclave signs a head or a checkpoint only at a sequence
 number that another member's enclave confirmed holding. The operator therefore runs, and posts
@@ -1286,8 +1291,8 @@ checkpoint always waits.
 **Promotion.** Once `heartbeatMisses` witnessed slots pass with no head of the signer epoch, anyone
 may promote the next qualified member in the turn's order. The vault then moves its signer to that
 member's vouched standby key, in a new signer epoch, with no timelock. Detection takes
-`heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head that landed, about six
-minutes at the proposed values, and at most 10 minutes under the deployment bounds. Each promotion
+`heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head that landed, 7 to 9.3
+minutes at the launch values, and at most 10 minutes under the deployment bounds. Each promotion
 adds the promoted member's start, and each member in the order that fails to start adds one more
 detection window.
 
@@ -1313,8 +1318,8 @@ member holding the keys records it as having held them and as the epoch's key ho
 promotion names it in that turn, the next turn's skips pass it, and the next turn's promotions take
 it last. A holder that withholds the keys therefore cannot take the turn itself, and cannot choose
 whom a promotion names. It can still hand the keys to the member that a skip names next in the
-order, which the seed fixed: at the proposed values, two skips fall due before an untaken turn's
-promotion.
+order, which the seed fixed. At the launch values, one skip falls due before an untaken turn's
+promotion, because a second would need another two-slot window past the first.
 
 **Skips.** A turn's member takes the turn with its first head under its assignment, which `LogHeads`
 latches. Once `takeWindow` witnessed slots pass with no latch, counted from the latest of the

@@ -667,11 +667,11 @@ an index: load only the rule whose hint matches the current action.
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
   `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
   posting intervals, not three. The optional `[liveness]` (#595) names a member's liveness caller, an
-  account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`; its
-  `read_interval` (15 s by default) paces the caller's and the operator's liveness rule's chain reads, at
-  least four a heartbeat interval, and its `fallback_interval` (30 s by default and at most that in a
-  production build, within the 256 blocks a fixed fallback block's hash can be recorded for) the
-  fallback fixer's.
+  account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`; the caller
+  and the operator's liveness rule read the chain four times a heartbeat interval, and every
+  `read_interval` (15 s by default) while no interval is known, and its `fallback_interval` (30 s by
+  default and at most that in a production build, within the 256 blocks a fixed fallback block's hash can
+  be recorded for) paces the fallback fixer's reads.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
@@ -853,6 +853,10 @@ an index: load only the rule whose hint matches the current action.
   `dev-launch-values.sh`, the launch values scenario on Anvil: the vault, token, timelock and staking
   contract deploy from `ops/runbooks/production-deployment.toml`, and the node's `InitEmissions` and
   `InitStaking` checks read them back and accept those values and no other budget, epoch or cooldown;
+  then the rotation contracts deploy from the same file, the timelock names the schedule, the node reads
+  the heartbeat rule through the custody quorum and does not refuse it, and its custody watcher, checking
+  the registry's schedule, the schedule's turn length, the vote's schedule and the fault proof's vault,
+  mirrors past the deployment (`custody/tests/election_scenario/launch_schedule.rs`);
   `dev-operator-election.sh`, the delegated operator election scenario on Anvil;
   `dev-parameter-votes.sh`, the parameter votes scenario on Anvil: the operator's house cap change applies with
   rotation on until the three-member set takes effect and is refused after; the set of 40:30:30 votes on
@@ -1036,8 +1040,11 @@ an index: load only the rule whose hint matches the current action.
   with a test that it loads. `production-deployment.toml` holds the launch deployment's one-time
   inputs, the owner's #436 values: the timelock's delay, the vault's period budget, exit period,
   claim window and staleness, `Staking`'s epoch and cooldown, the liquidity floor and the opening
-  day's start, with a test that holds each to the decision and the deploy runbook's `init-emissions`
-  and `init-staking` commands to the file.
+  day's start, and `OperatorSchedule`'s constructor, the owner's heartbeat rule of 2026-11-21 (140 s,
+  40 s tolerance, three misses, a two-slot take window) with its switch budget, held-head blocks and
+  bounds, and `ParameterVote`'s windows, all decided on #1175, with a test that holds each to the decision
+  and to the contracts' limits, and the deploy runbook's `init-emissions`, `init-staking` and rotation
+  contract deployments to the file.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's
   production-build tests), the reference-log examples' tests, the reference-log replay and
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
@@ -1407,7 +1414,8 @@ Run from the repo root:
   vault, its token, the timelock and the staking contract at the values in
   `ops/runbooks/production-deployment.toml`, and posts `InitEmissions` and `InitStaking` to a node whose
   checks read the contracts (the staking one through the custody quorum): the decided values apply, a budget, epoch or
-  cooldown that differs is refused and stays out of the log)
+  cooldown that differs is refused and stays out of the log; then, on a second Anvil, the rotation contracts at the
+  file's values, which the node accepts; needs Python 3 too)
 - Deliver secrets into an enclave as the operator: `cargo run -p engine-node -- admin --config <config>
   --key-file <key> deliver-secrets --to <host:port> --release <release.toml> --secrets-file <file>`
   (`secrets-status` reads what it attests it holds; `--allow-mock` for a dev node). Against anything

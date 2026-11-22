@@ -117,9 +117,10 @@ pub(crate) enum Reply {
     },
 }
 
-/// What a member's copy holds, shared between its following, which records it, and its answers.
+/// What a member's copy holds, shared between its following, which records it, and its answers, with
+/// what wakes the liveness caller when the stream brings a newer signed head.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Copy(Arc<Mutex<CopyState>>);
+pub(crate) struct Copy(Arc<Mutex<CopyState>>, Arc<tokio::sync::Notify>);
 
 #[derive(Debug, Default)]
 struct CopyState {
@@ -310,7 +311,13 @@ impl Copy {
         });
         if newer {
             state.signed = Some(head);
+            self.1.notify_one();
         }
+    }
+
+    /// Waits for a newer signed head than the last wait saw, or returns at once if one came since.
+    pub(crate) async fn signed_arrived(&self) {
+        self.1.notified().await;
     }
 
     /// The newest signed head the operator's stream carried.

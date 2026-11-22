@@ -270,7 +270,7 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
         view(&block, &domain).await.unwrap();
     }
     out.insert("rule read", take());
-    // Its members, read at the same block as a rule read, every minute.
+    // Its members, read at the same block as a rule read once its list is a minute old.
     {
         let block = reader.latest().await.unwrap();
         take();
@@ -305,7 +305,7 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
     out.insert("log-head turn read", take());
     quorum.finalized_balance(Address::repeat_byte(0x55)).await.unwrap();
     out.insert("relayer balance read", take());
-    // Before the registry names a schedule, as at launch, the rule, the fixer and the turn read stop at
+    // Before the registry names a schedule, the rule, the fixer and the turn read stop at
     // the domain, and the rule reads the vault's signer.
     chain.lock().unwrap().scheduled = false;
     {
@@ -353,25 +353,28 @@ async fn rpc_budget() {
     for (reader, calls) in &reads {
         println!("   {reader}: {}", calls.values().sum::<f64>());
     }
-    // A day of each node's readers while a turn of a set of three names the operator: the operator's
-    // watcher at 15 s on Arbitrum One (60 blocks a poll), its rule's reads at 15 s and members at 60 s, its
-    // poster's reads every 10 s with a turn read before each post every 30 s, its relayer's balance at 5
-    // minutes, and its standby renewal every minute; each member's caller at 15 s and follow stint every
-    // 16 s (a 15 s stint and its 1 s pause); and every node's fixer at 30 s.
+    // A day of each node's readers while a turn of a set of three names the operator, at the launch
+    // heartbeat interval of 140 s: the operator's watcher at 15 s on Arbitrum One (60 blocks a poll), its
+    // rule's reads at a quarter of the interval, 35 s, and members every 70 s (at the first of those reads a
+    // minute after the last list), its poster's reads every 17.5 s (`v2::cadence` splits half the interval
+    // into the fewest equal periods of at most a sixth of it, and a sixth of 140 s in whole nanoseconds is
+    // just under 70 s / 3, so four), with a turn read before each post and at least every 30 s, twice every
+    // 70 s, its relayer's balance at 5 minutes, and its standby renewal every minute; each member's caller
+    // at 35 s and follow stint every 16 s (a 15 s stint and its 1 s pause); and every node's fixer at 30 s.
     let in_turn: Readers = vec![
         ("operator's deposit watcher", &watcher, DAY / 15.0),
-        ("operator's liveness rule", &reads["rule read"], DAY / 15.0),
-        ("operator's liveness rule's members", &reads["rule members read"], DAY / 60.0),
-        ("operator's log-head reads", &reads["log-head read"], DAY / 10.0),
-        ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 30.0),
+        ("operator's liveness rule", &reads["rule read"], DAY / 35.0),
+        ("operator's liveness rule's members", &reads["rule members read"], DAY / 70.0),
+        ("operator's log-head reads", &reads["log-head read"], DAY / 17.5),
+        ("operator's log-head turn reads", &reads["log-head turn read"], DAY / 35.0),
         ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
         ("operator's standby renewal", &reads["standby renewal"], DAY / 60.0),
-        ("liveness callers, two members", &reads["caller read"], 2.0 * DAY / 15.0),
+        ("liveness callers, two members", &reads["caller read"], 2.0 * DAY / 35.0),
         ("follow stints, two members", &reads["member stint"], 2.0 * DAY / 16.0),
         ("fallback fixers, three nodes", &reads["fallback read"], 3.0 * DAY / 30.0),
     ];
     day("one operator and two members while a turn names the operator", &in_turn);
-    // Before the registry names a schedule, as at launch: the rule reads at 15 s, and the poster reads the
+    // Before the registry names a schedule: the rule reads at 15 s, and the poster reads the
     // posted head and the turn every 30 s; three nodes' fixers read at 30 s.
     let unscheduled: Readers = vec![
         ("operator's deposit watcher", &watcher, DAY / 15.0),

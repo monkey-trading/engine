@@ -16,6 +16,7 @@ variables and the checks that the other runbooks use.
 | Find what an alert means and which runbook answers it | [Alerts](alerts.md) |
 | Install a release, upgrade to one, or return to the previous one | [Deploy and rollback](deploy-and-rollback.md) |
 | Deploy the contracts, and initialise emissions and staking | [Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
+| Deploy the contracts that daily operator turns need | [Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
 | Write the trading server's configuration | [production-node.toml](production-node.toml) |
 | Stop new positions in one market or in all of them | [Make markets reduce-only](reduce-only.md) |
 | Bring a stopped or crashed trading server back | [Restart and recovery](restart-and-recovery.md) |

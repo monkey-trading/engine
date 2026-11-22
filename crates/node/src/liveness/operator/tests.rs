@@ -439,9 +439,9 @@ impl Rig {
     }
 }
 
-/// Lets a few polls run.
+/// Lets a few polls run, and a chain read: the rule reads four times the fake chain's 60 s interval.
 async fn settle() {
-    tokio::time::sleep(TEST_POLL * 4).await;
+    tokio::time::sleep(Duration::from_secs(15) + TEST_POLL * 4).await;
 }
 
 /// This log's cumulative prefix at `seq`.

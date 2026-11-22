@@ -195,8 +195,8 @@ read_interval = "30s"
 # by the checkpoint endpoint, must differ from the checkpoint, log-head and seed relayers.
 caller = "0xcccccccccccccccccccccccccccccccccccccccc" # REPLACE: funded by the checkpoint endpoint
 min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
-# The caller's chain reads, and the operator's liveness rule's: four a 60-second heartbeat interval. Each
-# reads at least four times a heartbeat interval whatever this says.
+# The caller's and the operator's liveness rule's chain reads while they know no heartbeat interval, as
+# before a schedule is named. With one, each reads four times an interval, every 35 s at 140 s.
 read_interval = "15s"
 # The fallback fixer's reads, and every 5 s once anyone fixes a turn's fallback block, so its hash is
 # recorded within the 256 blocks (64 s) it can be. A production build allows at most 30s.

@@ -2,8 +2,10 @@
 # the operator's two initialisations. The vault's and staking contract's values cannot change once
 # deployed, nor the initialisations once recorded (the timelock's delay can move through the timelock),
 # and the node refuses a different budget, epoch or cooldown than the contracts hold. Decided by the owner on
-# 2026-11-14 (#436). deploy-and-rollback.md uses them: "Deploy the contracts" for the contracts'
-# constructors, and steps 9 and 10 of "First deployment" for `init-emissions` and `init-staking`.
+# 2026-11-14 (#436), and for #1175 the operator schedule's heartbeat rule on 2026-11-21 and its other
+# values and the parameter vote's on 2026-11-22.
+# deploy-and-rollback.md uses them: "Deploy the contracts" and "Deploy the rotation contracts" for the
+# contracts' constructors, and steps 9 and 10 of "First deployment" for `init-emissions` and `init-staking`.
 # A test (`tests/production_deployment.rs`) holds each value to the decision and the runbook's
 # commands to this file.
 #
@@ -38,3 +40,53 @@ cooldown = 2419200 # 28 days
 # `init-staking`'s house NAV floor, in whole USD: NAV at or below it distributes nothing.
 [init_staking]
 liquidity_floor = "30500000"
+
+# `OperatorSchedule`'s constructor (deploy-and-rollback.md, "Deploy the rotation contracts"), in seconds
+# but for `block_millis` and `head_blocks`. The schedule takes the beacon genesis time and the turn length
+# from the seed receiver. Every value here is the owner's (#1175): a failed operator is replaced once three
+# witnessed slots of 140 s pass with no head, 7 to 9.3 minutes after its last head landed. The bounds, the
+# take window's bounds, the switch budget and the block time are fixed at deployment, and the timelock
+# moves the rule and the window within them only while no turn names the operator.
+[schedule]
+# The handover's switch budget, which the take window and the rule must leave a skip's member: about six
+# times the measured switch, 1 s in the daily rotation scenario plus the holder's and the successor's
+# reads of the turn's latest assignment, about 2.2 s at 100 ms a round trip.
+switch_budget = 20
+# Arbitrum One's block time, under which `head_blocks` must span less than one interval.
+block_millis = 250
+
+[schedule.liveness]
+heartbeat_interval = 140
+head_tolerance = 40
+heartbeat_misses = 3
+head_blocks = 200 # 50 s of blocks for a held head
+
+# The least the timelock may set: no tolerance or held-head window under a head's 30 s round trip, and the
+# fewest misses a two-slot take window allows. The shortest interval still exceeds the switch budget plus
+# the longest tolerance, as a two-slot take window needs.
+[schedule.liveness_minimums]
+heartbeat_interval = 90
+head_tolerance = 30
+heartbeat_misses = 3
+head_blocks = 120
+
+# The most: the launch interval, the longest that three misses allow at the launch tolerance; the most
+# misses that ten minutes of detection allow at the shortest interval; and `arbBlockHash`'s reach.
+[schedule.liveness_maximums]
+heartbeat_interval = 140
+head_tolerance = 60
+heartbeat_misses = 5
+head_blocks = 256
+
+# Witnessed slots a turn's member has to take it before anyone may skip it, and the bounds the timelock
+# moves it within. It must stay below `heartbeat_misses`.
+[schedule.take_window]
+slots = 2
+minimum = 2
+maximum = 4
+
+# `ParameterVote`'s constructor: how long a proposal takes votes on the normal path, whose change applies
+# seven days after the log records it, and on the fast path, whose restriction applies at once, in seconds.
+[parameter_vote]
+normal_window = 259200 # 3 days
+fast_window = 3600 # 1 hour
