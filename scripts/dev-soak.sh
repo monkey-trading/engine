@@ -9,6 +9,8 @@
 # machine that is also doing other work, and with the report kept for the release notes
 # (`ops/runbooks/deploy-and-rollback.md`):
 #   SOAK_DIR=<a directory on a disk with room> nice ./scripts/dev-soak.sh 2>&1 | tee soak-report.txt
+# SOAK_LOG_DIR=<a directory on another volume> puts the log in its `log` directory there, apart from SOAK_DIR's
+# caches and history index, as a node whose log has a disk of its own has it; the data is kept with the run.
 # Name SOAK_DIR: the log of a full run is large (see the report's `disk_bytes` lines), and without it
 # the run writes under the temporary directory and removes it afterwards. With it the data is kept;
 # delete it by its exact path once the report is saved.

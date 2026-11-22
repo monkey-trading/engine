@@ -687,6 +687,34 @@ by about 400 GB in a run:
 soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak
 ```
 
+### The log's own disk under the soak
+
+A flush of the history index's and the recovery caches' buffered writes on the log's disk can hold the log's
+batch syncs, which is why the image mounts the log on a disk of its own. Measure the difference on this host
+with the soak at ten times launch flow, once for each leg, on the host as step 4 above runs a list (the guest's
+launch script attaches a second disk only to the image's own init, which the benchmark guest does not use), one
+leg after the other, with `<nvme0>` and `<nvme1>` the mount points of the host's two NVMe drives:
+
+1. **Shared.** The log on the derived stores' drive. The list's line is
+   `soak SOAK_DIR=<nvme0>/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak`,
+   so the log is in `<nvme0>/soak/log` beside the caches and the history index.
+2. **Separate.** The log on its own drive. The line also names `SOAK_LOG_DIR=<nvme1>/soak`, so the log is in
+   `<nvme1>/soak/log` and the caches and history index stay in `<nvme0>/soak`. The two paths must be on
+   different drives, as `df` shows, or the leg shows nothing.
+
+Run both with the same `SOAK_HOURS`, `LOAD_ACCOUNTS` (10,000) and `SOAK_MULTIPLE` (10). Keep both reports. The
+soak prints these lines for each interval, and the figures to record come from them:
+
+- the `LOAD leg=… order_to_fill_us` line, which holds the interval's `p50`, `p99`, `p999` and `max`;
+- each `LOAD leg=… window=…` line, which holds that window's `batch_p99_us`, `batch_p999_us`, `busy_share`,
+  `host_io_wait_ms`, `host_cpu_wait_ms`, `host_disk_io` and `probe_blocked_ms`, and its `breaches` against #904's
+  bars (a window prints no order-to-fill figure unless it breaches one).
+
+Put the two legs side by side: each interval's `order_to_fill_us`, and each window's `batch_p99_us`,
+`batch_p999_us` and `host_io_wait_ms`, with the number of windows that breached and the worst window of each leg.
+State which leg has the lower order-to-fill tail and the lower batch tail, and by how much. Setting a bar on the
+difference waits for these figures.
+
 ## How to tell it is done, and when to escalate
 
 The host is ready, and the image is proven on it, when each of these holds:

@@ -1307,7 +1307,7 @@ Run from the repo root:
   `ENGINE_BENCH_SCALE_TO_RUNNER=1`, which only CI's job sets, each of those bars is scaled by 1 to 2.5 times a fixed
   reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar, as do `dev-load`'s order-to-fill and stream-lag bars
 - Soak dev scenario: `./scripts/dev-soak.sh [hours]` (needs only Cargo; by hand before each release, with
-  `SOAK_DIR` on a disk with room for the log; `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20),
+  `SOAK_DIR` on a disk with room for the log, and `SOAK_LOG_DIR` for a log on another volume; `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20),
   `SOAK_RESTART_HOURS` (2), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300), `SOAK_MULTIPLE` (10), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_SHORT` (1 for a run that tests the harness) set the run and
   `LOAD_ACCOUNTS` and the load scenario's other variables size the load; CI runs nine minutes at 10,000 accounts);
   `./scripts/dev-soak.sh --rotation [hours]` runs the short-turns scenario again and again for the hours
