@@ -193,15 +193,16 @@ so please check that an issue still reproduces there before you report it.
 
 We reward valid reports of vulnerabilities in the components in scope. The rewards are paid from
 the USDC that the engine distributes once people trade on it, and from nothing else: the project
-holds no fund for them. An award is registered in the engine's state, queued, and paid by each
-epoch close that has excess to distribute, so it is paid only once the engine has earned it, and
-it never expires. Every award is the amount the scale below states for the finding's severity, so
-the only judgement in an award is the severity, which we grade by the rules below.
+holds no fund for them. An award is approved by a stake-weighted vote, queued in the engine's
+state, and paid by each epoch close ahead of the operator's and stakers' shares, up to a cap. It is
+paid only once the engine has earned it, and it never expires. Every award is the amount the scale
+below states for the finding's severity, so the only judgement in an award is the severity, which
+we grade by the rules below.
 
 Reports go through the channels in [Reporting a vulnerability](#reporting-a-vulnerability), and
 the response times, containment and disclosure rules above apply to them unchanged. `OWNER`:
 the protocol version that adds awards. No award is paid before it is in force, and a report
-received earlier is registered once it is.
+received earlier is proposed once it is.
 
 ### What the bounty covers
 
@@ -285,28 +286,33 @@ them Critical.
    gives, and tell you the grade and the reasons for it.
 2. If you disagree, send evidence of a worse effect within ten business days, and we regrade it once.
    Our regrade is final.
-3. The owner of the project approves the award for the final grade. The approval confirms that the
-   report meets the rules above. It does not change the amount, which is the scale's.
-4. The award is registered in the engine, by the operator's signed command or, while votes govern,
-   by a passed vote. The engine names the amount from the scale for the grade, and refuses any other.
-   The registration records your address, the grade and a hash of the advisory's identifier, so it
-   reveals nothing about the finding. It is public in the log and in the API from the moment it is
-   registered.
-5. The award becomes payable `OWNER`: notice, seven days, after its registration.
-6. Each epoch close pays the payable awards first, oldest first, before it splits the rest of the
+3. After the fix has shipped and the advisory is published, a member of the rotation set proposes
+   the award on the vote contract. The proposal names your address, the final grade and the
+   advisory's identifier. No proposal is made while the finding is private, so a vote never reveals
+   a live finding.
+4. The rotation set votes, weighted by the stake delegated to its members, and the proposal passes
+   at two thirds of the weight, as every parameter vote does. It applies seven days after it is
+   logged. The operator cannot register an award by its own command, and the fast path refuses one.
+5. The engine adds the award to its queue with the amount the scale states for the grade, and
+   refuses any other amount. The queue and each award are public in the log and in the API.
+6. Each epoch close pays the queue first, oldest award first, before it splits the rest of the
    excess between the operator and the stakers. A close pays at most `OWNER`: share, a percentage
-   of its excess and `OWNER`: amount in USDC, whichever is less, and an award it cannot finish stays
-   at the front of the queue with the rest of its amount.
+   of its distributable excess, and an award it cannot finish stays at the front of the queue with
+   the rest of its amount.
 7. A payment is credited to your address as a distribution entitlement, and you claim it from the
    vault with a proof, as a staker claims a distribution. Nothing is paid until you claim.
 8. We credit you in the advisory as [Coordinated disclosure](#coordinated-disclosure) describes.
 
 A report is paid only from distributions that the engine has earned, and an epoch distributes
 nothing while the house's net asset value is at or below the liquidity floor or nobody is staked.
-An award waits in the queue until a close can pay it. The queue's state and each payment are public
-and can be checked by replaying the log. Registered awards cannot be removed except by the same
-route that registered them, and only before they become payable.
+An award waits in the queue until a close can pay it. The queue's state and each payment can be
+checked by replaying the log, and each claim against a checkpoint root.
 
-The scale, the share and the caps are fixed in the engine's rules. Raising any of them needs a
-notice of at least `OWNER`: notice, seven days, or a passed vote, and a change never lowers an
-award that is already registered.
+The vote is only as independent as its weights. At launch the rotation set's stake is largely the
+project owner's, so the owner's votes decide which reports are awarded. What the engine enforces,
+whoever votes, is the scale's amount per grade, the cap on each close, the queue's order and that a
+paid award is final. If the vault's exit starts, an award that has been credited ranks `OWNER`:
+exit order, and one still in the queue is `OWNER`: paid or lost at the exit.
+
+The scale and the cap are fixed in the engine's rules. A vote may lower the cap within
+`OWNER`: bounds, and nothing raises the scale or the cap above its launch value.
