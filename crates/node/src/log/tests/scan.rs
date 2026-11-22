@@ -72,3 +72,20 @@ fn the_scan_names_a_damaged_completed_segment() {
         assert!(error.contains(SEG_0) && error.contains("differs from"), "{error}");
     }
 }
+
+/// A completed segment whose last break is replaced by another byte keeps its listed length, so only the
+/// scan's check of its last line finds it: it fails the scan, naming the file, where leaving out the line
+/// would leave out the segment's last checkpoint.
+#[test]
+fn the_scan_refuses_a_completed_segment_that_ends_mid_line_at_its_listed_length() {
+    let dir = scratch_dir("scan-mid-line");
+    write(&dir, 2, &[cmd(0), cmd(1), checkpoint(1), cmd(2), cmd(3), cmd(4)]);
+    let listed = std::fs::read(dir.join(SEG_0)).unwrap();
+    assert_eq!(listed.last(), Some(&b'\n'), "the segment ends at a break");
+    let mut damaged = listed.clone();
+    *damaged.last_mut().unwrap() = b' ';
+    std::fs::write(dir.join(SEG_0), &damaged).unwrap();
+    assert_eq!(damaged.len(), listed.len());
+    let error = format!("{:#}", uncommanded(&dir, NonZeroUsize::MIN, Some).expect_err("a segment ending mid-line"));
+    assert!(error.contains(SEG_0) && error.contains("ends mid-line"), "{error}");
+}
