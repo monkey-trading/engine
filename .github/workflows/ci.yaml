@@ -624,12 +624,22 @@ jobs:
         run: ../image/retry forge build src/ArbSys.sol
       - name: Run the daily rotation dev scenario
         run: ./scripts/dev-daily-rotation.sh
+        env:
+          SCENARIO_LOG_DIR: ${{ github.workspace }}/scenario-logs
       - name: Run the parameter votes dev scenario
         run: ./scripts/dev-parameter-votes.sh
       - name: Run the minute-scale liveness dev scenario
         run: ./scripts/dev-liveness.sh
       - name: Run the operator faults dev scenario
         run: ./scripts/dev-operator-faults.sh
+      - name: Keep the scenario nodes' logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: daily-rotation-node-logs
+          path: scenario-logs/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   # A development build with five-minute operator turns (`short-turns`), a feature set apart from every
   # other job's: a production build's refusal of it, its clippy, its turn tests, and its scenario on

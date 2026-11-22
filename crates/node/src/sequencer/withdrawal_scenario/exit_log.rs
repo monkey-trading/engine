@@ -5,13 +5,15 @@ use std::path::Path;
 /// How many of its log's last lines a child's exit reports: a node logs why it stopped last.
 pub(super) const EXIT_LOG_LINES: usize = 40;
 
-/// How many lines from a panic's message a child's exit reports: its backtrace, down to the frames of
-/// the code that raised it, which sit below those of the panic machinery.
+/// How many lines from a failure's message a child's exit reports: a panic's backtrace, down to the
+/// frames of the code that raised it, which sit below those of the panic machinery, or an error exit's
+/// message, context chain and backtrace.
 const PANIC_LOG_LINES: usize = 150;
 
 /// What the log at `path` says of why its child stopped, or why it cannot be read: from the first
-/// panic's message on, then, if the log goes on past that, its last `EXIT_LOG_LINES` lines; with no
-/// panic, the last `EXIT_LOG_LINES` lines.
+/// failure on, a panic's message or the `Error:` line a test that returns an error exits with, which
+/// names the error and its whole context chain, then, if the log goes on past that, its last
+/// `EXIT_LOG_LINES` lines; with no failure, the last `EXIT_LOG_LINES` lines.
 pub(super) fn log_tail(path: &Path) -> String {
     match std::fs::read(path) {
         Ok(bytes) => report(&String::from_utf8_lossy(&bytes)),
@@ -22,7 +24,8 @@ pub(super) fn log_tail(path: &Path) -> String {
 fn report(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let tail_from = lines.len().saturating_sub(EXIT_LOG_LINES);
-    let Some(panic) = lines.iter().position(|line| line.contains("panicked at")) else {
+    let failed = |line: &&str| line.contains("panicked at") || line.starts_with("Error: ");
+    let Some(panic) = lines.iter().position(failed) else {
         return lines[tail_from..].join("\n");
     };
     let panic_end = (panic + PANIC_LOG_LINES).min(lines.len());
@@ -81,6 +84,33 @@ mod tests {
         assert!(report.contains("\n[72 lines omitted]\nafter 160\n"), "{report}");
         assert!(report.ends_with("after 199"), "{report}");
         assert_eq!(report.lines().count(), PANIC_LOG_LINES + 1 + EXIT_LOG_LINES);
+    }
+
+    #[test]
+    fn an_error_exit_is_reported_with_its_context_chain() {
+        let log = "INFO started\nError: starting the member\n\nCaused by:\n    0: binding the listener\n    1: \
+                   Address already in use (os error 98)\n\nStack backtrace:\n   0: frame\n";
+        let report = report(log);
+        assert!(report.starts_with("Error: starting the member\n\nCaused by:"), "{report}");
+        assert!(report.contains("Address already in use (os error 98)"), "{report}");
+        assert!(!report.contains("INFO started"), "{report}");
+    }
+
+    #[tokio::test]
+    async fn a_child_that_exits_with_an_error_reports_it_and_not_only_the_end_of_its_log() {
+        let dir = crate::test_support::scratch_dir("child-error-log");
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("child.log");
+        let script = format!(
+            "echo started; echo 'Error: the key is missing'; echo; echo 'Caused by:'; \
+             echo '    0: reading the sealed file'; seq 1 {}; exit 101",
+            EXIT_LOG_LINES * 2
+        );
+        let mut child = ChildProcess::spawn("sh", &["-c", script.as_str()], &log, &[], None).unwrap();
+        child.exited(Duration::from_secs(10)).await.unwrap();
+        let error = format!("{:#}", child.check().unwrap_err());
+        assert!(error.contains("exit status: 101"), "{error}");
+        assert!(error.contains("Error: the key is missing\n\nCaused by:\n    0: reading the sealed file"), "{error}");
     }
 
     #[tokio::test]
