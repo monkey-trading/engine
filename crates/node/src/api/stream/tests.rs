@@ -135,6 +135,43 @@ async fn a_feed_backfills_past_one_batch_from_disk() {
     assert_next_is_the_next_command(&node, &mut feed).await;
 }
 
+/// The live channel keeps a message until every subscriber has taken it. A feed reading the disk lets go
+/// of the messages sent before each read, which it takes from disk, and still yields every message once.
+#[tokio::test]
+async fn a_feed_reading_the_disk_holds_none_of_the_live_messages_sent_before_its_read() {
+    let dir = scratch_dir("feed-releases");
+    let node = TestSequencer::start_legacy(&dir, 1024);
+    for n in 0..BACKFILL_BATCH {
+        node.submit(deposit(1, &format!("dep-{n}"))).await;
+    }
+    let mut feed =
+        Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), Some(Offset::start_of(0)));
+    let mut probe = node.stream.subscribe();
+    for n in 0..5 {
+        node.submit(deposit(1, &format!("before-{n}"))).await;
+    }
+    let before = held_for_the_feed(&mut probe, "before the first read");
+    let mut got = take(&mut feed, 1).await;
+    assert!(
+        before.iter().all(|msg| Arc::strong_count(msg) == 1),
+        "the channel holds messages the feed reads from disk"
+    );
+    // Sent while the feed is part way through the disk, and read in its next batch.
+    got.extend(take(&mut feed, BACKFILL_BATCH - 1).await);
+    assert!(feed.backlog.is_empty() && feed.reader.is_some(), "the next message needs another batch");
+    for n in 0..5 {
+        node.submit(deposit(1, &format!("between-{n}"))).await;
+    }
+    let between = held_for_the_feed(&mut probe, "between two reads");
+    got.extend(take(&mut feed, 1).await);
+    assert!(between.iter().all(|msg| Arc::strong_count(msg) == 1), "the channel holds messages sent between reads");
+
+    let expected = log_messages(&dir, Offset::start_of(0));
+    got.extend(take(&mut feed, expected.len() - got.len()).await);
+    assert_eq!(got, expected);
+    assert_next_is_the_next_command(&node, &mut feed).await;
+}
+
 #[tokio::test]
 async fn a_backfill_reads_a_batch_only_with_a_permit_and_returns_it_after() {
     let dir = scratch_dir("feed-permits");
@@ -174,6 +211,9 @@ async fn a_feed_from_a_seq_refuses_a_live_message_past_that_seq() {
     let seq = node.next_seq().await;
     let mut feed =
         Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), Some(Offset::start_of(seq)));
+    // Its read of the disk begins, finding nothing at seq.
+    let mut answer = Box::pin(feed.next());
+    assert!((&mut answer).now_or_never().is_none());
     // As if seq's lines were cut from disk after being published: the next live message is seq + 1.
     let tick = CommandEntry {
         seal: None,
@@ -181,7 +221,7 @@ async fn a_feed_from_a_seq_refuses_a_live_message_past_that_seq() {
         events: Some(Vec::new()),
     };
     node.stream.send(Arc::new(StreamMsg::new(Offset::start_of(seq + 1), LogEntry::Command(tick)))).unwrap();
-    let answer = timeout(Duration::from_secs(10), feed.next()).await.expect("an answer in time");
+    let answer = timeout(Duration::from_secs(10), answer).await.expect("an answer in time");
     let err = answer.expect_err("the gap is refused");
     assert!(format!("{err:#}").contains("missing from the log on disk"), "{err:#}");
 }
@@ -460,6 +500,17 @@ fn tick(seq: u64) -> Arc<StreamMsg> {
 
 fn permits() -> Arc<Semaphore> {
     Arc::new(Semaphore::new(MAX_BACKFILLS))
+}
+
+/// What `probe` was sent since it last read, each still held by the channel for one other subscriber.
+fn held_for_the_feed(probe: &mut broadcast::Receiver<Arc<StreamMsg>>, label: &str) -> Vec<Arc<StreamMsg>> {
+    let mut sent = Vec::new();
+    while let Ok(msg) = probe.try_recv() {
+        sent.push(msg);
+    }
+    assert!(!sent.is_empty(), "{label}: messages were sent");
+    assert!(sent.iter().all(|msg| Arc::strong_count(msg) == 2), "{label}: the channel holds each for the feed");
+    sent
 }
 
 /// The feed's next message, failing the test if none comes within ten seconds.
