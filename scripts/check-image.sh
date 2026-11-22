@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The enclave image checks that need no SEV-SNP hardware. Boots the image under plain QEMU (no
-# SEV-SNP, so no hardware quote) with config/dev.toml on its data disk, then checks by variant:
+# SEV-SNP, so no hardware quote) with config/dev.toml on its data disk and an empty log disk beside it, then checks by variant:
 # - production: the engine refuses the config's mock providers and the guest powers off;
 # - dev: /v1/attestation serves a bundle that hashes to its report data and names the enclave
 #   address, the config file's SHA-256, and the TLS key, a client pinned to that key connects, and
@@ -44,15 +44,17 @@ fail() {
 # API listens on every interface so the forwarded port reaches it; the metrics port stays on
 # loopback.
 boot() {
-  rm -rf "$work/data" "$work/data.img" "$work/console.log"
+  rm -rf "$work/data" "$work/data.img" "$work/log.img" "$work/console.log"
   mkdir "$work/data"
   awk '/^\[/ { section = $0 } section == "[node]" && /^listen = / { $0 = "listen = \"0.0.0.0:8080\"" } 1' \
     > "$work/data/config.toml"
   mke2fs -q -t ext4 -d "$work/data" "$work/data.img" 64M
+  # The log's own disk, which init mounts at /data/log.
+  mke2fs -q -t ext4 "$work/log.img" 64M
   qemu-system-x86_64 -machine "q35,accel=$accel" -m 1G -smp 2 -display none -monitor none -no-reboot \
     -serial "file:$work/console.log" \
     -kernel "$image/vmlinuz" -initrd "$image/initramfs.cpio.gz" -append "$cmdline" \
-    -drive "if=virtio,format=raw,file=$work/data.img" \
+    -drive "if=virtio,format=raw,file=$work/data.img" -drive "if=virtio,format=raw,file=$work/log.img" \
     -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$port-:8080" -device virtio-net-pci,netdev=net0,romfile= &
   qemu_pid=$!
 }

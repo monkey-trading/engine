@@ -425,10 +425,10 @@ Before step 1, complete and check each of the following:
    [Chain finality](reference.md#chain-finality) describes. The trading server reads the release at
    that block.
 
-2. **Boot with new keys.** The log directory must be a volume of its own, on the host's other NVMe
-   drive than the data disk's, as [the production template](production-node.toml) says; a production
-   build refuses a configuration whose log directory shares a device with the history index, the
-   recovery caches or the daily snapshots. Make the data disk with `config.toml`, which is the file you hashed,
+2. **Boot with new keys.** Make the log disk, a second disk on the host's other NVMe drive than the
+   data disk's, which the image mounts at `/data/log`, as [the production template](production-node.toml)
+   says; a production build refuses a configuration whose log directory shares a device with the
+   history index, the recovery caches or the daily snapshots. Make the data disk with `config.toml`, which is the file you hashed,
    renamed, and an empty file named `new-key`. Start the VM on the host with the launch flags in
    `measurement.json`, as [Boot on an SEV-SNP host](../../image/README.md#boot-on-an-sev-snp-host)
    describes, and forward `tee.sealing.secrets.listen` from the operator's addresses.

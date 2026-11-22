@@ -388,11 +388,12 @@ files under `disk/`.
    Each run ends with `prepared ...: vault 0x..., release named`. The relayers are Anvil's
    accounts 3, 4 and 5.
 
-2. Make each guest's data disk. The file `new-key` on the disk makes the first boot seal new keys:
+2. Make each guest's data disk and its log disk, which are the guest's first and second virtio disks and which belong on the host's two NVMe drives, one each. The file `new-key` on the disk makes the first boot seal new keys:
 
    ```shell
    for guest in a b c; do
      mke2fs -q -t ext4 -d $SNP/$guest/disk $SNP/$guest/data.img 64G
+     mke2fs -q -t ext4 $SNP/$guest/log.img 64G
    done
    ```
 
@@ -414,7 +415,7 @@ command without running it.
      sudo tmux new-session -d -s guest-$guest -c "$PWD" \
        "QEMU=/opt/qemu/bin/qemu-system-x86_64 scripts/snp-launch.sh --memory 16G \
         --forward $api:8080 --forward $metrics:9464 \
-        $SNP/image-dev $SNP/$guest/data.img 2>&1 | tee $SNP/$guest/console.log"
+        $SNP/image-dev $SNP/$guest/data.img $SNP/$guest/log.img 2>&1 | tee $SNP/$guest/console.log"
    done
    ```
 
@@ -573,8 +574,9 @@ the simulated providers:
 ```shell
 mkdir $SNP/production && grep -v '^allowed_origins' config/dev.toml > $SNP/production/config.toml
 mke2fs -q -t ext4 -d $SNP/production $SNP/production.img 1G
+mke2fs -q -t ext4 $SNP/production-log.img 1G
 sudo QEMU=/opt/qemu/bin/qemu-system-x86_64 scripts/snp-launch.sh \
-  $SNP/image-production $SNP/production.img | tee $SNP/production-console.log
+  $SNP/image-production $SNP/production.img $SNP/production-log.img | tee $SNP/production-console.log
 grep -E 'SEV: Status|a production build refuses mock providers' $SNP/production-console.log
 ```
 

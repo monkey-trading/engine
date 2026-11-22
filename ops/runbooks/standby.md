@@ -238,7 +238,7 @@ in [How a takeover goes](#how-a-takeover-goes) is running.**
    The replay ends at a checkpoint equal to the vault's accepted one, with the same seq and root.
 
 6. Start the registered release with new keys. Copy the finalised log directory to the SEV-SNP
-   host's data disk as `/data/log`. Beside it, put `config.toml` and an empty file named `new-key`.
+   host's log disk, which the guest mounts as `/data/log`. On the data disk, put `config.toml` and an empty file named `new-key`.
    **`config.toml` is the registered release's configuration, byte for byte, not the standby's.**
    Boot the VM as step 2 of [First deployment](deploy-and-rollback.md#first-deployment) describes.
 

@@ -28,8 +28,11 @@ running trading server a node, as the first one below does.
   when the chip's certificate names the product line `tee.processor` names.
 - **The wall clock**, which stamps every command and which signed Roughtime readings bound.
 - **The data disk**, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
-  `nodev` and `noexec`. It holds `config.toml`, the log, the history index, the alert outbox, the
-  custody cursor and the sealed keys. The root filesystem and `/dev` are read-only, so a path in the
+  `nodev` and `noexec`. It holds `config.toml`, the history index, the recovery caches, the alert
+  outbox, the custody cursor and the sealed keys. The log is on the second virtio disk, mounted at
+  `/data/log` with the same options, so that the buffered writes of the first never hold the log's
+  syncs, and a production build refuses a configuration whose log directory shares a device with
+  the history index, the recovery caches or the daily snapshots. The root filesystem and `/dev` are read-only, so a path in the
   configuration outside `/data` fails at boot. The keys are sealed through `/dev/sev-guest` to this
   release's launch measurement and policy on this chip, so the host holds only ciphertext.
 
@@ -40,7 +43,7 @@ both before the engine starts. `/data/new-key` seals new keys for a release that
 The kernel also reads input that the launch measurement does not cover, and nothing yet bounds what
 a crafted input can do to it: the ext4 filesystem that the host builds, the ACPI tables that QEMU
 supplies, the emulated virtio devices, serial port and real-time clock, and the DHCP replies.
-Authenticating the data disk and measuring the ACPI tables are not yet done.
+Authenticating the data and log disks and measuring the ACPI tables are not yet done.
 
 The guest runs no login or other service. [init](../image/init) mounts the filesystems and runs
 the engine, and when the engine exits it syncs the disk and powers the guest off. The guest writes

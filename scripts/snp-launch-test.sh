@@ -32,7 +32,7 @@ cat > "$image/measurement.json" << 'EOF'
 }
 EOF
 (cd "$image" && sha256sum OVMF.fd initramfs.cpio.gz measurement.json vmlinuz > SHA256SUMS)
-touch "$work/data.img" "$work/bench.cpio.gz"
+touch "$work/data.img" "$work/log.img" "$work/bench.cpio.gz"
 
 check() {
   local name="$1" want="$2" got
@@ -68,30 +68,35 @@ readme=(
   -append "console=ttyS0 ip=dhcp panic=-1 no-kvmclock"
   -drive "if=none,id=data,format=raw,file=$work/data.img"
   -device virtio-blk-pci,drive=data,disable-legacy=on,iommu_platform=on
+  -drive "if=none,id=log,format=raw,file=$work/log.img"
+  -device virtio-blk-pci,drive=log,disable-legacy=on,iommu_platform=on
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:8081-:8080,hostfwd=tcp:0.0.0.0:9472-:9472
   -device virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on,romfile=
 )
 check "the launch flags from measurement.json" "$(printf '%q ' "${readme[@]}")" \
-  "$launch" --dry-run --memory 16G --forward 8081:8080 --forward 0.0.0.0:9472:9472 "$image" "$work/data.img"
+  "$launch" --dry-run --memory 16G --forward 8081:8080 --forward 0.0.0.0:9472:9472 "$image" "$work/data.img" "$work/log.img"
 
-bench=("${readme[@]}")
+# The benchmark guest has no log disk: its own init mounts only the data disk (readme[26..29] are the log's).
+bench=("${readme[@]:0:26}" "${readme[@]:30}")
 bench[5]=8
 bench[19]="$work/bench.cpio.gz"
 bench[27]=user,id=net0
 check "the benchmark guest's initramfs and vCPUs" "$(printf '%q ' "${bench[@]}")" \
   "$launch" --dry-run --memory 16G --initrd "$work/bench.cpio.gz" --smp 8 "$image" "$work/data.img"
 
-refused "a vCPU count without --initrd" "needs --initrd" "$launch" --dry-run --smp 8 "$image" "$work/data.img"
-refused "a malformed forward" "--forward takes" "$launch" --dry-run --forward 8081 "$image" "$work/data.img"
-refused "a missing data disk" "no data disk" "$launch" --dry-run "$image" "$work/missing.img"
+refused "a vCPU count without --initrd" "needs --initrd" "$launch" --dry-run --smp 8 "$image" "$work/data.img" "$work/log.img"
+refused "a malformed forward" "--forward takes" "$launch" --dry-run --forward 8081 "$image" "$work/data.img" "$work/log.img"
+refused "a missing data disk" "no data disk" "$launch" --dry-run "$image" "$work/missing.img" "$work/log.img"
+refused "a missing log disk" "no log disk" "$launch" --dry-run "$image" "$work/data.img" "$work/missing.img"
+refused "no log disk" "usage:" "$launch" --dry-run "$image" "$work/data.img"
 
 echo "altered" >> "$image/vmlinuz"
-refused "a kernel that is not the image's" "do not match its SHA256SUMS" "$launch" --dry-run "$image" "$work/data.img"
+refused "a kernel that is not the image's" "do not match its SHA256SUMS" "$launch" --dry-run "$image" "$work/data.img" "$work/log.img"
 (cd "$image" && echo "stand-in vmlinuz" > vmlinuz)
 
 sed -i.orig 's/"0x201"/"0x1"/' "$image/measurement.json"
 (cd "$image" && sha256sum OVMF.fd initramfs.cpio.gz measurement.json vmlinuz > SHA256SUMS)
-refused "a measurement without Secure TSC" "not 0x201" "$launch" --dry-run "$image" "$work/data.img"
+refused "a measurement without Secure TSC" "not 0x201" "$launch" --dry-run "$image" "$work/data.img" "$work/log.img"
 
 if ((failures)); then
   echo "$failures case(s) failed" >&2
