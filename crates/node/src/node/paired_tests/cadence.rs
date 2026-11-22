@@ -1,7 +1,7 @@
 //! The capture cadence through the node's startup order: a cache at a start's first checkpoint, then
 //! one every `[snapshots] interval` of sequenced time, and one at shutdown; a capture that finds one in
 //! flight, or that a stopped history owner cannot take, stays due; an owner behind the log takes a capture
-//! and completes it once it reaches the checkpoint, with a warning once it waits past the interval, and
+//! and completes it once it reaches the checkpoint, with a warning once it has waited a minute, and
 //! leaves its encoding wait at once when stopped; a handover's sealed log, or a checkpoint
 //! a withdrawal entry follows, is not captured at shutdown;
 //! a node without a stats worker encodes its caches itself; a restart resumes from the newest.
@@ -133,7 +133,7 @@ async fn an_owner_behind_the_log_takes_a_capture_and_completes_it_at_its_checkpo
 /// it, resolves it. With a one-second interval the minute decides, and with an hour the next capture is due
 /// only after the minute.
 #[tokio::test]
-async fn a_capture_waiting_past_the_interval_for_the_index_alerts_until_it_is_stored() {
+async fn a_capture_waiting_a_minute_for_the_index_alerts_until_it_is_stored() {
     let (second, minute) = (Duration::from_secs(1), Duration::from_secs(60));
     for (interval, late) in [(second, minute), (INTERVAL, INTERVAL)] {
         let mut cfg = configuration(&format!("paired-cadence-late-{}", interval.as_secs()));
