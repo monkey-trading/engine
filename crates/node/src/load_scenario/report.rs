@@ -450,9 +450,20 @@ mod tests {
         let earlier = Snapshot::take(&metrics);
         metrics.batch_seconds.observe(0.25);
         let window = Snapshot::take(&metrics).since(&earlier);
-        // Interpolated within the bucket from 0.2048 s to 0.4096 s, as Prometheus does.
-        let expected = format!("batch_p99_us=407552 busy_share={:.3} {}", window.busy_share, window.host);
-        assert_eq!(window_figures(&window), expected);
+        let window = Delta { busy_share: 0.5, host: Waited { io_ms: Some(12.0), cpu_ms: None }, ..window };
+        // The batch p99 is interpolated within the bucket from 0.2048 s to 0.4096 s, as Prometheus does.
+        assert_eq!(
+            window_figures(&window),
+            "batch_p99_us=407552 busy_share=0.500 host_io_wait_ms=12 host_cpu_wait_ms=n/a"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
+        let earlier =
+            Snapshot { waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000) }, ..Snapshot::take(&Metrics::new()) };
+        let later = Snapshot { waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500) }, ..earlier.clone() };
+        assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5) });
     }
 
     #[test]

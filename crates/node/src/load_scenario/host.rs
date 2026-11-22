@@ -1,13 +1,14 @@
 //! How long the host's tasks waited on storage and for a CPU, from Linux's pressure stall information
-//! (`/proc/pressure`): the runner's share of a window's stall, which the node's own figures cannot show.
+//! (`/proc/pressure`). The storage wait counts the node's own log syncs too, so a disk stall shows as a
+//! window's wait standing well above its neighbours'.
 
 use std::fmt;
 
 /// The host's wait totals at one moment, in microseconds, each None where the host reports none.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Waits {
-    pub io_us: Option<u64>,
-    pub cpu_us: Option<u64>,
+    pub(super) io_us: Option<u64>,
+    pub(super) cpu_us: Option<u64>,
 }
 
 /// How long the host's tasks waited between two `Waits`, in milliseconds: on storage, the node's own
@@ -15,8 +16,16 @@ pub(super) struct Waits {
 /// more of either than its neighbours names the disk or the cores.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Waited {
-    pub io_ms: Option<f64>,
-    pub cpu_ms: Option<f64>,
+    pub(super) io_ms: Option<f64>,
+    pub(super) cpu_ms: Option<f64>,
+}
+
+/// `host_io_wait_ms=… host_cpu_wait_ms=…`, `n/a` where the host reports none.
+impl fmt::Display for Waited {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ms = |wait: Option<f64>| wait.map_or_else(|| "n/a".to_owned(), |ms| format!("{ms:.0}"));
+        write!(f, "host_io_wait_ms={} host_cpu_wait_ms={}", ms(self.io_ms), ms(self.cpu_ms))
+    }
 }
 
 impl Waits {
@@ -31,14 +40,6 @@ impl Waits {
             now.zip(then).map(|(now, then)| now.saturating_sub(then) as f64 / 1_000.0)
         };
         Waited { io_ms: ms(self.io_us, earlier.io_us), cpu_ms: ms(self.cpu_us, earlier.cpu_us) }
-    }
-}
-
-/// `host_io_wait_ms=… host_cpu_wait_ms=…`, `n/a` where the host reports none.
-impl fmt::Display for Waited {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let ms = |wait: Option<f64>| wait.map_or_else(|| "n/a".to_owned(), |ms| format!("{ms:.0}"));
-        write!(f, "host_io_wait_ms={} host_cpu_wait_ms={}", ms(self.io_ms), ms(self.cpu_ms))
     }
 }
 
