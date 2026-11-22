@@ -239,7 +239,8 @@ impl<R: HeadsChain> Poster<R> {
             // custody providers' load.
             // Paces count from each read's tick, so a slow read does not push the next post a tick later.
             let tick = tokio::select! {
-                tick = retry.tick() => Some(tick),
+                // Not before the first release, as on an empty log: a tick then would push the first read a period on.
+                tick = retry.tick(), if released.borrow().seq != 0 => Some(tick),
                 changed = released.changed() => {
                     if changed.is_err() {
                         return Ok(());

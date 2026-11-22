@@ -161,9 +161,11 @@ async fn releases_between_ticks_cost_no_reads() {
     // is read once per tick, never once per release.
     let chain = FakeChain::new(None);
     let (tx, task) = spawn(chain.clone(), Duration::from_secs(60));
+    // The log's first head, which an empty log's poster reads for at once.
+    tx.send_replace(Head { seq: 1, link: B256::left_padding_from(&1u64.to_be_bytes()) });
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let before = chain.reads();
-    for seq in 1..=50u64 {
+    for seq in 2..=51u64 {
         tx.send_replace(Head { seq, link: B256::left_padding_from(&seq.to_be_bytes()) });
         tokio::time::sleep(Duration::from_millis(1)).await;
     }

@@ -95,6 +95,27 @@ async fn in_a_turn_the_stall_alert_fires_after_one_heartbeat_interval() {
     drive.stop().await;
 }
 
+/// A poster started on an empty log reads the chain at the log's first release, not at the read tick
+/// after it: in a turn, its first head goes out as soon as a member confirms the log, not a 30 s read
+/// interval later.
+#[tokio::test(start_paused = true)]
+async fn on_an_empty_log_the_first_read_comes_at_the_first_release() {
+    let chain = FakeChain::new(None);
+    chain.name_turn(turn(GENERATION));
+    let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
+    let drive = spawn_retrying(chain.clone(), Some(keys), Duration::from_secs(30));
+    // The log's genesis is released, and a member confirms it, a second after the poster starts.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(chain.reads(), 0, "nothing to read for before the first release");
+    drive.release(1);
+    drive.confirm(1, 0xc1);
+    drive.clock.advance(Duration::from_secs(1));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let posted = chain.posts_v2();
+    drive.stop().await;
+    assert_eq!(posted.iter().map(|(_, head)| head.head).collect::<Vec<_>>(), vec![at(1)], "the first head");
+}
+
 // ── Helpers ──
 
 /// The time between consecutive heads over `count` steps of 10 s, each releasing and confirming a newer
