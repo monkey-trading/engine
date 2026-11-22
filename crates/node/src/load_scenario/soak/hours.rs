@@ -136,7 +136,7 @@ pub(super) fn memory_failure(first: Standing, now: Standing) -> Option<String> {
     let bound = first.rss_mib as f64 * (1.0 + MEMORY_GROWTH + state_growth);
     (now.rss_mib as f64 > bound).then(|| {
         format!(
-            "resident memory {} MiB over {bound:.0} MiB: the first interval's {} MiB, {:.0}% more, \
+            "memory {} MiB over {bound:.0} MiB: the first interval's {} MiB, {:.0}% more, \
              and the state's growth of {:.0}%",
             now.rss_mib,
             first.rss_mib,
