@@ -14,7 +14,7 @@ const PANIC_LOG_LINES: usize = 150;
 /// failure on, a panic's message or the `Error:` line a test that returns an error exits with, which
 /// names the error and its whole context chain, then, if the log goes on past that, its last
 /// `EXIT_LOG_LINES` lines; with no failure, the last `EXIT_LOG_LINES` lines.
-pub(super) fn log_tail(path: &Path) -> String {
+pub(crate) fn log_tail(path: &Path) -> String {
     match std::fs::read(path) {
         Ok(bytes) => report(&String::from_utf8_lossy(&bytes)),
         Err(e) => format!("(the log cannot be read: {e})"),

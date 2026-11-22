@@ -30,7 +30,7 @@ use crate::standby_key::chain::StandbyDomain;
 use crate::tee::EnclaveKey;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::Release;
-use crate::test_support::scratch_dir;
+use crate::test_support::{quiet_addr, scratch_dir};
 use crate::trusted_time::TrustedClock;
 
 use super::super::rig::{Log, Rig, config, sampling};
@@ -80,7 +80,7 @@ impl World {
         let members: Vec<Member> = (0..4)
             .map(|i| {
                 let dir = scratch_dir(&format!("fallback-member-{i}"));
-                let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+                let free = quiet_addr();
                 Member {
                     candidate: chain.accounts[2 + i],
                     admin: k256::ecdsa::SigningKey::from_slice(&KEYS[i]).unwrap(),

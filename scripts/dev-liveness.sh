@@ -23,6 +23,13 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$root/contracts" && forge build)
+
+# Each member's node log is in a scratch directory a CI runner discards; with SCENARIO_LOG_DIR set they
+# go there, where the job uploads them when it fails.
+if [[ -n "${SCENARIO_LOG_DIR:-}" ]]; then
+  mkdir -p "$SCENARIO_LOG_DIR"
+  export TMPDIR="$SCENARIO_LOG_DIR"
+fi
 CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
   --ignored --exact --nocapture \
   custody::tests::election_scenario::liveness::dev_scenario_a_failed_operator_is_promoted_past_within_minutes
