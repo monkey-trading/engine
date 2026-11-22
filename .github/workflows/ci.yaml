@@ -630,6 +630,8 @@ jobs:
         run: ./scripts/dev-parameter-votes.sh
       - name: Run the minute-scale liveness dev scenario
         run: ./scripts/dev-liveness.sh
+        env:
+          SCENARIO_LOG_DIR: ${{ github.workspace }}/scenario-logs
       - name: Run the operator faults dev scenario
         run: ./scripts/dev-operator-faults.sh
       - name: Keep the scenario nodes' logs
