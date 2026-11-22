@@ -1005,9 +1005,14 @@ Known limits:
   had the firmware verify, but requires none, so a fix that needs that host step rather than a
   newer firmware version is not enforced.
 - AMD has not published the layout of version 4 of the attestation report, and the verifier reads
-  it as version 3, as public parsers do. A field that version 4 moved would make its reports fail to
-  verify, not verify falsely, because every field the verifier reads must match the VCEK's
-  certificate, the release manifest or the served bundle.
+  it with version 3's layout, which is an assumption. If version 4 placed bytes that the host or
+  guest chooses (`HOST_DATA`, `REPORT_DATA`, or the ID block's `FAMILY_ID` and `IMAGE_ID`) at an
+  offset the verifier reads, such as the measurement, whoever chose them could satisfy the
+  comparison with the release manifest. The verifier does not check this: the mitigation vectors
+  are read without comparison, so not every field it reads must match the VCEK's certificate, the
+  release manifest or the served bundle. The assumption rests on two facts: public parsers read the
+  version-4 reports that SEV firmware 1.55.31 issues with version 3's layout, and every published
+  revision has added fields only in space that version 3 reserved.
 - With the mock enclave, the stand-in for the sealing key is derived from public values, so anyone
   can compute it.
 - Two copies of the current release that the host runs from copies of one disk can both open the
