@@ -397,8 +397,17 @@ mod tests {
         let in_flight = Arc::new(AtomicU64::new(0));
         let weights = vec![(2, 1)];
         let (clients, subscribers) = (Vec::new(), Vec::new());
-        let mut scheduler =
-            Scheduler { rng: Rng::new(1), slots, cursor: 0, weights, jobs: channels, in_flight, clients, subscribers };
+        let mut scheduler = Scheduler {
+            rng: Rng::new(1),
+            slots,
+            cursor: 0,
+            weights,
+            jobs: channels,
+            in_flight,
+            clients,
+            subscribers,
+            probe: None,
+        };
         // Five requests a second among four traders, each free to send one every 1 / ACCOUNT_RATE.
         for step in 0..200 {
             scheduler.dispatch(start + Duration::from_millis(200 * step));
@@ -454,6 +463,7 @@ mod tests {
             in_flight: Arc::default(),
             clients: Vec::new(),
             subscribers,
+            probe: None,
         };
         let caught_up = scheduler(vec![subscriber(Some(ended + 1)), subscriber(Some(ended + 250))]);
         let far = Instant::now() + Duration::from_secs(60);
