@@ -9,8 +9,8 @@
 # has broken or the sequencer is saturated, then prints the load at which each budget first broke.
 # Each leg prints order-to-fill and price-to-stamp at p50, p99 and p999, the sequencer's
 # batch time, stream lag, the sequencer's busy share, and the process's CPU and resident memory,
-# against the launch bar, and on Linux how long the host's tasks waited on storage, as each window does;
-# the run's log then replays to its roots. It fails if either measured leg
+# against the launch bar, and, as each window does, how long the host's tasks waited on storage and for a
+# CPU where the host reports it; the run's log then replays to its roots. It fails if either measured leg
 # breaks the bar, with a loaded runner's tolerance, or did not measure what it claims: a request
 # refused, rejected or unanswered, a subscriber that took no frame, lost its connection or had not
 # taken the leg's last commands, or no fill or stamped price. The 5 ms order-to-fill p50 bar is held on
@@ -43,9 +43,9 @@ grep -qx "$test: test" <<<"$listed" || {
   echo "the dev scenario test $test was not found" >&2
   exit 1
 }
-# The build leaves its output, some 470 MB on CI's runners, in the page cache, and the kernel writes it
-# back once it is 30 seconds old (vm.dirty_expire_centisecs), inside the first leg, where that burst held
-# the log's syncs, and every order waiting on one, for up to 250 ms. Writing it back first leaves the
-# legs to the node's own writes.
+# The build leaves its output, some 460 MB on CI's runners, in the page cache, and the kernel writes it
+# back once it is 30 seconds old (vm.dirty_expire_centisecs): on CI's book, inside the first leg, where
+# that burst held the log's syncs, and every order waiting on one, for up to 250 ms. Writing it back
+# first leaves the legs to the node's own writes.
 sync
 CARGO_INCREMENTAL=0 "${cargo_test[@]}" --nocapture
