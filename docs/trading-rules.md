@@ -342,7 +342,10 @@ operator action is a signed instruction in the public log.
 The profit fee, spreads, margins, financing markups, stress settings, volume tiers, weekend margins,
 each market's minimum venues, quote age and divergence limit, and the futures contracts a market rolls
 through can change only after seven days' public notice, though a later futures contract can be added
-at once. Some of them can also change only within limits set at launch:
+at once to a market where no one holds a position. A notice can be used only in the seven days after
+its time; after that, the change needs a new notice. A market where positions are open always keeps
+the rules under which its venues can price it. Some of them can also change only within limits set at
+launch:
 
 - the base profit fee can rise to at most one and a half times its launch rate, and never fall below
   it;

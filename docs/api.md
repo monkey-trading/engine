@@ -1362,7 +1362,9 @@ widths and ranges are in `closeout_bucket_bps`, `closeout_range_bps`, `profit_bu
 `score_rules`, `governance`, `pending_ceiling`, `house_loss` and `operator_faults` are left out when
 they do not apply. The other fields are always present, and are `null` or empty when nothing
 applies. A noticed change appears in `params_notice` or `listing_notices` until it takes effect, at
-least seven days after the notice.
+least seven days after the notice, or another notice replaces it. It can take effect only within
+seven days of its `effective_at`; one left unused after that stays listed, and its change needs a
+new notice.
 
 ### Series
 
@@ -1403,6 +1405,7 @@ that the engine enforces.
 | `pending_rotation` | A key that takes over at its `effective_at`, or `null`. |
 | `rotation_enabled` | Whether the operator registry's elections and daily turns choose the operator. |
 | `last_election` | The registry's last election, or `null`. |
+| `waiting_elections` | The elections that take effect, each at its own time, before the last one, oldest first; `pending_rotation` is the first one's. Left out while none waits. |
 | `rotation_set`, `next_rotation_set` | The rotation set in effect and the next, with its members and `effective_at`. |
 | `turn`, `next_turn` | Today's and tomorrow's daily turns, each with `taken`, whether its member has taken it. |
 | `turns` | The turn history, newest first, as `records` with `next`, and `truncated` and `retained_from_seq` once older records have been dropped. |

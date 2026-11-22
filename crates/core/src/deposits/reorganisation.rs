@@ -83,7 +83,8 @@ impl Engine {
     /// Checks every move, then reverses every orphan and records every replacement, moving cash only
     /// where screening changes a deposit's credit. A move that has already applied is skipped.
     /// Error cases:
-    /// - a move fails a `Replace`'s checks (`check_replacement`)
+    /// - a move fails a `Replace`'s checks (`check_replacement`), from `V88` its id below the finalised
+    ///   frontier's deposit count among them
     /// - two moves name the same orphan, replacement, vault id or transaction-local deposit
     /// - a replacement's vault id is held by a live receipt that does not move in this command
     /// - a change in credited principal cannot be represented

@@ -186,6 +186,7 @@ impl Engine {
     /// exemption.
     /// Error cases:
     /// - the protocol is inactive, or the signature/nonce/expiry fails
+    /// - from `V88`, the operator key in effect signed it, which spends no nonce
     /// - the screening evidence is missing, mismatched, stale, unknown, or excludes the account or its
     ///   jurisdiction
     /// - a declaration exists
@@ -199,6 +200,7 @@ impl Engine {
         if eip712::recover(&hash, &request.auth.signature) != Some(request.account) {
             return Err(Reject::InvalidSignature);
         }
+        self.refuse_operator_signer(request.account)?;
         self.use_nonce(request.account, &request.auth)?;
         self.check_access(Some(request.account), None, hash, Some(evidence), false, false).map_err(access_error)?;
         if self.eligibility.contains_key(&request.account) {

@@ -35,7 +35,7 @@ use proptest::test_runner::{Config, RngSeed, TestRunner};
 use crate::common::close_spread::{attest, evidence, fund, source_key};
 use crate::common::launch_book::{BOOK_TIME, WEEKEND_MARGINS, benchmark_batch, price_command, production_harness_at};
 use crate::common::session_keys::{HOUR_MS, trade_cmd};
-use crate::common::{BTC, Client, Harness};
+use crate::common::{BTC, Client, Harness, OPERATOR_SEED};
 
 const SEED: u64 = 0x5eed_0912;
 const CASES: u32 = 12;
@@ -220,7 +220,8 @@ impl Run {
             h.cmd(cmd);
         }
         let mut run = Run { h, full: Engine::new(), restored: Engine::new(), clients: Vec::new(), mids, closeouts: 0 };
-        for (seed, (cash, positions)) in (0x31u8..).zip(openings) {
+        // The operator's key is no client's: from `V88` it signs no client request.
+        for (seed, (cash, positions)) in (0x31u8..).filter(|seed| *seed != OPERATOR_SEED).zip(openings) {
             let client = Client::new(seed);
             attest(&mut run.h, &client);
             fund(&mut run.h, &client, &cash.to_string());

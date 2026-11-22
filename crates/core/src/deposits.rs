@@ -240,6 +240,8 @@ impl Engine {
     /// Changes one receipt atomically after validating its entire transition.
     /// Error cases:
     /// - invalid amounts, arithmetic overflow, or an inconsistent receipt or transition
+    /// - from `V88`, a credit, reinstatement or replacement above the finalised frontier at an id
+    ///   below its deposit count (`check_id_above_frontier`)
     fn apply_deposit_update(
         &mut self,
         update: &DepositUpdate,
@@ -263,6 +265,7 @@ impl Engine {
             if self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block) {
                 return Err(DepositReject::SettledReceipt);
             }
+            self.check_id_above_frontier(receipt)?;
             let recorded = recorded.ok_or(DepositReject::UnknownReceipt)?;
             if recorded.updated_at_seq > *reversed_at_seq && recorded.status != DepositStatus::Reversed {
                 return Ok(());
@@ -290,6 +293,7 @@ impl Engine {
             if self.custody_checkpoint.is_some_and(|checkpoint| receipt.block <= checkpoint.block) {
                 return Err(DepositReject::SettledReceipt);
             }
+            self.check_id_above_frontier(receipt)?;
             self.check_transaction_available(receipt)?;
             self.reverse_conflicting_receipts(receipt, None, events)?;
             if self.adopt_legacy_deposit(receipt)? {

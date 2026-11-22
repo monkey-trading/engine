@@ -29,6 +29,10 @@ pub(super) struct OperatorView {
     pending_rotation: Option<PendingRotation>,
     rotation_enabled: bool,
     last_election: Option<Election>,
+    /// From `V88`, the elections that take effect in turn before the last, oldest first; the pending
+    /// rotation is the first one's. Left out while none waits.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    waiting_elections: Vec<Election>,
     /// The newest mirrored rotation set in effect on chain by the log's sequenced time, which turns
     /// are drawn from.
     rotation_set: Option<SetView>,
@@ -112,6 +116,7 @@ pub(super) async fn operator(
                     pending_rotation: e.operator_bounds().rotation,
                     rotation_enabled: e.operator_election().rotation_enabled,
                     last_election: e.operator_election().last,
+                    waiting_elections: e.operator_election().waiting.clone(),
                     rotation_set,
                     next_rotation_set,
                     turn: daily.in_effect.map(view),

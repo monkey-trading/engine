@@ -16,6 +16,15 @@
 //! catch-up mirrors before that handover applied supersedes it, and cancelling the successor
 //! restores it, as the registry then names its winner again.
 //!
+//! From `V88` a successor no longer supersedes it. The registry elects only once the election before
+//! has taken effect on chain, so an election still waiting in the engine when its successor is
+//! mirrored, as one is whenever the successor is made in the first blocks at or after its effective
+//! time, before the mirror's frontier passes that time, holds the role first: it joins `waiting`, the
+//! elections that take effect in turn, each at its own time, before the last. Only the first one's
+//! handover is pending; each that takes effect hands the pending handover to the next, and a command
+//! after several of their times takes the latest one's key (`election/waiting.rs`). Cancelling the last
+//! makes the one it waited behind the last again.
+//!
 //! From `V47` the mirror also records the candidate of the last election to take effect, with the
 //! key it was elected under, which earns the operator's share of each distribution (`staking`). It
 //! moves when an election takes effect, under the same conditions as its key, including an election
@@ -51,11 +60,14 @@ use crate::operator_bounds::{NOTICE_MS, PendingRotation};
 use crate::protocol::ProtocolVersion;
 use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 
+mod waiting;
+
 /// The registry as the engine mirrors it: whether rotation is on, the last election, the election a
 /// successor superseded before it took effect, kept to restore if the successor is cancelled, from
-/// `V47` the candidate seated by the last election to take effect, and from `V48` the last operator
-/// the timelock installed. Left out of the encoding while empty.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// `V47` the candidate seated by the last election to take effect, from `V48` the last operator the
+/// timelock installed, and from `V88` the elections the last waits behind. Left out of the encoding
+/// while empty.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperatorElection {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -64,7 +76,7 @@ pub struct OperatorElection {
     pub last: Option<Election>,
     /// The election the last one superseded before it took effect: its handover still waited, or from
     /// `V47` it named the key in effect and its time had not come. Cancelling the last restores it,
-    /// since the registry then names it again.
+    /// since the registry then names it again. `V88` sets it no more: `waiting` keeps that election.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prior: Option<Election>,
     /// From `V47`, the candidate of the last election to take effect. `None` on a log that activated
@@ -76,6 +88,11 @@ pub struct OperatorElection {
     /// registry installs at once, so no finalised frontier gates the handover.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed: Option<InstalledOperator>,
+    /// From `V88`, the elections still waiting to take effect when a later one was mirrored, oldest
+    /// first: each takes effect at its own time, the first with its handover pending, and the last's
+    /// waits for them all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waiting: Vec<Election>,
 }
 
 /// From `V48`, an operator the timelock installed, and the key it was installed under, which a
@@ -210,6 +227,10 @@ impl Engine {
                 let operator = self.operator.expect("checked above").address;
                 self.operator_bounds.rotation = (prior.admin_key != operator)
                     .then_some(PendingRotation { address: prior.admin_key, effective_at: prior.effective_at });
+            } else if let Some(waited) = self.operator_election.waiting.pop() {
+                // From `V88` the election the cancelled one waited behind is the last again; the
+                // pending handover stays the first waiting election's, or this one's if it was alone.
+                self.operator_election.last = Some(waited);
             }
         }
         events.push(Event::RotationSwitched { enabled, election_cancelled });
@@ -218,7 +239,9 @@ impl Engine {
     /// Mirrors the registry's `Elected` event: records the election, and a pending rotation to its
     /// key when that is not the key in effect, replacing any pending rotation. An election the
     /// successor supersedes before it took effect is kept as `prior`, restored if the successor is
-    /// cancelled before it takes effect. From `V51` an election is refused once the log holds a
+    /// cancelled before it takes effect. From `V88` such an election is not superseded: it is kept
+    /// as `waiting`, with its pending rotation, and the successor's rotation waits for it
+    /// (`settle_operator_candidate`). From `V51` an election is refused once the log holds a
     /// rotation set (`turns`).
     pub(crate) fn elect_operator(&mut self, election: &RegistryElection, events: &mut Vec<Event>) {
         let RegistryElection { epoch, candidate, admin_key, effective_at, block, ref chain_ref } = *election;
@@ -252,13 +275,24 @@ impl Engine {
         // cancelling the successor restores it, as the registry then names it again. Before `V47`
         // only a waiting handover counts; from it, so does an election naming the key in effect, which
         // moves the candidate.
-        let waiting = |last: &Election| {
+        let pending = |last: &Election| {
             self.operator_bounds.rotation.is_some_and(|rotation| self.is_elected(rotation))
                 || (self.protocol_version >= ProtocolVersion::V47 && !last.cancelled && !self.has_taken_effect(last))
         };
-        self.operator_election.prior = self.operator_election.last.filter(waiting);
-        self.operator_bounds.rotation =
-            (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
+        let predecessor = self.operator_election.last.filter(pending);
+        if self.protocol_version >= ProtocolVersion::V88
+            && (predecessor.is_some() || !self.operator_election.waiting.is_empty())
+        {
+            // It took effect on chain before the registry could elect again, so it holds the role
+            // first, and this one waits behind it and any before it; the pending handover stays the
+            // first waiting election's.
+            self.operator_election.waiting.extend(predecessor);
+            self.operator_election.prior = None;
+        } else {
+            self.operator_election.prior = predecessor;
+            self.operator_bounds.rotation =
+                (admin_key != operator).then_some(PendingRotation { address: admin_key, effective_at });
+        }
         self.operator_election.last =
             Some(Election { epoch, candidate, admin_key, effective_at, registry_effective_at, cancelled: false });
         events.push(Event::OperatorElected { epoch, candidate, admin_key, effective_at });
@@ -300,6 +334,7 @@ impl Engine {
             last.cancelled = true;
         }
         self.operator_election.prior = None;
+        self.operator_election.waiting.clear();
         self.operator_election.seated = None;
         self.operator_election.installed = Some(InstalledOperator { candidate, admin_key, effective_at });
         // From `V51` the registry names the installed operator over the last turn.
@@ -313,13 +348,16 @@ impl Engine {
 
     /// The pending rotation that hands over before a command stamped `ts`: its time has come and,
     /// for an elected key, the staking mirror's finalised frontier has reached the registry's
-    /// effective time.
+    /// effective time. From `V88`, once the first waiting election's time has come, the latest of the
+    /// elections in turn whose time has come (`due_waiting_key`).
     pub fn due_rotation(&self, ts: Millis) -> Option<PendingRotation> {
+        if let Some(due) = self.due_waiting_key(ts) {
+            return due;
+        }
         let reached = self.finalised_chain_time();
         self.operator_bounds.rotation.filter(|rotation| {
             rotation.effective_at <= ts
-                && (!self.is_elected(*rotation)
-                    || self.operator_election.last.is_some_and(|last| reached >= Some(last.registry_effective_at)))
+                && self.election_of(*rotation).is_none_or(|election| reached >= Some(election.registry_effective_at))
         })
     }
 
@@ -334,7 +372,8 @@ impl Engine {
     /// From `V47`, seats the last election's candidate, with its key, once that election's time has
     /// come (`has_taken_effect`). These are `due_rotation`'s conditions, so a handover and its candidate
     /// move together, and an election naming the key already in effect moves the candidate at the time
-    /// it would have moved a key.
+    /// it would have moved a key. From `V88` the waiting elections before it were seated in turn with
+    /// their handovers (`Engine::advance_waiting_elections`).
     pub(crate) fn settle_operator_candidate(&mut self) {
         if self.protocol_version < ProtocolVersion::V47 {
             return;
@@ -375,11 +414,20 @@ impl Engine {
         self.staking.as_ref().and_then(|staking| staking.completed_through).and_then(|checkpoint| checkpoint.time)
     }
 
-    /// Whether `rotation` is the one the last election, not cancelled, recorded.
+    /// Whether `rotation` is the one the last election, not cancelled, recorded, or from `V88` the
+    /// waiting one.
     pub(crate) fn is_elected(&self, rotation: PendingRotation) -> bool {
-        self.operator_election.last.is_some_and(|last| {
-            !last.cancelled && last.admin_key == rotation.address && last.effective_at == rotation.effective_at
-        })
+        self.election_of(rotation).is_some()
+    }
+
+    /// The election `rotation` hands over to: the last, not cancelled, or from `V88` a waiting one.
+    fn election_of(&self, rotation: PendingRotation) -> Option<Election> {
+        let names = |election: &Election| {
+            !election.cancelled
+                && election.admin_key == rotation.address
+                && election.effective_at == rotation.effective_at
+        };
+        self.operator_election.waiting.iter().copied().find(names).or(self.operator_election.last.filter(names))
     }
 
     /// Whether `rotation` is the one the last installation recorded.

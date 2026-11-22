@@ -22,34 +22,34 @@ use crate::{stress, v10, v11, v12, v14, v15, v16, v17, v18, v19, v20, v21, v22, 
 use crate::{
     v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52,
     v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v75,
-    v76, v77, v78, v79, v80, v81, v82, v83, v84, v85, v86, v87,
+    v76, v77, v78, v79, v80, v81, v82, v83, v84, v85, v86, v87, v88,
 };
 
-/// The scripted session: client auth and activation, genesis, funding, prices,
-/// every order kind, signed requests refused for each auth reason, triggers (one held back by its spread), cancels,
-/// reduce-only (one clipped to the position), stress, toxicity, a position flip, house capital, withdrawals, a session
-/// close and gapped open, financing rollovers over longs and a short, a two-position close-out with bad debt, two-band
-/// margin, an exchange holiday, a zero house capital move, an early close and a special session, admin changes, venue
-/// quotes stamped ahead of the sequenced time, and dust adds to a long and a short held over a rollover, with a
-/// rejection of each kind along the way. Then, under `V6`, close-outs after a margin-table rise, a close-out level
-/// rise, and a rollover's financing, house cap floors at a drawn-down NAV, and a close-out just after a session close
-/// that skips the closed market. Then, under `V7`, USD settlement of markets quoted in euros and yen. Then, under `V8`,
-/// operator commands signed and refused for each reason, and every market reduce-only. Then, under `V9`, the state
-/// tree: a new account's deposit, resting order and cancel, a dollar round trip, a euro position, and a marked markout.
-/// Then, under `V10`, spreads, a margin requirement, and close-out levels that round up; and under `V11`, markouts
-/// averaged by notional and scored at a valid index. Then, under `V12`, gapped opens, quotes ageing out, a session
-/// close, a leading venue, and an FX index ageing out, each processed before the next command acts. Then, under
-/// `V13`, stress that follows its inputs (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on,
-/// one part per version in its `v<N>.rs`: toxicity memory, the move window, dated benchmarks, MONKEY emissions,
-/// custody finality, futures rolls, FIFO withdrawals, access, staking, emission debt, the operator's bounds, the
-/// exit's leaves, the elected key, session keys, gross-loss emission weight, the operator's share,
-/// the timelock's installed operator, the house loss trigger, earned leverage, request and order limits, tier
-/// benefits, a rollover's tier in a catch-up, and a promotion finalised after its turn ended, including one
-/// of a refused draw and one whose set a lagging staking mirror kept, limits a price re-checks only
-/// once it could fill them, closes that wait for the staking mirror and count a parked deposit as its
-/// client's, with the operator's key refused as a session key, and voted changes to the rollover, price
-/// rules and corporate actions held to the operator's bounds, the operator's status notice, levels on a position,
-/// close-outs under portfolio margin, and a voted change to a futures market's contracts and its roll from its mark.
+/// The scripted session: client auth and activation, genesis, funding, prices, every order kind, signed requests
+/// refused for each auth reason, triggers (one held back by its spread), cancels, reduce-only (one clipped to the
+/// position), stress, toxicity, a position flip, house capital, withdrawals, a session close and gapped open, financing
+/// rollovers over longs and a short, a two-position close-out with bad debt, two-band margin, an exchange holiday, a
+/// zero house capital move, an early close and a special session, admin changes, venue quotes stamped ahead of the
+/// sequenced time, and dust adds to a long and a short held over a rollover, with a rejection of each kind along the
+/// way. Then, under `V6`, close-outs after a margin-table rise, a close-out level rise, and a rollover's financing,
+/// house cap floors at a drawn-down NAV, and a close-out just after a session close that skips the closed market. Then,
+/// under `V7`, USD settlement of markets quoted in euros and yen. Then, under `V8`, operator commands signed and
+/// refused for each reason, and every market reduce-only. Then, under `V9`, the state tree: a new account's deposit,
+/// resting order and cancel, a dollar round trip, a euro position, and a marked markout. Then, under `V10`, spreads, a
+/// margin requirement, and close-out levels that round up; and under `V11`, markouts averaged by notional and scored at
+/// a valid index. Then, under `V12`, gapped opens, quotes ageing out, a session close, a leading venue, and an FX index
+/// ageing out, each processed before the next command acts. Then, under `V13`, stress that follows its inputs
+/// (`stress.rs`), and the parts in `v14.rs` and `v15.rs`. Then, from `V16` on, one part per version in its `v<N>.rs`:
+/// toxicity memory, the move window, dated benchmarks, MONKEY emissions, custody finality, futures rolls, FIFO
+/// withdrawals, access, staking, emission debt, the operator's bounds, the exit's leaves, the elected key, session
+/// keys, gross-loss emission weight, the operator's share, the timelock's installed operator, the house loss trigger,
+/// earned leverage, request and order limits, tier benefits, a rollover's tier in a catch-up, and a promotion finalised
+/// after its turn ended, including one of a refused draw and one whose set a lagging staking mirror kept, limits a
+/// price re-checks only once it could fill them, closes that wait for the staking mirror and count a parked deposit as
+/// its client's, with the operator's key refused as a session key, and voted changes to the rollover, price rules and
+/// corporate actions held to the operator's bounds, the operator's status notice, levels on a position, close-outs
+/// under portfolio margin, a voted change to a futures market's contracts and its roll from its mark, and refused: a
+/// receipt at a vault id the frontier counts, a relisting leaving a held market unpriced, the office key's own order.
 pub(crate) fn session() -> Vec<Sequenced> {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
@@ -495,5 +495,6 @@ pub(crate) fn session() -> Vec<Sequenced> {
     v85::session(&mut h);
     v86::session(&mut h);
     v87::session(&mut h);
+    v88::session(&mut h);
     h.log
 }

@@ -262,7 +262,9 @@ venues disagree, or when executions look wrong.
    are protocol parameters, and changing them is the owner's decision, with a notice period that the
    engine enforces. Price rules, tighter or looser, apply only seven days after a listing notice,
    given with `announce-listing --price-rules-from`, or after a vote, whether or not the market is
-   reduce-only, and looser ones never beyond the market's launch rules.
+   reduce-only, and looser ones never beyond the market's launch rules. A notice can be used only
+   within seven days of its time, and rules that would leave a market with open positions without a
+   price are refused, whether or not it is reduce-only.
 
 A market's spread bands and margin bands change only seven days after a listing notice given with
 `announce-listing`, and only within the market's launch bands. During an incident, you therefore

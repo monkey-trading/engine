@@ -221,11 +221,17 @@ time its listing names.
 
      **Changes the live system.** The owner must approve the exact specification.
 
-     The listing applies at once only if it keeps every contract from the one the market prices from
-     on, each under its name and at its roll time, and adds contracts only after the last. A renamed,
-     dropped or moved contract from the one the market prices from on applies only from seven days
-     after a listing notice naming the new contracts, given with
-     `announce-listing <market> --contracts-from <market.toml> --effective-at <time>`.
+     The listing applies at once only if the market has no open positions, and the listing keeps
+     every contract from the one the market prices from on, each under its name and at its roll time,
+     and adds contracts only after the last. Any other change of contracts, adding one to a market
+     that has open positions included, applies only from seven days after a listing notice naming the
+     new contracts, given with
+     `announce-listing <market> --contracts-from <market.toml> --effective-at <time>`. Send the
+     listing within seven days of `<time>`. After that the notice lapses, and the change needs a new
+     notice.
+
+  **For a market that has open positions, give the notice at least seven days before the current
+  contract's roll time. Otherwise the market has no price once the current contract expires.**
 
   While parameter votes govern, as [Parameter votes](operator-candidate.md#parameter-votes)
   describes, the engine refuses this instruction from the operator. The members of the rotation set
@@ -375,18 +381,20 @@ which a quote stops counting towards the market's price.
 The engine checks the change, when it is sequenced, against the quotes that the market holds. While
 the market has open positions, or a market quoted in the currency it converts has open positions,
 the change applies only if those quotes, at their age at that moment, still price the market under
-the shorter limit. Otherwise the engine refuses the change with `price rules it cannot price under`.
-For a held market that converts at the market being changed, the reason is
-`which the price rules cannot price under`.
+the shorter limit. Otherwise the engine refuses the change with
+`has open positions and would have no price under the price rules of market`, naming the market
+that would have no price: the market being changed, or a market that converts at it. The engine
+refuses it whether or not those markets are reduce-only.
 
 A venue's quote keeps the venue's own timestamp, and the feed's repeat rule only delays a repeat of
 an unchanged price. A quiet mid price therefore leaves quotes older than a tighter limit, even while
 the venues are healthy.
 
 A tightening applies only from seven days after a listing notice that names the new price rules, or
-by a vote, whether or not the market is reduce-only. Undoing it is a loosening, which also applies
-only seven days after a notice of its own, or by a vote, and never beyond the market's launch rules.
-Tighten only what the owner accepts for at least seven days.
+by a vote, whether or not the market is reduce-only. The change must be signed within seven days of
+the notice's time. After that the notice lapses, and the change needs a new notice. Undoing it is a
+loosening, which also applies only seven days after a notice of its own, or by a vote, and never
+beyond the market's launch rules. Tighten only what the owner accepts for at least seven days.
 
 While parameter votes govern, which is while rotation is on and a rotation set with members is in
 effect, as [Parameter votes](operator-candidate.md#parameter-votes) describes, the engine refuses
@@ -395,8 +403,7 @@ proposed as a normal vote, which applies seven days after the engine logs it, an
 the quotes the market holds at that time. The vote's seven days are its notice, so step 1 is left
 out. A voted change that the engine refuses at that time is spent, and `proposal_rejected` fires. It
 cannot be signed again, and only a new proposal, with its own seven days, can make the change. Each
-step of a stepwise cut is a vote of its own. The reduce-only instructions in step 5 remain the
-operator's, and they must be in force before the change's `applies_at` in `GET /v1/house/state`.
+step of a stepwise cut is a vote of its own.
 
 1. Give notice of the tighter price rules:
 
@@ -407,7 +414,8 @@ operator's, and they must be in force before the change's `applies_at` in `GET /
 
    `<spec.toml>` is the market specification carrying the tighter price rules, and `<time>` is in RFC
    3339 form, at least seven days after the notice is logged. The last line of the output is
-   `[{"type":"admin_applied"}]`. Wait until `<time>` before the next step.
+   `[{"type":"admin_applied"}]`. Wait until `<time>` before the next step, and sign the change
+   within seven days of `<time>`. After that the notice lapses, and the change needs a new notice.
 
    **Changes the live system.** The owner must approve the notice.
 
@@ -431,53 +439,21 @@ operator's, and they must be in force before the change's `applies_at` in `GET /
    **Changes the live system.** Each step is its own notice and `upsert-market`, and the owner must
    approve the exact specification of each.
 
-If the change is still refused, follow steps 4 to 10. In these steps the check against the market's
-quotes does not apply, so the market may be left without a price.
-
-4. Ask the owner to accept that the market may stay reduce-only, or without a price, for seven days.
-   If the tighter limit does not price the market, restoring the previous limit is a loosening,
-   which takes that long.
-
-5. Make every held market that the refusal names reduce-only, as
-   [Make markets reduce-only](reduce-only.md) describes. Those are the market being changed and any
-   market that converts at it.
-
-   **Changes the live system.** The owner must approve the reduce-only instructions, the change, and
-   the steps that follow.
-
-6. Sign the change again. The check does not apply to a market that is reduce-only.
-
-7. Once the change has applied, give notice of the restore, so that the previous limit can apply
-   seven days later if it is needed. A restore notice given before the change applies would replace
-   the change's own notice:
-
-   ```shell
-   $ENGINE admin --config $CONFIG --node $API --pin $PIN announce-listing <market> \
-     --price-rules-from <spec.toml> --effective-at <time>
-   ```
-
-   `<market>` is the market's id, and `<spec.toml>` is a market specification carrying the previous
-   price rules. `<time>` is in RFC 3339 form, such as `2027-01-01T00:00:00Z`, at least seven days
-   after the notice is logged. The last line of the output is `[{"type":"admin_applied"}]`.
-
-   **A listing notice replaces the market's pending notice, whatever that notice names.**
-
-8. Wait for a monitor sample taken after the change. The gauge samples once a second, and keeps its
+4. Wait for a monitor sample taken after the change. The gauge samples once a second, and keeps its
    last value when a sample times out, so a `1` read at once can describe the previous limit. Then
    check that `engine_market_priced` reads `1` for the market you changed, and for each market that
    converts at it **and is open**. A market closed on its schedule reads `0` whatever the limit, so
    check such a market at its next session. The `mark` in `/v1/markets` remains after pricing is
-   lost, so it proves nothing.
-
-9. If a market reads `0`, restore the previous limit once the notice from step 7 allows it, with an
-   `upsert-market` carrying the previous price rules. Then wait for a monitor sample taken after the
-   restore, and for the venues to quote again, because loosening discards the quotes that were stale
-   under the tighter limit.
+   lost, so it proves nothing. If an open market reads `0` while its venues quote, the previous limit
+   can return only as a loosening: give notice of it as in step 1, and sign it with `upsert-market`
+   within seven days of the notice's time.
 
    **Changes the live system.** The owner must approve the restore.
 
-10. Resume normal trading only once `engine_market_priced` reads `1` for the market, as
-    [Resume normal trading](reduce-only.md#resume-normal-trading) describes.
+If the change is still refused once the venues have quoted again, the quotes that the market
+receives do not meet the shorter limit. Keep the current limit, and tell the owner. Making a market
+reduce-only does not let the change through, so no market with open positions is left without a
+price.
 
 **How to tell it is resolved.** The change has applied, and `engine_market_priced` reads `1` for the
 market and for each open market that converts at it.

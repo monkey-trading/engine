@@ -124,6 +124,99 @@ async fn rotation_on_without_an_election_keeps_the_log_key_in_effect() {
     assert!(!authority.admits(old).await.unwrap(), "the configured key the log rotated away from");
 }
 
+// From `V88` an election waiting behind the last narrows deliveries as the last does: the pending handover is
+// the first's, and neither election's key is the one the log records, so only the configured key delivers.
+#[tokio::test]
+async fn an_election_waiting_behind_the_last_narrows_deliveries() {
+    let mut node = Node::staking("delivery-waiting-election").await;
+    let old = node.state.operator.address;
+    let next = SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let rotated = engine_core::eip712::address(next.verifying_key());
+    // With rotation off the log rotates to `rotated`, away from the configured key.
+    let rotation = node.sign(0, AdminCommand::RotateOperator { address: rotated }, NOW + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&rotation).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    node.stamps.advance(Duration::from_millis(after_the_notice() as u64 - NOW as u64));
+    let sample = sample_around(node.stamps.as_ref());
+    node.state.tx.send(crate::sequencer::Request::TimeSample(sample)).await.unwrap();
+    node.state.clock = std::sync::Arc::new(crate::clock::test_clock::TestClock::at(after_the_notice()));
+    let handover = sign(&next, &node.state.operator, reduce_only(Some(1)), 0, after_the_notice() + 60_000);
+    let (status, _) = node.post("/v1/admin", serde_json::to_value(&handover).unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    let on = Command::SwitchRotation { enabled: true, election_cancelled: false, block: 1, chain_ref: "0xon:0".into() };
+    assert_eq!(
+        node.state.submit(on).await.unwrap(),
+        [Event::RotationSwitched { enabled: true, election_cancelled: false }]
+    );
+
+    // The second election is mirrored while the first still waits for its time.
+    let elected = |seed: u8| engine_core::eip712::address(SigningKey::from_slice(&[seed; 32]).unwrap().verifying_key());
+    for (epoch, seed) in [(1_u64, 0x66_u8), (2, 0x67)] {
+        let election = Command::ElectOperator(RegistryElection {
+            epoch,
+            candidate: AccountId([seed; 20]),
+            admin_key: elected(seed),
+            effective_at: after_the_notice() + epoch as i64 * 3_600_000,
+            block: 1 + epoch,
+            chain_ref: format!("0xelect:{epoch}"),
+        });
+        let events = node.state.submit(election).await.unwrap();
+        assert!(matches!(events.last(), Some(Event::OperatorElected { .. })), "{events:?}");
+    }
+    let waiting = node.state.query(|e| e.operator_election().waiting.len()).await.unwrap();
+    assert_eq!(waiting, 1, "the first waits behind the last");
+
+    let authority = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: old,
+        installed: None,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
+    };
+    assert!(authority.admits(old).await.unwrap(), "the configured key once elections narrow deliveries");
+    assert!(!authority.admits(rotated).await.unwrap(), "the log's key once elections narrow deliveries");
+    assert!(!authority.admits(elected(0x66)).await.unwrap(), "the waiting election's key before its time");
+    assert!(!authority.admits(elected(0x67)).await.unwrap(), "the last election's key");
+}
+
+// The last election, waiting behind the first, names this node's operator the successor as a pending rotation
+// to its key does: with rotation turned off before either takes effect, the key the log records still reaches
+// into no successor's enclave.
+#[tokio::test]
+async fn an_election_waiting_to_take_effect_names_this_node_the_successor() {
+    let node = Node::staking("delivery-waiting-successor").await;
+    let old = node.state.operator.address;
+    let elected = |seed: u8| engine_core::eip712::address(SigningKey::from_slice(&[seed; 32]).unwrap().verifying_key());
+    let on = Command::SwitchRotation { enabled: true, election_cancelled: false, block: 1, chain_ref: "0xon:0".into() };
+    node.state.submit(on).await.unwrap();
+    for (epoch, seed) in [(1_u64, 0x66_u8), (2, 0x67)] {
+        let election = Command::ElectOperator(RegistryElection {
+            epoch,
+            candidate: AccountId([seed; 20]),
+            admin_key: elected(seed),
+            effective_at: after_the_notice() + epoch as i64 * 3_600_000,
+            block: 1 + epoch,
+            chain_ref: format!("0xelect:{epoch}"),
+        });
+        let events = node.state.submit(election).await.unwrap();
+        assert!(matches!(events.last(), Some(Event::OperatorElected { .. })), "{events:?}");
+    }
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 4, chain_ref: "0xoff:0".into() };
+    node.state.submit(off).await.unwrap();
+    let (waiting, rotation) =
+        node.state.query(|e| (e.operator_election().waiting.len(), e.operator_bounds().rotation)).await.unwrap();
+    assert_eq!((waiting, rotation.map(|rotation| rotation.address)), (1, Some(elected(0x66))));
+
+    let authority = Authority::Log {
+        tx: node.state.tx.downgrade(),
+        configured: elected(0x67),
+        installed: None,
+        trusted: std::sync::Arc::new(crate::test_support::trusted(node.state.clock.clone())),
+    };
+    assert!(authority.admits(elected(0x67)).await.unwrap(), "the configured key");
+    assert!(!authority.admits(old).await.unwrap(), "the key the log records");
+}
+
 // An election that took effect, gave way to a signed rotation while rotation was off, and saw
 // rotation return is historical: it narrows nothing, and the key the log records keeps delivering.
 #[tokio::test]

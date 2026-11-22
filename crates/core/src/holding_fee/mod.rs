@@ -222,7 +222,7 @@ impl Engine {
     /// Error cases:
     /// - from `V55`, a changed curve `check_curve_bound` refuses
     /// - from `V55`, unless `voted`, a changed curve no notice names, or whose notice takes effect
-    ///   later than the sequenced time
+    ///   later than the sequenced time or from `V88` has lapsed
     pub(crate) fn check_curve_change(
         &self,
         curve: &[CurvePoint],
@@ -240,10 +240,7 @@ impl Engine {
             self.operator_bounds.notice.as_ref().filter(|notice| notice.profit_fee_curve.as_deref() == Some(curve));
         match named {
             None => Err("a profit_fee_curve change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the profit_fee_curve change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the profit_fee_curve change"),
         }
     }
 

@@ -459,16 +459,13 @@ fn log_admits(
     // with none recorded the key the log records stays in effect. A pending
     // rotation to this node's own key names this node's operator the successor,
     // as recovery reads it: during a promotion's notice the outgoing key still
-    // signs admin commands, but it reaches into no successor's enclave. So does
-    // the registry's installation of this node's key, before the log's scan passes it.
+    // signs admin commands, but it reaches into no successor's enclave. So do an
+    // election still to take effect that names this node's key, waiting or the
+    // last behind them, and the registry's installation of this node's key,
+    // before the log's scan passes it.
+    // From `V88` the elections the last waits behind govern as the last does.
     let election = engine.operator_election();
-    let governing = election.last.filter(|last| !last.cancelled).is_some_and(|last| {
-        engine
-            .operator_bounds()
-            .rotation
-            .is_some_and(|r| r.address == last.admin_key && r.effective_at == last.effective_at)
-            || last.admin_key == recorded
-    });
+    let governing = engine.election_governs_key();
     // Under daily turns each member's node takes its own operator's delivery only, for as long as the
     // turns hand the keys between members: drawn turns stand after rotation is turned off, until an
     // installation ends them.
@@ -476,6 +473,7 @@ fn log_admits(
     let own_key_only = (election.rotation_enabled && governing)
         || turns
         || engine.operator_bounds().rotation.is_some_and(|r| r.address == configured)
+        || engine.awaited_election_keys().any(|key| key == configured)
         || installed.and_then(|seated| seated.unscanned(engine)) == Some(configured);
     let due = now.and_then(|now| engine.due_key(now)).is_some_and(|r| r.address == signer);
     if own_key_only { signer == configured } else { signer == recorded || due }

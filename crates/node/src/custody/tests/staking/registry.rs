@@ -29,7 +29,7 @@ async fn registry_events_mirror_with_the_stakes_once_and_a_refused_one_stalls() 
     let mut cursor = cursor_at(1);
     mirror_range(&node, &reader, &mut cursor, &dir, 1, 3).await.unwrap();
     assert_eq!(cursor.next_block, 4);
-    let (election, staked_now) = node.read(move |e| (*e.operator_election(), e.staked(account))).await;
+    let (election, staked_now) = node.read(move |e| (e.operator_election().clone(), e.staked(account))).await;
     assert!(election.rotation_enabled);
     assert_eq!(election.last.map(|last| (last.epoch, last.admin_key, last.effective_at)), Some((1, key, effective_at)));
     assert_eq!(staked_now, TokenUnits(500));

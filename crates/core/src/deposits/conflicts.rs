@@ -7,6 +7,23 @@ use crate::event::Event;
 use crate::protocol::ProtocolVersion;
 
 impl Engine {
+    /// From `V88`, refuses `receipt`, in a block above the finalised frontier, at a vault deposit id
+    /// below the frontier's deposit count. Every such id is a deposit at or below the frontier, whose
+    /// receipt may still hold a pending or held leaf there, so this one would be a second receipt leaf
+    /// at the id: the shape the exit refunds and credits both. The custody adapter's ordered reads
+    /// never send one; the engine refuses it whatever sends it.
+    /// Error cases:
+    /// - from `V88`, the frontier's deposit count covers the receipt's id
+    pub(super) fn check_id_above_frontier(&self, receipt: &DepositReceipt) -> Result<(), DepositReject> {
+        let covered = self.custody_checkpoint.is_some_and(|checkpoint| {
+            receipt.block > checkpoint.block && receipt.deposit_id < checkpoint.deposit_count
+        });
+        if self.protocol_version >= ProtocolVersion::V88 && covered {
+            return Err(DepositReject::ConflictingReceipt);
+        }
+        Ok(())
+    }
+
     /// Reverses every other live receipt above the finalised frontier at `receipt`'s deposit id, so
     /// the new canonical receipt holds the id alone. From `V38` the exit refunds pending deposits
     /// by id, which two live receipts at one id would alias. A settled (finalised) conflict refuses

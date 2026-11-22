@@ -293,8 +293,9 @@ impl Engine {
     /// - from `V79`, a listed market's minimum level distance left out
     /// - unless `voted`, a changed markup, spread band table, margin band table or weekend margin, from
     ///   `V76` price rules looser in any rule, from `V79` a changed distance, or from `V87` tighter price
-    ///   rules or changed futures contracts, no notice names, or whose notice takes effect later than the
-    ///   sequenced time
+    ///   rules or changed futures contracts, from `V88` an added contract after the last to a market that
+    ///   holds positions, no notice names, or whose notice takes effect later than the sequenced time or from
+    ///   `V88` has lapsed
     /// - if `voted`, a changed spread band table whose rate at some notional is below the launch rate
     ///   there or above twice it, a changed margin band table whose requirement at some notional is
     ///   below launch's, from `V76` loosened price rules looser in any rule than the launch rules, or
@@ -365,7 +366,13 @@ impl Engine {
                 change.distance = true;
             }
         }
-        if self.protocol_version >= ProtocolVersion::V87 && !voted && !self.markets[&spec.id].keeps_contracts(spec) {
+        // From `V88` so does adding a contract after the last to a market that holds positions: one no venue
+        // quotes would be the contract it must roll onto.
+        let market = &self.markets[&spec.id];
+        let adds_held = self.protocol_version >= ProtocolVersion::V88
+            && self.holds_positions(spec.id)
+            && market.adds_contracts(spec);
+        if self.protocol_version >= ProtocolVersion::V87 && !voted && (!market.keeps_contracts(spec) || adds_held) {
             let named = notice.filter(|notice| notice.contracts.as_ref() == Some(&spec.contracts));
             self.check_noticed(spec.id, "futures contract", named)?;
             change.contracts = true;
@@ -412,16 +419,16 @@ impl Engine {
         }
     }
 
-    /// Checks a changed `what` table is named by `notice` and its time has come.
+    /// Checks a changed `what` table is named by `notice` and its time has come, and from `V88` has not
+    /// passed by more than `NOTICE_USE_MS` (`Engine::check_notice_in_force`).
     /// Error cases:
-    /// - no notice names it, or the notice takes effect later than the sequenced time
+    /// - no notice names it, or the notice takes effect later than the sequenced time, or has lapsed
     fn check_noticed(&self, market: MarketId, what: &str, notice: Option<&ListingNotice>) -> Result<(), String> {
         match notice {
             None => Err(format!("market {market}'s {what} change needs a notice of at least seven days")),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("market {market}'s {what} change takes effect from {}", notice.effective_at))
+            Some(notice) => {
+                self.check_notice_in_force(notice.effective_at, &format!("market {market}'s {what} change"))
             }
-            Some(_) => Ok(()),
         }
     }
 }

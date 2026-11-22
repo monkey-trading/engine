@@ -266,6 +266,35 @@ fn a_front_outage_counts_afresh_once_a_next_contract_is_added_back() {
     assert!(h.engine.accounts()[&long.account].positions.get(&US500).is_none_or(|p| p.qty.is_zero()));
 }
 
+/// From `V88`, a contract added after the last to a futures market that holds positions needs a notice, as
+/// any other change to its contracts does: one no venue quotes would be the contract the market must roll
+/// onto once its front stops. Before `V88` it applies at once, as it still does to a market no one holds.
+#[test]
+fn a_contract_added_after_the_last_to_a_held_futures_market_needs_a_notice() {
+    for (version, at_once) in [(V87, true), (ProtocolVersion::V88, false)] {
+        let (mut h, _) = held_on_front_alone(version, vec![all_contracts()[0].clone()]);
+        let unquoted = vec![all_contracts()[0].clone(), contract("ESX9", common::start() + ROLL_AFTER_MS)];
+        let events = h.operate(AdminCommand::UpsertMarket(us500(unquoted.clone())));
+        assert_eq!(events.last() == Some(&Event::AdminApplied), at_once, "{version:?}: {events:?}");
+        if at_once {
+            continue;
+        }
+        rejected(&events, "market 20's futures contract change needs a notice of at least seven days");
+        // A noticed addition applies from the notice's time.
+        let at = h.ts + NOTICE_MS;
+        assert_eq!(h.operate(contracts_notice(US500, Some(unquoted.clone()), at)).last(), Some(&Event::AdminApplied));
+        h.advance_to(at);
+        assert_eq!(h.operate(AdminCommand::UpsertMarket(us500(unquoted.clone()))).last(), Some(&Event::AdminApplied));
+        assert_eq!(h.engine.markets()[&US500].spec.contracts, unquoted);
+    }
+    let mut h = futures_genesis(ProtocolVersion::V88, vec![all_contracts()[0].clone()]);
+    futures_prices(&mut h, "ESZ6", "6000");
+    let unquoted = vec![all_contracts()[0].clone(), contract("ESX9", common::start() + ROLL_AFTER_MS)];
+    let events = h.operate(AdminCommand::UpsertMarket(us500(unquoted.clone())));
+    assert_eq!(events.last(), Some(&Event::AdminApplied), "a market no one holds: {events:?}");
+    assert_eq!(h.engine.markets()[&US500].spec.contracts, unquoted);
+}
+
 // ── Helpers ──
 
 fn rejected(events: &[Event], reason: &str) {

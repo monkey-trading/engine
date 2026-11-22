@@ -521,4 +521,13 @@ pub enum ProtocolVersion {
     /// contract's roll time at which it has an index, on the gap from the market's mark, so its index takes up from
     /// the last mark (`futures`).
     V87,
+    /// An election still waiting to take effect when its successor is mirrored takes effect first, its
+    /// handover and candidate at its own time, and each later one in turn after it (`election`). A credit,
+    /// reinstatement or replacement in a block above the finalised custody frontier is refused at a vault
+    /// deposit id below the frontier's deposit count (`deposits`). A notice is used only within seven days of
+    /// its time (`operator_bounds::notices`). Price rules that would leave a market holding positions with no
+    /// index are refused whether or not it is reduce-only (`operator_bounds::held`), and a contract added
+    /// after the last to a futures market holding positions needs a notice (`listing_bounds`). The operator
+    /// key in effect signs no client request, for its own address either (`auth`).
+    V88,
 }

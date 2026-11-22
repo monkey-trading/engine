@@ -166,7 +166,7 @@ async fn dev_scenario_the_elected_operator_and_a_staker_each_claim_their_share()
 
     // 8. The node stops; its log replays to the same distributions, with the same candidate.
     let dir = node.dir.clone();
-    let election = node.query(|e| *e.operator_election()).await;
+    let election = node.query(|e| e.operator_election().clone()).await;
     node.stop().await;
     let replayed = replay_path(&dir).expect("the log replays");
     assert_eq!(*replayed.engine.operator_election(), election);

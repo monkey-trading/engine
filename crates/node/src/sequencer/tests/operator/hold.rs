@@ -53,6 +53,67 @@ fn re_seating_the_recorded_key_supersedes_a_due_rotation_to_another_key() {
     assert!(holds(&mut seq, &clock));
 }
 
+#[test]
+fn re_seating_the_recorded_key_supersedes_a_due_election_behind_its_re_election() {
+    // From `V88`: a catch-up mirrors the recorded key's re-election and, before it takes effect, the next
+    // election, of another key, which waits behind it with no rotation pending. Both come due; the other's
+    // key is lost, and the timelock turns rotation off and seats the recorded key again before the log's
+    // scan reaches it.
+    let (dir, clock) = staked_log("reseat-over-election", Some(FRONTIER));
+    let recorded = dev_config().operator().unwrap();
+    queue_elections(&dir, &clock, [RECORDED_SEED, INSTALLED_SEED]);
+    clock.advance(Duration::from_millis(NOTICE_MS as u64 + 1_000));
+
+    let reseated = RegistryOperator { admin_key: recorded.address, since: FRONTIER + 1_000 };
+    let mut seq = recovered(&dir, &clock, Some(reseated));
+    assert_eq!(reseated.unscanned(&seq.engine), Some(recorded.address));
+    let due = seq.engine.due_rotation(clock.now_ms()).map(|rotation| rotation.address);
+    assert_eq!(due, Some(address(INSTALLED_SEED)));
+    assert!(!holds(&mut seq, &clock), "a hold waits for a snapshot only the superseded key could sign");
+    // Without the registry's seating the due key signs, so the hold stands.
+    let mut seq = recovered(&dir, &clock, None);
+    assert!(holds(&mut seq, &clock));
+}
+
+#[test]
+fn re_seating_the_recorded_key_supersedes_no_election_of_it() {
+    // From `V88`: the recorded key's two re-elections wait in turn and hand over to no other key.
+    let (dir, clock) = staked_log("reseat-over-re-elections", Some(FRONTIER));
+    queue_elections(&dir, &clock, [RECORDED_SEED, RECORDED_SEED]);
+    let reseated = RegistryOperator { admin_key: dev_config().operator().unwrap().address, since: FRONTIER + 1_000 };
+    let seq = recovered(&dir, &clock, Some(reseated));
+    assert_eq!(seq.engine.operator_election().waiting.len(), 1);
+    assert_eq!(reseated.unscanned(&seq.engine), None);
+}
+
+/// Mirrors, with rotation on, the elections of `seeds`' keys before the first takes effect, both seated on
+/// chain before the scan's frontier, then rotation turning off with no cancellation: the first waits ahead of
+/// the second.
+fn queue_elections(dir: &Path, clock: &Arc<TestClock>, seeds: [u8; 2]) {
+    let mut seq = recovered(dir, clock, None);
+    let on =
+        Command::SwitchRotation { enabled: true, election_cancelled: false, block: 11, chain_ref: "0x0a:0".into() };
+    let elections = (1..).zip(seeds).map(|(epoch, seed): (u64, u8)| {
+        Command::ElectOperator(RegistryElection {
+            epoch,
+            candidate: AccountId([seed; 20]),
+            admin_key: address(seed),
+            effective_at: FRONTIER - i64::try_from(3 - epoch).unwrap() * 3_600_000,
+            block: 11 + epoch,
+            chain_ref: format!("0x0b:{epoch}"),
+        })
+    });
+    let off =
+        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x0c:0".into() };
+    for cmd in std::iter::once(on).chain(elections).chain([off]) {
+        let events = seq.sequence(cmd).unwrap().expect("admitted");
+        assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
+    }
+    assert_eq!(seq.engine.operator_election().waiting.len(), 1);
+    assert_eq!(seq.engine.operator_bounds().rotation, None, "the waiting re-election names the recorded key");
+    seq.flush().unwrap();
+}
+
 /// A promoted member's admin key, seated from the promotion's block that the log's scan has yet to
 /// reach, ends a hold only the outgoing operator's key could end: holding would keep out the mirror
 /// that hands the log over to the promoted key.
