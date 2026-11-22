@@ -1,6 +1,6 @@
 //! The verified head a start after a handover seals: the handed-over checkpoint, which its replay
-//! verified, while the gate applies, and none while it does not, so keys handed over with rotation
-//! off open on a release built before the log check, nor over a range the keys name it a holder of;
+//! verified, while the gate applies, and none while it does not, so keys handed over once the turns
+//! have ended open on a release built before the log check, nor over a range the keys name it a holder of;
 //! and the one a promoted start seals: the checkpoint the promotion fixed, unless its own member
 //! sequenced the range.
 
@@ -21,11 +21,9 @@ fn a_start_after_a_handover_seals_its_check_only_while_the_gate_applies() {
     // Another member takes the keys and the log at the last checkpoint: its replay is the check.
     let handed = handed_over(&mut node, "gated");
     assert_eq!(handed.map(|head| head.seq), Some(node.last_checkpoint().seq));
-    // With rotation off, the same start seals none.
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
-    assert_eq!(handed_over(&mut node, "ungated"), None, "keys handed over with rotation off carry a head");
+    // Once the turns have ended, the same start seals none.
+    node.end_turns();
+    assert_eq!(handed_over(&mut node, "ungated"), None, "keys handed over once the turns ended carry a head");
 }
 
 /// A reorged skip's member, which handed the keys back with its commands in the log under no record of
@@ -58,10 +56,8 @@ fn a_promoted_start_seals_its_check_only_when_another_member_sequenced_the_range
     assert_eq!(other_member, Some(node.checkpoint_head(fixed)), "the promoted member's replay is the check");
     // This node's own member, promoted under another release, sequenced the range: its replay is none.
     assert_eq!(promoted(&node, node.member, fixed, "own"), None, "the member that sequenced it checked itself");
-    // With rotation off, the gate does not apply, and the start seals none.
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
+    // Once the turns have ended, the gate does not apply, and the start seals none.
+    node.end_turns();
     node.seq.flush().unwrap();
     assert_eq!(promoted(&node, other().admin_key, fixed, "ungated"), None, "sealed with the gate off");
 }
@@ -116,7 +112,7 @@ fn the_live_sequencer_and_a_replay_note_the_turn_that_had_begun_by_each_command(
 /// A start that read no schedule before it connected, as a whole-log take or a restart, reads the
 /// reassignments of the turns from the in-office turn of the range its keys' verified head leaves through
 /// the one in effect while the gate applies, so its own check sees a promotion the log has yet to mirror,
-/// and reads nothing once rotation is off.
+/// and reads nothing once the turns have ended.
 #[tokio::test]
 async fn a_start_with_no_earlier_read_reads_the_schedule_while_the_gate_applies() {
     struct Schedule(std::sync::Mutex<Vec<std::ops::Range<u64>>>);
@@ -148,15 +144,13 @@ async fn a_start_with_no_earlier_read_reads_the_schedule_while_the_gate_applies(
     let read_turns = schedule.0.lock().unwrap().iter().map(|turns| (turns.start, turns.end)).collect::<Vec<_>>();
     assert_eq!(read_turns, [(node.turn, node.turn + 1)]);
     assert_eq!(read.from, node.turn);
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
+    node.end_turns();
     node.seq.flush().unwrap();
     assert_eq!(
         crate::node::log_check::read_unreadied(&schedule, &recovered(&node), None, &Default::default()).await.unwrap(),
         None
     );
-    assert_eq!(schedule.0.lock().unwrap().len(), 1, "read with rotation off");
+    assert_eq!(schedule.0.lock().unwrap().len(), 1, "read once the turns ended");
 }
 
 /// A promoted start whose keys name its own member a holder past the verified head seals no check over

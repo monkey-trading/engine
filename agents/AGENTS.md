@@ -409,8 +409,8 @@ an index: load only the rule whose hint matches the current action.
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
   From #594, the boundary's log check (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):
-  while rotation is on and a daily turn is in effect whose set names two or more members, a withdrawal
-  is signed only for an approval at or below the head the last check verified, #14's posted root still
+  while a daily turn is in effect whose set names two or more members, which turning rotation off leaves
+  until an installation ends the turns, a withdrawal is signed only for an approval at or below the head the last check verified, #14's posted root still
   applying; at a handover the check is the successor's own, sealed with the keys as its first start
   passes the predecessor's head, unless its member sequenced part of the range, as after its own
   upgrade, and at a boundary the operator holds on through, its node writes a checkpoint after
@@ -425,7 +425,8 @@ an index: load only the rule whose hint matches the current action.
   the checkpoints its replica verified under the question's signer; the verified head is sealed with
   the keys while the gate applies, restored only when the log holds its checkpoint, carried by an
   upgrade, and with none the next check covers the latest holding, and `/v1/accounts/{a}/payouts`
-  names the boundary each waiting approval's check is at.
+  names the boundary each waiting approval's check is at, or, after the last drawn turn with rotation off,
+  that it waits for the installation, under Warning `log_check_awaiting_installation`.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the

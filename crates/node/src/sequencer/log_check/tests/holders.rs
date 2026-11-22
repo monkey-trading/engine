@@ -24,12 +24,10 @@ fn a_handover_names_this_release_a_holder_through_its_final_checkpoint_only_whil
     let mut node = Node::start("log-check-holder-ungated", &[other()]);
     node.approve(1);
     node.take_turn();
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
+    node.end_turns();
     node.seq.checkpoint().unwrap();
     assert!(handed_over(&mut node), "the handover's stop was refused");
-    assert!(node.store.keys().holders.is_empty(), "keys handed over with rotation off name a holder");
+    assert!(node.store.keys().holders.is_empty(), "keys handed over once the turns ended name a holder");
 }
 
 /// A holder record that cannot be sealed refuses the handover's stop, which the predecessor reports
@@ -108,13 +106,7 @@ fn every_holder_goes_once_the_gate_stops_applying_with_a_verified_head_or_withou
         let later = Holder { through: head.seq + 1, release: OTHER, candidates: [other().candidate].into() };
         node.store.update(|keys| keys.holders.push(later)).unwrap();
         let mut node = node.restart();
-        let off = Command::SwitchRotation {
-            enabled: false,
-            election_cancelled: false,
-            block: 14,
-            chain_ref: "0x04:0".into(),
-        };
-        node.seq.sequence(off).unwrap().expect("admitted");
+        node.end_turns();
         node.seq.refresh_log_check();
         let keys = node.store.keys();
         assert!(
@@ -136,9 +128,7 @@ fn a_stop_with_the_gate_off_drops_the_gates_records_or_is_refused() {
     node.store.update(|keys| keys.holders.push(later)).unwrap();
     let mut node = node.restart();
     let blocked = unsealable(name, &node.store);
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    node.seq.sequence(off).unwrap().expect("admitted");
+    node.end_turns();
     node.seq.refresh_log_check();
     node.seq.checkpoint().unwrap();
     let (reply, stopped) = tokio::sync::oneshot::channel();

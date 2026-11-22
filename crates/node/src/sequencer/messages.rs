@@ -193,17 +193,21 @@ pub struct PayoutView {
     pub nonce: u64,
     pub amount: Fixed,
     pub withdrawal: Option<SignedWithdrawal>,
-    /// The boundary whose log check the approval waits for, while the last check has not verified
-    /// the log through it.
+    /// What the approval's next signature waits for, while the last log check has not verified the
+    /// log through it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckWait>,
 }
 
-/// The daily turn at whose boundary a log check will cover an approval, and when that boundary is.
+/// What a log check that will cover an approval waits for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct CheckWait {
-    pub turn: u64,
-    pub boundary_ms: engine_core::types::Millis,
+#[serde(tag = "waits", rename_all = "snake_case")]
+pub enum CheckWait {
+    /// The check at a daily turn's boundary, and when that boundary is.
+    Boundary { turn: u64, boundary_ms: engine_core::types::Millis },
+    /// The timelock's installation of an operator, which ends the turns and lifts the gate: rotation
+    /// is off and no turn after `turn`, the last drawn, is assigned, so no boundary checks the approval.
+    Installation { turn: u64 },
 }
 
 /// What `/v1/stream` publishes: each log entry at its offset, in offset order. A standby follower

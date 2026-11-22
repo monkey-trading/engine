@@ -21,9 +21,9 @@ use super::super::Options;
 /// extensions to the quote), the issuer chain and revocation list answer PEM, and all only for
 /// the fixture's processor. `attempts` counts answers on the counting stand-ins, for the retry
 /// tests.
-pub(super) struct KdsStub {
-    pub(super) base: String,
-    pub(super) attempts: Arc<AtomicUsize>,
+pub(crate) struct KdsStub {
+    pub(crate) base: String,
+    pub(crate) attempts: Arc<AtomicUsize>,
     _task: JoinHandle<()>,
 }
 
@@ -122,6 +122,20 @@ pub(super) async fn kds_stub_switched(
                 }
                 next.run(request).await
             }
+        },
+    ));
+    let stub = serve(app).await;
+    KdsStub { base: stub.base, attempts, _task: stub._task }
+}
+
+/// The stand-in counting every request in `attempts`.
+pub(crate) async fn kds_stub_counted(chain: &TestChain) -> KdsStub {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let app = kds_app(chain, false, &crl_cell(chain, &[], None)).layer(axum::middleware::from_fn(
+        move |request: axum::extract::Request, next: axum::middleware::Next| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            next.run(request)
         },
     ));
     let stub = serve(app).await;

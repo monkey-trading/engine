@@ -329,6 +329,54 @@ async fn check_operator_hostname_refuses_a_mismatch_and_skips_without_acme() {
     assert!(format!("{err:#}").contains("other.example"), "{err:#}");
 }
 
+/// A successor fetches its quote's collateral before it connects, so however slow the vendor its
+/// request follows the predecessor's challenge by one quote: no fetch comes between the two, even once
+/// the collateral is older than its reuse time.
+#[tokio::test]
+async fn a_successor_fetches_its_collateral_before_it_connects() {
+    let forging = Forging::new();
+    let (cfg, kds) = hardware_successor(&forging).await;
+    let (address, answering) = challenging(kds.attempts.clone(), Duration::from_millis(50)).await;
+    let platform = Platform { launch_digest: LAUNCH_DIGEST, policy: POLICY, tcb: 0 };
+    let collateral = evidence::CollateralCache::new(Duration::from_millis(1));
+    let asked = successor::ask(&cfg, &address, &forging, &platform, (None, None), None, &collateral).await;
+    assert!(asked.is_err(), "keys came from a predecessor that sent none");
+    fetched_before_the_challenge(&cfg, &forging, answering.await.unwrap());
+}
+
+/// Attempts that share a cache, as a member's takes of its turn do, share the collateral their first one
+/// fetched, so attempts on a holder that cannot be reached ask the vendor for nothing more while it is
+/// fresh.
+#[tokio::test]
+async fn attempts_reuse_the_collateral_the_first_fetched() {
+    let forging = Forging::new();
+    let (cfg, kds) = hardware_successor(&forging).await;
+    // Bound and closed again, so connections to it are refused.
+    let unreachable = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
+    let platform = Platform { launch_digest: LAUNCH_DIGEST, policy: POLICY, tcb: 0 };
+    let collateral = evidence::CollateralCache::new(evidence::PREFETCH_REUSE);
+    let mut fetched = Vec::new();
+    for _ in 0..3 {
+        let asked = successor::ask(&cfg, &unreachable, &forging, &platform, (None, None), None, &collateral).await;
+        assert!(asked.is_err(), "keys came from a holder that cannot be reached");
+        fetched.push(kds.attempts.load(std::sync::atomic::Ordering::SeqCst));
+    }
+    assert!(fetched[0] > 0, "the first attempt fetched no collateral");
+    assert_eq!(fetched, [fetched[0]; 3], "a later attempt fetched the collateral again");
+}
+
+/// A new release's request for the delivered secrets fetches its collateral before it connects too.
+#[tokio::test]
+async fn a_request_for_the_secrets_fetches_its_collateral_before_it_connects() {
+    let forging = Forging::new();
+    let (cfg, kds) = hardware_successor(&forging).await;
+    let (address, answering) = challenging(kds.attempts.clone(), Duration::ZERO).await;
+    let sealer = crate::tee::sealing::MockSealer { launch_digest: LAUNCH_DIGEST };
+    let fetched = fetch_secrets(&cfg, &address, &sealer, &forging, AccountId([1; 20]), &[]).await;
+    assert!(fetched.is_err(), "secrets came from a predecessor that sent none");
+    fetched_before_the_challenge(&cfg, &forging, answering.await.unwrap());
+}
+
 /// Collateral fetched for a chip and TCB is reused for the reuse time, and fetched again for another
 /// chip or TCB or once that time has passed.
 #[tokio::test]
@@ -347,4 +395,77 @@ async fn collateral_is_reused_for_its_chip_and_tcb_until_the_reuse_time_passes()
     tokio::time::sleep(std::time::Duration::from_millis(350)).await;
     assert_eq!(cache.json(other_chip, lower, fetch).await.unwrap(), "collateral 3", "kept past the reuse time");
     assert!(cache.json(chip, tcb, || async { anyhow::bail!("down") }).await.is_err());
+}
+
+/// The chip the forged quotes name.
+const CHIP: [u8; 64] = [0x9d; 64];
+
+/// An enclave on the stand-in vendor chain: its quotes are reports the chain's VCEK signs.
+struct Forging(engine_verify::fixtures::TestChain);
+
+impl Forging {
+    /// The enclave on `CHIP` at the fixture's reported TCB.
+    fn new() -> Self {
+        Self(test_chain(CHIP, REPORTED_TCB))
+    }
+}
+
+impl crate::tee::Attestor for Forging {
+    fn attest(&self, report_data: [u8; 64]) -> anyhow::Result<(String, Vec<u8>)> {
+        Ok(("sev_guest".into(), forged_report(&self.0, LAUNCH_DIGEST, report_data, CHIP)))
+    }
+}
+
+/// A hardware successor's config for `forging`'s chip, fetching collateral from a counting stand-in for
+/// the vendor on its chain.
+async fn hardware_successor(forging: &Forging) -> (NodeConfig, crate::verify::tests::stub::KdsStub) {
+    let kds = crate::verify::tests::stub::kds_stub_counted(&forging.0).await;
+    let mut cfg = crate::test_support::dev_config();
+    cfg.tee.provider = TeeProvider::ConfigfsTsm;
+    cfg.tee.cpu_models = vec![cpu_model()];
+    cfg.tee.processor = Some(engine_verify::fixtures::PROCESSOR.into());
+    cfg.tee.kds_base = kds.base.clone();
+    (cfg, kds)
+}
+
+/// A predecessor stand-in that sends one connection a challenge `delay` after it accepts it and reads its
+/// request: its address, and the vendor fetches `fetches` counted as it sent the challenge and once the
+/// request came, with the request.
+async fn challenging(
+    fetches: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    delay: Duration,
+) -> (String, tokio::task::JoinHandle<(usize, usize, Request)>) {
+    let predecessor = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = predecessor.local_addr().unwrap().to_string();
+    let answering = tokio::spawn(async move {
+        let (mut stream, _) = predecessor.accept().await.unwrap();
+        tokio::time::sleep(delay).await;
+        let before = fetches.load(std::sync::atomic::Ordering::SeqCst);
+        send(&mut stream, &Challenge { nonce: hex::encode(CHALLENGE) }).await.unwrap();
+        let request: Request = receive(&mut stream).await.unwrap();
+        (before, fetches.load(std::sync::atomic::Ordering::SeqCst), request)
+    });
+    (address, answering)
+}
+
+/// Requires the vendor fetches to have come before the challenge and none between it and the request,
+/// whose quote, with the collateral it carries, passes a predecessor's check of `cfg`'s CPU models.
+fn fetched_before_the_challenge(
+    cfg: &NodeConfig,
+    forging: &Forging,
+    (before, after, request): (usize, usize, Request),
+) {
+    assert!(before > 0, "the successor connected before it fetched its collateral");
+    assert_eq!(after, before, "the successor fetched from the vendor between the challenge and its request");
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
+    let public = hex::decode(&request.public_key).unwrap();
+    let report_data = match request.secrets_only {
+        true => secrets::request_report_data(domain, &CHALLENGE, &public, &cfg.file_sha256),
+        false => request_report_data(domain, &CHALLENGE, &public, &cfg.file_sha256, &request.reads),
+    };
+    let root = pem_wrap(forging.0.ark.der(), "CERTIFICATE");
+    let (models, now) = (&cfg.tee.cpu_models, Some(1_800_000_000));
+    let peer = verify(TeeProvider::ConfigfsTsm, models, &request.evidence, &report_data, now, Some(&root))
+        .expect("a predecessor refuses the request's quote and the collateral fetched before the challenge");
+    assert_eq!(peer, Peer { launch_digest: LAUNCH_DIGEST, policy: POLICY });
 }

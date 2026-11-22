@@ -1,9 +1,10 @@
-//! The gate on payouts while rotation is on and a turn whose set names two or more members is in
-//! effect: a check comes due once this node holds a turn on that its verified head does not cover, a
-//! signature waits for a member's verification of the log through its approval, one from a member or
-//! release that sequenced the range is refused, a reissue waits as a first signature does, a check no
-//! member can be asked for pages, a one-member set or rotation off leaves #14's gate alone, and a
-//! restart restores the verified head only when the log holds its checkpoint.
+//! The gate on payouts while a turn whose set names two or more members is in effect: a check comes
+//! due once this node holds a turn on that its verified head does not cover, a signature waits for a
+//! member's verification of the log through its approval, one from a member or release that sequenced
+//! the range is refused, a reissue waits as a first signature does, a check no member can be asked for
+//! pages, rotation off leaves the gate while the drawn turn stands, a one-member set or the turns'
+//! end leaves #14's gate alone, and a restart restores the verified head only when the log holds its
+//! checkpoint.
 
 use super::*;
 
@@ -14,6 +15,7 @@ use std::time::Duration;
 use engine_core::Fixed;
 use engine_core::auth::Operator;
 use engine_core::command::Command;
+use engine_core::election::RegistryInstallation;
 use engine_core::emissions::TokenUnits;
 use engine_core::turns::{RegistryTurn, SetMember, TurnReason};
 use engine_core::types::AccountId;
@@ -58,7 +60,7 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval was signed before a member verified the log through it");
     let boundary = engine_core::turns::boundary(turn).unwrap();
-    assert_eq!(node.check_of(1), Some(CheckWait { turn, boundary_ms: boundary }));
+    assert_eq!(node.check_of(1), Some(CheckWait::Boundary { turn, boundary_ms: boundary }));
 
     // A verification from this release, or this member on another release, which sequenced the
     // range, or of another head, is refused.
@@ -82,11 +84,11 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval past the verified head was signed");
     let next = engine_core::turns::boundary(turn + 1).unwrap();
-    assert_eq!(node.check_of(2), Some(CheckWait { turn: turn + 1, boundary_ms: next }));
+    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: turn + 1, boundary_ms: next }));
 
     // Once the next turn, the other member's, applies here, its handover still checks the approval.
     node.hand_over_turn();
-    assert_eq!(node.check_of(2), Some(CheckWait { turn: turn + 1, boundary_ms: next }));
+    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: turn + 1, boundary_ms: next }));
 }
 
 #[test]
@@ -139,8 +141,11 @@ fn a_verified_head_at_the_command_before_the_turn_leaves_no_check_due() {
     assert!(node.seq.log_check.covers(&node.seq.engine, last));
 }
 
+/// Turning rotation off leaves the drawn turns standing, as the vault's `rotationEnabled()` counts them,
+/// so they still hand the keys over at their boundaries and the gate stands with them; the installation
+/// that ends the turns lifts it.
 #[test]
-fn rotation_off_leaves_payouts_to_the_posted_root_alone_and_drops_the_sealed_head() {
+fn rotation_off_keeps_the_gate_while_the_drawn_turn_stands_and_its_end_drops_the_sealed_head() {
     let mut node = Node::start("log-check-rotation-off", &[other()]);
     node.approve(1);
     node.take_turn();
@@ -149,20 +154,26 @@ fn rotation_off_leaves_payouts_to_the_posted_root_alone_and_drops_the_sealed_hea
     assert_eq!(node.store.keys().log_check, Some(head));
     node.approve(2);
     assert!(node.check_of(2).is_some(), "an approval past the verified head waits with rotation on");
-    let off =
-        Command::SwitchRotation { enabled: false, election_cancelled: false, block: 14, chain_ref: "0x04:0".into() };
-    let events = node.seq.sequence(off).unwrap().expect("admitted");
-    assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
+    node.turn_rotation_off();
     assert!(node.seq.engine.daily_turns().in_effect.is_some(), "the drawn turn stands");
     node.seq.refresh_log_check();
-    assert!(node.due.borrow().is_none(), "a check stayed due with rotation off");
+    assert_eq!(node.store.keys().log_check, Some(head), "the sealed head was dropped while the drawn turn stands");
+    assert!(node.check_of(2).is_some(), "an approval past the verified head stopped waiting with rotation off");
+    node.release();
+    let signed: Vec<u64> =
+        std::iter::from_fn(|| node.signed.try_recv().ok()).map(|withdrawal| withdrawal.nonce).collect();
+    assert_eq!(signed, [1], "an approval no check covers was signed while the drawn turn stands");
+
+    node.end_turns();
+    node.seq.refresh_log_check();
+    assert!(node.due.borrow().is_none(), "a check stayed due once the turns ended");
     // Keys handed over now carry no verified head, which a release built before the check refuses.
     assert_eq!(node.store.keys().log_check, None, "the sealed head outlived the gate");
     assert_eq!(node.check_of(2), None);
     node.release();
     let signed: Vec<u64> =
         std::iter::from_fn(|| node.signed.try_recv().ok()).map(|withdrawal| withdrawal.nonce).collect();
-    assert_eq!(signed, [1, 2], "#14's gate alone signs both");
+    assert_eq!(signed, [2], "#14's gate alone signs the rest");
 }
 
 #[test]
@@ -179,7 +190,11 @@ fn a_reissue_on_a_signer_change_waits_for_the_check_as_a_first_signature_does() 
     node.release_at(2);
     assert!(node.signed.try_recv().is_err(), "a signer change reissued an approval no check covers");
     let boundary = engine_core::turns::boundary(turn).unwrap();
-    assert_eq!(node.check_of(1), Some(CheckWait { turn, boundary_ms: boundary }), "the retired signature's wait");
+    assert_eq!(
+        node.check_of(1),
+        Some(CheckWait::Boundary { turn, boundary_ms: boundary }),
+        "the retired signature's wait"
+    );
     assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.release_at(2);
     let reissued = node.signed.try_recv().expect("the covered approval was not reissued");
@@ -344,6 +359,35 @@ impl Node {
         self.seq.trust(sample_around(self.clock.as_ref())).unwrap();
         self.seq.sequence(Command::Tick).unwrap().expect("admitted");
         assert_eq!(self.seq.engine.daily_turns().in_effect.map(|turn| turn.turn), Some(next));
+    }
+
+    /// Mirrors the timelock turning rotation off, which leaves the drawn turns standing.
+    fn turn_rotation_off(&mut self) {
+        let off = Command::SwitchRotation {
+            enabled: false,
+            election_cancelled: false,
+            block: 14,
+            chain_ref: "0x04:0".into(),
+        };
+        let events = self.seq.sequence(off).unwrap().expect("admitted");
+        assert!(!events.iter().any(|event| matches!(event, Event::ElectionRejected { .. })), "{events:?}");
+    }
+
+    /// Turns rotation off, if it is on, and mirrors the timelock's installation of an operator, which
+    /// ends the turns.
+    fn end_turns(&mut self) {
+        if self.seq.engine.operator_election().rotation_enabled {
+            self.turn_rotation_off();
+        }
+        let installation = RegistryInstallation {
+            candidate: AccountId([0xc9; 20]),
+            admin_key: AccountId([0xd9; 20]),
+            block: 16,
+            chain_ref: "0x06:0".into(),
+        };
+        let events = self.seq.sequence(Command::InstallOperator(installation)).unwrap().expect("admitted");
+        assert!(events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })), "{events:?}");
+        assert!(self.seq.engine.daily_turns().in_effect.is_none(), "the installation left a turn in effect");
     }
 
     /// Releases payouts on finalized evidence that the vault holds the latest checkpoint and every

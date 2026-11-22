@@ -178,7 +178,9 @@ pub(super) async fn hand_over(
     let prepared = Prepared { generation, signer, posted: None, bound: Bound::none() };
     let sealer = MockSealer { launch_digest: DIGEST };
     let started = Instant::now();
-    let taken = take_tail(cfg, &address, &sealer, &MockAttestor, &prepared, (&mut *follower, None)).await;
+    let collateral = crate::handover::evidence::CollateralCache::new(crate::handover::evidence::PREFETCH_REUSE);
+    let quoting = (&MockAttestor as &dyn crate::tee::Attestor, &collateral);
+    let taken = take_tail(cfg, &address, &sealer, quoting, &prepared, (&mut *follower, None)).await;
     let take = started.elapsed();
     served.abort();
     let confirmed = match taken {

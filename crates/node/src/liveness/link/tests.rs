@@ -11,6 +11,8 @@ use crate::log::CommandEntry;
 use crate::test_support::scratch_dir;
 
 const MEMBER: AccountId = AccountId([0xb2; 20]);
+/// The address every test connection comes from.
+const LOOPBACK: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
 /// An entries question names any offset a peer chooses: the largest ones answer nothing rather than
 /// overflow, which would abort the node.
@@ -258,18 +260,18 @@ async fn a_member_answers_its_status_and_entries_on_its_endpoint() {
     assert_eq!(entries.iter().map(|(offset, _)| offset.seq).collect::<Vec<_>>(), vec![2, 3]);
     let vouch = Tcp.ask(&endpoint, &Request::Vouch { request: Box::new(vouch_request(&keys)) }).await.unwrap();
     assert!(matches!(vouch, Reply::Refused { .. }), "no trusted time sample: the vouch is refused, not answered");
-    // One address holding silent connections takes only its share, and only until its question is due.
+    // One address holding silent connections takes only its share: a third connection from it takes the
+    // place of its oldest silent one, and the other goes at its question's time.
     let mut silent = Vec::new();
     for _ in 0..PER_PEER {
         silent.push(tokio::net::TcpStream::connect(&endpoint).await.unwrap());
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let crowded = Tcp.ask(&endpoint, &Request::Status { epoch: 1, nonce }).await;
-    assert!(crowded.is_err(), "a third connection from the address is dropped while two are held");
-    tokio::time::sleep(QUESTION_TIMEOUT + Duration::from_millis(200)).await;
-    let answered = Tcp.ask(&endpoint, &Request::Status { epoch: 1, nonce }).await.unwrap();
-    assert!(matches!(answered, Reply::Status { .. }), "the silent connections were dropped at their question's time");
-    drop(silent);
+    let crowded = Tcp.ask(&endpoint, &Request::Status { epoch: 1, nonce }).await.unwrap();
+    assert!(matches!(crowded, Reply::Status { .. }), "a third connection from the address was dropped");
+    let oldest = tokio::time::timeout(Duration::from_secs(1), receive::<Reply>(&mut silent[0])).await;
+    assert!(oldest.is_ok_and(|read| read.is_err()), "the address's oldest silent connection kept its place");
+    let newer = tokio::time::timeout(QUESTION_TIMEOUT + Duration::from_secs(5), receive::<Reply>(&mut silent[1])).await;
+    assert!(newer.is_ok_and(|read| read.is_err()), "a silent connection outlived its question's time");
     task.abort();
 }
 
@@ -290,13 +292,64 @@ async fn a_member_attests_the_standby_key_it_signs_with() {
     assert_eq!((request.candidate, request.key), (own.candidate, server.standby.address()));
 }
 
-/// A peer's connections count per IPv4 address, and per /64 for IPv6, which one host commonly holds.
+/// An address at its share gives the place of its oldest silent connection to a new one, and none while
+/// every connection it holds has asked; another address's share is its own.
+#[tokio::test]
+async fn an_address_at_its_share_gives_its_oldest_silent_place_to_a_new_connection() {
+    let (peers, silent) = (Arc::default(), Silent::default());
+    let other: std::net::IpAddr = "192.0.2.7".parse().unwrap();
+    let taken: Vec<_> = (0..2).map(|_| PeerSlot::take_or_evict(&peers, LOOPBACK, 2, &silent).unwrap()).collect();
+    assert!(taken.iter().all(|(_, evicted)| !evicted), "a slot within the share evicted a connection");
+    let (oldest, newer) = (silent.enter(1, LOOPBACK), silent.enter(2, LOOPBACK));
+    let elsewhere = silent.enter(0, other);
+    let (_third, evicted) = PeerSlot::take_or_evict(&peers, LOOPBACK, 2, &silent).expect("no place for a third");
+    assert!(evicted, "the third took a slot past the share without evicting");
+    let told =
+        async |place: &SilentPlace| tokio::time::timeout(Duration::from_millis(100), place.evicted()).await.is_ok();
+    assert!(told(&oldest).await, "the address's oldest silent connection was not told to leave");
+    assert!(!told(&newer).await && !told(&elsewhere).await, "another connection was told to leave");
+    assert!(!PeerSlot::take_or_evict(&peers, other, 2, &silent).unwrap().1, "another address's slot evicted");
+    // Once every connection the address holds has asked, a new one gets no slot.
+    drop((oldest, newer));
+    assert!(PeerSlot::take_or_evict(&peers, LOOPBACK, 2, &silent).is_none(), "a slot past a share that asked");
+}
+
+/// A full listener makes room for a connection whose address told its own oldest silent one to leave
+/// with that place alone, and otherwise tells the oldest silent connection.
+#[test]
+fn a_full_listener_takes_the_place_the_address_freed_and_evicts_no_other() {
+    let silent = Silent::default();
+    let (elsewhere, newer) = (silent.enter(1, "192.0.2.7".parse().unwrap()), silent.enter(2, LOOPBACK));
+    assert!(silent.make_room(true), "the place the address freed was not room");
+    // That told no one, so the oldest is still there to tell, and only it is told.
+    assert!(silent.make_room(false), "no room made with silent connections to evict");
+    assert!(!elsewhere.leave(), "the oldest silent connection was not told to leave");
+    assert!(newer.leave(), "a second silent connection was told to leave");
+    assert!(!silent.make_room(false), "room made with no silent connection to evict");
+}
+
+/// A connection told to leave before its question is read holds no place once the question comes, and
+/// one whose question came first is no longer among the silent ones to evict.
+#[test]
+fn a_question_and_an_eviction_settle_a_place_once() {
+    let silent = Silent::default();
+    let (told, asked) = (silent.enter(1, LOOPBACK), silent.enter(2, LOOPBACK));
+    assert!(silent.evict_oldest(), "no silent connection to evict");
+    assert!(!told.leave(), "a connection told to leave kept its place when its question came");
+    assert!(asked.leave(), "a connection whose question came first lost its place");
+    assert!(!silent.evict_oldest(), "a connection that asked was evicted");
+}
+
+/// A peer's connections count per IPv4 address, also when a dual-stack listener reports it mapped into
+/// IPv6, and per /64 for IPv6, which one host commonly holds.
 #[test]
 fn peers_count_per_ipv4_address_and_per_ipv6_64() {
     let v6 = |text: &str| text.parse::<std::net::IpAddr>().unwrap();
     assert_eq!(peer_key(v6("2001:db8:1:2:aaaa::1")), peer_key(v6("2001:db8:1:2:bbbb::2")));
     assert_ne!(peer_key(v6("2001:db8:1:2::1")), peer_key(v6("2001:db8:1:3::1")));
     assert_eq!(peer_key(v6("192.0.2.7")), v6("192.0.2.7"));
+    assert_eq!(peer_key(v6("::ffff:192.0.2.7")), v6("192.0.2.7"), "a mapped IPv4 peer counts as its address");
+    assert_ne!(peer_key(v6("::ffff:192.0.2.7")), peer_key(v6("::ffff:192.0.2.8")), "mapped IPv4 peers share a key");
 }
 
 /// A heavy question while no heavy permit is free is refused at once rather than holding its place.
@@ -308,7 +361,7 @@ async fn a_heavy_question_with_no_permit_free_is_refused_at_once() {
     let none_free = Semaphore::new(0);
     let serving = async {
         let (stream, _) = listener.accept().await.unwrap();
-        server.serve(stream, &none_free, Silent::default().enter(1)).await
+        server.serve(stream, &none_free, Silent::default().enter(1, LOOPBACK)).await
     };
     let question = Request::Entries { after: Some(Offset::start_of(1)) };
     let asking = Tcp.ask(&endpoint, &question);
@@ -337,7 +390,7 @@ async fn the_member_link_answers_a_log_check_on_its_endpoint_without_a_permit() 
         let none_free = Semaphore::new(0);
         let serving = async {
             let (stream, _) = listener.accept().await.unwrap();
-            server.serve(stream, &none_free, Silent::default().enter(1)).await
+            server.serve(stream, &none_free, Silent::default().enter(1, LOOPBACK)).await
         };
         let asking = async {
             let mut stream = TcpStream::connect(endpoint).await.unwrap();
@@ -372,7 +425,7 @@ async fn the_oldest_silent_connection_gives_its_place_up_to_a_newer_one() {
     let (oldest, _) = listener.accept().await.unwrap();
     let mut newer_client = TcpStream::connect(endpoint).await.unwrap();
     let (newer, _) = listener.accept().await.unwrap();
-    let (oldest_place, newer_place) = (silent.enter(1), silent.enter(2));
+    let (oldest_place, newer_place) = (silent.enter(1, LOOPBACK), silent.enter(2, LOOPBACK));
     let evicting = async {
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(silent.evict_oldest(), "a silent connection to evict");

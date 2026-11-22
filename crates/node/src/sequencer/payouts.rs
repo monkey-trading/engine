@@ -22,7 +22,8 @@ use tracing::{debug, info};
 
 use crate::checkpoints::{APPROVAL_PAGE_SIZE, ApprovalId, LifecycleEvidence};
 use crate::log::LogEntry;
-use crate::sequencer::{AccountPayouts, PayoutView, Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
+use crate::sequencer::checkpoints::Gate;
+use crate::sequencer::{AccountPayouts, CheckWait, PayoutView, Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
 
 /// A signature is delivery progress; the contract's used nonce is the payment authority.
@@ -383,14 +384,7 @@ impl Sequencer {
             return AccountPayouts { seq, loaded: false, payouts: Vec::new(), next: None };
         };
         let first = after.map_or(0, |after| after.saturating_add(1));
-        let now = u64::try_from(self.last_ts / 1_000).unwrap_or_default();
-        // An authorization of the latest signer epoch that has not expired needs no new signature, so
-        // it waits for no log check.
-        let usable = |released: Option<(u64, u64)>| {
-            released.is_some_and(|(epoch, expires_at)| {
-                now < expires_at && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
-            })
-        };
+        let usable = |released| self.usable(gate, released);
         let mut held = gate.payouts.range((account, first)..=(account, u64::MAX));
         let payouts = held
             .by_ref()
@@ -404,6 +398,25 @@ impl Sequencer {
             .collect::<Vec<_>>();
         let next = held.next().and(payouts.last().map(|last| last.nonce));
         AccountPayouts { seq, loaded: gate.backlog.is_empty(), payouts, next }
+    }
+
+    /// How many unpaid approvals' next signatures wait for the installation that ends the turns.
+    pub(super) fn awaiting_installation(&self) -> usize {
+        let Some(gate) = &self.gate else { return 0 };
+        let waits = |payout: &&Payout| {
+            !self.usable(gate, payout.released)
+                && matches!(self.log_check_wait(payout.approval.approved_seq), Some(CheckWait::Installation { .. }))
+        };
+        gate.payouts.values().filter(waits).count()
+    }
+
+    /// Whether an authorization released as `released`, its signer epoch and expiry, needs no new
+    /// signature, and so waits for no log check: it is of the latest signer epoch and has not expired.
+    fn usable(&self, gate: &Gate, released: Option<(u64, u64)>) -> bool {
+        let now = u64::try_from(self.last_ts / 1_000).unwrap_or_default();
+        released.is_some_and(|(epoch, expires_at)| {
+            now < expires_at && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
+        })
     }
 
     /// Builds the common stream/log representation before the enclave signs it.

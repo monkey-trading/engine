@@ -291,13 +291,17 @@ retries it every `checkpoints.retry_interval`. The checkpoint stays queued, and 
 ## The boundary's log check
 
 Use this procedure when an account's payouts read names a `check` for a waiting approval, or when
-`log_check_pending`, `log_check_unattributable` or `log_check_unavailable` fires.
+`log_check_pending`, `log_check_unattributable`, `log_check_unavailable` or
+`log_check_awaiting_installation` fires.
 
-The check applies while rotation is on and a daily turn is in effect whose rotation set names two or
-more members. The trading server then signs an authorisation only for an approval at or below the
+The check applies while a daily turn is in effect whose rotation set names two or more members.
+While it applies, the trading server signs an authorisation only for an approval at or below the
 head of the log that the last boundary's check verified. An approval made during a turn therefore
 waits until the next boundary, which is at most a day plus the time a handover takes. That wait is
-the rule, not a stall.
+the rule, not a stall. Turning rotation off leaves the drawn turns in effect, and the check with them,
+until the timelock's installation of an operator ends the turns, so an approval made during the last
+drawn turn waits for that installation. Its payouts read then shows `waits` as `installation`, and
+`log_check_awaiting_installation` pages while any approval waits so.
 
 1. Find which check each of an account's waiting approvals depends on:
 
@@ -305,13 +309,19 @@ the rule, not a stall.
    curl -sf $API/v1/accounts/<address>/payouts | jq .
    ```
 
-   `<address>` is the account's address. For each approval that is still waiting, the answer names
-   the turn and the `boundary_ms` of the check that will cover it. That is the check of the turn in
-   effect, if that check is still outstanding and will reach the approval, and otherwise the check
-   of the next turn.
+   `<address>` is the account's address. For each approval that is still waiting, the answer's
+   `check` says what will cover it. With `waits` as `boundary`, it names the turn and the
+   `boundary_ms` of that check: the check of the turn in effect, if that check is still outstanding
+   and will reach the approval, and otherwise the check of the next turn. With `waits` as
+   `installation`, rotation is off and no turn after the last drawn one is assigned, so the approval
+   waits for the timelock's installation of an operator.
 
 2. Find how the check runs at that boundary, and act on it:
 
+   - **Waiting for the installation,** no boundary will check the approval.
+     `log_check_awaiting_installation` fires while one waits. Carry on with the governance fallback
+     in [When no standby qualifies](standby.md#when-no-standby-qualifies): the approvals are signed
+     once the installation ends the turns.
    - **At a handover,** the successor's trading server is the check. It verified the log through the
      checkpoint it was handed before it started. Nothing needs to be done.
    - **At a boundary through which the operator keeps its turn,** the operator's trading server asks
@@ -344,7 +354,7 @@ the rule, not a stall.
 **How to tell it is resolved.** `log_check_pending` resolves once a member verifies the checkpoint,
 and the waiting approvals are then signed. `log_check_unattributable` resolves once the check can be
 asked for or is no longer due. `log_check_unavailable` resolves once the check no longer applies,
-for example because rotation is off.
+for example once an installation ends the turns.
 
 ## The trading server has stopped
 

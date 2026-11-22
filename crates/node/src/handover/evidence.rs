@@ -15,6 +15,10 @@ use crate::tee::sealing::Platform;
 use crate::tee::{Attestor, MOCK_QUOTE_MARKER};
 use crate::verify::Collateral;
 
+/// How long collateral `prefetch` fetched is reused: across a member's attempts to take its turn, a
+/// fetch a minute while a holder stays unreachable.
+pub(crate) const PREFETCH_REUSE: Duration = Duration::from_secs(60);
+
 /// A quote, and what verifies it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +96,29 @@ impl CollateralCache {
         *held = Some(Held { chip, tcb, at: Instant::now(), json: json.clone() });
         Ok(json)
     }
+
+    /// A cache holding what this one holds, for as long as it lives: one exchange's quotes then read the
+    /// collateral fetched before it began, however old that grows meanwhile.
+    async fn pinned(&self) -> Self {
+        let held = self.held.lock().await;
+        let kept = held.as_ref().map(|kept| Held { json: kept.json.clone(), ..*kept });
+        Self { reuse: Duration::MAX, held: tokio::sync::Mutex::new(kept) }
+    }
+}
+
+/// Fills `cache` with this enclave's quote collateral, by one quote over no data, unless it holds a fresh
+/// fetch, and returns it pinned for one exchange: a step that must answer a challenge within a deadline
+/// fetches first, and its quote over the challenge reads the pinned copy, fetching nothing after it.
+/// Error cases:
+/// - see `produce`
+pub(crate) async fn prefetch(
+    quoting: &Quoting<'_>,
+    attestor: &dyn Attestor,
+    platform: &Platform,
+    cache: &CollateralCache,
+) -> anyhow::Result<CollateralCache> {
+    produce_with(quoting, attestor, platform, [0; 64], Some(cache)).await?;
+    Ok(cache.pinned().await)
 }
 
 /// This enclave's evidence over `report_data`, fetching the vendor chain for a hardware quote.

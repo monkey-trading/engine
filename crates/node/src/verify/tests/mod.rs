@@ -9,7 +9,7 @@ mod relay;
 mod relay_scenario;
 mod replay_dispatch;
 mod revocation;
-mod stub;
+pub(crate) mod stub;
 
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;

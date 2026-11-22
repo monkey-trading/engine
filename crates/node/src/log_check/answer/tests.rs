@@ -122,11 +122,12 @@ async fn one_address_holds_at_most_two_connections_so_it_cannot_fill_the_endpoin
     let answering = answering(CheckedHeads::default());
     let listen = answering.listen;
     let probing = async {
-        let (_first, _second) = (connect(listen).await, connect(listen).await);
-        let mut third = connect(listen).await;
-        // Closed at once, not held until the question's deadline.
-        let read = timeout(QUESTION_TIMEOUT / 2, receive::<Answer>(&mut third)).await;
-        assert!(read.is_ok_and(|read| read.is_err()), "a third connection from one address was served");
+        let (mut first, _second) = (connect(listen).await, connect(listen).await);
+        let _third = connect(listen).await;
+        // The third takes the place of the address's oldest silent one at once, not at its question's
+        // deadline.
+        let read = timeout(QUESTION_TIMEOUT / 2, receive::<Answer>(&mut first)).await;
+        assert!(read.is_ok_and(|read| read.is_err()), "the address's oldest silent connection kept its place");
     };
     tokio::select! {
         () = probing => {}

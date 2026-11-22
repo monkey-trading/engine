@@ -157,8 +157,11 @@ const MAX_MESSAGE_BYTES: u32 = 1 << 20;
 /// The largest log segment frame either side reads: the same bound the archive serves a segment
 /// under, so every segment a predecessor can publish it can also hand over.
 const MAX_SEGMENT_BYTES: u32 = 64 << 20;
-/// How long a peer gets to send the challenge or a request, or the confirmation after the keys.
+/// How long a peer gets to connect, to write a message, or to acknowledge a confirmation.
 pub(crate) const MESSAGE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a successor waits for the challenge, which the predecessor sends as it accepts the
+/// connection: a connection with none by then is retried.
+const CHALLENGE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the successor waits for the keys: the predecessor's drain and its vendor fetch.
 pub(crate) const REPLY_TIMEOUT: Duration = Duration::from_secs(300);
 /// The most signer epochs `vault_signers` reads, one call each: far past any deployment's history, whose

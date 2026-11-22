@@ -418,6 +418,12 @@ command without running it.
    Guest `a` serves its API on `127.0.0.1:8081` and its metrics on `127.0.0.1:9465`, guest `b` on
    8082 and 9466, and guest `c` on 8083 and 9467.
 
+   `--forward` uses QEMU's user networking, which shows the guest every peer under one address. That
+   is enough for these guests, which take no turns. A guest that serves members or clients needs
+   networking that keeps each peer's own address, such as a bridged or TAP device: its handover and
+   delivery listeners, and its API, count connections per address, so behind user networking one
+   peer can hold every place.
+
 2. Check that each guest launched with SEV-SNP and Secure TSC:
 
    ```shell

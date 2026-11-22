@@ -8,13 +8,16 @@ use anyhow::Context;
 use engine_core::Engine;
 use engine_core::eip712::B256;
 use engine_core::event::Event;
-use engine_core::types::AccountId;
+use engine_core::types::{AccountId, Millis};
 use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::log_check::{Due, Holder, Takings, VerifiedHead, applies, own_candidates, seal_verified};
 use crate::sequencer::{CheckWait, Replayed, Sequencer};
 use crate::tee::sealing::KeyStore;
+
+/// How often, in sequenced time, the approvals waiting for the installation are counted.
+const COUNT_EVERY: Millis = 60_000;
 
 /// What a node that takes turns gives its sequencer for the log check.
 pub(crate) struct LogCheckSetup {
@@ -47,6 +50,10 @@ pub(super) struct LogCheck {
     unattributable: Option<u64>,
     /// Whether `log_check_unavailable` is raised.
     unavailable: bool,
+    /// The last drawn turn `log_check_awaiting_installation` was raised for, until it resolves.
+    awaiting_installation: Option<u64>,
+    /// The last drawn turn whose unpaid approvals were last counted, and the sequenced time they were.
+    installation_counted: Option<(u64, Millis)>,
     /// Whether the sealed keys hold a verified head, restored or not.
     sealed: bool,
 }
@@ -154,10 +161,19 @@ impl LogCheck {
         !applies(engine) || self.verified.is_some_and(|verified| approved_seq <= verified.seq)
     }
 
-    /// The boundary whose check will cover an approval at `approved_seq`, while it waits for one:
-    /// the turn in effect's when nobody has taken it yet, so its member's handover will check this
-    /// log, or when its check is outstanding and will reach the approval, its target not yet written
-    /// or at or past it; else the next turn's.
+    /// The last drawn turn, the one in effect, while the gate applies, rotation is off and no later turn
+    /// is assigned: no boundary follows it, and only the installation that ends the turns lifts the gate.
+    fn last_drawn(&self, engine: &Engine) -> Option<u64> {
+        let turns = engine.daily_turns();
+        let in_effect = turns.in_effect?;
+        let later = turns.assigned.range(in_effect.turn.saturating_add(1)..).next().is_some();
+        (applies(engine) && !engine.operator_election().rotation_enabled && !later).then_some(in_effect.turn)
+    }
+
+    /// What will cover an approval at `approved_seq`, while it waits for a check: the turn in effect's
+    /// boundary when nobody has taken it yet, so its member's handover will check this log, or when its
+    /// check is outstanding and will reach the approval, its target not yet written or at or past it;
+    /// else the next turn's boundary, or, after the last drawn turn, the installation.
     fn wait(&self, engine: &Engine, approved_seq: u64) -> Option<CheckWait> {
         if self.covers(engine, approved_seq) {
             return None;
@@ -171,8 +187,15 @@ impl LogCheck {
                 let target = self.target.filter(|target| target.seq >= taken_seq);
                 approved_seq < taken_seq || target.is_none_or(|target| target.seq >= approved_seq)
             });
-        let turn = if this_turn { in_effect.turn } else { in_effect.turn.saturating_add(1) };
-        Some(CheckWait { turn, boundary_ms: engine_core::turns::boundary(turn)? })
+        if this_turn {
+            let turn = in_effect.turn;
+            return Some(CheckWait::Boundary { turn, boundary_ms: engine_core::turns::boundary(turn)? });
+        }
+        if let Some(turn) = self.last_drawn(engine) {
+            return Some(CheckWait::Installation { turn });
+        }
+        let turn = in_effect.turn.saturating_add(1);
+        Some(CheckWait::Boundary { turn, boundary_ms: engine_core::turns::boundary(turn)? })
     }
 
     /// Whether the sealed keys may carry the gate's records: a verified head or holders.
@@ -181,7 +204,8 @@ impl LogCheck {
     }
 
     /// Drops the verified head, the holders and their seal once the gate no longer applies, so keys
-    /// handed over with rotation off carry none and a release built before the log check can take them.
+    /// handed over once the turns have ended carry none and a release built before the log check can take
+    /// them.
     /// Error cases:
     /// - the keys cannot be sealed again, which leaves the records to drop at the next refresh
     fn forget(&mut self) -> anyhow::Result<()> {
@@ -217,7 +241,8 @@ impl LogCheck {
 
 impl Sequencer {
     /// Publishes the check due, when it changed, and raises `log_check_unattributable` while one is
-    /// outstanding that no member can be asked for (`LogCheck::unattributable`).
+    /// outstanding that no member can be asked for (`LogCheck::unattributable`), and
+    /// `log_check_awaiting_installation` while approvals wait for the installation that ends the turns.
     pub(super) fn refresh_log_check(&mut self) {
         if self.log_check.carried()
             && !applies(&self.engine)
@@ -252,13 +277,14 @@ impl Sequencer {
                 );
             }
         }
+        self.refresh_awaiting_installation();
         // Without a setup this node takes no turn and asks for no check, so nothing it holds is signed.
         let unavailable = self.log_check.store.is_none() && applies(&self.engine);
         if std::mem::replace(&mut self.log_check.unavailable, unavailable) != unavailable {
             if unavailable {
                 warn!(
                     alert = "log_check_unavailable",
-                    "rotation is on and the turn's set names two or more members, so withdrawals wait for the \
+                    "a turn is in effect whose set names two or more members, so withdrawals wait for the \
                      boundary's log check, but this node runs without operator.rotation_enabled and sealed keys: it \
                      takes no turn and asks for no check, and signs no withdrawal until it restarts with them"
                 );
@@ -268,6 +294,38 @@ impl Sequencer {
                     "withdrawals no longer wait for the boundary's log check"
                 );
             }
+        }
+    }
+
+    /// Raises `log_check_awaiting_installation`, once for each last drawn turn, while approvals wait for
+    /// the installation, and resolves it once none does. The unpaid approvals are counted at most once
+    /// a minute of sequenced time, and only after the last drawn turn, so the batches between pay for no
+    /// scan.
+    fn refresh_awaiting_installation(&mut self) {
+        let last = self.log_check.last_drawn(&self.engine);
+        if let Some(turn) = last {
+            let counted = self.log_check.installation_counted;
+            if counted.is_some_and(|(counted, at)| counted == turn && self.last_ts.saturating_sub(at) < COUNT_EVERY) {
+                return;
+            }
+            self.log_check.installation_counted = Some((turn, self.last_ts));
+        }
+        let held = last.map(|turn| (turn, self.awaiting_installation())).filter(|(_, waiting)| *waiting > 0);
+        let raised = std::mem::replace(&mut self.log_check.awaiting_installation, held.map(|(turn, _)| turn));
+        if raised == held.map(|(turn, _)| turn) {
+            return;
+        }
+        if let Some(turn) = raised {
+            info!(alert_resolved = "log_check_awaiting_installation", turn, "no withdrawal waits for the installation");
+        }
+        if let Some((turn, waiting)) = held {
+            warn!(
+                alert = "log_check_awaiting_installation",
+                turn,
+                "{waiting} approved withdrawals wait for the boundary's log check, but rotation is off and no \
+                 turn after the last drawn one is assigned, so no boundary checks them: they are signed once the \
+                 timelock's installation of an operator ends the turns"
+            );
         }
     }
 
@@ -340,7 +398,7 @@ impl Sequencer {
         Ok(())
     }
 
-    /// The boundary whose check an approval at `approved_seq` waits for (see `LogCheck::wait`).
+    /// What an approval at `approved_seq` waits for (see `LogCheck::wait`).
     pub(super) fn log_check_wait(&self, approved_seq: u64) -> Option<CheckWait> {
         self.log_check.wait(&self.engine, approved_seq)
     }

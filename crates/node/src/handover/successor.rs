@@ -19,11 +19,11 @@ use tracing::{error, info};
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
 use crate::handover::assigned::{Binding, Bound};
-use crate::handover::evidence::{self, Peer, Quoting};
+use crate::handover::evidence::{self, CollateralCache, Peer, Quoting};
 use crate::handover::tail::{TailRefused, Tip, Unacknowledged, tail_report_data, version_name};
 use crate::handover::{
-    Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
-    confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
+    CHALLENGE_TIMEOUT, Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data,
+    confirm_digest, confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, ReplayWorkers, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
@@ -87,8 +87,9 @@ pub(crate) async fn take_with(
     let log_tip = manifest_tip(dir);
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
     let bound = Bound::read(assignments, &release).await?;
+    let collateral = CollateralCache::new(evidence::PREFETCH_REUSE);
     let Answered { mut stream, request, mut keys, peer } =
-        ask(cfg, address, attestor, &platform, (log_tip, None), bound.binding.as_ref()).await?;
+        ask(cfg, address, attestor, &platform, (log_tip, None), bound.binding.as_ref(), &collateral).await?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
     let tails = std::mem::take(&mut keys.handover_tails);
     // The vault names the key before anything is written: a handover never lands the log of a
@@ -134,6 +135,7 @@ pub(super) struct Answered {
 /// Connects to the predecessor at `address`, binds a request to its challenge — naming `tip` for a
 /// tail handover, and `log_tip` for whole segments, and `binding`, the turn's assignment it takes, when
 /// it read one (#596) — under this enclave's quote, and opens the keys its quote-bound answer carries.
+/// The quote's collateral is fetched into `collateral` before connecting, unless it holds a fresh fetch.
 /// The predecessor's certificates are checked at the host's time, before trusted time runs: the vault
 /// naming the key bounds what this accepts.
 /// Error cases:
@@ -146,17 +148,22 @@ pub(super) async fn ask(
     platform: &Platform,
     (log_tip, tip): (Option<u64>, Option<&Tip>),
     binding: Option<&Binding>,
+    collateral: &CollateralCache,
 ) -> anyhow::Result<Answered> {
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let (secret, public) = Kx::gen_keypair();
     let public = public.to_bytes().to_vec();
     info!(predecessor = address, ?log_tip, tip = ?tip.map(|tip| tip.seq), "asking the running release for its keys");
+    // The collateral comes first: the predecessor gives the request a few seconds from its challenge.
+    let quoting = Quoting::from(&cfg.tee);
+    let collateral = evidence::prefetch(&quoting, attestor, platform, collateral).await?;
     let mut stream = timeout(MESSAGE_TIMEOUT, TcpStream::connect(address))
         .await
         .context("connecting to the predecessor timed out")?
         .with_context(|| format!("connecting to the predecessor at {address}"))?;
-    let challenge: Challenge =
-        timeout(MESSAGE_TIMEOUT, receive(&mut stream)).await.context("the predecessor sent no challenge in time")??;
+    let challenge: Challenge = timeout(CHALLENGE_TIMEOUT, receive(&mut stream))
+        .await
+        .context("the predecessor sent no challenge in time")??;
     let challenge: [u8; 32] = hex::decode(&challenge.nonce)
         .ok()
         .and_then(|nonce| nonce.try_into().ok())
@@ -170,7 +177,7 @@ pub(super) async fn ask(
         Some(binding) => bound_report_data(domain, &request, binding),
         None => request,
     };
-    let evidence = evidence::produce(&Quoting::from(&cfg.tee), attestor, platform, request).await?;
+    let evidence = evidence::produce_with(&quoting, attestor, platform, request, Some(&collateral)).await?;
     let config_sha256 = hex::encode(cfg.file_sha256);
     let request_message = Request {
         public_key: hex::encode(&public),

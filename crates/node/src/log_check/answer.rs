@@ -5,8 +5,8 @@
 //! statement's seq with the same link and root, in the turn assignment taken there. It quotes once
 //! per question, answering a replay with the evidence it already produced, and at most
 //! `QUOTES_PER_MINUTE` times a minute. It serves a few connections at once, each with a short deadline
-//! for its question, so an idle connection holds up no other, and a full table makes room for a new
-//! connection by dropping the oldest that has not asked.
+//! for its question, so an idle connection holds up no other, and a full address share or a full table
+//! makes room for a new connection by dropping its oldest that has not asked.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
@@ -209,20 +209,22 @@ impl Answering {
                             continue;
                         }
                     };
-                    let Some(slot) = PeerSlot::take(&peers, peer_key(peer.ip()), self.per_peer) else {
-                        debug!(%peer, "closed a log check connection: its address holds {} already", self.per_peer);
+                    let key = peer_key(peer.ip());
+                    let Some((slot, evicted)) = PeerSlot::take_or_evict(&peers, key, self.per_peer, &silent) else {
+                        debug!(%peer, "closed a log check connection: its address's {} have asked", self.per_peer);
                         continue;
                     };
-                    // A full table: the oldest connection that has not asked yet gives its place up.
-                    if serving.len() >= self.connections
-                        && !(silent.evict_oldest() && timeout(EVICTION_WAIT, serving.next()).await.is_ok())
-                    {
+                    // A full table: the oldest connection that has not asked yet gives its place up, unless
+                    // the address's own oldest just did.
+                    let placed = serving.len() < self.connections
+                        || (silent.make_room(evicted) && timeout(EVICTION_WAIT, serving.next()).await.is_ok());
+                    if !placed {
                         debug!(%peer, "closed a log check connection: {} are being served", serving.len());
                         continue;
                     }
                     connection += 1;
                     let span = info_span!("log_check", id = connection, peer = %peer);
-                    let place = silent.enter(connection);
+                    let place = silent.enter(connection, key);
                     serving.push(async move {
                         let _held = slot;
                         if let Err(e) = self.serve(stream, place).await {
@@ -235,17 +237,22 @@ impl Answering {
         }
     }
 
-    /// Reads one operator's question and sends its answer.
+    /// Reads one operator's question and sends its answer. Any stranger can end a connection before its
+    /// question, so those endings are logged quietly.
     /// Error cases:
-    /// - the question does not arrive in time or does not parse, a newer connection takes the place of
-    ///   this silent one, or the answer cannot be sent
+    /// - the answer cannot be sent
     async fn serve(&self, mut stream: TcpStream, place: SilentPlace) -> anyhow::Result<()> {
-        let ask: Ask = tokio::select! {
-            ask = timeout(QUESTION_TIMEOUT, receive(&mut stream)) => ask.context("no question in time")??,
-            () = place.evicted() => anyhow::bail!("a newer connection took this silent one's place"),
+        let asked = tokio::select! {
+            asked = timeout(QUESTION_TIMEOUT, receive::<Ask>(&mut stream)) => Some(asked),
+            () = place.evicted() => None,
         };
-        drop(place);
-        self.respond(&mut stream, &ask).await
+        match asked.filter(|_| place.leave()) {
+            Some(Ok(Ok(ask))) => return self.respond(&mut stream, &ask).await,
+            Some(Ok(Err(e))) => debug!("the connection sent no question: {e:#}"),
+            Some(Err(_)) => debug!("no question in time"),
+            None => debug!("a newer connection took this silent one's place"),
+        }
+        Ok(())
     }
 
     /// Sends this member's answer to `ask`, read from `stream`: here, or by the member link, which

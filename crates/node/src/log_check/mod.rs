@@ -1,8 +1,9 @@
-//! The boundary's log check (#594). While rotation is on and a daily turn is in effect whose rotation
-//! set names two or more members, the enclave signs a withdrawal only for an approval at or below the
-//! head of the log the last check verified, #14's posted root still applying; a one-member set,
-//! rotation off, or no turn in effect, leaves #14's gate alone. A check is another member's
-//! verification of the log through a checkpoint, `(seq, link, root)`:
+//! The boundary's log check (#594). While a daily turn is in effect whose rotation set names two or
+//! more members, the enclave signs a withdrawal only for an approval at or below the head of the log
+//! the last check verified, #14's posted root still applying; a one-member set, or no turn in effect,
+//! leaves #14's gate alone. A drawn turn stands after rotation is turned off until an installation ends
+//! the turns, as the vault's `rotationEnabled()` counts it, and the check stands with it. A check is
+//! another member's verification of the log through a checkpoint, `(seq, link, root)`:
 //! - at a handover, the successor's own: its replica, or its start's replay, verified every entry
 //!   through the handed-over checkpoint, recorded as its start re-seals the keys
 //!   (`node::keys::check_predecessor_head`);
@@ -238,12 +239,12 @@ fn statement_hash(tag: &[u8], domain: CheckpointDomain, nonce: &[u8; 32], statem
     hash
 }
 
-/// Whether the gate applies to `engine`'s log: rotation is on and a turn is in effect whose set names
-/// two or more members. A set the log no longer keeps counts as two.
+/// Whether the gate applies to `engine`'s log: a turn is in effect whose set names two or more members,
+/// so its boundary can hand the keys to another member, whatever the rotation switch says. A set the
+/// log no longer keeps counts as two.
 pub(crate) fn applies(engine: &Engine) -> bool {
     let turns = engine.daily_turns();
-    engine.operator_election().rotation_enabled
-        && turns.in_effect.is_some_and(|turn| turns.sets.get(&turn.set).is_none_or(|set| set.members.len() >= 2))
+    turns.in_effect.is_some_and(|turn| turns.sets.get(&turn.set).is_none_or(|set| set.members.len() >= 2))
 }
 
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced

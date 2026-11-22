@@ -18,8 +18,9 @@
 //! the member's registered standby key, an entry must extend the asker's seal chain, and a vouch
 //! recovers to its voucher. The endpoint is public, so a member answers at most `PER_PEER` connections
 //! from one address and `CONNECTIONS` in all, drops a connection that sends no question within
-//! `QUESTION_TIMEOUT`, and works on at most `HEAVY` entries or vouch questions at once: holding the
-//! operator's status questions off takes many addresses reconnecting every second.
+//! `QUESTION_TIMEOUT`, makes room in a full address share or a full table by dropping its oldest
+//! connection that has not asked, and works on at most `HEAVY` entries or vouch questions at once:
+//! holding the operator's status questions off takes many addresses reconnecting every second.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
@@ -27,7 +28,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use alloy::primitives::{Address, B256};
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use engine_core::eip712::Signature;
 use engine_core::types::AccountId;
 use engine_verify::CpuModel;
@@ -379,14 +380,16 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
                 }
             };
             while answering.try_join_next().is_some() {}
-            let Some(peer_slot) = PeerSlot::take(&peers, peer_key(peer.ip()), PER_PEER) else {
+            let key = peer_key(peer.ip());
+            let Some((peer_slot, evicted)) = PeerSlot::take_or_evict(&peers, key, PER_PEER, &silent) else {
                 debug!(%peer, "too many member link connections from this address: dropped");
                 continue;
             };
             let permit = match permits.clone().try_acquire_owned() {
                 Ok(permit) => Some(permit),
-                // Every place taken: the oldest connection that has not asked yet gives its place up.
-                Err(_) if silent.evict_oldest() => {
+                // Every place taken: the oldest connection that has not asked yet gives its place up, unless
+                // the address's own oldest just did.
+                Err(_) if silent.make_room(evicted) => {
                     timeout(EVICTION_WAIT, permits.clone().acquire_owned()).await.ok().and_then(Result::ok)
                 }
                 Err(_) => None,
@@ -397,7 +400,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
             };
             connection += 1;
             let span = info_span!("member_link", id = connection, peer = %peer);
-            let (server, heavy, place) = (server.clone(), heavy.clone(), silent.enter(connection));
+            let (server, heavy, place) = (server.clone(), heavy.clone(), silent.enter(connection, key));
             answering.spawn(
                 async move {
                     let _held = (permit, peer_slot);
@@ -422,7 +425,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
             question = timeout(QUESTION_TIMEOUT, receive(&mut stream)) => question.context("no question in time")??,
             () = place.evicted() => bail!("a newer connection took this silent one's place"),
         };
-        drop(place);
+        ensure!(place.leave(), "a newer connection took this silent one's place");
         // A log check quotes only for a question its checkpoint's signer signed, so it needs no permit.
         let request = match question {
             Question::Member(request) => request,
