@@ -10,7 +10,7 @@ use tokio::sync::watch;
 use crate::log::{Manifest, PrefixRing, SegmentedLog};
 use crate::sequencer::Sequencer;
 use crate::tee::EnclaveKey;
-use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, log_entries, scratch_dir};
+use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, keep_time_fresh, log_entries, scratch_dir};
 
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
@@ -348,6 +348,8 @@ fn signer() -> AccountId {
 /// checkpoint.
 async fn sequence_ticks(dir: &std::path::Path, count: usize) {
     let node = TestSequencer::start(dir, 1024);
+    // The ticks wait on the disk, which may keep them past trusted time's grace on a loaded machine.
+    tokio::spawn(keep_time_fresh(node.tx.downgrade()));
     for _ in 0..count {
         node.submit(Command::Tick).await;
     }
