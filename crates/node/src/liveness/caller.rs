@@ -1,6 +1,6 @@
 //! A member's liveness caller (#595): from a funded account of its own, apart from the log-head and
-//! seed relayers, it reads the chain every `[liveness] read_interval`, at least four times a heartbeat
-//! interval (`liveness::read_every`), and while a turn names the operator it
+//! seed relayers, it reads the chain four times a heartbeat interval, or every `[liveness] read_interval`
+//! while it knows no interval (`liveness::read_every`), and while a turn names the operator it
 //! - witnesses the current slot once no witness has marked it (`OperatorSchedule.witness`);
 //! - promotes once the block time reaches `promotionDueAt` (`OperatorSchedule.promote`), naming the
 //!   next member in the turn's order;

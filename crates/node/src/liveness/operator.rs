@@ -1,7 +1,7 @@
 //! The operator's side of the liveness rule. It reads the chain at the latest agreed block four times a
 //! heartbeat interval, or every `[liveness] read_interval` while it knows no interval, and once trusted
-//! time reaches the turn boundary after the last read's block; every `POLL` it asks the members under the last read
-//! and, while a turn names the operator and its set has another member:
+//! time reaches the turn boundary after the last read's block; every `POLL` it asks the members under the
+//! last read and, while a turn names the operator and its set has another member:
 //! - asks each other member for its status, over a fresh nonce, and takes a status that recovers to
 //!   the member's promotable standby key, or, while it has none, to the key whose attestation this
 //!   enclave verified (`attested`), names this signer epoch, and holds a link this log holds at that
