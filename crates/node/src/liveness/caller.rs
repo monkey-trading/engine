@@ -8,7 +8,9 @@
 //!   (`OperatorSchedule.skip`, #596), naming the next member in the turn's order;
 //! - relays the operator's newest signed head from its stream when the chain's head is older than five
 //!   sixths of an interval, so a head the operator's own relayer fails to post still counts for the
-//!   enclave that signed it.
+//!   enclave that signed it. A head the stream brings once the last read's head has aged that far is
+//!   read for and relayed at once: the next read, a quarter of an interval on, could come after its
+//!   signing time has left the head tolerance.
 //!
 //! The same account fixes turn fallbacks for the node's whole life (`liveness::fallback`), one call at a
 //! time with these (`Sends`).
@@ -181,8 +183,18 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
         let mut poll = interval(self.poll.min(UNREAD_EVERY));
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let (mut read_failed, mut failing) = (false, false);
+        // When the last read's head turns stale for a relay, and that read's block time: a head the stream
+        // brings from then on is read for at once, by the later of that block time and the clock.
+        let mut stale_at: Option<(u64, u64)> = None;
         loop {
-            poll.tick().await;
+            let woken = tokio::select! {
+                _ = poll.tick() => false,
+                () = self.copy.signed_arrived() => true,
+            };
+            let now = u64::try_from(self.clock.now_ms() / 1000).unwrap_or(0);
+            if woken && !stale_at.is_some_and(|(at, time)| now.max(time) >= at) {
+                continue;
+            }
             let read: BoxFuture<'_, anyhow::Result<View>> =
                 Box::pin(async { view(&self.chain.latest().await?, &self.domain).await });
             let view = match read.await {
@@ -205,6 +217,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                     continue;
                 }
             };
+            stale_at = (view.turn_names_operator() && view.rule.interval != 0).then(|| (relay_from(&view), view.time));
             // Four reads a slot, however the rule's interval moves.
             let every = read_every(self.poll, view.rule.interval);
             if poll.period() != every {
@@ -354,7 +367,7 @@ pub(crate) fn calls(view: &View, signed: Option<SignedHead>, now: u64) -> Vec<Ca
     if time >= view.skip_due_at {
         calls.push(Call::Skip);
     }
-    let stale = view.head.posted_at.saturating_add(view.rule.interval * 5 / 6) <= time;
+    let stale = relay_from(view) <= time;
     if let Some(signed) =
         signed.filter(|signed| stale && signed.epoch == view.epoch && signed.head.head.seq >= view.head.seq)
         && (signed.head.head.seq > view.head.seq || signed.head.signed_at > view.head.signed_at)
@@ -362,6 +375,12 @@ pub(crate) fn calls(view: &View, signed: Option<SignedHead>, now: u64) -> Vec<Ca
         calls.push(Call::Relay(Box::new(signed)));
     }
     calls
+}
+
+/// When the chain's head of `view` turns stale enough to relay a newer one: five sixths of an interval
+/// after it landed, past the half interval at which the operator's own heads are due.
+fn relay_from(view: &View) -> u64 {
+    view.head.posted_at.saturating_add(view.rule.interval * 5 / 6)
 }
 
 #[cfg(test)]

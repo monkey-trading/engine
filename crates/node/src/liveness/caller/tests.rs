@@ -9,10 +9,11 @@ use alloy::sol_types::SolCall;
 use super::*;
 use crate::liveness::fake::{ChainState, DOMAIN, FakeChain};
 use crate::log_heads::{Head, HeadV2, Hold};
-use crate::test_support::capture_alerts;
 
 /// How often the caller polls in these tests.
 const TEST_POLL: Duration = Duration::from_millis(50);
+/// How often it reads once it knows the fake chain's 60 s heartbeat interval: a quarter of it.
+const SLOT_READ: Duration = Duration::from_secs(15);
 
 /// A call sent: where to, and its data.
 type SentCall = (Address, Vec<u8>);
@@ -26,6 +27,8 @@ struct Sent {
     refused: Arc<Mutex<bool>>,
     /// The endpoint fails every request, as one down or not signing for the caller does.
     down: Arc<Mutex<bool>>,
+    /// The balance reads asked for, one a chain read.
+    balance_reads: Arc<Mutex<u32>>,
 }
 
 impl Sending for Sent {
@@ -39,6 +42,7 @@ impl Sending for Sent {
     }
 
     async fn balance(&self) -> anyhow::Result<U256> {
+        *self.balance_reads.lock().unwrap() += 1;
         anyhow::ensure!(!*self.down.lock().unwrap(), "liveness RPC failed: connection refused");
         Ok(*self.balance.lock().unwrap())
     }
@@ -191,9 +195,49 @@ async fn the_caller_witnesses_promotes_and_relays_from_its_own_account() {
     assert!(calls.contains(&(DOMAIN.log_heads, relayed)), "the stream's head goes to LogHeads");
 }
 
+/// A head the stream brings once the chain's head is stale for a relay is read for and relayed at once,
+/// not at the next read a quarter of an interval on, which could come after its signing time has left the
+/// head tolerance; one brought while the chain's head is fresh waits for the next read.
+#[tokio::test(start_paused = true)]
+async fn a_head_the_stream_brings_once_the_chains_is_stale_is_relayed_at_once() {
+    // Posted five sixths of the 60 s interval before the block.
+    let time = 1_800_000_000;
+    let chain = Arc::new(FakeChain::new(ChainState { head: (7, 1_000, time - 50), ..Default::default() }));
+    let copy = Copy::default();
+    let sent = Sent::default();
+    let caller = Caller {
+        chain: chain.clone(),
+        sending: sent.clone(),
+        domain: DOMAIN,
+        copy: copy.clone(),
+        min_balance: U256::ZERO,
+        poll: TEST_POLL,
+        clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
+    };
+    let reads = || *sent.balance_reads.lock().unwrap();
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(SLOT_READ / 3).await;
+    assert_eq!(reads(), 1, "the read at 0 s, with no head to relay");
+    let newer = signed(1, 8);
+    copy.signed_head(newer.clone());
+    tokio::time::sleep(TEST_POLL).await;
+    assert_eq!(reads(), 2, "read at once");
+    let relayed = newer.head.calldata(&newer.signature).unwrap();
+    assert!(sent.calls.lock().unwrap().contains(&(DOMAIN.log_heads, relayed)), "and relayed");
+    // The chain takes a head; the read at 15 s sees it fresh, and a head the stream brings then waits.
+    chain.set(|chain| chain.head = (8, 1_000, time));
+    tokio::time::sleep(SLOT_READ).await;
+    assert_eq!(reads(), 3);
+    copy.signed_head(signed(1, 9));
+    tokio::time::sleep(TEST_POLL).await;
+    task.abort();
+    assert_eq!(reads(), 3, "no read for a head while the chain's is fresh");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_caller_below_its_minimum_balance_pages_once_until_funded() {
-    let (_guard, mut alerts) = capture_alerts();
+    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
     let chain = Arc::new(FakeChain::new(ChainState::default()));
     let sent = Sent::default();
     let caller = Caller {
@@ -207,13 +251,17 @@ async fn a_caller_below_its_minimum_balance_pages_once_until_funded() {
         sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
-    tokio::time::sleep(TEST_POLL * 3).await;
+    // Reads at 0, 15 and 30 s find it unfunded.
+    tokio::time::sleep(SLOT_READ * 5 / 2).await;
+    assert_eq!(*sent.balance_reads.lock().unwrap(), 3);
     *sent.balance.lock().unwrap() = U256::from(10);
-    tokio::time::sleep(TEST_POLL * 2).await;
+    tokio::time::sleep(SLOT_READ).await;
     task.abort();
     let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
     let unfunded = raised.iter().filter(|alert| alert["alert"] == "liveness_caller_unfunded").count();
     assert_eq!(unfunded, 1, "{raised:?}");
+    let resolved: Vec<_> = std::iter::from_fn(|| resolutions.try_recv().ok()).collect();
+    assert!(resolved.iter().any(|alert| alert["alert_resolved"] == "liveness_caller_unfunded"), "{resolved:?}");
 }
 
 /// A caller whose endpoint fails, as one down or not signing for its account does, pages
@@ -235,10 +283,11 @@ async fn a_caller_whose_endpoint_fails_pages_once_until_a_call_goes_through() {
         sends: Arc::default(),
     };
     let task = tokio::spawn(caller.run());
-    tokio::time::sleep(TEST_POLL * 3).await;
+    // Reads at 0, 15 and 30 s find the endpoint down.
+    tokio::time::sleep(SLOT_READ * 5 / 2).await;
+    assert_eq!(*sent.balance_reads.lock().unwrap(), 3);
     *sent.down.lock().unwrap() = false;
-    // The next read, a quarter of the fake chain's 60 s interval on.
-    tokio::time::sleep(Duration::from_secs(15)).await;
+    tokio::time::sleep(SLOT_READ).await;
     task.abort();
     let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
     let failed = raised.iter().filter(|alert| alert["alert"] == "liveness_caller_send_failed").count();

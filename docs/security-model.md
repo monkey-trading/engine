@@ -1259,8 +1259,10 @@ tolerance near the interval, a failed first head at that turn reaches the chain 
 through the members' relays.
 
 When the chain's newest head is older than five sixths of an interval, each member relays the
-newest head that the operator signed. The operator's own heads are due every half interval, so
-members relay a head only when the operator's posts fail or are slow to land. A send that the
+newest head that the operator signed. A head that a member's stream brings after that point is
+relayed at once rather than at the member's next read, which could come after the head's signing
+time has left the head tolerance. The operator's own heads are due every half interval, so members relay a
+head only when the operator's posts fail or are slow to land. A send that the
 relayer's endpoint accepts but that never lands holds the operator's later posts for one heartbeat
 interval from the send, and up to one and a half intervals until the next post due after that
 replaces it at its nonce. Through that time the operator still signs its heads, and the members'

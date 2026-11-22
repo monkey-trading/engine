@@ -2,7 +2,8 @@
 # the operator's two initialisations. The vault's and staking contract's values cannot change once
 # deployed, nor the initialisations once recorded (the timelock's delay can move through the timelock),
 # and the node refuses a different budget, epoch or cooldown than the contracts hold. Decided by the owner on
-# 2026-11-14 (#436), and the operator schedule's and the parameter vote's on 2026-11-21 (#1175).
+# 2026-11-14 (#436), and for #1175 the operator schedule's heartbeat rule on 2026-11-21 and its other
+# values and the parameter vote's on 2026-11-22.
 # deploy-and-rollback.md uses them: "Deploy the contracts" and "Deploy the rotation contracts" for the
 # contracts' constructors, and steps 9 and 10 of "First deployment" for `init-emissions` and `init-staking`.
 # A test (`tests/production_deployment.rs`) holds each value to the decision and the runbook's

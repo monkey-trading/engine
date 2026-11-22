@@ -43,10 +43,10 @@ pub(crate) fn refused(rule: Rule, tick: Duration) -> Option<&'static str> {
 }
 
 /// Whether the chain is due a read, `since` after the last one and with `reached` trusted time's lower
-/// bound in milliseconds: before the first, `read_every` after the last (the `configured` read interval
-/// or a quarter of the last read's heartbeat interval), or once trusted time reaches the turn boundary
-/// after the last read's block, from which another set may apply. `last` is that read's block time and
-/// heartbeat interval, in seconds.
+/// bound in milliseconds: before the first, `read_every` after the last (a quarter of the last read's
+/// heartbeat interval, or the `configured` read interval while it names none), or once trusted time
+/// reaches the turn boundary after the last read's block, from which another set may apply. `last` is
+/// that read's block time and heartbeat interval, in seconds.
 pub(super) fn read_due(
     configured: Duration,
     since: Option<Duration>,
