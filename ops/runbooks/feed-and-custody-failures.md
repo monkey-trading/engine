@@ -192,10 +192,17 @@ time its listing names.
 
 - **`futures_roll_overdue` (Warning).** The roll time has passed, and no price gap between the two
   contracts has been recorded. The roll records the gap between the two contracts' prices, so it
-  needs quotes for the next contract. Check the feeds that quote the **next** contract.
+  needs quotes for the next contract. Check the feeds that quote the **next** contract. If the front
+  contract has stopped being quoted first, the market has no price until the front has had none for
+  seven days, closed hours included, and then rolls onto the next contract at its first quote, from
+  its last mark. The seven days count only while a next contract is listed, and start again whenever
+  the next contract changes.
 
 - **`futures_last_contract` (Warning).** The market is priced from the last contract that its
-  listing names. Before that contract expires, the owner lists the next contract.
+  listing names. Before that contract expires, the owner lists the next contract. A next contract
+  listed after the current one has stopped being quoted leaves the market without a price for at
+  least seven days from the listing, until the next contract quotes past its roll time, however long
+  the current contract has been silent.
 
   1. Check that the vendors' symbols for the new contract are in the configuration. If they are not,
      adding them is a new release.
@@ -213,6 +220,12 @@ time its listing names.
      `[{"type":"admin_applied"}]`.
 
      **Changes the live system.** The owner must approve the exact specification.
+
+     The listing applies at once only if it keeps every contract from the one the market prices from
+     on, each under its name and at its roll time, and adds contracts only after the last. A renamed,
+     dropped or moved contract from the one the market prices from on applies only from seven days
+     after a listing notice naming the new contracts, given with
+     `announce-listing <market> --contracts-from <market.toml> --effective-at <time>`.
 
   While parameter votes govern, as [Parameter votes](operator-candidate.md#parameter-votes)
   describes, the engine refuses this instruction from the operator. The members of the rotation set
@@ -370,26 +383,41 @@ A venue's quote keeps the venue's own timestamp, and the feed's repeat rule only
 an unchanged price. A quiet mid price therefore leaves quotes older than a tighter limit, even while
 the venues are healthy.
 
-A tightening applies at once. Undoing it is a loosening, which applies only seven days after a
-listing notice, or by a vote, and never beyond the market's launch rules. Tighten only what the
-owner accepts for at least seven days.
+A tightening applies only from seven days after a listing notice that names the new price rules, or
+by a vote, whether or not the market is reduce-only. Undoing it is a loosening, which also applies
+only seven days after a notice of its own, or by a vote, and never beyond the market's launch rules.
+Tighten only what the owner accepts for at least seven days.
 
 While parameter votes govern, which is while rotation is on and a rotation set with members is in
 effect, as [Parameter votes](operator-candidate.md#parameter-votes) describes, the engine refuses
-the operator's `upsert-market`. Each change in the steps below is then proposed as a normal vote,
-which applies seven days after the engine logs it, and is checked against the quotes the market
-holds at that time. A voted change that the engine refuses at that time is spent, and
-`proposal_rejected` fires. It cannot be signed again, and only a new proposal, with its own seven
-days, can make the change. Each step of a stepwise cut is a vote of its own. The reduce-only
-instructions in step 5 remain the operator's, and they must be in force before the change's
-`applies_at` in `GET /v1/house/state`.
+the operator's `upsert-market` and its listing notices. Each change in the steps below is then
+proposed as a normal vote, which applies seven days after the engine logs it, and is checked against
+the quotes the market holds at that time. The vote's seven days are its notice, so step 1 is left
+out. A voted change that the engine refuses at that time is spent, and `proposal_rejected` fires. It
+cannot be signed again, and only a new proposal, with its own seven days, can make the change. Each
+step of a stepwise cut is a vote of its own. The reduce-only instructions in step 5 remain the
+operator's, and they must be in force before the change's `applies_at` in `GET /v1/house/state`.
 
-1. Check that the market is open and has a price, which is when `engine_market_priced` reads `1` for
+1. Give notice of the tighter price rules:
+
+   ```shell
+   $ENGINE admin --config $CONFIG --node $API --pin $PIN announce-listing <market> \
+     --price-rules-from <spec.toml> --effective-at <time>
+   ```
+
+   `<spec.toml>` is the market specification carrying the tighter price rules, and `<time>` is in RFC
+   3339 form, at least seven days after the notice is logged. The last line of the output is
+   `[{"type":"admin_applied"}]`. Wait until `<time>` before the next step.
+
+   **Changes the live system.** The owner must approve the notice.
+
+   **A listing notice replaces the market's pending notice, whatever that notice names.**
+
+2. Check that the market is open and has a price, which is when `engine_market_priced` reads `1` for
    it, as [Find what is down](#find-what-is-down) shows. A closed market holds old quotes, and every
    tightening is refused until it opens. `market_no_price` fires only after `alerts.no_price_after`,
-   so its silence proves nothing.
-
-2. Sign the change with `upsert-market`, as [Futures markets](#futures-markets) shows.
+   so its silence proves nothing. Then sign the change with `upsert-market`, as
+   [Futures markets](#futures-markets) shows.
 
    **Changes the live system.** The owner must approve the exact specification.
 
@@ -397,10 +425,11 @@ instructions in step 5 remain the operator's, and they must be in force before t
    or triggers the repeat, and sign the same change again.
 
 3. For a large cut, tighten in steps, signing each step after the venues have quoted again, so that
-   each step still prices the market from quotes that arrived after the previous step.
+   each step still prices the market from quotes that arrived after the previous step. Each step
+   needs a notice of its own, naming that step's rules, so a cut in steps takes seven days a step.
 
-   **Changes the live system.** Each step is its own `upsert-market`, and the owner must approve the
-   exact specification of each.
+   **Changes the live system.** Each step is its own notice and `upsert-market`, and the owner must
+   approve the exact specification of each.
 
 If the change is still refused, follow steps 4 to 10. In these steps the check against the market's
 quotes does not apply, so the market may be left without a price.
@@ -418,8 +447,9 @@ quotes does not apply, so the market may be left without a price.
 
 6. Sign the change again. The check does not apply to a market that is reduce-only.
 
-7. In the same window as the change, give notice of the restore, so that the previous limit can
-   apply seven days later if it is needed:
+7. Once the change has applied, give notice of the restore, so that the previous limit can apply
+   seven days later if it is needed. A restore notice given before the change applies would replace
+   the change's own notice:
 
    ```shell
    $ENGINE admin --config $CONFIG --node $API --pin $PIN announce-listing <market> \

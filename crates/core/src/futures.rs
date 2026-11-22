@@ -5,7 +5,13 @@
 //! contract's roll time has passed, the market rolls at the first command at which the next
 //! contract has an index and a gap is recorded: the adjustment takes the gap, so the index moves
 //! only as the market did since the gap was measured, even when the front contract has stopped
-//! quoting, as it does at expiry.
+//! quoting, as it does at expiry. From `V87` a market with no gap recorded rolls too, once its front
+//! has had no index for `MARK_ROLL_WAIT_MS`, at the first command past the next contract's roll time at
+//! which that contract has an index, on the gap from the market's mark: the front's median there less
+//! the next contract's, so the index takes up from the last mark. The wait counts sequenced time,
+//! closed hours included, only while the market has a next contract, and starts again when that
+//! contract changes. A front that stopped quoting before a gap was measured then leaves the market
+//! without a price for at least that long.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::take;
@@ -17,8 +23,16 @@ use crate::Fixed;
 use crate::engine::{Engine, MarketState};
 use crate::event::Event;
 use crate::market::MarketSpec;
+use crate::operator_bounds::NOTICE_MS;
 use crate::price::{Index, PriceError, SourceQuote, compute_index};
+use crate::protocol::ProtocolVersion;
 use crate::types::{MarketId, Millis};
+
+/// How long a market's front contract must have had no index before the market, with no gap recorded,
+/// rolls onto its next contract from its mark, from `V87`: a notice's seven days of sequenced time,
+/// closed hours included, counted only while the market has a next contract and afresh from each change
+/// of it (`FuturesState::front_unpriced_since`).
+pub const MARK_ROLL_WAIT_MS: Millis = NOTICE_MS;
 
 /// Which of a market's quotes a quote joins: those of the contract it prices from, or the next
 /// one's.
@@ -51,6 +65,11 @@ pub struct FuturesState {
     /// an index; `None` until then, and again after each roll.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<Fixed>,
+    /// From `V87`, while the market has a next contract, the time of the first command since which the
+    /// front has had no index; `None` while it has one, and after each roll or change of next contract.
+    /// Left out of the encoding while `None`, as it always is before `V87`, so earlier roots stand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front_unpriced_since: Option<Millis>,
 }
 
 impl FuturesContract {
@@ -71,6 +90,7 @@ impl FuturesState {
             adjustment: Fixed::ZERO,
             next_quotes: BTreeMap::new(),
             gap: None,
+            front_unpriced_since: None,
         })
     }
 }
@@ -203,8 +223,19 @@ impl MarketState {
         contracts.get(front + 1)
     }
 
+    /// Whether `spec` keeps the contracts this market's listing names from the one it prices from on: each
+    /// at its name and roll time, in order, adding contracts only after the last. True for a market not
+    /// priced from futures, and for a `spec` that drops the front, which `relisted` refuses.
+    pub(crate) fn keeps_contracts(&self, spec: &MarketSpec) -> bool {
+        let Some(futures) = &self.futures else { return true };
+        match (from_front(&self.spec.contracts, &futures.contract), from_front(&spec.contracts, &futures.contract)) {
+            (Some(listed), Some(relisted)) => relisted.starts_with(listed),
+            _ => true,
+        }
+    }
+
     /// The futures state for this market under a new listing `spec`: where it stands, and the next
-    /// contract's quotes and the gap to it while that contract stays next.
+    /// contract's quotes, the gap to it and when the front's index lapsed while that contract stays next.
     /// Error cases:
     /// - `spec` names futures contracts and the market is listed without them, or the reverse
     /// - `spec` does not name the contract the market prices from
@@ -223,6 +254,8 @@ impl MarketState {
                 if next != self.next_contract().map(|c| c.contract.as_str()) {
                     kept.next_quotes.clear();
                     kept.gap = None;
+                    // Kept only while there is a next contract, so it starts again with the new one.
+                    kept.front_unpriced_since = None;
                 }
                 Ok(Some(kept))
             }
@@ -233,8 +266,10 @@ impl MarketState {
 impl Engine {
     /// For every market priced from futures with a next contract: records the gap between the two
     /// contracts' medians when both have an index now, then rolls the market if the next contract's
-    /// roll time has passed, it has an index, and a gap is recorded. A roll adds the gap to the
-    /// adjustment, and the next contract's quotes become the market's.
+    /// roll time has passed, it has an index, and a gap is recorded, or from `V87`, with none recorded,
+    /// the front has had no index for `MARK_ROLL_WAIT_MS` and the market has a mark to take the gap
+    /// from. A roll adds the gap to the adjustment, and the next contract's quotes become the market's.
+    /// From `V87` it also records when the front's index lapsed (`FuturesState::front_unpriced_since`).
     pub(crate) fn roll_futures(&mut self, events: &mut Vec<Event>) {
         let now = self.now;
         let ids: Vec<MarketId> =
@@ -244,30 +279,50 @@ impl Engine {
             let futures = market.futures.as_ref().expect("a market with a next contract prices from futures");
             let next = market.next_contract().expect("selected above");
             let rules = &market.spec.price_rules;
+            let front_index = compute_index(&market.quotes, rules, now);
             let next_index = compute_index(&futures.next_quotes, rules, now);
-            let gap = match (compute_index(&market.quotes, rules, now), &next_index) {
+            let gap = match (&front_index, &next_index) {
                 (Ok(front), Ok(next)) => Some(front.mid - next.mid),
                 _ => futures.gap,
             };
-            let due = next.rolls_in_ms() <= now && next_index.is_ok() && gap.is_some();
-            if gap == futures.gap && !due {
+            let v87 = self.protocol_version >= ProtocolVersion::V87;
+            let unpriced_since = match front_index {
+                Err(_) if v87 => futures.front_unpriced_since.or(Some(now)),
+                _ => None,
+            };
+            // With no gap recorded while the next contract has an index, the front has none: from `V87`, once
+            // it has had none for the wait, its median at the mark stands in for it.
+            let waited = unpriced_since.is_some_and(|since| since.saturating_add(MARK_ROLL_WAIT_MS) <= now);
+            let roll_gap = match (gap, &next_index) {
+                (None, Ok(next)) if waited => market.mark.map(|mark| mark - futures.adjustment - next.mid),
+                _ => gap,
+            };
+            let due = next.rolls_in_ms() <= now && next_index.is_ok() && roll_gap.is_some();
+            if gap == futures.gap && unpriced_since == futures.front_unpriced_since && !due {
                 continue;
             }
             let contract = next.contract.clone();
-            // Only a market whose gap moves or that rolls is taken for change, so the state root
-            // rehashes no other.
+            // Only a market whose gap moves, whose front's index lapses or returns, or that rolls is taken for
+            // change, so the state root rehashes no other.
             let market = self.markets.get_mut(&market_id).expect("listed");
             let futures = market.futures.as_mut().expect("checked above");
             futures.gap = gap;
+            futures.front_unpriced_since = unpriced_since;
             if due {
-                futures.adjustment += gap.expect("checked above");
+                futures.adjustment += roll_gap.expect("checked above");
                 futures.gap = None;
+                futures.front_unpriced_since = None;
                 futures.contract = contract.clone();
                 market.quotes = take(&mut futures.next_quotes);
                 events.push(Event::MarketRolled { market: market_id, contract, adjustment: futures.adjustment });
             }
         }
     }
+}
+
+/// `contracts` from the one named `front` on, if they name it.
+fn from_front<'a>(contracts: &'a [FuturesContract], front: &str) -> Option<&'a [FuturesContract]> {
+    contracts.iter().position(|c| c.contract == front).map(|at| &contracts[at..])
 }
 
 /// Checks a listing's futures contracts: each named once, in roll order.

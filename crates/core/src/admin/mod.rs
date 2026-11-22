@@ -97,6 +97,9 @@ impl Engine {
     ///   `Engine::relist_markets`
     /// - from `V82`, `UpsertMarket` or `RelistMarkets` whose calendar shuts a listed market within seven
     ///   days at an instant its calendar in force has it open, outside a vote (`Engine::check_listing_change`)
+    /// - from `V87`, `UpsertMarket` or `RelistMarkets` tightening a listed market's price rules, or changing
+    ///   a futures market's contracts from its front on other than by adding after the last, without a
+    ///   notice or a vote (`Engine::check_listing_change`)
     ///
     /// A `voted` command is a passed vote's, whose seven days' notice replaces the parameter, markup
     /// and ceiling notices. From `V56` new parameters and listings set the baseline, and the values in

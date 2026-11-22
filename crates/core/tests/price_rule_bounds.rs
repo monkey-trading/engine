@@ -3,7 +3,9 @@
 //! names them, and never past the market's launch rules, while tighter rules apply at once. So the
 //! operator, who is also its enclave's host, cannot widen a market's freshness bound, hold the venue
 //! streams back, and trade an old price against the house. The activation takes each listed market's
-//! rules, and the corporate bounds in force, as launch's.
+//! rules, and the corporate bounds in force, as launch's. From `V87` tighter rules need the notice too,
+//! whether or not the market is reduce-only, so the operator cannot leave a held market's quotes unable to
+//! price it, and its close-outs waiting, at once.
 
 mod common;
 
@@ -12,7 +14,8 @@ use common::events::{fills, only_fill};
 use common::toxicity::v54_params;
 use common::weekend::{client, genesis_at, genesis_with_params, globex};
 use common::{BTC, ETH, Harness};
-use engine_core::command::AdminCommand;
+use engine_core::Fixed;
+use engine_core::command::{AdminCommand, Command};
 use engine_core::corporate::LAUNCH_CORPORATE_BOUNDS;
 use engine_core::event::Event;
 use engine_core::holding_fee::DEFAULT_PROFIT_FEE_CURVE;
@@ -65,6 +68,7 @@ fn rules_notice(market: MarketId, price_rules: PriceRules, effective_at: Millis)
         weekend_margin_bps: None,
         price_rules: Some(price_rules),
         min_level_distance_bps: None,
+        contracts: None,
         effective_at,
     };
     AdminCommand::AnnounceListing { market, notice }
@@ -196,4 +200,116 @@ fn v76s_activation_takes_each_listed_markets_rules_and_the_corporate_bounds_in_f
     let due = h.engine.next_rollover().expect("rollovers are scheduled");
     let rollover = &h.engine.params().expect("parameters are set").rollover;
     assert_eq!(bounds.last_rollover, Some(rollover.previous_before(due)), "the rollover before the one due");
+}
+
+#[test]
+fn from_v87_tighter_price_rules_need_a_notice_whether_or_not_the_market_is_reduce_only() {
+    let mut h = genesis(ProtocolVersion::V87);
+    let holder = client(&mut h, 1, "50000");
+    only_fill(&trade(&mut h, &holder, BTC, Side::Buy, "1", "100000"));
+    let launch = rules(&h, BTC);
+    let unpriceable = PriceRules { min_sources: 9, ..launch };
+    let fresher = PriceRules { max_age_ms: launch.max_age_ms / 2, ..launch };
+    let reason = "market 1's price rule change needs a notice of at least seven days";
+
+    // With BTC open to new risk, a tighter rule its quotes still meet; then with BTC reduce-only, every market,
+    // and in a relisting of several markets at once.
+    rejected(&h.operate(relisting(&h, BTC, fresher)), reason);
+    h.operator_admin(AdminCommand::SetReduceOnly { market: Some(BTC), reduce_only: true });
+    for tighter in [unpriceable, fresher] {
+        rejected(&h.operate(relisting(&h, BTC, tighter)), reason);
+    }
+    h.operator_admin(AdminCommand::SetReduceOnly { market: None, reduce_only: true });
+    let eth = h.engine.markets()[&ETH].spec.clone();
+    let specs = vec![MarketSpec { price_rules: unpriceable, ..h.engine.markets()[&BTC].spec.clone() }, eth];
+    rejected(&h.operate(AdminCommand::RelistMarkets { specs }), reason);
+    // An unheld market's too.
+    let eth_tighter = PriceRules { min_sources: rules(&h, ETH).min_sources + 1, ..rules(&h, ETH) };
+    rejected(&h.operate(relisting(&h, ETH, eth_tighter)), "market 2's price rule change needs a notice");
+    assert_eq!(rules(&h, BTC), launch);
+
+    // A notice names them, and from its time a relisting applies them once.
+    let at = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(rules_notice(BTC, fresher, at))));
+    rejected(&h.operate(relisting(&h, BTC, fresher)), "market 1's price rule change takes effect from");
+    h.advance_to(at);
+    h.price(BTC, "100000");
+    assert!(applied(&h.operate(relisting(&h, BTC, fresher))));
+    assert_eq!(rules(&h, BTC), fresher);
+    assert!(!h.engine.operator_bounds().markups.contains_key(&BTC), "the relisting spends the notice");
+}
+
+#[test]
+fn from_v87_a_noticed_rule_no_quote_meets_still_needs_a_held_market_reduce_only() {
+    let mut h = genesis(ProtocolVersion::V87);
+    let holder = client(&mut h, 1, "50000");
+    only_fill(&trade(&mut h, &holder, BTC, Side::Buy, "1", "100000"));
+    let unpriceable = PriceRules { min_sources: 9, ..rules(&h, BTC) };
+    let at = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(rules_notice(BTC, unpriceable, at))));
+    h.advance_to(at);
+    h.price(BTC, "100000");
+    // From its time the notice names the rules, but two venues cannot give nine sources while BTC takes new risk.
+    rejected(&h.operate(relisting(&h, BTC, unpriceable)), "need it reduce-only first");
+    h.operator_admin(AdminCommand::SetReduceOnly { market: Some(BTC), reduce_only: true });
+    assert!(applied(&h.operate(relisting(&h, BTC, unpriceable))));
+    assert!(!h.engine.operator_bounds().markups.contains_key(&BTC), "the relisting spends the notice");
+}
+
+#[test]
+fn a_reduce_only_markets_price_rules_stay_without_a_notice_so_its_long_closes_out_on_the_way_down() {
+    let mut h = genesis(ProtocolVersion::V87);
+    let long = client(&mut h, 2, "12000");
+    only_fill(&trade(&mut h, &long, BTC, Side::Buy, "1", "100000"));
+    let launch = rules(&h, BTC);
+
+    h.operator_admin(AdminCommand::SetReduceOnly { market: Some(BTC), reduce_only: true });
+    rejected(&h.operate(relisting(&h, BTC, PriceRules { min_sources: 9, ..launch })), "needs a notice");
+    let events = walk_down(&mut h, 75_000);
+    assert!(events.iter().any(|e| matches!(e, Event::CloseOut { .. })), "{events:?}");
+    assert_eq!(bad_debt(&events), Fixed::ZERO, "a continuous price leaves no bad debt");
+    assert!(h.engine.accounts()[&long.account].positions.get(&BTC).is_none_or(|p| p.qty.is_zero()));
+}
+
+#[test]
+fn a_restore_notice_given_ahead_lets_no_freeze_through_so_a_pair_leaves_the_house_no_bad_debt() {
+    let mut h = genesis(ProtocolVersion::V87);
+    let launch = rules(&h, BTC);
+    // A week ahead, a notice naming BTC's own launch rules, which would let them back at once.
+    let at = h.ts + NOTICE_MS;
+    assert!(applied(&h.operate(rules_notice(BTC, launch, at))));
+    h.advance_to(at + 1_000);
+    h.cmd(Command::Tick);
+
+    // A pair in two wallets at 10x, then reduce-only and rules no venue can meet.
+    let long = client(&mut h, 2, "12000");
+    let short = client(&mut h, 3, "12000");
+    h.price(BTC, "100000");
+    only_fill(&trade(&mut h, &long, BTC, Side::Buy, "1", "100000"));
+    only_fill(&trade(&mut h, &short, BTC, Side::Sell, "1", "100000"));
+    h.operator_admin(AdminCommand::SetReduceOnly { market: Some(BTC), reduce_only: true });
+    rejected(&h.operate(relisting(&h, BTC, PriceRules { min_sources: 9, ..launch })), "needs a notice");
+
+    let events = walk_down(&mut h, 75_000);
+    let long_closed = events.iter().any(|e| matches!(e, Event::CloseOut { account, .. } if *account == long.account));
+    assert!(long_closed, "the long closes out on the way down: {events:?}");
+    assert_eq!(bad_debt(&events), Fixed::ZERO, "a continuous price leaves no bad debt");
+}
+
+/// Walks BTC from $100,000 down to `to` in steps of $1,000, from two venues every 200 ms.
+fn walk_down(h: &mut Harness, to: i64) -> Vec<Event> {
+    let mut all = Vec::new();
+    for thousands in (to / 1_000..100).rev() {
+        h.advance(200);
+        all.extend(h.price(BTC, &(thousands * 1_000).to_string()));
+    }
+    all
+}
+
+/// The house's bad debt over `events`.
+fn bad_debt(events: &[Event]) -> Fixed {
+    events.iter().fold(Fixed::ZERO, |sum, e| match e {
+        Event::BadDebt { amount, .. } => sum + *amount,
+        _ => sum,
+    })
 }

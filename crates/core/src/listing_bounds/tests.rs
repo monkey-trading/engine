@@ -1,4 +1,5 @@
 use super::*;
+use crate::Fixed;
 
 fn f(n: i64) -> Fixed {
     Fixed::from_int(n)

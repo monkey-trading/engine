@@ -239,8 +239,9 @@ impl NoPrice {
 impl LastContract {
     /// Warns once for each market priced from futures that prices from the last contract its
     /// listing names, so the operator lists the next before it expires: a market whose front stops
-    /// quoting with no gap to its next recorded can never roll. Resolves once a next contract is
-    /// listed.
+    /// quoting with no gap to its next recorded has no price until it rolls from its mark, once its
+    /// front has had none for seven days counted only while a next contract is listed. Resolves once a
+    /// next contract is listed.
     pub fn check(&mut self, sample: &Sample) {
         for market in &sample.markets {
             match &market.last_contract {
@@ -269,8 +270,9 @@ impl LastContract {
 impl RollOverdue {
     /// Warns once for each market priced from futures whose next contract's roll time has passed
     /// with no gap recorded, so the operator checks the next contract's feeds before the front
-    /// stops quoting: the market rolls only once both contracts have an index. Resolves when the
-    /// market rolls, or records a gap and so is no longer overdue.
+    /// stops quoting: the market rolls once both contracts have an index, or else only once its front
+    /// has had none for seven days, closed hours included, while this next contract is listed. Resolves
+    /// when the market rolls, or records a gap and so is no longer overdue.
     pub fn check(&mut self, sample: &Sample) {
         for market in &sample.markets {
             match &market.roll_overdue {

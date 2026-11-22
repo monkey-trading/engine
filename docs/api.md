@@ -1348,7 +1348,7 @@ widths and ranges are in `closeout_bucket_bps`, `closeout_range_bps`, `profit_bu
 | `seq` | The last command the answer reflects, or `null` on an empty log. |
 | `params` | The trading settings in force, with `seq`, the command that set them, or `null` before the first. They include `portfolio_grid`, the offset groups that close-outs read, while they name any. |
 | `params_notice` | A pending change to the trading settings, with the time it takes effect, `effective_at`, or `null`. A change to the offset groups' shocks or floor shares appears as its `portfolio_grid`. |
-| `listing_notices` | By market, a pending change to the market's bands or markup, with `effective_at`. |
+| `listing_notices` | By market, a pending change to the market's `spread_tiers`, `margin_tiers`, `markup_bps`, `weekend_margin_bps`, `price_rules`, `min_level_distance_bps` or futures `contracts`, with `effective_at`. |
 | `score_rules` | The toxicity score's fixed constants. |
 | `house_loss` | The house's loss to its clients over the trailing day, `loss`, from the start of its window, `since`, and the stress `level` that the loss sets in every market. |
 | `governance` | Present while votes of the operator rotation govern the settings. It names the vote contract, each passed change waiting with its `applies_at`, and each restriction in force with its `expires_at`. |

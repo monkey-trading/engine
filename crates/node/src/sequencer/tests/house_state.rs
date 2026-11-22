@@ -193,6 +193,7 @@ fn a_pending_listing_notice_is_listed_in_the_market_reads_units_and_across_a_res
         price_rules: None,
         effective_at,
         min_level_distance_bps: Some(45),
+        contracts: None,
     };
     let events = operate(&mut seq, &clock, AdminCommand::AnnounceListing { market: 1, notice: notice.clone() });
     assert_eq!(events, [Event::AdminApplied]);
