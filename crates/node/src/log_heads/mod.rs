@@ -425,7 +425,7 @@ impl<R: HeadsChain> Poster<R> {
                 let digest = next.digest(self.domain.chain_id, Address::from(self.domain.vault.0), epoch);
                 let signature = self.key.sign_digest(digest);
                 last_signed = last_signed.max(next.signed_at);
-                let paced_v2 = posted_v2_at;
+                let (paced_v2, first_head) = (posted_v2_at, first_head_due);
                 (posted_at, posted_v2_at, first_head_due) = (Some(tick), Some(tick), false);
                 first_post = first_post.or(posted_at);
                 if at_boundary {
@@ -440,8 +440,9 @@ impl<R: HeadsChain> Poster<R> {
                             info!(alert_resolved = "log_head_post_failed", "posting the log head recovered");
                         }
                     }
-                    // Nothing went out, as behind a pending v1 send: the boundary's next read tries the first head.
-                    Ok(PostOutcome::Waiting) if at_boundary => (posted_v2_at, first_head_due) = (paced_v2, true),
+                    // Nothing went out, as behind a pending v1 send: the next read, from the boundary or on a read
+                    // tick, tries the turn's first head again.
+                    Ok(PostOutcome::Waiting) if first_head => (posted_v2_at, first_head_due) = (paced_v2, true),
                     Ok(PostOutcome::Waiting) => {}
                     Err(cause) => {
                         post_failed = true;

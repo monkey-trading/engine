@@ -191,6 +191,26 @@ async fn a_first_head_the_relayer_holds_back_goes_out_at_the_next_read_from_the_
     assert!(first.is_some_and(|first| first <= Duration::from_secs(2)), "held back once, then sent: {first:?}");
 }
 
+/// A turn's first head that the relayer holds back on a read tick, not a read from the boundary, as for a node
+/// that finds the turn it holds at its start, goes out at the next read tick, not half an interval later.
+#[tokio::test(start_paused = true)]
+async fn a_first_head_held_back_on_a_read_tick_goes_out_at_the_next_tick() {
+    let chain = FakeChain::new(None);
+    chain.name_turn(turn(GENERATION));
+    chain.change_turn(|turn| turn.interval = TIGHTEST_INTERVAL);
+    chain.wait_next_v2_posts(1);
+    let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
+    let started = tokio::time::Instant::now();
+    let drive = spawn_retrying(chain.clone(), Some(keys), Duration::from_secs(30));
+    drive.release(1);
+    drive.confirm(1, 0xc1);
+    pass(&drive, 10).await;
+    let first = chain.posted_v2_at().first().map(|at| *at - started);
+    drive.stop().await;
+    let tick = crate::log_heads::v2::cadence(TIGHTEST_INTERVAL, Duration::from_secs(30)).0;
+    assert_eq!(first, Some(tick), "held back at the start's read, sent at the next tick");
+}
+
 /// Where no turn names the operator from a boundary, the poster reads the chain every second from when true
 /// time may have reached the boundary until it has certainly passed it by 30 s, the 30 s turn reads keeping
 /// their cadence, then every 30 s again; on monotonic time, so a host clock held at the boundary changes
