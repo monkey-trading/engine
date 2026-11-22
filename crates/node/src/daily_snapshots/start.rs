@@ -1,11 +1,11 @@
 //! The daily snapshot a member's replica starts from: the newest, among those in its own directory of them and
 //! those its origins list, whose checkpoint the copy holds and the vault has finalized, signed over its state by the
-//! vault-recorded signer that signed that checkpoint (`open_signed`). Candidates are tried newest first, a fetched
-//! one only once its file is whole, and one that is refused is passed over for the next, a fetched one's file
-//! removed, since only its signature and root make it usable, and a held one that is refused gives way to an
-//! origin's at its offset. One the vault has not yet finalized is not a candidate, so the checkpoint the vault
-//! finalizes next, which the member's start anchors at, is one the replica retains; nor is one from the turns of
-//! the member in office, whose commands the member's own log check at its first take must have replayed
+//! vault-recorded signer that signed that checkpoint (`open_signed`). Offsets are tried newest first, and at each
+//! the sources that list it in turn: the member's own copy, then each origin's in order. A fetched one is used only
+//! once its file is whole, and one that is refused is passed over, a fetched one's file removed, since only its
+//! signature and root make it usable. One the vault has not yet finalized is not a candidate, so the checkpoint the
+//! vault finalizes next, which the member's start anchors at, is one the replica retains; nor is one from the turns
+//! of the member in office, whose commands the member's own log check at its first take must have replayed
 //! (`log_check::own_check`).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,7 +20,8 @@ use crate::daily_snapshots::writer::write_manifest;
 use crate::daily_snapshots::{Listed, Signed, open_signed, read_manifest};
 use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 
-/// How many of the newest candidates are tried before the replica replays the whole copy.
+/// How many of the newest offsets are tried, each from every source that lists it, before the replica
+/// replays the whole copy.
 const ATTEMPTS: usize = 3;
 
 /// Where a candidate snapshot is: in the member's own directory, or listed by an origin.
@@ -54,19 +55,16 @@ pub(crate) async fn snapshot_start(
     if !answered && !origins.is_empty() {
         warn!(alert = "snapshot_start_refused", "no origin's daily snapshot manifest could be read");
     }
-    // By offset, the member's own first, then the first origin to list each, which a refused held one gives way to.
+    // By offset, the member's own first, then each origin that lists it in order, each giving way to the next.
     let early = |listing: &Listed| before.is_none_or(|before| listing.ts < before);
     let mut candidates: BTreeMap<(u64, u32), Vec<(Source, Listed)>> = BTreeMap::new();
     for listing in held.iter().filter(|listing| listing.seq <= bound && early(listing)) {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Held, listing.clone()));
     }
     for (origin, listing) in offers.into_iter().filter(|(_, listing)| early(listing)) {
-        let at = candidates.entry((listing.seq, listing.index)).or_default();
-        if !at.iter().any(|(source, _)| matches!(source, Source::Offered(_))) {
-            at.push((Source::Offered(origin), listing));
-        }
+        candidates.entry((listing.seq, listing.index)).or_default().push((Source::Offered(origin), listing));
     }
-    for (source, listing) in candidates.into_values().rev().flatten().take(ATTEMPTS) {
+    for (source, listing) in candidates.into_values().rev().take(ATTEMPTS).flatten() {
         match candidate(client, (dir, copy), &source, &listing, (domain, signers, before)).await {
             Ok(signed) => {
                 if matches!(source, Source::Offered(_)) {

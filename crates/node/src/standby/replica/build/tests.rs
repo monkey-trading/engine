@@ -281,6 +281,35 @@ async fn a_snapshot_from_the_in_office_members_turns_is_not_taken() {
     assert_eq!(std::fs::read(held.join(&kept.file)).unwrap(), std::fs::read(origin.join(&kept.file)).unwrap());
 }
 
+/// A snapshot an origin lists but cannot serve gives way to the next origin's copy at the same offset, which counts as
+/// one attempt: a mirror that copied the manifest but not the files does not keep the operator's snapshot from the
+/// member.
+#[tokio::test]
+async fn a_refused_origins_snapshot_gives_way_to_the_next_origins_at_its_offset() {
+    let (dir, origin) = (scratch_dir("build-snapshot-mirror"), scratch_dir("build-snapshot-mirror-origin"));
+    write_log(&dir).await;
+    let older = publish_at(&dir, &origin, &recorded(), |held| held / 3);
+    let newer = publish_at(&dir, &origin, &recorded(), |held| 2 * held / 3);
+    assert!(older < newer);
+    let mirror = scratch_dir("build-snapshot-mirror-files");
+    std::fs::create_dir_all(&mirror).unwrap();
+    std::fs::copy(origin.join(MANIFEST), mirror.join(MANIFEST)).unwrap();
+    let member = scratch_dir("build-snapshot-mirror-member");
+    let client = crate::standby::archive::archive_client(false).unwrap();
+    let origins = [serve(&mirror).await, serve(&origin).await];
+    let (_guard, mut alerts) = capture_alerts();
+    let signed = snapshot_start(&client, &origins, (&member, &dir), DOMAIN, &[signer()].into(), (u64::MAX, None)).await;
+    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(newer), "the newest, from the operator");
+    let alert = alerts.try_recv().expect("the mirror's refusal is paged");
+    assert_eq!(
+        (alert["alert"].as_str(), alert["seq"].as_str()),
+        ("snapshot_start_refused", newer.to_string().as_str())
+    );
+    assert!(alerts.try_recv().is_err(), "the operator's copy passes");
+    let kept: Vec<u64> = read_manifest(&member).unwrap().iter().map(|listing| listing.seq).collect();
+    assert_eq!(kept, [newer], "the snapshot taken is listed");
+}
+
 /// A replica from a snapshot records no checkpoint it verified, so it answers no member's log check, whose range may
 /// start before its snapshot; a whole replay records them.
 #[tokio::test]
