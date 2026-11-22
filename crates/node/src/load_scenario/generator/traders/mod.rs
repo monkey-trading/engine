@@ -125,6 +125,8 @@ pub(super) struct Trader {
     /// When the node last answered a screened request of this trader's: within the screening bound of
     /// it, the node holds a fresh decision for the trader, which its refreshes keep fresh.
     screened_at: Option<Instant>,
+    /// The order the last request asked to cancel, so a rejection of it as unknown removes it.
+    cancelling: Option<u64>,
 }
 
 impl Trader {
@@ -146,6 +148,7 @@ impl Trader {
             rejection_said: false,
             statuses_said: BTreeSet::new(),
             screened_at: None,
+            cancelling: None,
         }
     }
 
@@ -193,6 +196,7 @@ impl Trader {
         let (nonce, expires_at) = (self.nonce, now_ms() + REQUEST_LIFE_MS);
         let sign = |hash| RequestAuth { nonce, expires_at, signature: eip712::sign(&self.session, &hash) };
         let account = self.account;
+        self.cancelling = None;
         let holding = self.holding.lock().expect("a holding");
         match job.kind {
             Kind::Market | Kind::Limit => {
@@ -221,6 +225,7 @@ impl Trader {
             }
             Kind::Cancel => {
                 let order_id = holding.resting.last().copied().unwrap_or(0);
+                self.cancelling = Some(order_id);
                 let auth = Some(sign(eip712::cancel_hash(&domain(), account, order_id, nonce, expires_at)));
                 ("/v1/orders/cancel", json!(CancelRequest { account, order_id, auth }).to_string())
             }
@@ -298,6 +303,12 @@ impl Trader {
                     }
                 }
                 Some("order_rejected") => {
+                    // The node has no such order: a reply lost to a restart took its cancel, so the
+                    // generator no longer holds it, or it would ask for it again.
+                    if event["reason"]["kind"] == "unknown_order" {
+                        let target = self.cancelling.take();
+                        holding.resting.retain(|order| Some(*order) != target);
+                    }
                     // Said once per trader, so a rejection the figures only count can be read.
                     if rejected.is_none() && !std::mem::replace(&mut self.rejection_said, true) {
                         eprintln!("load generator: {} had an order rejected: {event}", self.account);
