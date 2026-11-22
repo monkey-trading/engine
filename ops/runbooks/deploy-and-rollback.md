@@ -294,8 +294,8 @@ already names.
 
    **Changes the live system.** The owner must approve each deployment.
 
-   Set `SEED_RECEIVER` to the receiver's address on Arbitrum and `SEED_RELAY` to the relay's address on
-   Ethereum.
+   Set `SEED_RECEIVER` to the receiver's address on Arbitrum and `SEED_RELAY` to the relay's address
+   on Ethereum.
 
 3. **Deploy the operator schedule** on Arbitrum, with the registry, the seed receiver, the log heads
    and the `[schedule]` values.
@@ -306,12 +306,12 @@ already names.
    forge create src/OperatorSchedule.sol:OperatorSchedule --rpc-url $RPC --account <deployer> --broadcast --constructor-args $REGISTRY $SEED_RECEIVER $LOG_HEADS "(140,40,3,200)" "(90,30,3,120)" "(140,60,5,256)" "(2,2,4)" 20 250
    ```
 
-   After the three addresses come the heartbeat rule in force, its minimums and its maximums, each as
-   the interval, the head tolerance, the missed slots and the held-head blocks. Then come the take
-   window as its slots, minimum and maximum, the switch budget in seconds, and Arbitrum's block time in
-   milliseconds. The constructor reverts with `InvalidLiveness` or `InvalidTakeWindow` when the values
-   break the schedule's limits. Set `SCHEDULE` to the address that the command prints, which must be
-   the planned one, and check it:
+   After the three addresses come the heartbeat rule in force, its minimums and its maximums, each
+   as the interval, the head tolerance, the missed slots and the held-head blocks. Then come the
+   take window as its slots, minimum and maximum, the switch budget in seconds, and Arbitrum's block
+   time in milliseconds. The constructor reverts with `InvalidLiveness` or `InvalidTakeWindow` when
+   the values break the schedule's limits. Set `SCHEDULE` to the address that the command prints,
+   which must be the planned one, and check it:
 
    ```shell
    cast call $SCHEDULE 'registry()(address)' --rpc-url $RPC
@@ -319,8 +319,8 @@ already names.
    cast call $SCHEDULE 'takeWindow()(uint16,uint16,uint16)' --rpc-url $RPC
    ```
 
-   The first command prints `$REGISTRY`, the second `140`, `40`, `3` and `200`, and the third `2`, `2`
-   and `4`.
+   The first command prints `$REGISTRY`, the second `140`, `40`, `3` and `200`, and the third `2`,
+   `2` and `4`.
 
 4. **Name the schedule in the registry,** through the timelock, as
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
@@ -331,15 +331,16 @@ already names.
    DATA=$(cast calldata 'setSchedule(address)' $SCHEDULE)
    ```
 
-   **Changes the live system.** The owner must approve this contract call, and the multisig signs the
-   schedule and the execute.
+   **Changes the live system.** The owner must approve this contract call, and the multisig signs
+   the schedule and the execute.
 
    The call reverts with `ScheduleAlreadySet` once a schedule is named, with `RotationActive` while
    rotation is on, with `EpochTooShort` while the election epoch is shorter than a day, and with
    `InvalidSchedule` for a schedule built for another registry. Once it executes,
    `cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`.
 
-5. **Deploy the parameter vote** on Arbitrum, over the schedule, with the `[parameter_vote]` windows.
+5. **Deploy the parameter vote** on Arbitrum, over the schedule, with the `[parameter_vote]`
+   windows.
 
    **Changes the live system.** The owner must approve the deployment.
 
@@ -361,8 +362,9 @@ already names.
    Set `FAULT_PROOF` to the address that the command prints, which must be the planned one.
 
 **How to tell it is resolved.** The registry names the schedule, every contract is at the address
-that the release's configuration names, every check above prints what it should, and checks 2 to 5 in [Variables and checks](seed-relay.md#variables-and-checks) pass. The
-relayer's checks there need a running trading server, so they wait for the first deployment.
+that the release's configuration names, every check above prints what it should, and checks 2 to 5
+in [Variables and checks](seed-relay.md#variables-and-checks) pass. The relayer's checks there need
+a running trading server, so they wait for the first deployment.
 
 ## First deployment
 

@@ -748,12 +748,12 @@ two paid providers, and loses its majority whenever either of them fails, so a s
 in the third seat costs more and keeps a provider's failure from pausing crediting.
 
 Before a schedule is named, the load fits dRPC's free tier with 1% to spare, Infura's Team plan, or
-Alchemy on pay as you go at about $125 a month. The timelock names the schedule in [Deploy the
-rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), before [First
-deployment](deploy-and-rollback.md#first-deployment) starts the first trading server, and from then
-on the liveness rule and the callers read the chain four times its heartbeat interval. Size the
-plans for the load once a turn names the operator, since that starts with a mirrored event, not a
-configuration change.
+Alchemy on pay as you go at about $125 a month. The timelock names the schedule in
+[Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), before
+[First deployment](deploy-and-rollback.md#first-deployment) starts the first trading server, and
+from then on the liveness rule and the callers read the chain four times a heartbeat interval. Size
+the plans for the load once a turn names the operator, since that starts with a mirrored event, not
+a configuration change.
 
 **What would lower it further.** The deposit watcher's 21 calls a poll do not grow with the chain,
 so `custody.evm.poll_interval` trades 120,960 calls a day at 15 s against a deposit credited up to
