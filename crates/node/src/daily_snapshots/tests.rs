@@ -190,6 +190,24 @@ fn a_busy_writer_skips_the_day_and_its_drop_waits_a_bounded_time() {
     assert!(dropping.elapsed() < std::time::Duration::from_secs(10), "the drop waited {:?}", dropping.elapsed());
 }
 
+/// A day the sequencer skipped, or could not encode, raises `daily_snapshot_failed`, and the next snapshot
+/// handed over resolves it, though the thread failed no publish itself; a snapshot published with none
+/// raised resolves nothing.
+#[test]
+fn a_published_snapshot_resolves_the_alert_its_senders_end_raised() {
+    let (_logging, _alerts, mut resolved) = crate::test_support::capture_alerts_and_resolutions();
+    let mut resolutions = |name: &str, raise: fn(&mut Writer)| {
+        let mut writer = Writer::start(&scratch_dir(name), None).unwrap();
+        raise(&mut writer);
+        writer.take(job(Offset { seq: 5, index: 1 }, DAY_MS));
+        writer.finish();
+        std::iter::from_fn(|| resolved.try_recv().ok()).count()
+    };
+    assert_eq!(resolutions("daily-resolve-none", |_| {}), 0, "nothing was raised");
+    assert_eq!(resolutions("daily-resolve-skip", |w| w.skip(1, 0, "the writer is still writing")), 1, "a skipped day");
+    assert_eq!(resolutions("daily-resolve-encoding", Writer::encoding_failed), 1, "an encoding that failed");
+}
+
 // ── Helpers ──
 
 /// A change to a daily snapshot's JSON.

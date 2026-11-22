@@ -107,6 +107,9 @@ impl Sequencer {
             Ok(encoding) => encoding,
             Err(e) => {
                 warn!(alert = "daily_snapshot_failed", "no daily snapshot at seq {seq}: {e:#}");
+                if let Some(daily) = self.captures.daily.as_mut() {
+                    daily.encoding_failed();
+                }
                 return Ok(());
             }
         };
