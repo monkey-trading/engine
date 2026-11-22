@@ -1,7 +1,7 @@
 //! `engine ct-watch`: a separate process, outside the enclave and holding no key of the node's,
 //! that follows Certificate Transparency logs and alerts when a certificate for the API's domain
 //! names a key no verified attestation of the node names. It polls the node's `/v1/attestation`,
-//! verifies it with the native verifier, and keeps each attested TLS key hash. It reads each log's
+//! verifies it with the native verifier, and keeps each TLS key hash attested by an enclave it pins. It reads each log's
 //! signed tree head and new entries (RFC 6962), checks every certificate and precertificate, and
 //! raises the Critical `unattested_certificate` through the same webhook routing as the node.
 //! `ct_log_unreachable` and `attestation_unverified` say the watcher cannot do its job.

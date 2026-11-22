@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
+use engine_core::types::AccountId;
 use reqwest::Url;
 use serde::Deserialize;
 
@@ -59,6 +60,10 @@ pub struct WatchedNode {
     pub url: String,
     /// The release manifest the attestation is verified against.
     pub release: PathBuf,
+    /// The enclaves whose attested TLS keys the watcher accepts: the vault's checkpoint signer, and
+    /// each standby key the vault may promote to it. An attestation that verifies but names another
+    /// enclave names no key.
+    pub enclaves: Vec<AccountId>,
     /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo or
     /// Siena processor.
     pub processor: String,
@@ -132,6 +137,7 @@ impl WatchConfig {
     /// - the domain is not a lowercase hostname, an interval is zero or the attestation interval
     ///   exceeds half the grace, a URL is not HTTPS (or loopback HTTP with `allow_mock`) or carries
     ///   credentials, a log name repeats or is malformed, or a log key is not a supported one
+    /// - `node.enclaves` names no enclave
     /// - the Critical route names no environment variable
     pub(super) fn validate(&self, allow_mock: bool) -> anyhow::Result<()> {
         validate_domain(&self.domain)?;
@@ -157,6 +163,7 @@ impl WatchConfig {
         endpoint_url(&self.node.url, allow_mock).context("node.url")?;
         endpoint_url(&self.node.kds, false).context("node.kds")?;
         ensure!(!self.node.processor.is_empty(), "node.processor is empty");
+        ensure!(!self.node.enclaves.is_empty(), "node.enclaves names no enclave");
         ensure!(!self.logs.is_empty(), "no [[logs]] to follow");
         let mut names = std::collections::BTreeSet::new();
         let mut keys = std::collections::BTreeSet::new();

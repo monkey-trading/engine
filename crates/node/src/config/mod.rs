@@ -348,7 +348,8 @@ impl NodeConfig {
     /// - this is a production build and a TEE, custody, or feed provider is `mock`, an allowed
     ///   origin is not `https`, `[api.tls.acme]` is missing, a trusted proxy range is loopback or too
     ///   wide, `api.fresh_accounts` is above the production values (see `ApiSection::refuse_dev_fresh_budgets`),
-    ///   `api.request_bursts` is above them (see `ApiSection::refuse_dev_request_bursts`),
+    ///   `api.request_bursts` is above them (see `ApiSection::refuse_dev_request_bursts`), `api.quote_max_markets` or
+    ///   `custody.evm.max_block_range` above its (see `refuse_dev_quote_markets`, `refuse_wide_custody_scans`),
     ///   `liveness.fallback_interval` is above its (see `LivenessSection::refuse_slow_fallback_fixer`), the
     ///   access screening slots are below the production value, their shares above theirs or the
     ///   reserve below it (see `AccessSection::refuse_dev_screening_slots`),
@@ -370,6 +371,8 @@ impl NodeConfig {
         cfg.api
             .refuse_dev_request_bursts(PRODUCTION_BUILD)
             .with_context(|| format!("validating {}", path.display()))?;
+        cfg.api.refuse_dev_quote_markets(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
+        cfg.refuse_wide_custody_scans(PRODUCTION_BUILD).with_context(|| format!("validating {}", path.display()))?;
         if let Some(liveness) = &cfg.liveness {
             liveness
                 .refuse_slow_fallback_fixer(PRODUCTION_BUILD)

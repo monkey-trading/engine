@@ -14,6 +14,11 @@ use serde::Deserialize;
 
 use crate::config::{CustodyProvider, NodeConfig, SecretUrl, TeeProvider};
 
+/// The most blocks one custody scan may read in a production build: about forty minutes of Arbitrum's
+/// quarter-second blocks, so one staking scan carries the mirror past at most one of the daily epoch
+/// ends a held close waits on, each closed at the stake mirrored when the frontier passed it.
+const PRODUCTION_MAX_BLOCK_RANGE: u64 = 10_000;
+
 /// The block tag whose number marks finality on the custody chain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,7 +48,7 @@ pub struct EvmCustodySection {
     pub start_block: u64,
     /// Most blocks asked for in one `eth_getLogs` request, and most headers in one JSON-RPC
     /// batch; set it within both of the provider's limits. The watcher also keeps one proven
-    /// block hash per this many blocks of backlog.
+    /// block hash per this many blocks of backlog. At most 10,000 in a production build.
     pub max_block_range: u64,
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
@@ -228,6 +233,20 @@ impl NodeConfig {
         let section =
             evm.and_then(|evm| evm.staking.as_ref()).and_then(|staking| staking.registry.fault_proof.as_ref());
         section.map(FaultProofCustodySection::config).transpose()
+    }
+
+    /// Refuses a custody scan wider than the production value when `production` is set.
+    /// Error cases:
+    /// - `production` is set and `custody.evm.max_block_range` is above `PRODUCTION_MAX_BLOCK_RANGE`
+    pub(super) fn refuse_wide_custody_scans(&self, production: bool) -> anyhow::Result<()> {
+        let range = self.custody.evm.as_ref().map_or(0, |evm| evm.max_block_range);
+        if production && range > PRODUCTION_MAX_BLOCK_RANGE {
+            bail!(
+                "a production build allows custody.evm.max_block_range at most {PRODUCTION_MAX_BLOCK_RANGE}, and the \
+                 config sets {range}"
+            );
+        }
+        Ok(())
     }
 
     /// Checks the custody section against its provider, and that genesis credits house capital

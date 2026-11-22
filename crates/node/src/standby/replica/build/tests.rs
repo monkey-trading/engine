@@ -11,6 +11,8 @@ use crate::tee::EnclaveKey;
 use crate::test_support::capture_alerts;
 use crate::test_support::{SEGMENT_COMMANDS, log_entries, scratch_dir};
 
+mod vault_root;
+
 /// The deployment the test sequencer seals and signs for.
 const DOMAIN: CheckpointDomain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
 

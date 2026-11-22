@@ -84,7 +84,13 @@ mod tests {
         AccountPayouts {
             seq: Some(7),
             loaded: true,
-            payouts: vec![PayoutView { nonce: 3, amount: Fixed::from_int(40), withdrawal: None, check: None }],
+            payouts: vec![PayoutView {
+                nonce: 3,
+                amount: Fixed::from_int(40),
+                withdrawal: None,
+                check: None,
+                usable_until: None,
+            }],
             next: Some(3),
         }
     }

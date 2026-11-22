@@ -60,6 +60,11 @@ because a request refused for its expiry also uses its nonce.
 
 The server signs its host's clock only while that clock is within its drift bound of trusted time,
 so a signed time is accurate to within that bound. Without trusted time, the server signs nothing.
+A stream connection opened with `heads=1` on a server that holds a daily operator turn stays open
+then, and receives each log head bare, as `{"type":"log_head",…}` outside any frame, since a head
+carries its own signature. `FrameVerifier::verify_text` refuses a message that is not a frame and
+then every frame after it, so a client that asks for heads reads each message's top-level `type`
+first, checks a bare head by its own signature, and passes only frames to its `FrameVerifier`.
 
 ## Layout
 

@@ -8,8 +8,11 @@
 //! and restarts the seal chain there; then it replays strictly, as a whole-log replay does, through the
 //! checkpoint where the next range starts. The pass over the ranges then requires each to start from the
 //! checkpoint the one before ended at and from the state it ended in, compared by the SHA-256 of the whole
-//! state's encoding, which binds what the root leaves out too. So the ranges tile the log as one history, as a whole-log replay applies it, and a
-//! snapshot's root check only fails a bad snapshot before its range runs.
+//! state's encoding, which binds what the root leaves out too. A range from a snapshot that failed is
+//! compared the same way before its own fault is reported, so a snapshot that differs from the state the
+//! log reaches is blamed, not the fault it led its range to. So the ranges tile the log as one history, as
+//! a whole-log replay applies it, and a snapshot's root check only fails a bad snapshot before its range
+//! runs.
 //!
 //! What a sequential replay carries across that checkpoint besides the engine is either reset there (the
 //! seal chain, the last command's unmatched approvals and, under a trusted signer, the unauthenticated
@@ -95,10 +98,24 @@ pub(super) struct RangeReplayed {
 
 /// A checkpoint where one range ends and the next starts, and the SHA-256 of the whole state's encoding
 /// there (`daily_snapshots::state_digest`): the pass requires the two ranges to agree on both.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Boundary {
     pub(super) checkpoint: Checkpoint,
     pub(super) state: [u8; 32],
+}
+
+/// The context of a failed range from a daily snapshot: the snapshot and where it starts, so the pass can
+/// check the start against where the range before ends before it reports the range's own fault.
+#[derive(Debug)]
+pub(super) struct FromSnapshot {
+    pub(super) start: Boundary,
+    pub(super) file: PathBuf,
+}
+
+impl std::fmt::Display for FromSnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "from daily snapshot {}", self.file.display())
+    }
 }
 
 impl Trust {
@@ -301,7 +318,8 @@ fn run<R: Sync, T: Send>(
 
 /// Replays `range` of the log at `path` under `trust`, `last` when it ends the log: from its snapshot's
 /// checkpoint, applied first over the snapshot's state, or from the log's start, over `base`'s engine,
-/// through the checkpoint at its end, as the module says.
+/// through the checkpoint at its end, as the module says. A range from a snapshot that fails once the
+/// snapshot has loaded carries `FromSnapshot` in its error.
 /// Error cases:
 /// - the snapshot does not load (`daily_snapshots::load`), or the log holds no checkpoint at its offset,
 ///   or another than the snapshot's
@@ -312,6 +330,23 @@ fn replay_range(
     (range, last): (&Range, bool),
     trust: &Trust,
     base: &(dyn Fn() -> Engine + Sync),
+) -> anyhow::Result<RangeReplayed> {
+    let mut started = None;
+    replay_span(path, (range, last), trust, base, &mut started).map_err(|failed| match (started, &range.start) {
+        (Some(start), Some((_, file))) => failed.context(FromSnapshot { start, file: file.clone() }),
+        _ => failed,
+    })
+}
+
+/// `replay_range`, setting `started` to the range's start once its snapshot has loaded.
+/// Error cases:
+/// - as `replay_range`
+fn replay_span(
+    path: &Path,
+    (range, last): (&Range, bool),
+    trust: &Trust,
+    base: &(dyn Fn() -> Engine + Sync),
+    started: &mut Option<Boundary>,
 ) -> anyhow::Result<RangeReplayed> {
     let mut replay = trust.replay()?;
     replay.range = Some(Refs::default());
@@ -328,6 +363,7 @@ fn replay_range(
             replay.logs_events = true;
             replay.range = Some(Refs { start: Some(offset.seq), ..Refs::default() });
             let start = Boundary { checkpoint: snapshot.checkpoint.clone(), state };
+            *started = Some(start.clone());
             (offset.seq, Some((*offset, snapshot.checkpoint, file.clone())), Some(start))
         }
     };

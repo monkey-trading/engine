@@ -197,6 +197,10 @@ pub struct PayoutView {
     /// log through it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<CheckWait>,
+    /// The expiry of the latest authorization while it is usable as of the last command: of the latest
+    /// signer epoch and not yet expired. The API refuses a reissue of it before screening the request.
+    #[serde(skip)]
+    pub usable_until: Option<u64>,
 }
 
 /// What a log check that will cover an approval waits for.

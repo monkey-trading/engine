@@ -99,23 +99,34 @@ pub(super) fn begin_refresh(dir: &Path) -> anyhow::Result<()> {
 /// `replay_as_takeover` of the copy in `dir` after a takeover's archive refresh: a copy that replays is
 /// marked checked and the refresh committed; one that does not has what the refresh added dropped
 /// (`undo_refresh`), and is marked checked again if it was before, as what the operator's stream gave.
+/// When the refresh added segments, the copy without them is then replayed in turn: an origin that served
+/// segments no replay admits, as a mirror listed first can, leaves the takeover to what the stream gave.
 /// Error cases:
-/// - the copy does not replay, or cannot be marked or cut back
+/// - the copy does not replay, without the refresh's segments either, or cannot be marked or cut back
 pub(super) fn replay_refreshed(
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
     signers: BTreeSet<AccountId>,
 ) -> anyhow::Result<()> {
-    match replay_as_takeover(dir, (domain, workers), signers) {
+    match replay_as_takeover(dir, (domain, workers), signers.clone()) {
         Ok(()) => {
             forget(dir, REFRESH)?;
             mark(dir)
         }
         Err(refused) => match undo_refresh(dir) {
-            Ok(Some(dropped)) if dropped > 0 => Err(refused.context(format!(
-                "the takeover's replay refused the copy with the {dropped} segments the archive refresh added, \
-                 which are dropped: the copy is what the operator's stream gave"
-            ))),
+            Ok(Some(dropped)) if dropped > 0 => {
+                warn!(
+                    dropped,
+                    "the takeover's replay refused the copy with the {dropped} segments the archive refresh \
+                     added, which are dropped; replaying the copy as the operator's stream gave it: {refused:#}"
+                );
+                replay_as_takeover(dir, (domain, workers), signers).and_then(|()| mark(dir)).map_err(|stream| {
+                    stream.context(format!(
+                        "the copy the operator's stream gave does not replay either, and the takeover's replay \
+                         refused the {dropped} segments the archive refresh added ({refused:#})"
+                    ))
+                })
+            }
             Ok(_) => Err(refused),
             Err(undo) => Err(refused.context(format!(
                 "the copy does not replay, and dropping what the archive refresh added failed ({undo:#}): the next \

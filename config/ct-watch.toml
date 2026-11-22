@@ -2,12 +2,13 @@
 # certificate for the API's domain whose key no verified attestation of the node names, and alerts
 # on it. It runs outside the enclave, on a host independent of the node's, and holds no key of the
 # node's. Every key below is required except those shown commented out or marked with a default;
-# the minimum to say is `domain`, `[node]` (the URL and the release manifest it verifies against)
-# and `[[logs]]`. Every section rejects unknown keys.
+# the minimum to say is `domain`, `[node]` (the URL, the release manifest it verifies against and
+# the enclaves it pins) and `[[logs]]`. Every section rejects unknown keys.
 #
 # A node release changes its launch measurement and TLS key. Switch `node.release` to the new
 # release's manifest right after the node upgrade: until then the new attestation does not verify
 # (`attestation_unverified`), and past `grace` its certificate would raise `unattested_certificate`.
+# A new vault signer is the same: add its enclave to `node.enclaves` when the timelock installs it.
 # Without `[alerts.critical]` the watcher refuses to start (only a mock run may log alone).
 #
 # Replace the placeholders: this file lists no real log. Follow every log the certificate authority
@@ -43,6 +44,11 @@ release = "release.toml"
 # The vendor's product name for the quote's certificate chain: Milan, or Genoa for a Genoa, Bergamo
 # or Siena processor.
 processor = "Milan"
+# The enclave addresses whose attested TLS keys are accepted: the vault's `checkpointSigner()`, and
+# with rotation on each member's registered standby key, which a promotion can make the signer. An
+# attestation that verifies but names another enclave, as any enclave of the release can, names no
+# key and raises `attestation_unverified`. A placeholder: replace it.
+enclaves = ["0x1111111111111111111111111111111111111111"]
 # kds = "https://kdsintf.amd.com"   # the vendor key-distribution service; this is the default
 # root = "extra-root.pem"           # an extra root to pin the quote's chain, for test chains only
 

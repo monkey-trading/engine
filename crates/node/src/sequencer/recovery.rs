@@ -446,7 +446,7 @@ impl Sequencer {
             );
             gate.backlog = payout_order.into_iter().map(|(key, index)| (key, index, authorized.remove(&key))).collect();
         }
-        sequencer.load_backlog()?;
+        sequencer.recover_backlog()?;
         if let Some(gate) = &mut sequencer.gate {
             // Resume every durable signature before extending the chain. In particular an
             // unmined child remains a live commitment even while latest equals finalized.

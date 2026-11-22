@@ -1,5 +1,6 @@
 //! The config file's hash, which the attestation binds, and a production build's refusal of mock
-//! providers, of fresh-account budgets and request bursts above its values, and of an `http` origin.
+//! providers, of fresh-account budgets, request bursts and quote markets above its values, and of an
+//! `http` origin.
 
 use super::*;
 
@@ -99,6 +100,20 @@ fn a_production_build_refuses_request_bursts_above_its_value() {
     ] {
         assert!(toml::from_str::<NodeConfig>(&text).is_err());
     }
+}
+
+#[test]
+fn a_production_build_refuses_more_quote_markets_than_its_value() {
+    let dev = std::fs::read_to_string(DEV).unwrap();
+    assert!(dev.contains("\nquote_max_markets = 4\n"));
+    let markets = |markets: usize| {
+        let text = dev.replace("\nquote_max_markets = 4\n", &format!("\nquote_max_markets = {markets}\n"));
+        toml::from_str::<NodeConfig>(&text).unwrap()
+    };
+    markets(4).api.refuse_dev_quote_markets(true).unwrap();
+    markets(5).api.refuse_dev_quote_markets(false).unwrap();
+    let err = markets(5).api.refuse_dev_quote_markets(true).unwrap_err().to_string();
+    assert!(err.contains("api.quote_max_markets at most 4, and the config sets 5"), "{err}");
 }
 
 #[test]

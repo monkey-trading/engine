@@ -10,9 +10,14 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{Connector, connect_async_tls_with_config};
 
 use crate::config::VenueConnection;
+
+/// The longest message, and frame, a venue may send: four times Coinbase's BTC-USD snapshot, the
+/// largest any venue sends, at some 4 MB. A longer one fails the connection before it is read.
+const MAX_MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 
 /// One message read from a venue.
 #[derive(Debug)]
@@ -58,6 +63,8 @@ impl Link {
 /// Error cases:
 /// - the URL does not parse, or `bearer` is not a header value
 /// - the connection or the WebSocket handshake fails
+///
+/// A message or frame longer than `MAX_MESSAGE_BYTES` ends the stream with an error.
 pub(super) async fn connect(
     conn: &VenueConnection,
     bearer: Option<&str>,
@@ -70,7 +77,9 @@ pub(super) async fn connect(
         value.set_sensitive(true);
         request.headers_mut().insert(AUTHORIZATION, value);
     }
-    let (ws, _) = connect_async_tls_with_config(request, None, false, Some(Connector::Rustls(tls))).await?;
+    let config =
+        WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE_BYTES)).max_frame_size(Some(MAX_MESSAGE_BYTES));
+    let (ws, _) = connect_async_tls_with_config(request, Some(config), false, Some(Connector::Rustls(tls))).await?;
     let (sink, stream) = ws.split();
     let stream = stream.map(|message| {
         Ok(match message? {

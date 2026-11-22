@@ -7,8 +7,9 @@
 //! the timelock installing this key again after a retirement) signs again, with no request, each
 //! unpaid approval never signed or whose authorization is still usable; an expired one waits for its
 //! account's screened request. A restart signs nothing again whose latest logged authorization is of
-//! the epoch in force. A holder's queued request lives in memory, so a restart forgets it; the same
-//! signed body stays good until an authorization replaces the one it names.
+//! the epoch in force, and holds no release for an approval whose authorization has expired (`backlog`).
+//! A holder's queued request lives in memory, so a restart forgets it; the same signed body stays good
+//! until an authorization replaces the one it names.
 
 use std::collections::BTreeMap;
 
@@ -25,6 +26,9 @@ use crate::log::LogEntry;
 use crate::sequencer::checkpoints::Gate;
 use crate::sequencer::{AccountPayouts, CheckWait, PayoutView, Reissue, ReissueScreening, Sequencer, SignedWithdrawal};
 use crate::withdrawals::{Authorization, LIFETIME_SECONDS};
+
+mod backlog;
+pub(super) use crate::sequencer::payouts::backlog::Backlog;
 
 /// A signature is delivery progress; the contract's used nonce is the payment authority.
 pub(super) struct Payout {
@@ -77,7 +81,7 @@ impl Sequencer {
 
     /// Loads the oldest recovered approvals once the previous window was observed, so a restart
     /// holds proofs and queries custody only for a window plus the approvals still unpaid. Nothing
-    /// after the oldest unloaded approval is signed, and an unobserved due one blocks every later
+    /// after the oldest unloaded live approval is signed, and an unobserved due one blocks every later
     /// release, so no newer approval passes an older one that may still need a signature.
     /// Error cases:
     /// - the backlog names an approval the engine lacks, or the registry is poisoned
@@ -109,7 +113,7 @@ impl Sequencer {
             loaded.insert(key);
             gate.unswept += 1;
         }
-        let unloaded = match gate.backlog.front() {
+        let unloaded = match gate.backlog.oldest_live() {
             Some(&(key, index, _)) => Some((
                 self.engine
                     .withdrawal_approval(key.0, key.1)
@@ -384,16 +388,19 @@ impl Sequencer {
             return AccountPayouts { seq, loaded: false, payouts: Vec::new(), next: None };
         };
         let first = after.map_or(0, |after| after.saturating_add(1));
-        let usable = |released| self.usable(gate, released);
         let mut held = gate.payouts.range((account, first)..=(account, u64::MAX));
         let payouts = held
             .by_ref()
             .take(limit)
-            .map(|(&(_, nonce), payout)| PayoutView {
-                nonce,
-                amount: payout.approval.amount,
-                withdrawal: payout.latest.clone(),
-                check: (!usable(payout.released)).then(|| self.log_check_wait(payout.approval.approved_seq)).flatten(),
+            .map(|(&(_, nonce), payout)| {
+                let usable_until = self.usable_until(gate, payout.released);
+                PayoutView {
+                    nonce,
+                    amount: payout.approval.amount,
+                    withdrawal: payout.latest.clone(),
+                    check: usable_until.is_none().then(|| self.log_check_wait(payout.approval.approved_seq)).flatten(),
+                    usable_until,
+                }
             })
             .collect::<Vec<_>>();
         let next = held.next().and(payouts.last().map(|last| last.nonce));
@@ -413,10 +420,18 @@ impl Sequencer {
     /// Whether an authorization released as `released`, its signer epoch and expiry, needs no new
     /// signature, and so waits for no log check: it is of the latest signer epoch and has not expired.
     fn usable(&self, gate: &Gate, released: Option<(u64, u64)>) -> bool {
+        self.usable_until(gate, released).is_some()
+    }
+
+    /// When an authorization released as `released` stops being usable (`usable`), while it is; a reissue
+    /// of it is refused until then.
+    fn usable_until(&self, gate: &Gate, released: Option<(u64, u64)>) -> Option<u64> {
         let now = u64::try_from(self.last_ts / 1_000).unwrap_or_default();
-        released.is_some_and(|(epoch, expires_at)| {
-            now < expires_at && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
-        })
+        released
+            .filter(|&(epoch, expires_at)| {
+                now < expires_at && gate.schedule.epoch().is_none_or(|latest| latest == epoch)
+            })
+            .map(|(_, expires_at)| expires_at)
     }
 
     /// Builds the common stream/log representation before the enclave signs it.

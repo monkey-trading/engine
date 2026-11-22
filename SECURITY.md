@@ -164,6 +164,11 @@ trading server. The vault trusts its timelock's choice of signer, as
 
 - Volumetric denial of service, meaning attacks that work only by flooding the API or the network
   with traffic.
+- Holding every place the API has. The production configuration lets one client address hold 32
+  connections, so 16 addresses can hold all 512 connections, and 8 can hold all 256 stream
+  subscriber places. A few addresses can therefore deny the whole API for as long as they keep
+  their places. An IPv6 client is counted by its /64. The trading server raises
+  `api_connections_full` or `api_subscribers_full` while its places are full.
 - Social engineering of anyone involved with the project.
 - Reorganisations of Arbitrum One that undo a block finalised on Ethereum, which is what the chain's
   `finalized` tag reports.

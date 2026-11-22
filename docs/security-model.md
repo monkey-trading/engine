@@ -85,8 +85,9 @@ fresh decision of the screening source that the log records, about the account a
 network address. The decision must be signed by the authority the log records, and it must name the
 account. The engine accepts it only while its observation time is no older than the recorded
 freshness bound, and no more than a second later, than the time the trading server stamps the
-request. The trading server keeps one decision for each account and client address, and attaches it
-to each of that pair's requests while it is fresh. It asks the source again before the decision runs
+request. The trading server keeps one decision for each account and client, and attaches it to each
+of that pair's requests while it is fresh. A client is its address, or for IPv6 its /64, as the API's
+limits count it. It asks the source again before the decision runs
 out for a pair that sent a request within the bound. A deposit's decision instead names the deposit
 that it screens, and backs only that deposit. A deposit from a payer confirmed as sanctioned is held
 uncredited, and the trading server publishes the evidence for the hold.
@@ -131,8 +132,7 @@ Known limits:
   enough addresses and credited accounts: at the production values and a source that takes its full
   2 seconds, 68 accounts behind 34 addresses, two of the accounts holding a position or withdrawable
   cash.
-- The trading server keeps decisions for at most 50,000 pairs of an account and a client address at
-  once. Past that, a request from a new pair waits for the source each time, as no decision is kept
+- The trading server keeps decisions for at most 50,000 pairs of an account and a client at once. Past that, a request from a new pair waits for the source each time, as no decision is kept
   for it.
 - A hold for a confirmed sanction has no automatic release or refund.
 - Jurisdiction screening uses the address of the connection's peer or, behind a configured
@@ -140,8 +140,9 @@ Known limits:
   supplies both addresses, so neither is bounded against a host that relays or translates client
   connections.
 - The log carries no client address, so a replay cannot check which address a decision was made
-  for. The trading server attaches a decision only to requests from the address that it asked the
-  source about, and no check in the engine establishes that.
+  for. The trading server attaches a decision only to requests from the client that it asked the
+  source about: the same address, or for IPv6 an address in the same /64. No check in the engine
+  establishes that.
 - The engine checks the source's signature, freshness and subject, but it trusts the source's
   classifications. Their correctness rests on the source's provenance, which no check in the code
   establishes.
@@ -1122,6 +1123,10 @@ Known limits:
   `accounturi` records narrow it further to the ACME accounts the enclaves hold. These are the
   account sealed with the turn's keys and, with rotation on, the account sealed with each member's
   standby key. A host that deletes the sealed keys forces new ones, which the vault must register.
+- `engine ct-watch` learns a key only from a verified attestation of an enclave that its
+  `node.enclaves` names, the vault's signer and the standby keys that a promotion can make the
+  signer. A new signer, or a promotion to a key the list leaves out, raises `attestation_unverified`
+  until the list names it, and its certificates raise `unattested_certificate` past the grace period.
 - `engine ct-watch` raises its alert only once a Certificate Transparency log that it follows shows
   the certificate, and only after a grace period, ten minutes by default, in which no verified
   attestation has named the key. It must be running before the first such certificate is issued,
@@ -1274,6 +1279,10 @@ Known limits:
 - A boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn.
 - A start from a snapshot past the verified head cannot say who sequenced the range. It asks no one,
   and raises `log_check_unattributable` until a full replay or a handover.
+- A member's replica starts from a daily snapshot only of a checkpoint that its copy holds, at or
+  before the vault's finalised one, and, where the vault accepted a checkpoint at the snapshot's
+  sequence number, of the root that the vault accepted there. A snapshot of a checkpoint that the
+  vault did not accept rests on the vault's later checkpoint, which its replay must reach.
 - A member whose replica started from a daily snapshot did not replay the log before the snapshot's
   checkpoint, so its own check at a handover or a promotion counts only for a range that starts after
   that checkpoint, and it answers no other member's question, since the range a question covers may

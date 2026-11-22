@@ -28,11 +28,13 @@ fn an_unsigned_then_signed_then_reissued_approval_reads_its_latest_authorization
     assert_eq!(unsigned.payouts.len(), 1);
     let view = &unsigned.payouts[0];
     assert_eq!((view.nonce, view.amount, &view.withdrawal), (1, Fixed::from_int(40), &None), "not yet signed");
+    assert_eq!(view.usable_until, None);
 
     let evidence = node.evidence(&cp);
     let first = sign(&mut node, &evidence);
     let signed = node.seq.account_payouts(TRADER, None, ALL);
     assert_eq!(signed.payouts[0].withdrawal.as_ref(), Some(&first), "the shape the stream carried");
+    assert_eq!(signed.payouts[0].usable_until, first.authorization.as_ref().map(|auth| auth.expires_at));
 
     // A signer rotation replaces it.
     let mut rotated = node.evidence(&cp);

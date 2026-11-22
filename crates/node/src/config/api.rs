@@ -3,6 +3,7 @@
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::time::Duration;
 
+use anyhow::bail;
 use serde::Deserialize;
 
 use super::api_defaults::{
@@ -10,6 +11,10 @@ use super::api_defaults::{
 };
 use super::stats::{default_stats_interval, default_stats_light_interval};
 use super::{ApiTlsSection, FreshAccountBudgets, ProxyProtocolSection, RequestBursts};
+
+/// The most markets one quote subscription may name in a production build, the default: each market a
+/// subscriber names adds to every read it makes on the sequencer's thread.
+const PRODUCTION_QUOTE_MAX_MARKETS: usize = 4;
 
 /// Limits on the public API. A client is its socket peer IP, or the address a trusted proxy's PROXY
 /// protocol header names, with an IPv6 client counted by its /64; forwarding headers are ignored
@@ -58,7 +63,7 @@ pub struct ApiSection {
     /// than this. At least 100 ms.
     #[serde(default = "default_quote_interval", with = "humantime_serde")]
     pub quote_interval: Duration,
-    /// Most markets one quote subscription may name.
+    /// Most markets one quote subscription may name. At most four in a production build.
     #[serde(default = "default_quote_max_markets")]
     pub quote_max_markets: NonZeroUsize,
     /// The least sequenced time between two scans of every account for the house's position
@@ -93,6 +98,22 @@ pub struct ApiSection {
     pub fresh_accounts: FreshAccountBudgets,
     /// How many seconds of its tier's request rate each of a credited account's buckets holds at once.
     pub request_bursts: RequestBursts,
+}
+
+impl ApiSection {
+    /// Refuses a `quote_max_markets` above the production value when `production` is set.
+    /// Error cases:
+    /// - `production` is set and `quote_max_markets` is above `PRODUCTION_QUOTE_MAX_MARKETS`
+    pub(super) fn refuse_dev_quote_markets(&self, production: bool) -> anyhow::Result<()> {
+        let markets = self.quote_max_markets.get();
+        if production && markets > PRODUCTION_QUOTE_MAX_MARKETS {
+            bail!(
+                "a production build allows api.quote_max_markets at most {PRODUCTION_QUOTE_MAX_MARKETS}, and the \
+                 config sets {markets}"
+            );
+        }
+        Ok(())
+    }
 }
 
 /// A token bucket: `burst` requests at once, refilled at `per_second`.
