@@ -195,12 +195,16 @@ pub(super) fn process() -> (f64, u64) {
     (cpu, rss_kib >> 10)
 }
 
-/// What a window prints beside its breaches: the batch time at p99, which the log's sync and the
-/// release behind it make up, the sequencer's busy share, which a checkpoint's root work on its thread
-/// counts in, and the host's waits.
+/// What a window prints beside its breaches: the batch time, which the log's sync and the release
+/// behind it make up, at p99 and p999, the sequencer's busy share and the host's waits. A sync held for
+/// `t` holds every batch formed meanwhile, their times spread from `t` down to nothing, so in a window
+/// of `w` seconds, at any batch rate, it reaches p999 as about `t - w / 1000` (24 ms short in a 24 s
+/// window), and p99, about `t - w / 100`, only past 240 ms: p999 names one stall that breaks a tail
+/// bar, and p99 many. The busy share is the window's mean, which a hold of under a second barely moves.
 pub(super) fn window_figures(node: &Delta) -> String {
-    let batch_p99_us = node.batch.quantile(0.99) * 1e6;
-    format!("batch_p99_us={batch_p99_us:.0} busy_share={:.3} {}", node.busy_share, node.host)
+    let at = |q: f64| node.batch.quantile(q) * 1e6;
+    let (p99, p999) = (at(0.99), at(0.999));
+    format!("batch_p99_us={p99:.0} batch_p999_us={p999:.0} busy_share={:.3} {}", node.busy_share, node.host)
 }
 
 /// `[[dd-]hh:]mm:ss[.ss]` as seconds.
@@ -390,98 +394,4 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_histogram_is_read_from_the_nodes_encoding_and_judged_at_its_bounds() {
-        let metrics = Metrics::new();
-        let waited = &metrics.latency.price_to_stamp;
-        (0..50).for_each(|_| waited.observe(0.000_5));
-        (0..49).for_each(|_| waited.observe(0.005));
-        waited.observe(0.5);
-        metrics.fills.get_or_create(&crate::metrics::MarketLabel { market: 1 }).inc_by(3);
-        metrics.fills.get_or_create(&crate::metrics::MarketLabel { market: 2 }).inc_by(4);
-        let (histograms, counters) = parse(&metrics.encode());
-        let h = &histograms[PRICE_TO_STAMP];
-        assert_eq!((h.count, h.buckets.len()), (100, 17), "{h:?}");
-        assert!((h.sum - 0.770).abs() < 1e-9, "{}", h.sum);
-        assert_eq!(counters["engine_fills_total"], 7.0, "a counter sums over its labels");
-        assert!(h.within(0.5, 0.001), "50 of 100 within a millisecond holds the median there");
-        assert!(!h.within(0.51, 0.001));
-        assert!(h.within(0.99, 0.01) && !h.within(0.999, 0.01));
-        // The 50th of 100 observations is the last in the bucket up to half a millisecond.
-        assert!((h.quantile(0.5) - 0.000_5).abs() < 1e-12, "{}", h.quantile(0.5));
-        assert!((h.quantile(0.995) - 0.375).abs() < 1e-9, "halfway into the bucket from 0.25 s to 0.5 s");
-        let earlier = h.clone();
-        waited.observe(0.000_5);
-        let (histograms, _) = parse(&metrics.encode());
-        let since = histograms[PRICE_TO_STAMP].since(&earlier);
-        assert_eq!((since.count, since.buckets[4].1, since.buckets[3].1), (1, 1, 1), "{since:?}");
-    }
-
-    #[test]
-    fn a_leg_that_measured_nothing_or_was_refused_is_named_unmeasured() {
-        let metrics = Metrics::new();
-        let before = Snapshot::take(&metrics);
-        metrics.latency.price_to_stamp.observe(0.000_1);
-        let node = Snapshot::take(&metrics).since(&before);
-        let filled = Quantiles { count: 1, p50: 1, p99: 1, p999: 1, max: 1 };
-        let clean = Figures { order_to_fill_us: filled, ..Figures::default() };
-        assert!(unmeasured(&clean, &node).is_empty());
-        for (gap, figures) in [
-            ("refused", Figures { refused: 1, ..clean.clone() }),
-            ("unanswered", Figures { unanswered: 1, ..clean.clone() }),
-            ("filled", Figures { order_to_fill_us: Quantiles::default(), ..clean.clone() }),
-            ("took no frame", Figures { silent_subscribers: 1, ..clean.clone() }),
-            ("ended", Figures { disconnects: 1, ..clean.clone() }),
-            ("last commands", Figures { behind_subscribers: 1, ..clean.clone() }),
-        ] {
-            let gaps = unmeasured(&figures, &node);
-            assert!(gaps.len() == 1 && gaps[0].contains(gap), "{gap}: {gaps:?}");
-        }
-        let idle = Snapshot::take(&metrics);
-        assert_eq!(unmeasured(&clean, &idle.since(&idle)), ["no price stamped"]);
-    }
-
-    #[test]
-    fn a_window_prints_its_batch_p99_busy_share_and_host_waits() {
-        let metrics = Metrics::new();
-        let earlier = Snapshot::take(&metrics);
-        metrics.batch_seconds.observe(0.25);
-        let window = Snapshot::take(&metrics).since(&earlier);
-        let window = Delta { busy_share: 0.5, host: Waited { io_ms: Some(12.0), cpu_ms: None }, ..window };
-        // The batch p99 is interpolated within the bucket from 0.2048 s to 0.4096 s, as Prometheus does.
-        assert_eq!(
-            window_figures(&window),
-            "batch_p99_us=407552 busy_share=0.500 host_io_wait_ms=12 host_cpu_wait_ms=n/a"
-        );
-    }
-
-    #[test]
-    fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
-        let earlier =
-            Snapshot { waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000) }, ..Snapshot::take(&Metrics::new()) };
-        let later = Snapshot { waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500) }, ..earlier.clone() };
-        assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5) });
-    }
-
-    #[test]
-    fn cpu_time_reads_both_platforms_formats() {
-        assert_eq!(cpu_seconds("1:02.50"), 62.5);
-        assert_eq!(cpu_seconds("01:01:02"), 3_662.0);
-        assert_eq!(cpu_seconds("1-00:00:01"), 86_401.0);
-    }
-
-    #[test]
-    fn a_loaded_runner_may_miss_a_tail_but_never_the_median() {
-        let tail = Breach { budget: "order_to_fill_us", quantile: "p99", figure: 30_000.0, bar: 25_000.0 };
-        let median = Breach { budget: "price_to_stamp_us", quantile: "p50", figure: 2_000.0, bar: 1_000.0 };
-        let windows = vec![vec![tail.clone()], vec![tail.clone()], vec![], vec![], vec![]];
-        assert!(tolerate(&windows, 2).is_empty());
-        let windows = vec![vec![tail.clone()], vec![tail.clone()], vec![tail.clone()], vec![], vec![]];
-        assert_eq!(tolerate(&windows, 2).len(), 1);
-        let windows = vec![vec![median], vec![], vec![], vec![], vec![]];
-        assert_eq!(tolerate(&windows, 2).len(), 1, "a median over its bar in one window fails");
-    }
-}
+mod tests;
