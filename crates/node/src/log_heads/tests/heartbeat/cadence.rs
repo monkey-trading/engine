@@ -317,3 +317,35 @@ async fn steps(drive: &Drive, seqs: std::ops::RangeInclusive<u64>) {
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 }
+
+/// A node whose first trusted time sample arrives 5 s before a turn's boundary, after the poster's first pass,
+/// reads from the boundary as soon as the sample places it, not at its next 30 s read tick: the turn's first
+/// head goes out within a second of the confirmation, with no release between the sample and the boundary.
+#[tokio::test(start_paused = true)]
+async fn a_first_sample_before_a_boundary_starts_its_reads_with_no_release_waking_the_poster() {
+    let boundary = engine_core::turns::boundary(turn(GENERATION).turn).expect("the turn has a boundary");
+    let chain = FakeChain::new(None);
+    let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
+    let (drive, samples) =
+        spawn_sampled(chain.clone(), Some(keys), Duration::from_secs(30), (boundary - 5_000, 0), false);
+    drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
+    drive.release(1);
+    pass(&drive, 1).await;
+    // The sample arrives; nothing is released from here on until the turn is named and confirmed.
+    let now = drive.clock.true_ms();
+    samples.send_replace(Some(Sample {
+        at: crate::clock::Clock::instant(drive.clock.as_ref()),
+        earliest_ms: now - 3_000,
+        latest_ms: now + 3_000,
+    }));
+    pass(&drive, 6).await;
+    chain.name_turn(turn(GENERATION));
+    chain.change_turn(|turn| turn.interval = TIGHTEST_INTERVAL);
+    drive.release(2);
+    drive.confirm(2, 0xc1);
+    let named = tokio::time::Instant::now();
+    pass(&drive, 3).await;
+    let first = chain.posted_v2_at().first().map(|at| *at - named);
+    drive.stop().await;
+    assert!(first.is_some_and(|first| first <= Duration::from_secs(1)), "{first:?} after the turn");
+}

@@ -187,10 +187,17 @@ impl BoundaryReads {
     /// monotonic time, whatever the host clock reads: from when true time may have reached the boundary, on
     /// a monotonic clock running up to `MAX_SLOW_PPM` slow or as fast, every `BOUNDARY_READ_EVERY` until it
     /// has certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
-    /// `trusted`, nor before its first sample.
+    /// `trusted`; before its first sample it waits for it, then places the boundary from it.
     pub(crate) async fn next(&mut self, trusted: Option<&TrustedClock>) -> Instant {
-        let bounds = trusted.and_then(|trusted| trusted.drift_bounds_ms(MAX_SLOW_PPM));
-        let Some((earliest, latest)) = bounds else { return std::future::pending().await };
+        let Some(trusted) = trusted else { return std::future::pending().await };
+        let bounds = match trusted.drift_bounds_ms(MAX_SLOW_PPM) {
+            Some(bounds) => bounds,
+            None => {
+                trusted.first_sample().await;
+                trusted.drift_bounds_ms(MAX_SLOW_PPM).expect("a first sample is held")
+            }
+        };
+        let (earliest, latest) = bounds;
         let now = Instant::now();
         // The latest boundary true time may have reached, and whether it may still be in the search after it.
         let boundary = latest - latest.saturating_sub(BOUNDARY_OFFSET_MS).rem_euclid(TURN_MS);
