@@ -10,9 +10,11 @@
 //! share, and the process's CPU and resident memory, judged against #904's launch bar (`report`),
 //! and the ramp the first multiple at which each budget broke. Each window prints its batch time at
 //! p99 and p999 and the sequencer's busy share beside its breaches, and each window and leg how long the
-//! host's tasks waited on storage and for a CPU where the host reports it, so a window broken by a
-//! disk or a core stall says so. The screening source answers each call after a remote source's
-//! round trip (`SOURCE_DELAY_MS`), and the bar holds the market orders of traders that sent a
+//! host's tasks waited on storage and for a CPU and the I/O its disks completed, where the host
+//! reports them, so a window broken by a disk or a core stall says so. Each window also prints the
+//! storage probe's longest block and whether a stall of the runner's own storage excuses it. The
+//! screening source answers each call after a remote source's round trip (`SOURCE_DELAY_MS`), and the
+//! bar holds the market orders of traders that sent a
 //! screened request within its bound, whose decisions the node's refreshes keep fresh, so any of
 //! them that waits for the source counts against it. The orders of traders it keeps no decision
 //! for, which wait for the source, of those between, and of fresh traders queued behind another
@@ -21,8 +23,9 @@
 //! log, so `engine replay` cannot start from it.
 //!
 //! The launch and ten-times legs pass only within the bar, on their second run if their first broke it
-//! (`rerun`), under the tolerance for a loaded runner
-//! that `sequencer::wait_bench::price_wait_budget` grants (`report::tolerate`). On CI the order-to-fill and
+//! (`rerun`), under the tolerance for a loaded runner that `sequencer::wait_bench::price_wait_budget`
+//! grants (`report::tolerate`), also in the windows a stall of the runner's own storage, timed by a
+//! probe apart from the node, does not excuse (`storage`). On CI the order-to-fill and
 //! stream-lag bars are scaled by the runner's measured speed (`ENGINE_BENCH_SCALE_TO_RUNNER`,
 //! `common::rerun`), printed on each leg's lines. They pass only
 //! if they measured what they claim (`report::unmeasured`): every request answered 200 with no
@@ -44,6 +47,7 @@ pub(crate) mod plan;
 mod report;
 mod rerun;
 mod soak;
+mod storage;
 mod venues;
 
 use std::collections::BTreeMap;
@@ -109,9 +113,17 @@ struct Run {
     leg: String,
     multiple: f64,
     breaches: Vec<Breach>,
-    windows: Vec<Vec<Breach>>,
+    windows: Vec<Window>,
     /// What the leg failed to measure (`report::unmeasured`).
     gaps: Vec<String>,
+}
+
+/// One window of a leg: the budgets it broke, and why the runner's storage excuses them, if it does
+/// (`storage::excuse`).
+#[derive(Clone, Debug)]
+struct Window {
+    breaches: Vec<Breach>,
+    excused: Option<String>,
 }
 
 /// `name`'s value in the environment, or `default`.
@@ -292,8 +304,15 @@ fn spawn_generator(plan: &Plan) -> Generator {
 async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let Generator { mut child, mut answers, mut lines } = spawn_generator(plan);
     let resident = Resident::start();
+    // Beside the node's log, on the same filesystem.
+    let probe_dir = scratch_dir("load-storage-probe");
+    std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
+    let probe = storage::Probe::start(&probe_dir).expect("the storage probe starts");
+    if probe.is_none() {
+        println!("LOAD storage probe off: the host counts no thread's time, so no window is excused");
+    }
     let (mut start, mut window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
-    let mut windows: Vec<Vec<Breach>> = Vec::new();
+    let mut windows: Vec<Window> = Vec::new();
     let mut runs = Vec::new();
     // The first multiple each budget broke at, over the ramp and the legs before it.
     let mut broken: BTreeMap<(&str, &str), f64> = BTreeMap::new();
@@ -312,14 +331,23 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 );
                 (start, window, windows) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics), Vec::new());
                 resident.reset();
+                if let Some(probe) = &probe {
+                    probe.take();
+                }
             }
             Line::Window { leg, index, figures } => {
                 let now = Snapshot::take(&node.metrics);
                 let delta = now.since(&window);
                 let breaches = judge(&figures, &delta);
-                println!("LOAD leg={leg} window={index} breaches={breaches:?} {}", window_figures(&delta));
+                let block = probe.as_ref().map(storage::Probe::take).unwrap_or_default();
+                let excused = storage::excuse(&breaches, &block, &delta.host, delta.secs);
+                println!(
+                    "LOAD leg={leg} window={index} breaches={breaches:?} {} probe_blocked_ms={} excused={excused:?}",
+                    window_figures(&delta),
+                    block.blocked.as_millis()
+                );
                 window = now;
-                windows.push(breaches);
+                windows.push(Window { breaches, excused });
             }
             Line::End { leg, multiple, figures } => {
                 let node_figures = Snapshot::take(&node.metrics).since(&start);

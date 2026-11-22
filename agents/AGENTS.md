@@ -967,7 +967,8 @@ an index: load only the rule whose hint matches the current action.
   bar holding the market orders of traders that sent a screened request within the screening bound, whose decisions the
   node keeps fresh, under a source answering in 200 ms, and those of traders that wait for the source, or may, or that
   queue behind another trader's wait on their client's connection, printed apart (#1070), failing outside it under
-  a loaded runner's tolerance, then the log replayed from the rebuilt book (`replay::replay_path_from`);
+  a loaded runner's tolerance, in the windows a stall of the runner's own storage does not excuse (`storage.rs`), then
+  the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-soak.sh`, the soak dev scenario (`load_scenario/soak/`, #909): that load for hours at ten times launch flow on a node
   that publishes paired recovery caches (`load_scenario/durable.rs`), in report intervals judged by window against #904's
   bar outside what a fault, a restart or the start excuses (`timeline.rs`), #867's faults injected in turn through links in

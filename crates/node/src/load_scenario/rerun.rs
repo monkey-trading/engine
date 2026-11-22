@@ -2,12 +2,47 @@
 //! usual size a leg breaks the launch bar on unchanged code, and a regression breaks it again. A leg
 //! that breaks it is run once more on the same node, and fails only if the second run breaks it too.
 
-use crate::load_scenario::report::tolerate;
-use crate::load_scenario::{MISSES, Run};
+use std::collections::BTreeSet;
 
-/// What failed a measured leg's run: the bar's breaches outside the tolerance for a loaded runner.
+use crate::load_scenario::report::{Breach, tolerate};
+use crate::load_scenario::{MISSES, Run, Window};
+
+/// What failed a measured leg's run: each budget outside the tolerance for a loaded runner both over
+/// every window and over the windows the runner's storage did not excuse (`storage`), in which it is
+/// allowed its share of misses, as the soak allows. An excuse can only pass a budget the tolerance
+/// fails, never fail one it passes. Every window keeps its place, so a breach names its own window; a
+/// run whose every window the storage excused, and that broke the tolerance, measured nothing.
 pub(super) fn failed(run: &Run) -> Vec<String> {
-    tolerate(&run.windows, MISSES)
+    let judged = run.windows.iter().filter(|window| window.excused.is_none()).count();
+    let share = judged * MISSES / run.windows.len().max(1);
+    let budgets: BTreeSet<(&str, &str)> =
+        run.windows.iter().flat_map(|window| &window.breaches).map(|breach| (breach.budget, breach.quantile)).collect();
+    let mut failed = Vec::new();
+    for budget in budgets {
+        // The budget's breaches in each window, an excused window's dropped when `excusing`.
+        let breaches = |excusing: bool| -> Vec<Vec<Breach>> {
+            let of_budget = |breach: &&Breach| (breach.budget, breach.quantile) == budget;
+            let window = |window: &Window| {
+                let dropped = excusing && window.excused.is_some();
+                window.breaches.iter().filter(of_budget).filter(|_| !dropped).cloned().collect()
+            };
+            run.windows.iter().map(window).collect()
+        };
+        if tolerate(&breaches(false), MISSES).is_empty() {
+            continue;
+        }
+        if judged == 0 {
+            return vec![format!(
+                "the runner's storage stalled in all {} windows, so none was judged",
+                run.windows.len()
+            )];
+        }
+        let excused = run.windows.len() - judged;
+        let allowed =
+            |why: String| format!("{why}, {excused} of them excused by the runner's storage, {share} allowed");
+        failed.extend(tolerate(&breaches(true), share).into_iter().map(allowed));
+    }
+    failed
 }
 
 /// Whether `run`, a leg that has just ended after the `earlier` ones, is run again: a measured leg that
@@ -30,12 +65,16 @@ pub(super) fn judged(runs: &[Run]) -> Vec<&Run> {
 mod tests {
     use super::*;
     use crate::load_scenario::plan::{Figures, Quantiles};
-    use crate::load_scenario::report::{Breach, Snapshot, judge, order_to_fill_bars};
+    use crate::load_scenario::report::{Snapshot, judge, order_to_fill_bars};
     use crate::metrics::Metrics;
+
+    fn unexcused(breaches: Vec<Breach>) -> Window {
+        Window { breaches, excused: None }
+    }
 
     fn run(leg: &str, over: bool) -> Run {
         let breach = Breach { budget: "order_to_fill_us", quantile: "p50", figure: 20_000.0, bar: 5_000.0 };
-        let windows = vec![if over { vec![breach] } else { Vec::new() }; 5];
+        let windows = vec![unexcused(if over { vec![breach] } else { Vec::new() }); 5];
         Run { leg: leg.into(), multiple: 1.0, breaches: Vec::new(), windows, gaps: Vec::new() }
     }
 
@@ -91,11 +130,51 @@ mod tests {
             let filled = Quantiles { count: 100, p50, p99: p50, p999: p50, max: p50 };
             judge(&Figures { order_to_fill_us: filled, ..Figures::default() }, &node)
         };
-        let at_bar = Run { windows: vec![window(bar); 5], ..run("launch_flow", false) };
+        let at_bar = Run { windows: vec![unexcused(window(bar)); 5], ..run("launch_flow", false) };
         assert!(failed(&at_bar).is_empty(), "every window at the bar");
         let mut over = at_bar;
-        over.windows[2] = window(bar + 1);
+        over.windows[2] = unexcused(window(bar + 1));
         assert_eq!(failed(&over).len(), 1, "one window over the bar: {:?}", over.windows[2]);
+    }
+
+    /// A tail may miss its bar in two of five windows, or in its share of those the runner's storage
+    /// did not excuse: one of three. A run whose every window the storage excused fails.
+    #[test]
+    fn a_window_the_storage_excused_is_not_judged_and_the_rest_keep_their_share_of_misses() {
+        let tail = Breach { budget: "order_to_fill_us", quantile: "p99", figure: 250_000.0, bar: 36_000.0 };
+        let excused = Window { breaches: vec![tail.clone()], excused: Some("the storage stalled".into()) };
+        let windows = |breached: &[bool]| -> Vec<Window> {
+            breached.iter().map(|over| unexcused(if *over { vec![tail.clone()] } else { Vec::new() })).collect()
+        };
+        let mut stalled = Run { windows: windows(&[false, false, true, false, false]), ..run("launch_flow", false) };
+        (stalled.windows[0], stalled.windows[1]) = (excused.clone(), excused.clone());
+        assert!(failed(&stalled).is_empty(), "one miss in three judged windows");
+        stalled.windows[3] = unexcused(vec![tail.clone()]);
+        let why = failed(&stalled);
+        assert_eq!(why.len(), 1, "two misses in three judged windows");
+        assert!(why[0].ends_with("2 of them excused by the runner's storage, 1 allowed"), "{why:?}");
+        let none_excused = Run { windows: windows(&[true, true, true, false, false]), ..run("launch_flow", false) };
+        assert_eq!(failed(&none_excused).len(), 1, "three misses in five windows, as before");
+        let all = Run { windows: vec![excused; 5], ..run("launch_flow", false) };
+        assert!(failed(&all).iter().any(|why| why.contains("none was judged")), "{:?}", failed(&all));
+    }
+
+    /// Excusing a window never fails a budget the tolerance passes over every window, and a breach in a
+    /// judged window keeps its own window's number.
+    #[test]
+    fn an_excused_window_fails_no_run_the_tolerance_passes_and_judged_windows_keep_their_numbers() {
+        let order = Breach { budget: "order_to_fill_us", quantile: "p99", figure: 250_000.0, bar: 36_000.0 };
+        let frame = Breach { budget: "stream_lag_ms", quantile: "p99", figure: 200.0, bar: 144.0 };
+        let excused = Window { breaches: vec![order.clone()], excused: Some("the storage stalled".into()) };
+        let mut lagging = run("launch_flow", false);
+        lagging.windows[0] = excused.clone();
+        (lagging.windows[1], lagging.windows[2]) = (unexcused(vec![frame.clone()]), unexcused(vec![frame]));
+        assert!(failed(&lagging).is_empty(), "two frame misses in five windows: {:?}", failed(&lagging));
+        let median = Breach { budget: "order_to_fill_us", quantile: "p50", figure: 9_000.0, bar: 7_195.0 };
+        let mut slow = run("launch_flow", false);
+        (slow.windows[0], slow.windows[1], slow.windows[3]) = (excused.clone(), excused, unexcused(vec![median]));
+        let why = failed(&slow);
+        assert!(why.len() == 1 && why[0].starts_with("window 3:"), "{why:?}");
     }
 
     #[test]
