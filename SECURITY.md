@@ -191,14 +191,17 @@ so please check that an issue still reproduces there before you report it.
 
 ## Bug bounty
 
-We pay for valid reports of vulnerabilities in the components in scope. Every payout is the amount
-the scale below states for the finding's severity, so the only judgement in a payout is the
-severity, which we grade by the rules below. We publish the scale before launch and apply it to
-every report received while it stands.
+We reward valid reports of vulnerabilities in the components in scope. The rewards are paid from
+the USDC that the engine distributes once people trade on it, and from nothing else: the project
+holds no fund for them. An award is registered in the engine's state, queued, and paid by each
+epoch close that has excess to distribute, so it is paid only once the engine has earned it, and
+it never expires. Every award is the amount the scale below states for the finding's severity, so
+the only judgement in an award is the severity, which we grade by the rules below.
 
 Reports go through the channels in [Reporting a vulnerability](#reporting-a-vulnerability), and
 the response times, containment and disclosure rules above apply to them unchanged. `OWNER`:
-platform. Name the platform that hosts the programme and where a report goes once it does.
+the protocol version that adds awards. No award is paid before it is in force, and a report
+received earlier is registered once it is.
 
 ### What the bounty covers
 
@@ -246,20 +249,20 @@ You can be paid for a report if:
   as this policy asks;
 - you are not a maintainer, an employee or contractor of the project, or anyone paid to write,
   review or audit the code in question;
-- you tell us where to send the payment, and give any detail the payment platform needs to pay you;
+- you give an address on Arbitrum One from which you will claim the award;
 - you make no demand for payment, or for more than the scale states, as a condition of reporting
   or of keeping a report private.
 
 Several reports with one root cause are one finding, paid once at the highest severity among them.
 A fix you send is welcome, and does not change the payout.
 
-### Severity and payouts
+### Severity and awards
 
 We grade severity by what an attacker achieves, and not by how hard the finding was to make, using
 the same grades as the project's [code review severity guide](agents/skills/agent-code-review/references/severity.md).
 The grade is the one whose description fits the worst effect a realistic attacker can reach:
 
-| Severity | What an attacker achieves | Payout |
+| Severity | What an attacker achieves | Award |
 | --- | --- | --- |
 | Critical | Funds are lost, frozen or taken: USDC in the vault, MONKEY minted that is not owed, or a claim paid that is not owed. Or a state is forged: the trading server reports a state that its log does not replay to, or the enclave signs a state that the rules do not produce, or a signature is forged or reused. Or a key is controlled: the enclave's keys are read or altered from its host, or the vault's signer, timelock or guardian, or an operator's election, is taken over. | `OWNER`: amount in USDC |
 | High | Wrong behaviour on a realistic path that takes no funds: an order executes at a price the rules do not allow, a request that any client can send halts the engine, an effect is lost or duplicated after a restart, funds are frozen for a time without our action, or one of the engine's checks or an operator's bounds is passed. | `OWNER`: amount in USDC |
@@ -276,18 +279,34 @@ reading or altering what the enclave holds are Critical. An order at a price the
 and a halt by a request that any client can send, are High, unless they also take funds, which makes
 them Critical.
 
-### How a payout is decided and paid
+### How an award is decided and paid
 
 1. We grade the finding within the ten business days that [What happens next](#what-happens-next)
    gives, and tell you the grade and the reasons for it.
 2. If you disagree, send evidence of a worse effect within ten business days, and we regrade it once.
    Our regrade is final.
-3. The owner of the project approves the payout for the final grade. The approval confirms that the
+3. The owner of the project approves the award for the final grade. The approval confirms that the
    report meets the rules above. It does not change the amount, which is the scale's.
-4. We pay in USDC, `OWNER`: chain and timing, such as within ten business days of the final grade.
-   We do not wait for the fix to ship. `OWNER`: payment source.
-5. We credit you in the advisory as [Coordinated disclosure](#coordinated-disclosure) describes.
+4. The award is registered in the engine, by the operator's signed command or, while votes govern,
+   by a passed vote. The engine names the amount from the scale for the grade, and refuses any other.
+   The registration records your address, the grade and a hash of the advisory's identifier, so it
+   reveals nothing about the finding. It is public in the log and in the API from the moment it is
+   registered.
+5. The award becomes payable `OWNER`: notice, seven days, after its registration.
+6. Each epoch close pays the payable awards first, oldest first, before it splits the rest of the
+   excess between the operator and the stakers. A close pays at most `OWNER`: share, a percentage
+   of its excess and `OWNER`: amount in USDC, whichever is less, and an award it cannot finish stays
+   at the front of the queue with the rest of its amount.
+7. A payment is credited to your address as a distribution entitlement, and you claim it from the
+   vault with a proof, as a staker claims a distribution. Nothing is paid until you claim.
+8. We credit you in the advisory as [Coordinated disclosure](#coordinated-disclosure) describes.
 
-We may change the scale, and publish the change in this section 30 days before it applies. A change
-applies to reports received after it takes effect, and never lowers the payout of a report that has
-been received.
+A report is paid only from distributions that the engine has earned, and an epoch distributes
+nothing while the house's net asset value is at or below the liquidity floor or nobody is staked.
+An award waits in the queue until a close can pay it. The queue's state and each payment are public
+and can be checked by replaying the log. Registered awards cannot be removed except by the same
+route that registered them, and only before they become payable.
+
+The scale, the share and the caps are fixed in the engine's rules. Raising any of them needs a
+notice of at least `OWNER`: notice, seven days, or a passed vote, and a change never lowers an
+award that is already registered.
