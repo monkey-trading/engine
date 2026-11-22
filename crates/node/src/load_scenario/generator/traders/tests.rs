@@ -28,3 +28,40 @@ fn a_cancel_or_close_all_whose_target_is_gone_goes_out_as_a_market_order() {
         assert_eq!(trader.request(&held, &units).0, path);
     }
 }
+
+#[test]
+fn a_cancel_the_node_rejects_as_unknown_drops_the_order_it_asked_for_and_another_rejection_keeps_it() {
+    let units = BTreeMap::from([(2, Fixed::from_int(50))]);
+    let cancel = Job {
+        trader: 0,
+        kind: Kind::Cancel,
+        market: 2,
+        side: Side::Buy,
+        due: Instant::now(),
+        dispatched: Instant::now(),
+    };
+    let rejection = |trader: &Trader, kind: &str| json!([{ "type": "order_rejected", "account": trader.account, "client_id": 0, "reason": { "kind": kind } }]);
+    // A reply lost to a restart left order 9 listed, which the node no longer has.
+    let mut trader = Trader::new(1);
+    trader.holding.lock().unwrap().resting.extend([7, 9]);
+    assert_eq!(trader.request(&cancel, &units).0, "/v1/orders/cancel");
+    let reply = rejection(&trader, "unknown_order");
+    assert_eq!(trader.take(200, &reply).1.as_deref(), Some("unknown_order"));
+    assert_eq!(trader.holding.lock().unwrap().resting, [7], "the order the cancel named is gone");
+    // Any other rejection leaves the order resting: the node still has it.
+    let mut trader = Trader::new(1);
+    trader.holding.lock().unwrap().resting.push(9);
+    trader.request(&cancel, &units);
+    let reply = rejection(&trader, "market_closed");
+    trader.take(200, &reply);
+    assert_eq!(trader.holding.lock().unwrap().resting, [9]);
+    // A rejection of a request that was no cancel names no order.
+    let mut trader = Trader::new(1);
+    trader.holding.lock().unwrap().resting.push(9);
+    trader.request(&cancel, &units);
+    let market = Job { kind: Kind::Market, ..cancel };
+    trader.request(&market, &units);
+    let reply = rejection(&trader, "unknown_order");
+    trader.take(200, &reply);
+    assert_eq!(trader.holding.lock().unwrap().resting, [9], "no cancel was asked for");
+}
