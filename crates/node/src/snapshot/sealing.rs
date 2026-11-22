@@ -179,10 +179,10 @@ impl Endpoint {
         Self { tx, ..self }
     }
 
-    /// Whether the history owner has stopped taking input.
+    /// Whether the history owner has stopped taking input and captures.
     #[cfg(test)]
     pub(crate) fn is_closed(&self) -> bool {
-        self.tx.is_closed()
+        self.tx.is_closed() && self.seals.is_closed()
     }
 
     /// Takes every free slot of the owner's queue until the returned permits drop, as an index behind

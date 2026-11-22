@@ -20,7 +20,7 @@ use crate::snapshot::{self, RecoveryContext, Snapshot};
 use crate::stats::background::Job;
 
 /// The least sequenced time a capture in flight waits for the history index before a capture due behind it
-/// alerts, when the interval between captures is shorter.
+/// alerts. Cadence already keeps the interval between the two.
 const CAPTURE_LATE: Millis = 60_000;
 
 /// A checkpoint whose capture waits, with its progress and recovery facts as they stood then.
@@ -182,9 +182,8 @@ impl Sequencer {
         let Some(permit) = endpoint.try_permit() else {
             // A capture still in flight past the interval, and a minute at least, waits for an index
             // behind the log: no cache is written until the index reaches it.
-            let late = endpoint.interval_ms.max(CAPTURE_LATE);
             if let Some((seq, handed)) = self.captures.handed
-                && self.engine.now().saturating_sub(handed) >= late
+                && self.engine.now().saturating_sub(handed) >= CAPTURE_LATE
             {
                 let waited = self.engine.now().saturating_sub(handed) / 1_000;
                 endpoint.write_alert.failed(|| {

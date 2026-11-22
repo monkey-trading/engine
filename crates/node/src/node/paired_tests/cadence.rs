@@ -130,7 +130,8 @@ async fn an_owner_behind_the_log_takes_a_capture_and_completes_it_at_its_checkpo
 
 /// A capture due while the one handed over before it has waited, for an index behind the log, past the
 /// interval and a minute at least alerts, and the owner's storing of that capture, once its index reaches
-/// it, resolves it. With a one-second interval the minute decides, and with an hour the interval does.
+/// it, resolves it. With a one-second interval the minute decides, and with an hour the next capture is due
+/// only after the minute.
 #[tokio::test]
 async fn a_capture_waiting_past_the_interval_for_the_index_alerts_until_it_is_stored() {
     let (second, minute) = (Duration::from_secs(1), Duration::from_secs(60));
@@ -222,13 +223,7 @@ async fn shutdown_caches_a_checkpoint_whose_capture_failed_after_its_slot_was_re
         clock.advance(INTERVAL);
         node.sealing.fail_next(stage);
         // Commands up to a checkpoint, whose due capture fails once.
-        let every = node.cfg.node.checkpoint_every;
-        let mut n = 0;
-        while n == 0 || (node.manifest.borrow().flushed.expect("commands are logged").seq + 1) % every != 0 {
-            node.submit(deposit(1, &format!("failed-{n}"))).await;
-            n += 1;
-        }
-        let last = node.manifest.borrow().flushed.expect("commands are logged").seq;
+        let last = to_checkpoint(&node, "failed").await;
         node.history_caught_up().await;
         assert_eq!(caches(&node), before, "{stage:?}: the capture failed");
         let (cfg, reader) = node.stop().await;

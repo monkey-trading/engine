@@ -240,7 +240,8 @@ impl Node {
         }
     }
 
-    /// Stops the history owner as a failed task would, returning once its input queue is closed.
+    /// Stops the history owner as a failed task would, returning once its input queue and capture slot are
+    /// closed.
     pub(crate) async fn stop_history(&self) {
         self.history.abort();
         timeout(HANG, async {
