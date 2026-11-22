@@ -235,6 +235,44 @@ async fn a_head_the_stream_brings_once_the_chains_is_stale_is_relayed_at_once() 
     assert_eq!(reads(), 3, "no read for a head while the chain's is fresh");
 }
 
+/// A head fresh at the last read turns stale by the caller's clock between reads: a head the stream
+/// brings a second before that waits, and one brought at it is read for and relayed at once.
+#[tokio::test(start_paused = true)]
+async fn a_head_turning_stale_by_the_clock_between_reads_wakes_the_caller() {
+    // Posted 40 s before the block: stale for a relay 10 s on, by the clock alone.
+    let time = 1_800_000_000;
+    let chain = Arc::new(FakeChain::new(ChainState { head: (7, 1_000, time - 40), ..Default::default() }));
+    let copy = Copy::default();
+    let sent = Sent::default();
+    let clock = Arc::new(crate::clock::test_clock::TestClock::at(i64::try_from(time).unwrap() * 1000));
+    let caller = Caller {
+        chain,
+        sending: sent.clone(),
+        domain: DOMAIN,
+        copy: copy.clone(),
+        min_balance: U256::ZERO,
+        poll: TEST_POLL,
+        clock: clock.clone(),
+        sends: Arc::default(),
+    };
+    let reads = || *sent.balance_reads.lock().unwrap();
+    let task = tokio::spawn(caller.run());
+    tokio::time::sleep(TEST_POLL).await;
+    assert_eq!(reads(), 1, "the read at 0 s");
+    clock.advance(Duration::from_secs(9));
+    copy.signed_head(signed(1, 8));
+    tokio::time::sleep(TEST_POLL).await;
+    assert_eq!(reads(), 1, "a second before the head turns stale: no read");
+    clock.advance(Duration::from_secs(1));
+    let newer = signed(1, 9);
+    copy.signed_head(newer.clone());
+    tokio::time::sleep(TEST_POLL).await;
+    task.abort();
+    assert_eq!(reads(), 2, "read at once");
+    let relayed = newer.head.calldata(&newer.signature).unwrap();
+    assert!(sent.calls.lock().unwrap().contains(&(DOMAIN.log_heads, relayed)), "and relayed");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_caller_below_its_minimum_balance_pages_once_until_funded() {
     let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();

@@ -653,9 +653,9 @@ disagreeing with the others.
 ### RPC budget
 
 The deposit watcher polls every 15 s (`custody.evm.poll_interval`). This section counts what one
-operator and two members sharing one account per provider send each provider, at the launch heartbeat
-interval of 140 seconds, and says which plans carry it. No free tier does once a turn names the
-operator, as the last table shows.
+operator and two members sharing one account per provider send each provider, at the launch
+heartbeat interval of 140 seconds, and says which plans carry it. No free tier does once a turn
+names the operator, as the last table shows.
 
 Every read goes to all three providers, so each provider sees every logical read once. The counts are
 JSON-RPC calls per provider, measured by the harness `cargo test -p engine-node --lib rpc_budget --
@@ -697,12 +697,12 @@ release tag's block. A staking window that holds mirrored events also reads the 
 lowest event block up to its end, to link each event to the release tag's chain, and one more
 `eth_getLogs` for each event block, which reads it again by its hash.
 
-A member's follow stint reads, at the latest agreed block, whether a promotion names its standby key and
-whether the schedule still lists the key as promotable. It also reads the posted log head it pins its
-copy to. The operator's standby renewal reads whether the schedule still lists its standby key.
-A member's liveness caller also reads once for each head its stream brings while the chain's newest
-head is old enough to relay. That happens only while the operator's own posts fail, so the counts
-leave it out.
+A member's follow stint reads, at the latest agreed block, whether a promotion names its standby key
+and whether the schedule still lists the key as promotable. It also reads the posted log head it
+pins its copy to. The operator's standby renewal reads whether the schedule still lists its standby
+key. A member's liveness caller also reads once for each head its stream brings while the chain's
+newest head is old enough to relay. That happens only while the operator's own posts fail, so the
+counts leave it out.
 
 The fallback fixer reads every 30 s because anyone may fix a turn's fallback block, a draw included,
 and the schedule's governance may replace the seed receiver at any time: the block's hash must then be
@@ -713,8 +713,8 @@ a send as slow as that poll still fit inside the 64 s.
 Per provider account, a day's load is the operator in effect's readers plus the other two members'.
 The operator's are the watcher, the liveness rule, the log-head reads, the relayer balance read, the
 standby renewal, the fixer and the seed relay. Each member's are the liveness caller, the follow
-stints, the fixer and the seed relay. While a turn names the operator, the harness counts 692,722 calls
-a day before the seed relays and the operator list:
+stints, the fixer and the seed relay. While a turn names the operator, the harness counts 692,722
+calls a day before the seed relays and the operator list:
 
 - 393,922 `eth_call`
 - 226,121 `eth_getBlockByNumber`
@@ -725,9 +725,10 @@ a day before the seed relays and the operator list:
 The three seed relays add about 51,000, so the account sees about 744,000 calls a day, about 9 a
 second on average. The costs below count the seed relays' calls at the price of an `eth_call`.
 
-Before the registry names a schedule, no turn names the operator and members run no caller. The liveness rule still reads every 15 s, 10 calls a read that stop at the registry, and the
-log-head poster reads the posted head and whether a turn names the operator every 30 s, 6 and 7 calls.
-The harness counts 295,488 calls a day for three nodes then, about 346,000 with the seed relays.
+Before the registry names a schedule, no turn names the operator and members run no caller. The
+liveness rule still reads every 15 s, 10 calls a read that stop at the registry, and the log-head
+poster reads the posted head and whether a turn names the operator every 30 s, 6 and 7 calls. The
+harness counts 295,488 calls a day for three nodes then, about 346,000 with the seed relays.
 
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |
@@ -738,26 +739,28 @@ The harness counts 295,488 calls a day for three nodes then, about 346,000 with 
 
 Check each limit on the provider's page before relying on it, because they change.
 
-**What fits.** The cheapest set that carries the load with room to spare is dRPC on pay as you go and
-Infura's Team plan, at about $360 a month together, with PublicNode as the third provider. Infura's plan
-leaves about 24% of its daily credits spare, or 21% with the operator list, and a provider past its
-daily limit fails every read until the day resets. Alchemy on pay as you go, in Infura's place, costs
-about $400 a month with dRPC and has no daily limit. The quorum rests on the two paid providers, and
-loses its majority whenever either of them fails, so a second paid provider in the third seat costs
-more and keeps a provider's failure from pausing crediting.
+**What fits.** The cheapest set that carries the load with room to spare is dRPC on pay as you go
+and Infura's Team plan, at about $360 a month together, with PublicNode as the third provider.
+Infura's plan leaves about 24% of its daily credits spare, or 21% with the operator list, and a
+provider past its daily limit fails every read until the day resets. Alchemy on pay as you go, in
+Infura's place, costs about $400 a month with dRPC and has no daily limit. The quorum rests on the
+two paid providers, and loses its majority whenever either of them fails, so a second paid provider
+in the third seat costs more and keeps a provider's failure from pausing crediting.
 
 Before a schedule is named, the load fits dRPC's free tier with 1% to spare, Infura's Team plan, or
-Alchemy on pay as you go at about $125 a month. The deployment names the schedule before the first
-deployment, though, and from then on the readers read it at a quarter of its interval. Size the plans
-for the load once a turn names the operator, since that starts with a mirrored event, not a
+Alchemy on pay as you go at about $125 a month. The timelock names the schedule in [Deploy the
+rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), before [First
+deployment](deploy-and-rollback.md#first-deployment) starts the first trading server, and from then
+on the liveness rule and the callers read the chain four times its heartbeat interval. Size the
+plans for the load once a turn names the operator, since that starts with a mirrored event, not a
 configuration change.
 
 **What would lower it further.** The deposit watcher's 21 calls a poll do not grow with the chain,
-so `custody.evm.poll_interval` trades 120,960 calls a day at 15 s against a deposit credited up to one
-interval after its block is two blocks deep. The rule and the callers, 123,428 calls a day between
-them, read four times a heartbeat interval, every 35 s at 140 s, which gives a caller four chances to
-witness each slot. The follow stints carry the most, 237,600 calls a day for two members, reading once
-a stint so a member notices its own promotion promptly.
+so `custody.evm.poll_interval` trades 120,960 calls a day at 15 s against a deposit credited up to
+one interval after its block is two blocks deep. The rule and the callers, 123,428 calls a day
+between them, read four times a heartbeat interval, every 35 s at 140 s, which gives a caller four
+chances to witness each slot. The follow stints carry the most, 237,600 calls a day for two members,
+reading once a stint so a member notices its own promotion promptly.
 
 **`max_block_range` and `stall_critical_after` at 15 s.** Both stay. At 15 s the watcher reads about 60
 new blocks a poll, far under `max_block_range = 1000`, and after an outage it reads 1,000 a poll, which

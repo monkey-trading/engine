@@ -1025,19 +1025,21 @@ With `[liveness]`, the trading server also does all of these from the caller acc
 - It skips a turn once `skipDueAt()` passes, and promotes once `promotionDueAt()` passes.
 - It relays the operator's signed heads from its stream when the chain's head is older than five
   sixths of an interval. The operator's own heads are due every half interval, so the caller relays a
-  head only when the operator's posts fail or are slow to land.
+  head only when the operator's posts fail or are slow to land. A head the stream brings after that
+  point is relayed at once, with a read of its own, rather than at the caller's next read.
 - For the trading server's whole life, whether following or holding a turn, it fixes the fallback of
   a turn whose draw deadline passed with no relayed seed. The fix is `SeedReceiver.fixFallback`,
   sent as two calls 5 seconds apart, and lets the turn be drawn for the rest of its window.
 
 The caller reads the chain four times a heartbeat interval, every 35 seconds at the launch interval
 of 140 seconds. While it knows no interval, as before a schedule is named, it reads every
-`liveness.read_interval`, 15 seconds by default. The operator's trading server reads the chain for the
-liveness rule at the same cadence, and asks the members for their copies every second. The fallback
-fixer reads the seed receiver every `liveness.fallback_interval`, 30 seconds by default and at most
-that in a production build, and every 5 seconds once anyone has fixed a turn's block, so it records the
-block's hash within the 256 blocks it can. The RPC budget in
-[feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads cost.
+`liveness.read_interval`, 15 seconds by default. The operator's trading server reads the chain for
+the liveness rule at the same cadence, and asks the members for their copies every second. The
+fallback fixer reads the seed receiver every `liveness.fallback_interval`, 30 seconds by default and
+at most that in a production build, and every 5 seconds once anyone has fixed a turn's block, so it
+records the block's hash within the 256 blocks it can. The RPC budget in
+[feed-and-custody-failures.md](feed-and-custody-failures.md#rpc-budget) counts what these reads
+cost.
 
 1. Add the section to the configuration:
 
