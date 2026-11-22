@@ -53,16 +53,16 @@ use crate::common::launch_book::{NamedCounts, build};
 use crate::feeds::venue::Timing;
 use crate::load_scenario::durable::Durable;
 use crate::load_scenario::node::{Boot, Node};
-use crate::load_scenario::plan::{Leg, Line, Plan};
+use crate::load_scenario::plan::{Leg, Line, Plan, requests_per_second};
 use crate::load_scenario::report::{Snapshot, judge, print, process, unmeasured};
 use crate::load_scenario::soak::alerts::Alerts;
 use crate::load_scenario::soak::config::Config;
 use crate::load_scenario::soak::faults::{Done, Rig, priced_within};
 use crate::load_scenario::soak::hours::{
-    Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure,
+    Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure, workload_gaps,
 };
 use crate::load_scenario::soak::support::{Reaper, log_quiet, newest_cache, rebind};
-use crate::load_scenario::soak::timeline::{FEED_ALERTS, Timeline, WINDOW_SETTLE};
+use crate::load_scenario::soak::timeline::{FEED_ALERTS, Timeline, WINDOW_SETTLE, restart_alerts, start_alerts};
 use crate::load_scenario::venues::{self, Venues};
 use crate::load_scenario::{
     ACCOUNTS, ACCOUNTS_PER_CLIENT, Generator, LINE_WITHIN, QUOTING_PER_CENT, book_mix, env, moves, spawn_generator,
@@ -75,18 +75,6 @@ use crate::test_support::{Alert, capture_alerts_everywhere, scratch_dir};
 /// How long a restart may keep the node down before the generator's clients give up: the drain, the
 /// history owner's last cache and the recovery each have a couple of minutes.
 const RESTART_DOWN: Duration = Duration::from_secs(7 * 60);
-
-/// The alerts the start may raise: the book's house loss, the RWA stand-ins' contracts the markets do not
-/// take, and a feed still connecting.
-fn start_alerts() -> Vec<&'static str> {
-    [&FEED_ALERTS[..], &["house_deficit", "house_loss_stress", "prices_rejected"]].concat()
-}
-
-/// The alerts a restart may raise: a feed reconnecting, the stand-ins' contracts again, and the house's
-/// loss, which a new process pages again while it stands.
-fn restart_alerts() -> Vec<&'static str> {
-    [&FEED_ALERTS[..], &["house_deficit", "house_loss_stress", "prices_rejected"]].concat()
-}
 
 #[test]
 #[ignore = "the soak, run by scripts/dev-soak.sh"]
@@ -222,6 +210,11 @@ impl Soak {
             starting: Some(starting),
             failed: Vec::new(),
         }
+    }
+
+    /// The leg the generator was planned to run under `name`.
+    fn planned(&self, name: &str) -> &Leg {
+        self.legs.iter().find(|planned| planned.name == name).expect("a planned leg")
     }
 
     fn node(&self) -> &Node {
@@ -396,7 +389,7 @@ impl Soak {
                 let now = Snapshot::take(&self.node().metrics);
                 let breaches = judge(&figures, &now.since(&self.window));
                 // The generator's own arithmetic: a leg's windows are equal parts of its length.
-                let planned = self.legs.iter().find(|planned| planned.name == leg).expect("a planned leg");
+                let planned = self.planned(&leg);
                 let length = Duration::from_secs(planned.secs) / planned.windows.max(1);
                 let from = self.leg_began + length * index;
                 let excused = self.timeline.excuse(from, from + length, WINDOW_SETTLE).map(str::to_owned);
@@ -408,6 +401,8 @@ impl Soak {
             Line::End { leg, multiple, figures } => {
                 let node_figures = Snapshot::take(&self.node().metrics).since(&self.start);
                 let breaches = judge(&figures, &node_figures);
+                let expected = requests_per_second(multiple) * self.planned(&leg).secs as f64;
+                self.interval.workload = workload_gaps(&figures, expected);
                 let peak = self.samples.iter().map(|(rss, _)| *rss).max().unwrap_or(0);
                 println!("SOAK {leg} figures, the injected faults included, the node's since its last restart:");
                 print(&leg, multiple, &figures, &node_figures, peak, &breaches);

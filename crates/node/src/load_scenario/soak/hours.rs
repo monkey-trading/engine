@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::load_scenario::plan::Figures;
 use crate::load_scenario::report::{Breach, tolerate};
 use crate::load_scenario::soak::faults::Done;
 use crate::load_scenario::{MISSES, WINDOWS};
@@ -62,6 +63,29 @@ pub(super) struct Interval {
     pub unexpected_alerts: Vec<String>,
     /// A fault that must raise an alert and did not, by the fault's name.
     pub missing_alerts: Vec<String>,
+    /// What the interval's order flow lacked (`workload_gaps`), whatever excuses its windows.
+    pub workload: Vec<String>,
+}
+
+/// The least share of the requests an interval should have sent that it must have, which a generator that
+/// is open-loop reaches however the node does.
+const REQUESTS_AT_LEAST: f64 = 0.5;
+
+/// What an interval's order flow lacked, from the generator's totals over all of it: a market order
+/// filled, and half the requests its rate and length call for sent. The windows an event excuses are not
+/// judged against the bar, but they are not exempt from running a load.
+pub(super) fn workload_gaps(figures: &Figures, expected_requests: f64) -> Vec<String> {
+    let sent = figures.sent.values().sum::<u64>() as f64;
+    let mut gaps = Vec::new();
+    if figures.fills == 0 {
+        gaps.push("no market order filled in the interval".to_owned());
+    }
+    if sent < expected_requests * REQUESTS_AT_LEAST {
+        gaps.push(format!(
+            "{sent:.0} requests sent in the interval, under half the {expected_requests:.0} its rate calls for"
+        ));
+    }
+    gaps
 }
 
 /// What fails `interval` against the bounds that need nothing from the intervals before it. An interval
@@ -98,6 +122,7 @@ pub(super) fn failures(interval: &Interval, judged_required: bool) -> Vec<String
             failed.push(format!("after a restart: {why}"));
         }
     }
+    failed.extend(interval.workload.iter().cloned());
     failed.extend(interval.unexpected_alerts.iter().map(|name| format!("alert {name} raised outside any fault")));
     failed.extend(interval.missing_alerts.iter().map(|name| format!("{name} raised no alert")));
     failed
@@ -183,6 +208,21 @@ mod tests {
     }
 
     #[test]
+    fn an_interval_that_ran_no_order_flow_fails_even_when_every_window_is_excused_and_the_run_is_short() {
+        let sent =
+            |requests| Figures { sent: [("market".to_owned(), requests)].into(), fills: 1, ..Figures::default() };
+        assert!(workload_gaps(&sent(1_000), 1_000.0).is_empty(), "the load ran");
+        assert!(workload_gaps(&sent(500), 1_000.0).is_empty(), "half the requests is enough");
+        assert_eq!(workload_gaps(&sent(499), 1_000.0).len(), 1, "under half");
+        let unfilled = Figures { fills: 0, ..sent(1_000) };
+        assert_eq!(workload_gaps(&unfilled, 1_000.0), ["no market order filled in the interval"]);
+        let nothing = workload_gaps(&Figures::default(), 1_000.0);
+        let interval =
+            Interval { windows: vec![window(0, vec![], Some("restart"))], workload: nothing, ..Interval::default() };
+        assert_eq!(failures(&interval, false).len(), 2, "a short run still needs a load");
+    }
+
+    #[test]
     fn a_median_breach_names_its_own_window_after_excused_ones() {
         let interval = Interval {
             windows: vec![
@@ -232,6 +272,7 @@ mod tests {
             }],
             unexpected_alerts: vec!["log_sync_held".to_owned()],
             missing_alerts: vec!["slow_link".to_owned()],
+            workload: Vec::new(),
         };
         let failed = failures(&interval, true);
         assert_eq!(failed.len(), 4, "{failed:?}");
