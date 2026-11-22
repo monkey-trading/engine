@@ -355,7 +355,7 @@ fn is_host_port(address: &str) -> bool {
 /// write to it lands in, whether or not the rest of it exists yet.
 /// Error cases:
 /// - the working directory cannot be read, or a part of `path` that exists cannot be resolved
-fn resolved(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+pub(super) fn resolved(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     let absolute = std::path::absolute(path)?;
     let mut existing = absolute.as_path();
     let mut rest = Vec::new();

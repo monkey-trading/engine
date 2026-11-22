@@ -94,7 +94,10 @@ Advance-5 configurator:
 
 - [ ] **Server:** Advance-5, AMD EPYC 8224P, 24 cores and 48 threads at 2.55 GHz (3.0 GHz boost).
 - [ ] **Memory:** 192 GB. The configurator offers 96 GB to 576 GB.
-- [ ] **Storage:** at least 2 × 1.92 TB NVMe. The confidential computing page lists 2 × 960 GB to
+- [ ] **Storage:** at least 2 × 1.92 TB NVMe. Each guest's log goes on one drive and its derived
+  stores, which are the history index, the marks cache, the recovery caches and the daily snapshots,
+  on the other. Their buffered writes hold the log's batch syncs when they share its disk, and a
+  production build refuses a log directory on the device of any of them. The confidential computing page lists 2 × 960 GB to
   8 × 7.68 TB. Which sizes the configurator offers for this server is **UNVERIFIED**.
 - [ ] **Public bandwidth:** the default 1 Gbit/s.
 - [ ] **Operating system:** Ubuntu Server 26.04 LTS, without a hypervisor template.

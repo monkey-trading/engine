@@ -16,7 +16,11 @@
 # their values into the attested enclave (key-recovery.md, "Secrets"); a production build refuses
 # `api_key_env` and `url_env`. A URL's origin stays here, so a delivered value never changes who answers.
 #
-# Paths are under /data, the image's one writable disk. The alert outbox must be a sibling of the
+# Paths are under /data, the image's writable disk. The log directory is a mount point of its own
+# volume, the host's first NVMe drive, and everything else under /data is on the second: the history
+# index, the marks cache, the recovery caches and the daily snapshots write buffered data whose flush
+# holds the log's batch syncs when it shares their disk. A production build refuses a log directory
+# on the device of any of them (sev-snp-host.md, "Storage"). The alert outbox must be a sibling of the
 # log directory. A production build refuses mock providers, an unsigned API, plain-http origins and
 # a config without [api.tls.acme].
 
