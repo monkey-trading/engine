@@ -19,8 +19,8 @@ use crate::snapshot::sealing::Encoding;
 use crate::snapshot::{self, RecoveryContext, Snapshot};
 use crate::stats::background::Job;
 
-/// The least sequenced time a capture in flight waits for the history index before a capture due behind it
-/// alerts. Cadence already keeps the interval between the two.
+/// The least sequenced time a capture in flight waits for the history index before a capture behind it
+/// alerts. Outside shutdown, cadence also keeps the interval between the two.
 const CAPTURE_LATE: Millis = 60_000;
 
 /// A checkpoint whose capture waits, with its progress and recovery facts as they stood then.
@@ -180,8 +180,8 @@ impl Sequencer {
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
         let Some(endpoint) = self.sealing.clone() else { return Ok(()) };
         let Some(permit) = endpoint.try_permit() else {
-            // A capture still in flight past the interval, and a minute at least, waits for an index
-            // behind the log: no cache is written until the index reaches it.
+            // A capture still in flight a minute after it was handed over waits for an index behind the
+            // log: no cache is written until the index reaches it.
             if let Some((seq, handed)) = self.captures.handed
                 && self.engine.now().saturating_sub(handed) >= CAPTURE_LATE
             {
