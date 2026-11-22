@@ -185,7 +185,8 @@ relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the 
 interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
 # Reads the posted head back every 30 s: a post lands at most once an hour outside a turn. While a turn
 # names the operator it reads every sixth of the heartbeat interval, and with EVM custody never less
-# often than every 30 s, whatever this says.
+# often than every 30 s, whatever this says. While none does, it also reads every second from each turn's
+# boundary, by trusted time, until 30 s past it or the first head of a turn it found.
 read_interval = "30s"
 
 [liveness]

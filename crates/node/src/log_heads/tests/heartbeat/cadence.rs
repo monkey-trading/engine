@@ -137,7 +137,8 @@ async fn a_new_turns_first_head_goes_out_from_its_boundary_within_half_an_interv
         let case = format!("{before} s before, {lag} s late, confirmed {confirm} s on, {behind} s behind");
         let chain = FakeChain::new(None);
         let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
-        let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), boundary - before * 1000);
+        let drive =
+            spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), (boundary - before * 1000, 0));
         drive.clock.skew(-behind * 1000);
         // As the liveness rule lets it sign while no turn names the operator: at the tip, up to the boundary.
         drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
@@ -175,7 +176,7 @@ async fn a_first_head_the_relayer_holds_back_goes_out_at_the_next_read_from_the_
     let boundary = engine_core::turns::boundary(turn(GENERATION).turn).expect("the turn has a boundary");
     let chain = FakeChain::new(None);
     let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
-    let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), boundary - 10_000);
+    let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), (boundary - 10_000, 0));
     drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
     drive.release(1);
     pass(&drive, 10).await;
@@ -211,6 +212,35 @@ async fn a_first_head_held_back_on_a_read_tick_goes_out_at_the_next_tick() {
     assert_eq!(first, Some(tick), "held back at the start's read, sent at the next tick");
 }
 
+/// A day with no fresh trusted time sample, on a monotonic clock running the 500 ppm slow the liveness rule
+/// allows, leaves the sample's bounds 43.2 s behind true time: the poster still reads from the boundary before
+/// true time reaches it, from the bound widened for that drift, and sends the turn's first head at once.
+#[tokio::test(start_paused = true)]
+async fn a_day_old_sample_on_a_slow_monotonic_clock_still_reads_from_the_boundary() {
+    let boundary = engine_core::turns::boundary(turn(GENERATION).turn).expect("the turn has a boundary");
+    let (day, drift) = (Duration::from_secs(86_400), 43_200);
+    let chain = FakeChain::new(None);
+    let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
+    let start = boundary - 86_400_000 - 10_000;
+    let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), (start, drift));
+    drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
+    drive.release(1);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // A day on, 10 s before the boundary; a release wakes the poster to place it again.
+    drive.clock.advance(day - Duration::from_secs(1));
+    drive.release(2);
+    pass(&drive, 10).await;
+    chain.name_turn(turn(GENERATION));
+    chain.change_turn(|turn| turn.interval = TIGHTEST_INTERVAL);
+    drive.release(3);
+    drive.confirm(3, 0xc1);
+    let named = tokio::time::Instant::now();
+    pass(&drive, 3).await;
+    let first = chain.posted_v2_at().first().map(|at| *at - named);
+    drive.stop().await;
+    assert!(first.is_some_and(|first| first <= Duration::from_secs(1)), "{first:?} after the turn was named");
+}
+
 /// Where no turn names the operator from a boundary, the poster reads the chain every second from when true
 /// time may have reached the boundary until it has certainly passed it by 30 s, the 30 s turn reads keeping
 /// their cadence, then every 30 s again; on monotonic time, so a host clock held at the boundary changes
@@ -221,7 +251,7 @@ async fn a_boundary_that_names_no_turn_is_read_for_30_s_then_every_30_s() {
     for stalled in [false, true] {
         let chain = FakeChain::new(None);
         chain.slow_turn_reads(Duration::from_millis(100));
-        let drive = spawn_retrying_at(chain.clone(), None, Duration::from_secs(30), boundary - 10_000);
+        let drive = spawn_retrying_at(chain.clone(), None, Duration::from_secs(30), (boundary - 10_000, 0));
         drive.release(1);
         // Reads to 1 s after the start, then to 40 s past the boundary, then to 130 s past it.
         let mut counts = Vec::new();

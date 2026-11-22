@@ -10,8 +10,8 @@ import {LivenessTest} from "./helpers/LivenessTest.sol";
 /// with every slot witnessed. The first comes anywhere in the half interval after the boundary, as a
 /// member that also held the turn before posts it and as the poster, reading from each turn's boundary,
 /// finds the first turn after none named the operator, or, if later, within 30 s and a read tick, a sixth
-/// of an interval, a margin past those. With any one head failing, or one a read tick late, with the rest following it, at every second of that
-/// phase, no promotion or skip comes due. Once a head of the signer epoch has landed, the promotion also stays further off than the
+/// of an interval, a margin past those. With any one head failing, or one a read tick late, with the rest
+/// following it, at every second of that phase, no promotion or skip comes due. Once a head of the signer epoch has landed, the promotion also stays further off than the
 /// operator's stop margin. Before one has, as at the first turn after rotation turns on, the boundary's
 /// slot and the one before it start the count, and under the tightest rule a failed first head can bring
 /// the operator's stop, though not the promotion, before its next head lands.
@@ -19,7 +19,8 @@ abstract contract HeartbeatPaceTest is LivenessTest {
     /// The operator's node stops signing this long before a promotion could pass (`liveness::DELTA`).
     uint64 internal constant STOP_MARGIN = 15;
     uint256 internal constant NONE = type(uint256).max;
-    /// How often the poster reads whether a turn names the operator while none does (`TURN_READ_EVERY`).
+    /// How often the poster's regular reads ask whether a turn names the operator while none does
+    /// (`TURN_READ_EVERY`), beside its reads from each boundary: the base of the first head's margin.
     uint64 internal constant TURN_READ = 30;
 
     uint64 internal start;

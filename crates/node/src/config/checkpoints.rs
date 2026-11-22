@@ -87,8 +87,9 @@ pub struct LogHeadsSection {
     #[serde(with = "humantime_serde", default = "default_log_heads_interval")]
     pub interval: Duration,
     /// How often the poster reads the posted head back, and at least every `interval`. Wherever the
-    /// liveness rule runs, as with EVM custody, it reads at least every 30 s, and while a turn names the
-    /// operator every sixth of its heartbeat interval.
+    /// liveness rule runs, as with EVM custody, it reads at least every 30 s, while a turn names the
+    /// operator every sixth of its heartbeat interval, and while none does every second from each turn's
+    /// boundary, by trusted time, until 30 s past it or the first head of a turn it found.
     #[serde(with = "humantime_serde", default = "default_log_heads_read_interval")]
     pub read_interval: Duration,
 }

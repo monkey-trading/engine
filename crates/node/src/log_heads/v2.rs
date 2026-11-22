@@ -17,7 +17,7 @@ use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::liveness::operator::Signing;
-use crate::liveness::{Released, Signable};
+use crate::liveness::{MAX_SLOW_PPM, Released, Signable};
 use crate::log_heads::Head;
 use crate::trusted_time::TrustedClock;
 
@@ -183,11 +183,12 @@ pub(crate) struct BoundaryReads {
 
 impl BoundaryReads {
     /// Waits for the next read due from a turn's boundary as the latest trusted time sample places it, on
-    /// monotonic time, whatever the host clock reads: from when true time may have reached the boundary,
-    /// every `BOUNDARY_READ_EVERY` until it has certainly passed it by `BOUNDARY_SEARCH_MS`, then from the
-    /// next boundary. Never completes without `trusted`, nor before its first sample.
+    /// monotonic time, whatever the host clock reads: from when true time may have reached the boundary, on
+    /// a monotonic clock running up to `MAX_SLOW_PPM` slow, every `BOUNDARY_READ_EVERY` until it has
+    /// certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
+    /// `trusted`, nor before its first sample.
     pub(crate) async fn next(&mut self, trusted: Option<&TrustedClock>) -> Instant {
-        let bounds = trusted.and_then(|trusted| trusted.reached_ms().zip(trusted.since_sample_ms()));
+        let bounds = trusted.and_then(|trusted| trusted.reached_ms().zip(trusted.upper_bound_ms(MAX_SLOW_PPM)));
         let Some((earliest, latest)) = bounds else { return std::future::pending().await };
         let now = Instant::now();
         // The latest boundary true time may have reached, and whether it may still be in the search after it.
