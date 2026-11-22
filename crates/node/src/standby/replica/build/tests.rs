@@ -310,6 +310,48 @@ async fn a_refused_origins_snapshot_gives_way_to_the_next_origins_at_its_offset(
     assert_eq!(kept, [newer], "the snapshot taken is listed");
 }
 
+/// A copy with a tail no accepted signer sealed, after the checkpoint a signed snapshot stands at, is cut back and its
+/// replica built again from the snapshot, with no whole replay: the tail is kept aside, paged once as Critical
+/// `copy_tail_unaccepted`, and the replica holds what a whole replay of the cut copy holds.
+#[tokio::test]
+async fn a_replica_from_a_snapshot_is_rebuilt_after_an_unaccepted_tail_is_cut() {
+    let (dir, snapshots) = (scratch_dir("build-snapshot-cut"), scratch_dir("build-snapshot-cut-daily"));
+    write_log(&dir).await;
+    let seq = publish_middle(&dir, &snapshots, &recorded());
+    // The copy's last checkpoints dropped, as an archive whose segments end between checkpoints lists, and the tail
+    // after the one left sealed by a key the vault has not recorded.
+    while crate::standby::copies_tests::uncovered(&dir).len() < 2 {
+        crate::test_support::drop_last_checkpoint(&dir);
+    }
+    let tail = crate::standby::copies_tests::uncovered(&dir);
+    let foreign = EnclaveKey::generate();
+    crate::standby::copies_tests::seal_with(&dir, &foreign, &tail);
+    let last = log_entries(&dir).into_iter().rev().find_map(|entry| match entry {
+        LogEntry::Checkpoint(checkpoint) => Some(checkpoint.seq),
+        _ => None,
+    });
+    assert!(last > Some(seq), "the snapshot's checkpoint precedes the tail's");
+    let signed = usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.expect("a usable snapshot");
+    let (_guard, mut alerts) = capture_alerts();
+    let follower = open(&dir, Some(signed));
+    assert_eq!(follower.replays(), 0, "the rebuild after the cut replays nothing whole");
+    assert_eq!(follower.replica().last_seq(), Some(tail[0] - 1), "the tail was cut");
+    let alert = alerts.try_recv().expect("the tail is paged");
+    assert_eq!(
+        (alert["alert"].as_str(), alert["level"].as_str(), alert["seq"].as_str()),
+        ("copy_tail_unaccepted", "ERROR", tail[0].to_string().as_str())
+    );
+    assert!(alerts.try_recv().is_err(), "the page is the only one: the snapshot is not refused");
+    let mut aside = dir.as_os_str().to_owned();
+    aside.push(format!(".unaccepted-{}", tail[0]));
+    assert!(std::path::Path::new(&aside).is_dir(), "the tail is kept aside");
+    let whole = open(&dir, None);
+    assert_eq!(whole.replays(), 1);
+    assert_eq!(follower.replica().head_link(), whole.replica().head_link());
+    assert_eq!(follower.replica().last_checkpoint(), whole.replica().last_checkpoint());
+    assert_eq!(engine_json(&follower), engine_json(&whole));
+}
+
 /// A replica from a snapshot records no checkpoint it verified, so it answers no member's log check, whose range may
 /// start before its snapshot; a whole replay records them.
 #[tokio::test]
