@@ -957,6 +957,14 @@ an index: load only the rule whose hint matches the current action.
   node keeps fresh, under a source answering in 200 ms, and those of traders that wait for the source, or may, or that
   queue behind another trader's wait on their client's connection, printed apart (#1070), failing outside it under
   a loaded runner's tolerance, then the log replayed from the rebuilt book (`replay::replay_path_from`);
+  `dev-soak.sh`, the soak dev scenario (`load_scenario/soak/`, #909): that load for hours at ten times launch flow on a node
+  that publishes paired recovery caches (`load_scenario/durable.rs`), in report intervals judged by window against #904's
+  bar outside what a fault, a restart or the start excuses (`timeline.rs`), #867's faults injected in turn through links in
+  front of the crypto stand-ins (`faults.rs`: a stalled venue, a dropped one, a slow link, a quiet product, both venues
+  down, trusted time down, each followed by every market priced again within its deadline), the node stopped and started
+  again from its newest cache, and each interval's report of latency, resident memory against the first interval's
+  (allowed the newest cache's growth), the log's and the caches' bytes on disk, the stats worker's lag and the alerts no
+  event that explains it excused (`alerts.rs`, `hours.rs`); `--rotation` repeats the short-turns scenario instead;
   `dev-recovery-scale.sh`, the recovery dev scenario (`sequencer/recovery_scale/`, #908): a node's sequencer takes over
   the launch book on a test clock and writes 30 days of launch flow and 3 of ten times it on accelerated sequenced time
   (`flow.rs`: the template's ticks, each market's price commands at `load_scenario`'s live rates while its venue is
@@ -1044,7 +1052,7 @@ an index: load only the rule whose hint matches the current action.
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots and member snapshot start), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
-  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
+  score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
@@ -1273,6 +1281,11 @@ Run from the repo root:
   that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures; with
   `ENGINE_BENCH_SCALE_TO_RUNNER=1`, which only CI's job sets, each of those bars is scaled by 1 to 2.5 times a fixed
   reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar, as do `dev-load`'s order-to-fill and stream-lag bars
+- Soak dev scenario: `./scripts/dev-soak.sh [hours]` (needs only Cargo; by hand before each release, with
+  `SOAK_DIR` on a disk with room for the log; `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20),
+  `SOAK_RESTART_HOURS` (2), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300), `SOAK_MULTIPLE` (10), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_SHORT` (1 for a run that tests the harness) set the run and
+  `LOAD_ACCOUNTS` and the load scenario's other variables size the load; CI runs nine minutes at 10,000 accounts);
+  `./scripts/dev-soak.sh --rotation [hours]` runs the short-turns scenario again and again for the hours
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it
   prints a day of; at the full 30 days the log does not fit a development machine, so run it under `nice` with
   `RECOVERY_LAUNCH_SECS` set to the days that fit, which sizes the ten-times leg a tenth as long unless

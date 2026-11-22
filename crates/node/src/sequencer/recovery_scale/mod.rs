@@ -41,11 +41,11 @@
 mod bench;
 mod cache;
 mod daily;
-mod flow;
+pub(crate) mod flow;
 mod handover;
 mod member_snapshot;
 mod orders;
-mod paired;
+pub(crate) mod paired;
 mod report;
 mod restart;
 #[cfg(test)]
@@ -109,7 +109,7 @@ const SWITCH_BUDGET: Duration = Duration::from_secs(1);
 const COMMAND_BAR: Duration = Duration::from_millis(500);
 
 /// The book's engine as an encoding, decoded afresh for each replay that starts from it.
-pub(super) struct Base {
+pub(crate) struct Base {
     encoded: String,
 }
 
@@ -118,7 +118,7 @@ impl Base {
     /// starts at seq 0, where a node's history index and segment catalog start.
     /// Error cases:
     /// - the book does not encode or decode
-    fn new(book: &Engine) -> anyhow::Result<Self> {
+    pub(crate) fn new(book: &Engine) -> anyhow::Result<Self> {
         let mut fields: BTreeMap<String, Box<serde_json::value::RawValue>> =
             serde_json::from_str(&serde_json::to_string(book)?)?;
         fields.insert("last_seq".into(), serde_json::value::RawValue::from_string("null".into())?);
@@ -126,7 +126,7 @@ impl Base {
     }
 
     /// The book, decoded, its transient indexes rebuilt as recovery rebuilds them.
-    pub(super) fn engine(&self) -> Engine {
+    pub(crate) fn engine(&self) -> Engine {
         let mut engine: Engine = serde_json::from_str(&self.encoded).expect("the book decodes");
         engine.restore_indexes();
         engine

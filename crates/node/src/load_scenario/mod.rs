@@ -33,16 +33,18 @@
 //! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections, at most two on
 //! CME Group's, whose stand-in reads its prices twice a second) and `LOAD_SOURCE_DELAY_MS` (200).
 
+mod durable;
 pub(crate) mod generator;
 mod node;
 pub(crate) mod plan;
 mod report;
 mod rerun;
+mod soak;
 mod venues;
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::Duration;
 
 use engine_core::types::{MarketId, Millis};
@@ -50,7 +52,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::clock::now_ms;
 use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
-use crate::load_scenario::node::Node;
+use crate::load_scenario::node::{Boot, Node};
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
 use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, judge, print, unmeasured};
 use crate::load_scenario::venues::Moves;
@@ -90,6 +92,8 @@ const BOOK_EPOCH_MS: Millis = 24 * 60 * 60 * 1_000;
 const SATURATED: f64 = 0.9;
 /// How long the generator may go without a line: a leg, its drain and its subscribers' start.
 const LINE_WITHIN: Duration = Duration::from_secs(10 * 60);
+/// How long the generator's clients keep trying to reach a node before they give up.
+const CONNECT_SECS: u64 = 60;
 /// How long every market has to be priced once the feeds start.
 const PRICED_WITHIN: Duration = Duration::from_secs(90);
 /// How long the screening source takes to answer [#1070]: a remote source's round trip, which a request
@@ -120,6 +124,15 @@ fn dev_scenario_load() {
     runtime.block_on(run());
 }
 
+/// How often each market's mid moves: `LOAD_CRYPTO_RATE` sets every crypto market's price commands a
+/// second in place of its measured one, and `LOAD_RWA_MOVES` each other market's moves a second.
+fn moves() -> Moves {
+    let rate = |measured: f64| std::env::var("LOAD_CRYPTO_RATE").map_or(measured, |rate| rate.parse().expect("a rate"));
+    let crypto =
+        CRYPTO_RATES.iter().map(|(market, measured)| (*market, rate(*measured) / CRYPTO_CONNECTIONS)).collect();
+    Moves { crypto, rwa: env("LOAD_RWA_MOVES", RWA_MOVES) }
+}
+
 /// The book's mix at the wall clock `now`: its clock `BOOK_LEAD_MS` behind, its emissions and staking
 /// starting a day ahead of `now` and not at the deployment's start, which may be in the past.
 fn book_mix(now: Millis, accounts: usize) -> Mix {
@@ -144,20 +157,16 @@ async fn run() {
     let engine = std::mem::take(&mut book.h.engine);
     drop(book);
 
-    // `LOAD_CRYPTO_RATE` sets every crypto market's rate in place of its measured one.
-    let rate = |measured: f64| std::env::var("LOAD_CRYPTO_RATE").map_or(measured, |rate| rate.parse().expect("a rate"));
-    let crypto =
-        CRYPTO_RATES.iter().map(|(market, measured)| (*market, rate(*measured) / CRYPTO_CONNECTIONS)).collect();
     let source_delay = Duration::from_millis(env("LOAD_SOURCE_DELAY_MS", SOURCE_DELAY_MS));
-    let mut venues = venues::start(Moves { crypto, rwa: env("LOAD_RWA_MOVES", RWA_MOVES) }, source_delay).await;
+    let venues = venues::start(moves(), source_delay, false).await;
     let dir = scratch_dir("load");
     let (listener, api) = node::listen().await;
-    let node = Node::start(engine, &dir, listener, &mut venues).await;
+    let node = Node::start(Boot::Book(Box::new(engine)), &dir, listener, &venues, None).await;
     wait_priced(&node.tx).await;
 
     let legs = vec![
-        Leg { name: "launch_flow".into(), multiple: 1.0, secs: env("LOAD_LEG_SECS", LEG_SECS) },
-        Leg { name: "ten_times".into(), multiple: 10.0, secs: env("LOAD_LEG_SECS", LEG_SECS) },
+        Leg { name: "launch_flow".into(), multiple: 1.0, secs: env("LOAD_LEG_SECS", LEG_SECS), windows: 0 },
+        Leg { name: "ten_times".into(), multiple: 10.0, secs: env("LOAD_LEG_SECS", LEG_SECS), windows: 0 },
     ];
     let mut plan = Plan {
         api,
@@ -171,6 +180,7 @@ async fn run() {
         ramp: None,
         windows: WINDOWS,
         screening_bound_ms: u64::try_from(venues.access.max_age.as_millis()).expect("a bound in range"),
+        connect_secs: CONNECT_SECS,
     };
     if env("LOAD_RAMP", 0) == 1 {
         plan.ramp = Some(Ramp { max: plan.ceiling(), ..RAMP });
@@ -178,7 +188,7 @@ async fn run() {
     let runs = drive(&plan, &node).await;
 
     let (signer, log_dir) = (node.signer, node.log_dir.clone());
-    node.stop().await.expect("the node drains");
+    node.stop(true).await.expect("the node drains");
     drop(venues);
     let rebuilt = build(&mix, counts).h.engine;
     let replayed = crate::sequencer::replay::replay_path_from(rebuilt, &log_dir, signer, Default::default())
@@ -190,31 +200,35 @@ async fn run() {
     conclude(&runs);
 }
 
+/// Each market with no price, and why: its refusal, and the age of each quote it holds.
+async fn unpriced(tx: &mpsc::Sender<Request>) -> Vec<(MarketId, String)> {
+    let (reply, unpriced) = oneshot::channel::<Vec<(MarketId, String)>>();
+    let read = move |engine: &engine_core::Engine| {
+        let now = now_ms().max(engine.now());
+        let unpriced: Vec<(MarketId, String)> = engine
+            .markets()
+            .iter()
+            .filter_map(|(id, market)| {
+                let refused = market.index(now).err()?;
+                let held: Vec<String> = market
+                    .quotes
+                    .iter()
+                    .map(|(source, quote)| format!("{source} {:?} {} ms", quote.contract, now - quote.ts))
+                    .collect();
+                Some((*id, format!("{refused:?}, holding {held:?}")))
+            })
+            .collect();
+        let _ = reply.send(unpriced);
+    };
+    tx.send(Request::Query(Box::new(read))).await.expect("the sequencer");
+    unpriced.await.expect("an answer")
+}
+
 /// Waits for every market to be priced from its stand-ins.
 async fn wait_priced(tx: &mpsc::Sender<Request>) {
     let started = std::time::Instant::now();
     loop {
-        let (reply, unpriced) = oneshot::channel::<Vec<(MarketId, String)>>();
-        let read = move |engine: &engine_core::Engine| {
-            let now = now_ms().max(engine.now());
-            // Each market with no price, why, and the age of each quote it holds.
-            let unpriced: Vec<(MarketId, String)> = engine
-                .markets()
-                .iter()
-                .filter_map(|(id, market)| {
-                    let refused = market.index(now).err()?;
-                    let held: Vec<String> = market
-                        .quotes
-                        .iter()
-                        .map(|(source, quote)| format!("{source} {:?} {} ms", quote.contract, now - quote.ts))
-                        .collect();
-                    Some((*id, format!("{refused:?}, holding {held:?}")))
-                })
-                .collect();
-            let _ = reply.send(unpriced);
-        };
-        tx.send(Request::Query(Box::new(read))).await.expect("the sequencer");
-        let unpriced = unpriced.await.expect("an answer");
+        let unpriced = unpriced(tx).await;
         if unpriced.is_empty() {
             println!("LOAD priced every market after {:?}, stress levels {:?}", started.elapsed(), stress(tx).await);
             return;
@@ -237,9 +251,16 @@ async fn stress(tx: &mpsc::Sender<Request>) -> BTreeMap<usize, usize> {
     levels.await.expect("an answer")
 }
 
-/// Starts the generator, judges each leg it reports, and stops the ramp once every budget has broken,
-/// a leg did not measure what it claims, or the sequencer is saturated.
-async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
+/// The load generator, a child process, and its lines.
+struct Generator {
+    child: Child,
+    /// Where the node's side answers each leg's end.
+    answers: ChildStdin,
+    lines: mpsc::UnboundedReceiver<Line>,
+}
+
+/// Starts the load generator on `plan`, whose lines come back on the channel.
+fn spawn_generator(plan: &Plan) -> Generator {
     let mut child = Command::new(std::env::current_exe().expect("this test binary"))
         .args(["--exact", "load_scenario::generator::load_generator", "--ignored", "--nocapture", "--test-threads=1"])
         .env("LOAD_PLAN", serde_json::to_string(plan).expect("a plan encodes"))
@@ -247,9 +268,9 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
         .stdout(Stdio::piped())
         .spawn()
         .expect("the load generator starts");
-    let mut answers = child.stdin.take().expect("the generator's input");
+    let answers = child.stdin.take().expect("the generator's input");
     let output = child.stdout.take().expect("the generator's output");
-    let (lines_tx, mut lines) = mpsc::unbounded_channel();
+    let (lines_tx, lines) = mpsc::unbounded_channel();
     std::thread::spawn(move || {
         for line in BufReader::new(output).lines().map_while(Result::ok) {
             // libtest writes the test's name ahead of its first line, on the same line.
@@ -259,6 +280,13 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
             }
         }
     });
+    Generator { child, answers, lines }
+}
+
+/// Starts the generator, judges each leg it reports, and stops the ramp once every budget has broken,
+/// a leg did not measure what it claims, or the sequencer is saturated.
+async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
+    let Generator { mut child, mut answers, mut lines } = spawn_generator(plan);
     let resident = Resident::start();
     let (mut start, mut window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
     let mut windows: Vec<Vec<Breach>> = Vec::new();

@@ -44,7 +44,7 @@ pub(super) struct Paired {
 /// The config of a node whose log is in `run`, with its caches there, one every `interval`, pinned to
 /// `signer`, its replays' command seals checked ahead by `workers`, in the log's deployment and at
 /// the template's cadences.
-pub(super) fn node_config(run: &Path, interval: Duration, (signer, workers): (AccountId, ReplayWorkers)) -> NodeConfig {
+pub(crate) fn node_config(run: &Path, interval: Duration, (signer, workers): (AccountId, ReplayWorkers)) -> NodeConfig {
     let mut cfg = crate::test_support::dev_config();
     cfg.node.replay_workers = workers;
     cfg.custody.chain_id = DOMAIN.chain_id;

@@ -8,7 +8,7 @@ mod readers;
 mod rewrite;
 mod scratch;
 mod staking_rpc;
-pub use alerts::{capture_alerts, capture_alerts_and_resolutions, capture_field};
+pub use alerts::{capture_alerts, capture_alerts_and_resolutions, capture_alerts_everywhere, capture_field};
 pub use copy::copy_dir;
 pub use events::every_event;
 pub use readers::{marks_reader, stats};

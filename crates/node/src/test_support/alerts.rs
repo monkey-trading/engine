@@ -48,6 +48,17 @@ pub fn capture_alerts() -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {
     (tracing::subscriber::set_default(Registry::default().with(AlertLayer(tx, "alert"))), rx)
 }
 
+/// Routes every thread's logs to an alert collector for the rest of the process, for a scenario whose
+/// node runs on several threads, as `#[tokio::test(flavor = "multi_thread")]` and the sequencer's own
+/// thread do, and which runs alone in its process. It sets the process's global subscriber, so it is
+/// called once, before any other collector.
+pub fn capture_alerts_everywhere() -> mpsc::UnboundedReceiver<Alert> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tracing::subscriber::set_global_default(Registry::default().with(AlertLayer(tx, "alert")))
+        .expect("no other global subscriber");
+    rx
+}
+
 /// Collects the fields of every event that carries a `key` field, as `capture_alerts` does for alerts.
 pub fn capture_field(key: &'static str) -> (DefaultGuard, mpsc::UnboundedReceiver<Alert>) {
     keep_callsites_interested();

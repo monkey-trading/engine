@@ -13,7 +13,7 @@ mod hostile;
 mod hours;
 mod kraken_support;
 mod late;
-mod link;
+pub(crate) mod link;
 mod loss_trigger;
 mod mock;
 mod quiet;
