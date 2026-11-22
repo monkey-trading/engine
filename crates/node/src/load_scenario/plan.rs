@@ -59,6 +59,8 @@ pub(super) struct Plan {
     /// How long a client keeps trying to reach the node before the generator gives up: a node that
     /// restarts is gone this long.
     pub connect_secs: u64,
+    /// Whether the generator runs the storage probe whose blocks may excuse a window (`storage`).
+    pub storage_probe: bool,
 }
 
 /// One leg: a multiple of launch flow for a time.

@@ -39,7 +39,7 @@ use crate::load_scenario::plan::{
     ACCOUNT_RATE, CANCELS, LAUNCH_BTC_FILLS_PER_SECOND, LAUNCH_FILLS_PER_SECOND, LIMIT_ORDERS, Leg, Line,
     MARKET_ORDERS, Plan, requests_per_second,
 };
-use crate::load_scenario::storage::Probe;
+use crate::load_scenario::storage::{Probe, Storage};
 use crate::test_support::scratch_dir;
 
 /// The generator's runtime threads.
@@ -75,8 +75,8 @@ struct Scheduler {
     /// Every client's recorder, and every subscriber's.
     clients: Vec<Recorder>,
     subscribers: Vec<Recorder>,
-    /// The storage probe, read as each window closes (`storage`); None on a host that counts no
-    /// thread's time.
+    /// The storage probe, cut with each window's samples (`storage`); None unless the plan asks for it
+    /// and the host can run it.
     probe: Option<Arc<Probe>>,
 }
 
@@ -194,10 +194,12 @@ async fn run(plan: Plan) {
     }
     wait_subscribed(&stream_recorders).await;
     take_all(&client_recorders, &stream_recorders);
-    // On the node's filesystem: both take the test's temporary directory.
-    let probe_dir = scratch_dir("load-storage-probe");
-    std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
-    let probe = Probe::start(&probe_dir).expect("the storage probe starts").map(Arc::new);
+    // On the node's filesystem: the node's scenario takes the test's temporary directory too.
+    let probe = plan.storage_probe.then(|| {
+        let probe_dir = scratch_dir("load-storage-probe");
+        std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
+        Probe::start(&probe_dir).expect("the storage probe starts").map(Arc::new)
+    });
     let mut scheduler = Scheduler {
         rng: Rng::new(906),
         slots,
@@ -207,17 +209,14 @@ async fn run(plan: Plan) {
         in_flight,
         clients: client_recorders,
         subscribers: stream_recorders,
-        probe,
+        probe: probe.flatten(),
     };
     report(&Line::Ready { traders: plan.traders, subscribers: plan.subscribers });
 
     let mut stdin = std::io::stdin().lock().lines();
     'legs: for leg in plan.steps() {
         loop {
-            // A leg's first window starts here.
-            if let Some(probe) = &scheduler.probe {
-                probe.take();
-            }
+            scheduler.begin_leg();
             report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
             let windows = if leg.windows == 0 { plan.windows } else { leg.windows };
             let figures = scheduler.drive(&leg, windows).await;
@@ -246,7 +245,21 @@ async fn wait_subscribed(subscribers: &[Recorder]) {
     }
 }
 
+/// A window's samples and what the storage probe saw over it, cut at one instant: a block whose sync
+/// ends after the cut counts in the next window.
+fn close_window(clients: &[Recorder], subscribers: &[Recorder], probe: Option<&Probe>) -> (Samples, Option<Storage>) {
+    let cut = Instant::now();
+    (take_all(clients, subscribers), probe.map(|probe| probe.take(cut)))
+}
+
 impl Scheduler {
+    /// Starts a leg's first window: the storage probe's blocks from before it count in none.
+    fn begin_leg(&self) {
+        if let Some(probe) = &self.probe {
+            probe.take(Instant::now());
+        }
+    }
+
     /// Runs `leg`'s schedule, reporting each of its `windows` as it ends, and returns the leg's
     /// samples once its replies are in and every subscriber has taken a command stamped after its
     /// end, or `DRAIN` has passed, with the requests still unanswered and the subscribers behind.
@@ -258,11 +271,11 @@ impl Scheduler {
         let (mut due, mut index, mut next_window) = (start, 0, start + window);
         let mut all = Samples::default();
         let (clients, subscribers, probe) = (self.clients.clone(), self.subscribers.clone(), self.probe.clone());
-        // A window's samples, and the storage probe's read with them; the last one's also count what
+        // A window's samples and the storage probe's blocks, cut together; the last one's also count what
         // the leg's drain left behind.
         let close = |index: u32, all: &mut Samples, unanswered: u64, behind: u64| {
-            let samples = Samples { unanswered, behind, ..take_all(&clients, &subscribers) };
-            let storage = probe.as_ref().map(|probe| probe.take());
+            let (taken, storage) = close_window(&clients, &subscribers, probe.as_deref());
+            let samples = Samples { unanswered, behind, ..taken };
             report(&Line::Window { leg: leg.name.clone(), index, figures: samples.figures(), storage });
             all.merge(samples);
         };
@@ -381,102 +394,4 @@ impl Scheduler {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_trader_gets_only_what_it_can_act_on_and_no_more_than_its_rate() {
-        // Two clients of two traders each; only the second client's first trader rests an order.
-        let holdings: Vec<Arc<std::sync::Mutex<Holding>>> = (0..4).map(|_| Arc::default()).collect();
-        holdings[2].lock().unwrap().resting.push(7);
-        let start = Instant::now();
-        let slots = (0..4)
-            .map(|at| Slot { client: at / 2, trader: at % 2, holding: holdings[at].clone(), free_at: start })
-            .collect();
-        let (channels, mut received): (Vec<_>, Vec<_>) = (0..2).map(|_| mpsc::unbounded_channel()).unzip();
-        let in_flight = Arc::new(AtomicU64::new(0));
-        let weights = vec![(2, 1)];
-        let (clients, subscribers) = (Vec::new(), Vec::new());
-        let mut scheduler = Scheduler {
-            rng: Rng::new(1),
-            slots,
-            cursor: 0,
-            weights,
-            jobs: channels,
-            in_flight,
-            clients,
-            subscribers,
-            probe: None,
-        };
-        // Five requests a second among four traders, each free to send one every 1 / ACCOUNT_RATE.
-        for step in 0..200 {
-            scheduler.dispatch(start + Duration::from_millis(200 * step));
-        }
-        assert_eq!(scheduler.in_flight.load(Ordering::Acquire), 200);
-        let mut last: BTreeMap<(usize, usize), Instant> = BTreeMap::new();
-        let (mut cancels, mut markets) = (0, 0);
-        for (client, jobs) in received.iter_mut().enumerate() {
-            while let Ok(job) = jobs.try_recv() {
-                if let Some(before) = last.insert((client, job.trader), job.due) {
-                    let spacing = job.due.duration_since(before).as_secs_f64();
-                    assert!(
-                        spacing >= 1.0 / ACCOUNT_RATE - 1e-9,
-                        "trader {client}/{} sent {spacing}s apart",
-                        job.trader
-                    );
-                }
-                match job.kind {
-                    Kind::Cancel | Kind::CancelAll => {
-                        cancels += 1;
-                        assert_eq!((client, job.trader), (1, 0), "only the trader resting an order cancels");
-                    }
-                    Kind::CloseAll => panic!("no trader holds a position to close"),
-                    Kind::Market => markets += 1,
-                    Kind::Limit => {}
-                }
-            }
-        }
-        assert!(cancels > 0 && markets > 0, "{cancels} cancels, {markets} market orders");
-    }
-
-    #[test]
-    fn the_first_reply_of_each_other_status_is_written_out_with_its_body() {
-        let mut trader = traders::Trader::new(1);
-        let body = serde_json::json!({ "error": "screening is at capacity" });
-        let line = trader.refusal_line(503, &body).expect("the first 503 is said");
-        assert!(line.contains("503") && line.contains("screening is at capacity"), "{line}");
-        assert_eq!(trader.refusal_line(503, &body), None, "a second 503 is not");
-        assert!(trader.refusal_line(429, &body).is_some(), "another status is");
-    }
-
-    #[tokio::test]
-    async fn a_leg_waits_for_every_subscriber_to_take_a_command_stamped_after_its_end() {
-        let ended = 1_000;
-        let subscriber =
-            |newest: Option<i64>| Recorder::new(Samples { newest_stamp: newest, ..Samples::default() }.into());
-        let scheduler = |subscribers| Scheduler {
-            rng: Rng::new(1),
-            slots: Vec::new(),
-            cursor: 0,
-            weights: Vec::new(),
-            jobs: Vec::new(),
-            in_flight: Arc::default(),
-            clients: Vec::new(),
-            subscribers,
-            probe: None,
-        };
-        let caught_up = scheduler(vec![subscriber(Some(ended + 1)), subscriber(Some(ended + 250))]);
-        let far = Instant::now() + Duration::from_secs(60);
-        assert_eq!(caught_up.await_streams(ended, far).await, 0);
-        // One took nothing since the window began, one only a command stamped at the leg's end.
-        let behind = scheduler(vec![subscriber(Some(ended + 1)), subscriber(None), subscriber(Some(ended))]);
-        let late = behind.subscribers[1].clone();
-        let drained = Instant::now() + Duration::from_millis(500);
-        let catching = tokio::spawn(async move { behind.await_streams(ended, drained).await });
-        // The wait has looked once, with two subscribers behind, before the late one catches up.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        late.lock().unwrap().newest_stamp = Some(ended + 5);
-        let left = tokio::time::timeout(Duration::from_secs(10), catching).await.expect("in time").expect("the task");
-        assert_eq!(left, 1, "the subscriber that took a later command catches up; the one at the end does not");
-    }
-}
+mod tests;

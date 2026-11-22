@@ -129,6 +129,8 @@ async fn run() {
         windows: config.windows_in(config.report.as_secs()),
         screening_bound_ms: u64::try_from(venues.access.max_age.as_millis()).expect("a bound in range"),
         connect_secs: RESTART_DOWN.as_secs(),
+        // The soak judges no window by the runner's storage.
+        storage_probe: false,
     };
     println!("SOAK data in {} ({})", dir.display(), if kept { "kept" } else { "removed with the run" });
     let timing = Timing::for_venues(&venues::template_venues());

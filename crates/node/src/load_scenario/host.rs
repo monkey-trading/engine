@@ -4,8 +4,9 @@
 //! neighbours'; the I/O counts everything the host read, wrote, discarded and flushed, the node's log
 //! and its journal included, and how long each disk had I/O in flight.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -58,9 +59,14 @@ impl fmt::Display for Waited {
 }
 
 impl Waits {
-    /// The host's totals now.
+    /// The host's totals now, over every disk.
     pub(super) fn now() -> Self {
-        Waits { io_us: wait_us("io"), cpu_us: wait_us("cpu"), disks: disks() }
+        Waits { io_us: wait_us("io"), cpu_us: wait_us("cpu"), disks: disks(None) }
+    }
+
+    /// The host's totals now, over the disks named `only`.
+    pub(super) fn now_on(only: &BTreeSet<String>) -> Self {
+        Waits { io_us: wait_us("io"), cpu_us: wait_us("cpu"), disks: disks(Some(only)) }
     }
 
     /// How long the host's tasks waited from `earlier` to this, and what its disks did.
@@ -80,14 +86,15 @@ impl Waits {
     }
 }
 
-/// What every disk of the host has completed, from each whole disk's `stat`: a partition is counted in
-/// its disk, and a device built on others (`dm-`, `md`), memory (`zram`, `ram`) or a file (`loop`) is
-/// not a disk of its own.
-fn disks() -> Option<Disks> {
+/// What the host's disks, or those named `only`, have completed, from each whole disk's `stat`: a
+/// partition is counted in its disk, and a device built on others (`dm-`, `md`), memory (`zram`,
+/// `ram`) or a file (`loop`) is not a disk of its own.
+fn disks(only: Option<&BTreeSet<String>>) -> Option<Disks> {
     let mut disks = Disks::default();
     for disk in std::fs::read_dir("/sys/block").ok()?.filter_map(Result::ok) {
         let name = disk.file_name().to_string_lossy().into_owned();
-        if ["dm-", "md", "zram", "ram", "loop"].iter().any(|virtual_disk| name.starts_with(virtual_disk)) {
+        let named = only.is_none_or(|only| only.contains(&name));
+        if !named || ["dm-", "md", "zram", "ram", "loop"].iter().any(|virtual_disk| name.starts_with(virtual_disk)) {
             continue;
         }
         let (ops, bytes, busy_ms) =
@@ -96,6 +103,33 @@ fn disks() -> Option<Disks> {
         disks.busy_ms.insert(name, busy_ms);
     }
     Some(disks)
+}
+
+/// The whole disks that hold the filesystem `path` is on, from its device number (`/sys/dev/block`):
+/// the disk itself, the disk a partition is part of, or the disks under a device built on others
+/// (`slaves`, as under a device-mapper snapshot); None where the host does not list them.
+pub(super) fn backing_disks(path: &Path) -> Option<BTreeSet<String>> {
+    use std::os::unix::fs::MetadataExt;
+    let device = std::fs::metadata(path).ok()?.dev();
+    // Linux's device number: the major number in bits 8 to 19 and 32 to 43, the minor in the rest.
+    let major = ((device >> 8) & 0xfff) | ((device >> 32) & 0xffff_f000);
+    let minor = (device & 0xff) | ((device >> 12) & 0xffff_ff00);
+    let mut disks = BTreeSet::new();
+    whole_disks(&std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok()?, &mut disks);
+    (!disks.is_empty()).then_some(disks)
+}
+
+/// Adds to `disks` the whole disks under `device`, a block device's directory in sysfs.
+fn whole_disks(device: &Path, disks: &mut BTreeSet<String>) {
+    let slaves: Vec<_> = std::fs::read_dir(device.join("slaves"))
+        .map(|slaves| slaves.filter_map(|slave| std::fs::canonicalize(slave.ok()?.path()).ok()).collect())
+        .unwrap_or_default();
+    let disk = if device.join("partition").exists() { device.parent() } else { Some(device) };
+    if !slaves.is_empty() {
+        slaves.iter().for_each(|slave| whole_disks(slave, disks));
+    } else if let Some(name) = disk.and_then(Path::file_name) {
+        disks.insert(name.to_string_lossy().into_owned());
+    }
 }
 
 /// The I/O completed, the bytes it moved and the time with I/O in flight in a block device's `stat`:
@@ -144,16 +178,52 @@ mod tests {
         assert_eq!(completed("1 2 3 4 5 6 7"), None, "a stat too short to hold the time doing I/O");
     }
 
+    /// A whole disk names itself, a partition its disk, and a device built on others the disks under it,
+    /// as sysfs lays them out: `slaves` links to each device it is built on.
+    #[test]
+    fn a_filesystems_backing_disks_are_its_whole_disks_through_partitions_and_built_devices() {
+        let sys = crate::test_support::scratch_dir("backing-disks");
+        let (nvme, sda1, dm) = (sys.join("pci/nvme1n1"), sys.join("pci/sda/sda1"), sys.join("virtual/dm-0"));
+        for dir in [&nvme, &sda1, &dm.join("slaves")] {
+            std::fs::create_dir_all(dir).expect("a directory");
+        }
+        std::fs::write(sda1.join("partition"), "1\n").expect("a partition's number");
+        std::os::unix::fs::symlink(&nvme, dm.join("slaves/nvme1n1")).expect("a slave");
+        std::os::unix::fs::symlink(&sda1, dm.join("slaves/sda1")).expect("a slave");
+        let under = |device: &Path| {
+            let mut disks = BTreeSet::new();
+            whole_disks(device, &mut disks);
+            disks.into_iter().collect::<Vec<_>>()
+        };
+        assert_eq!(under(&nvme), ["nvme1n1"]);
+        assert_eq!(under(&sda1), ["sda"], "a partition's disk");
+        assert_eq!(under(&dm), ["nvme1n1", "sda"], "the disks under a device built on them");
+        // CI's Linux runners must name the disks under their temporary directory, or no stall of them
+        // could be excused.
+        if cfg!(target_os = "linux") {
+            assert!(backing_disks(&sys).is_some_and(|disks| !disks.is_empty()), "the disks under {sys:?}");
+        }
+    }
+
     #[test]
     fn a_window_waited_what_each_total_grew_by_in_milliseconds_or_none_reported() {
-        let disks = |ops, bytes, sda, nvme| Disks {
+        let disks = |ops, bytes, busy: &[(&str, u64)]| Disks {
             ops,
             bytes,
-            busy_ms: BTreeMap::from([("sda".to_owned(), sda), ("nvme0n1".to_owned(), nvme)]),
+            busy_ms: busy.iter().map(|(name, ms)| ((*name).to_owned(), *ms)).collect(),
         };
+        // The busiest disk comes first by name, and one appears only in the later reading.
         let (earlier, later) = (
-            Waits { io_us: Some(1_000), cpu_us: Some(20_000), disks: Some(disks(100, 1 << 20, 5_000, 900)) },
-            Waits { io_us: Some(251_000), cpu_us: Some(20_500), disks: Some(disks(350, 6 << 20, 5_240, 990)) },
+            Waits {
+                io_us: Some(1_000),
+                cpu_us: Some(20_000),
+                disks: Some(disks(100, 1 << 20, &[("nvme0n1", 900), ("sda", 5_000)])),
+            },
+            Waits {
+                io_us: Some(251_000),
+                cpu_us: Some(20_500),
+                disks: Some(disks(350, 6 << 20, &[("nvme0n1", 1_140), ("sda", 5_090), ("sdb", 9_000)])),
+            },
         );
         let waited = later.since(&earlier);
         let disk_io = DiskIo { ops: 250, bytes: 5 << 20, busiest_ms: 240 };
