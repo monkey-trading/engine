@@ -89,17 +89,16 @@ fn a_windows_batch_p999_names_one_sync_stall_its_p99_misses() {
 
 #[test]
 fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
-    let disks =
-        |ops, bytes, request_ms| Disks { ops, bytes, request_ms: BTreeMap::from([("sda".to_owned(), request_ms)]) };
+    let disks = |ops, bytes, flushes| Some(Disks { ops, bytes, flushes });
     let earlier = Snapshot {
-        waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000), disks: Some(disks(10, 4_096, 700)) },
+        waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000), disks: disks(10, 4_096, 3) },
         ..Snapshot::take(&Metrics::new())
     };
     let later = Snapshot {
-        waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500), disks: Some(disks(15, 8_192, 760)) },
+        waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500), disks: disks(15, 8_192, 4) },
         ..earlier.clone()
     };
-    let disk_io = Some(DiskIo { ops: 5, bytes: 4_096, busiest_ms: 60 });
+    let disk_io = Some(DiskIo { ops: 5, bytes: 4_096, flushes: 1 });
     assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5), disk_io });
 }
 
