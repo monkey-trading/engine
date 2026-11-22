@@ -191,4 +191,103 @@ so please check that an issue still reproduces there before you report it.
 
 ## Bug bounty
 
-There is no bug bounty yet. We will announce one, with its scope and rewards, before launch.
+We pay for valid reports of vulnerabilities in the components in scope. Every payout is the amount
+the scale below states for the finding's severity, so the only judgement in a payout is the
+severity, which we grade by the rules below. We publish the scale before launch and apply it to
+every report received while it stands.
+
+Reports go through the channels in [Reporting a vulnerability](#reporting-a-vulnerability), and
+the response times, containment and disclosure rules above apply to them unchanged. `OWNER`:
+platform. Name the platform that hosts the programme and where a report goes once it does.
+
+### What the bounty covers
+
+The bounty covers each component in the [scope](#scope) table. A finding is rewarded for the
+component whose code or deployment it breaks:
+
+| Component | A finding in scope |
+| --- | --- |
+| `engine-core` | A way to break a trading rule, the state a command produces, or a guarantee in the [security model](docs/security-model.md#trading-rules-and-the-operators-bounds). |
+| `engine-node` | A way to make the trading server publish, sign or serve something its log does not support, to get past one of its checks, or to halt it with a client's request. |
+| `engine-wire`, `engine-verify` and the browser verifier | A signed answer or an attestation that a verifier accepts and should refuse, or the reverse. |
+| The vault and the MONKEY token | A way to take, freeze or mint funds that the contracts do not allow. |
+| The staking contract | A way to take or freeze staked MONKEY or a distribution, or to move votes that the contract does not allow. |
+| The operator contracts | A way to elect, draw, promote, fault or vote against the contracts' rules. |
+| The seed relay | A way to forge, bias or withhold a daily turn's seed. |
+| The enclave image | A flaw in what the image's code and build give the enclave, such as a key, clock or disk guarantee that `docs/enclave.md` states. |
+| `engine ct-watch` | A way to make the watcher miss or invent an unattested certificate. |
+
+The contracts and the image are in scope as published in this repository, before they are deployed.
+We grade a contract finding by the funds the contract is designed to hold at launch.
+
+### What it does not cover
+
+The [out of scope](#out-of-scope) list above applies, and so does
+[what counts as a new finding](#what-counts-as-a-new-finding). The bounty also does not cover:
+
+- a finding that rests on a known limit in the security model, an open issue or a `TODO` in the code;
+- a finding that needs an operator's key, or another credential, to be compromised first, except as
+  [findings that start from an operator's key](#findings-that-start-from-an-operators-key) describes;
+- the development-only parts: the mock TEE, custody and feed providers, the `short-turns` feature,
+  the dev configurations, and the keys that `config/test-keys.toml` lists as published;
+- `research/`, `agents/`, `docs/`, tests and scripts, unless a flaw there reaches a component in
+  scope;
+- the output of an automated scanner with no demonstrated effect, a missing hardening measure with
+  no path to an effect, and a vulnerability in a dependency that the engine's use of it does not
+  reach.
+
+### Who can be paid
+
+You can be paid for a report if:
+
+- it is the first report of the issue that we can reproduce. A later report of the same issue is
+  credited, and not paid;
+- you followed the [safe harbour](#safe-harbour) when you found it and sent it, and kept it private
+  as this policy asks;
+- you are not a maintainer, an employee or contractor of the project, or anyone paid to write,
+  review or audit the code in question;
+- you tell us where to send the payment, and give any detail the payment platform needs to pay you;
+- you make no demand for payment, or for more than the scale states, as a condition of reporting
+  or of keeping a report private.
+
+Several reports with one root cause are one finding, paid once at the highest severity among them.
+A fix you send is welcome, and does not change the payout.
+
+### Severity and payouts
+
+We grade severity by what an attacker achieves, and not by how hard the finding was to make, using
+the same grades as the project's [code review severity guide](agents/skills/agent-code-review/references/severity.md).
+The grade is the one whose description fits the worst effect a realistic attacker can reach:
+
+| Severity | What an attacker achieves | Payout |
+| --- | --- | --- |
+| Critical | Funds are lost, frozen or taken: USDC in the vault, MONKEY minted that is not owed, or a claim paid that is not owed. Or a state is forged: the trading server reports a state that its log does not replay to, or the enclave signs a state that the rules do not produce, or a signature is forged or reused. Or a key is controlled: the enclave's keys are read or altered from its host, or the vault's signer, timelock or guardian, or an operator's election, is taken over. | `OWNER`: amount in USDC |
+| High | Wrong behaviour on a realistic path that takes no funds: an order executes at a price the rules do not allow, a request that any client can send halts the engine, an effect is lost or duplicated after a restart, funds are frozen for a time without our action, or one of the engine's checks or an operator's bounds is passed. | `OWNER`: amount in USDC |
+| Medium | Wrong behaviour on an edge path, a failure that nobody would notice, or a refusal of service to one account. | `OWNER`: amount in USDC |
+| Low | A weakness with no effect on behaviour, such as a hardening gap that needs another flaw to matter. | `OWNER`: amount in USDC, or credit only |
+
+When a finding fits two rows, it takes the higher one. We grade a finding down one row when it needs
+a condition that an attacker cannot bring about, such as the holder of a key choosing to act against
+its own interest, and we say so in our reply.
+
+The [findings that matter most](#findings-that-matter-most) grade as follows. Taking funds, a
+reported state that differs from the replayed log, a forged or reused enclave signature, and
+reading or altering what the enclave holds are Critical. An order at a price the rules do not allow,
+and a halt by a request that any client can send, are High, unless they also take funds, which makes
+them Critical.
+
+### How a payout is decided and paid
+
+1. We grade the finding within the ten business days that [What happens next](#what-happens-next)
+   gives, and tell you the grade and the reasons for it.
+2. If you disagree, send evidence of a worse effect within ten business days, and we regrade it once.
+   Our regrade is final.
+3. The owner of the project approves the payout for the final grade. The approval confirms that the
+   report meets the rules above. It does not change the amount, which is the scale's.
+4. We pay in USDC, `OWNER`: chain and timing, such as within ten business days of the final grade.
+   We do not wait for the fix to ship. `OWNER`: payment source.
+5. We credit you in the advisory as [Coordinated disclosure](#coordinated-disclosure) describes.
+
+We may change the scale, and publish the change in this section 30 days before it applies. A change
+applies to reports received after it takes effect, and never lowers the payout of a report that has
+been received.

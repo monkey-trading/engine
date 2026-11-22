@@ -201,7 +201,7 @@ coordinator proposes each step; the owner decides and acts.
    current release and the fix has merged, as [SECURITY.md](../../../SECURITY.md#coordinated-disclosure) says.
    - Request a CVE for Critical and High findings.
    - Credit the reporter if they wish.
-   - Bounty payouts follow the scale #72 publishes. #72 is a launch blocker.
+   - Bounty payouts follow the scale in [SECURITY.md](../../../SECURITY.md#bug-bounty). It is a launch blocker (#72).
 8. **Deadline.** If a fix cannot meet `SECURITY.md`'s deadline, agree one extension with the
    reporter in writing, of at most 30 days, and keep containment in place. Publish when the fix is
    live or at the extended deadline, whichever comes first.
