@@ -99,8 +99,12 @@ relay's bounds and its refresh schedule.
 - SEV-SNP enabled in its firmware, on a processor that reports Secure TSC (CPUID Fn8000_001F_EAX
   bit 8);
 - a KVM host kernel that offers Secure TSC to SNP guests, such as Linux 6.18;
-- a QEMU whose `sev-snp-guest` object has the `secure-tsc` property, which is on QEMU's `master`
-  branch from commit `a26f9b975d5c` and in no release up to 11.1.3.
+- a QEMU whose `sev-snp-guest` object has the `secure-tsc` property, which commit `a26f9b975d5c`
+  added. It is in QEMU's 11.2.0 release candidates and in no release up to 11.1.3.
+
+[SEV-SNP host](../ops/runbooks/sev-snp-host.md) sets up such a host, checks it with
+`scripts/snp-host-check.sh`, and launches the image with `scripts/snp-launch.sh`, which builds the
+command below from `measurement.json`.
 
 The launch flags must match `measurement.json`. `cbitpos` is 51 on Milan and later processors, and
 KVM sets the guest's TSC frequency to the host's unless `tsc-frequency` names another. The guest

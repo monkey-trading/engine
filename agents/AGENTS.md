@@ -1023,7 +1023,13 @@ an index: load only the rule whose hint matches the current action.
   with `dev-quotes-cases.sh` and the stream client `dev-quotes-client.py`; and `build-image.sh` and `check-image.sh`, which build the enclave image from a
   commit and boot it under QEMU without SEV-SNP, and `check-image-retry.sh`, which scans
   `image/Dockerfile` so every download runs under `retry` and the cargo build stays `--frozen`,
-  and checks the build's download retries.
+  and checks the build's download retries; and, for `ops/runbooks/sev-snp-host.md`,
+  `snp-host-check.sh`, which checks without changing anything that a host can launch the image as an
+  SEV-SNP guest with Secure TSC, `snp-launch.sh`, which launches the image as one with
+  `measurement.json`'s flags, `snp-local-chain.sh`, which deploys a guest's vault on a local Anvil
+  chain reached over TLS, names its release and installs its attested key, and `snp-bench-guest.sh`,
+  which builds the benchmark guest and runs the same benchmarks on the host, with
+  `snp-host-check-test.sh` and `snp-launch-test.sh` testing the first two on fixtures.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, a webhook
   left off for want of its delivered URL, a log sync held past 5 s, or a
@@ -1031,7 +1037,9 @@ an index: load only the rule whose hint matches the current action.
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and
   checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
-  `unattested_certificate` alert, operator candidates and standbys, and the seed relay. `alerts.md` lists every alert
+  `unattested_certificate` alert, operator candidates and standbys, the seed relay, and an SEV-SNP host (ordering
+  the server, enabling SEV-SNP, booting three guests against a local chain, verifying their attestations and
+  measuring the engine inside a guest against the host, `sev-snp-host.md`). `alerts.md` lists every alert
   the code raises with its level and where to go (a new alert gets a row there in the same change),
   `reference.md` holds the shared variables, checks and timelock call patterns (one call, or a batch
   of calls in one transaction), and `production-node.toml` is the production
@@ -1551,6 +1559,10 @@ Run from the repo root:
   `scripts/check-image-retry.sh` scans `image/Dockerfile` so every download runs under `retry` and
   the cargo build stays `--frozen`, and checks the build's download retries, without building
   (needs Docker and `python3`)
+- SEV-SNP host: `sudo scripts/snp-host-check.sh` checks a host before a launch, and
+  `scripts/snp-launch.sh [--dry-run] <image-dir> <data-disk>` launches the image as an SEV-SNP guest
+  (`ops/runbooks/sev-snp-host.md`); their fixture tests are `scripts/snp-host-check-test.sh` and
+  `scripts/snp-launch-test.sh` (need only `python3`, `jq` and `sha256sum`)
 - Review-delta script tests: `agents/skills/agent-code-review/scripts/review-delta-test.sh` (builds
   a scratch git repository; needs only `git`, `sed`, and `diff`)
 - Merge approval gate tests: `scripts/check-merge-approved-test.sh` (stubs the GitHub API; needs
