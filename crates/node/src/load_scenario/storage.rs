@@ -1,21 +1,22 @@
-//! The runner's storage, timed apart from the node, and the windows a stall of it excuses. A thread of
-//! its own appends a page to a file on the node's filesystem and syncs it every `PERIOD`, as the log's
-//! sync thread syncs each batch, and keeps its longest block since it was last read: the sync's time
-//! less what the thread spent on a CPU or waiting for one, as the kernel's scheduler counts it
-//! (`/proc/thread-self/schedstat`), with what the host did over the same sync. On a healthy runner a
-//! sync holds the thread a few milliseconds; when the storage itself stalls, it holds it as long as
-//! every order and stream frame released only after the log's sync.
+//! The runner's storage, timed apart from the node, and the windows a stall of it excuses. The load
+//! generator, a process of its own, runs a thread that appends a page to a file on the node's filesystem
+//! and syncs it every `PERIOD`, as the log's sync thread syncs each batch, and keeps its longest block
+//! since it was last read: the sync's time less what the thread spent on a CPU or waiting for one, as
+//! the kernel's scheduler counts it (`/proc/thread-self/schedstat`), with what the host did over the
+//! same sync. The generator reads it as it closes each window's samples, with what the host did over the
+//! window, so a block counts in the window whose orders and frames it held. On a healthy runner a sync
+//! holds the thread a few milliseconds; when the storage itself stalls, it holds it as long as every
+//! order and stream frame released only after the log's sync.
 //!
 //! A window is excused only by what the host shows over the probe's block, never by the node's figures:
-//! the probe blocked at least `STALLED`, some task on the host waiting on storage throughout, and the
+//! the probe blocked at least `STALLED`, a disk with I/O in flight for at least half the block, and the
 //! disks completing less than half the I/O and bytes a second they completed over the window, reads,
 //! discards and flushes included, so they stalled rather than worked through a load, the node's
-//! included. A host whose scheduler counts no thread's time runs no probe, since it could excuse
-//! nothing. Even then only an order-to-fill
-//! or stream-lag tail over its bar by no more than the block is excused, and only when every breach of
-//! the window is one. A stall in the node's own code, or cores it keeps busy, leaves the probe
-//! unblocked, and a median, a price's stamp, which does not wait on the sync, and the busy share are
-//! never excused.
+//! included. Only an order-to-fill or stream-lag tail over its bar by no more than the block is excused,
+//! and only when every breach of the window is one. A stall in the node's own code, or cores it keeps
+//! busy, leaves the probe unblocked, and a median, a price's stamp, which does not wait on the sync, and
+//! the busy share are never excused. A host whose scheduler counts no thread's time runs no probe, since
+//! it could excuse nothing.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -23,6 +24,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 
 use crate::load_scenario::host::{Waited, Waits};
 use crate::load_scenario::report::Breach;
@@ -48,17 +51,28 @@ struct Shared {
     stop: AtomicBool,
 }
 
-/// The longest block of the syncs that ended since the last `take`, at `since`.
+/// The longest block of the syncs that ended since the last `take`, at `since`, and the host's totals
+/// then.
 struct Longest {
     since: Instant,
+    host: Waits,
     block: Block,
 }
 
 /// One sync of the probe: how long it held the thread blocked, and what the host did over it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Block {
     pub blocked: Duration,
     pub host: Waited,
+}
+
+/// What the probe saw over a window: its longest block, what the host did over the window, and the
+/// window's length in seconds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub(super) struct Storage {
+    pub block: Block,
+    pub window: Waited,
+    pub secs: f64,
 }
 
 impl Drop for Probe {
@@ -91,7 +105,7 @@ impl Probe {
                 let host = Waits::now().since(&host);
                 if let Err(error) = synced {
                     // A probe that cannot sync shows no stall, so it excuses nothing.
-                    println!("LOAD storage probe stopped: {error}");
+                    eprintln!("LOAD storage probe stopped: {error}");
                     return;
                 }
                 probe.record(Block { blocked: blocked(took, scheduled), host }, ended);
@@ -101,20 +115,21 @@ impl Probe {
         Ok(Some(Probe { shared }))
     }
 
-    /// The longest block of the syncs that ended since the last call.
-    pub(super) fn take(&self) -> Block {
+    /// The longest block of the syncs that ended since the last call, and what the host did since it.
+    pub(super) fn take(&self) -> Storage {
+        let (now, host) = (Instant::now(), Waits::now());
         let mut longest = self.shared.longest.lock().expect("the probe's block");
-        longest.since = Instant::now();
-        std::mem::take(&mut longest.block)
+        let window = host.since(&longest.host);
+        let secs = now.duration_since(longest.since).as_secs_f64();
+        (longest.since, longest.host) = (now, host);
+        Storage { block: std::mem::take(&mut longest.block), window, secs }
     }
 }
 
 impl Shared {
     fn new() -> Self {
-        Shared {
-            longest: Mutex::new(Longest { since: Instant::now(), block: Block::default() }),
-            stop: AtomicBool::new(false),
-        }
+        let longest = Longest { since: Instant::now(), host: Waits::now(), block: Block::default() };
+        Shared { longest: Mutex::new(longest), stop: AtomicBool::new(false) }
     }
 
     /// Keeps `block`, of a sync that `ended`, if it is the longest of those that ended since the last
@@ -146,19 +161,21 @@ fn on_cpu_and_queued_ns(schedstat: &str) -> Option<u64> {
     Some(fields.next()?.ok()? + fields.next()?.ok()?)
 }
 
-/// Why the runner's storage excuses a window of `secs`, with `breaches` and the host's `window` figures,
-/// if it does: the probe's longest `block` shows the storage stalled on its own, and every breach is an
-/// order-to-fill or stream-lag tail over its bar by no more than that block.
-pub(super) fn excuse(breaches: &[Breach], block: &Block, window: &Waited, secs: f64) -> Option<String> {
-    let (io_wait_ms, (ops, bytes)) = (block.host.io_ms?, block.host.disk_io?);
-    let (window_ops, window_bytes) = window.disk_io?;
-    let blocked_ms = block.blocked.as_secs_f64() * 1e3;
-    let waited_on_storage = block.blocked >= STALLED && io_wait_ms >= blocked_ms;
+/// Why the runner's storage excuses a window with `breaches`, if it does: the probe's longest block over
+/// it, in `storage`, shows the storage stalled on its own, and every breach is an order-to-fill or
+/// stream-lag tail over its bar by no more than that block.
+pub(super) fn excuse(breaches: &[Breach], storage: &Storage) -> Option<String> {
+    let (block, during) = (&storage.block, storage.block.host.disk_io?);
+    let window = storage.window.disk_io?;
+    let (blocked_ms, blocked_us) = (block.blocked.as_secs_f64() * 1e3, block.blocked.as_micros());
+    // A disk had I/O in flight for at least half the block: the probe waited on storage, not on memory
+    // or a lock, by a figure the kernel keeps per disk rather than averaged over the busy CPUs.
+    let on_storage = block.blocked >= STALLED && u128::from(during.busiest_ms) * 2_000 >= blocked_us;
     // Under half the window's rate: `during / blocked < over_window / window / 2`, in whole microseconds.
-    let (blocked_us, window_us) = (block.blocked.as_micros(), (secs * 1e6) as u128);
+    let window_us = (storage.secs * 1e6) as u128;
     let slower =
         |during: u64, over_window: u64| u128::from(during) * window_us * 2 < u128::from(over_window) * blocked_us;
-    let stalled = waited_on_storage && slower(ops, window_ops) && slower(bytes, window_bytes);
+    let stalled = on_storage && slower(during.ops, window.ops) && slower(during.bytes, window.bytes);
     let explained = |breach: &Breach| {
         let per_ms = if breach.budget.ends_with("_ms") { 1.0 } else { 1e3 };
         HELD_BY_THE_SYNC.contains(&breach.budget)
@@ -167,8 +184,9 @@ pub(super) fn excuse(breaches: &[Breach], block: &Block, window: &Waited, secs: 
     };
     (stalled && !breaches.is_empty() && breaches.iter().all(explained)).then(|| {
         format!(
-            "the probe blocked {blocked_ms:.0} ms on storage, the host waiting {io_wait_ms:.0} ms and its disks \
-             completing {ops} I/Os meanwhile, against {window_ops} in the window"
+            "the probe blocked {blocked_ms:.0} ms on storage, a disk busy {} ms of it and the disks completing {} \
+             I/Os meanwhile, against {} in the window",
+            during.busiest_ms, during.ops, window.ops
         )
     })
 }
@@ -176,19 +194,27 @@ pub(super) fn excuse(breaches: &[Breach], block: &Block, window: &Waited, secs: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load_scenario::host::DiskIo;
 
-    const SECS: f64 = 24.0;
-    /// A window's disks completing 300 I/Os and 3 MB a second, as a runner's do at launch flow.
-    const WINDOW: Waited = Waited { io_ms: Some(400.0), cpu_ms: Some(1_000.0), disk_io: Some((7_200, 72_000_000)) };
-
-    fn block(blocked_ms: u64, io_ms: f64, ops: u64, bytes: u64) -> Block {
-        let host = Waited { io_ms: Some(io_ms), cpu_ms: Some(0.0), disk_io: Some((ops, bytes)) };
-        Block { blocked: Duration::from_millis(blocked_ms), host }
+    /// A window of 24 s whose disks completed 300 I/Os and 3 MB a second, as a runner's do at launch flow.
+    fn window(block: Block) -> Storage {
+        let io = DiskIo { ops: 7_200, bytes: 72_000_000, busiest_ms: 2_000 };
+        let window = Waited { io_ms: Some(400.0), cpu_ms: Some(1_000.0), disk_io: Some(io) };
+        Storage { block, window, secs: 24.0 }
     }
 
-    /// A block of 240 ms in which the disks completed almost nothing, the host waiting on them throughout.
+    fn block(blocked_ms: u64, busiest_ms: u64, ops: u64, bytes: u64) -> Block {
+        let disk_io = Some(DiskIo { ops, bytes, busiest_ms });
+        Block {
+            blocked: Duration::from_millis(blocked_ms),
+            host: Waited { io_ms: Some(60.0), cpu_ms: Some(0.0), disk_io },
+        }
+    }
+
+    /// A block of 240 ms through which a disk held I/O in flight and completed almost nothing. The
+    /// host's storage wait over it, 60 ms, is averaged over the busy CPUs, as on a loaded runner.
     fn stall() -> Block {
-        block(240, 245.0, 3, 12_288)
+        block(240, 240, 3, 12_288)
     }
 
     fn breach(budget: &'static str, quantile: &'static str, figure: f64, bar: f64) -> Breach {
@@ -205,33 +231,41 @@ mod tests {
     }
 
     #[test]
-    fn a_window_the_storage_stalled_on_its_own_is_excused() {
-        let why = excuse(&stalled_window(), &stall(), &WINDOW, SECS);
-        assert!(why.is_some_and(|why| why.contains("240 ms")));
+    fn a_window_the_storage_stalled_on_its_own_is_excused_whatever_the_averaged_storage_wait() {
+        let why = excuse(&stalled_window(), &window(stall()));
+        assert!(why.is_some_and(|why| why.contains("blocked 240 ms") && why.contains("busy 240 ms")));
+        let unreported = Block { host: Waited { io_ms: None, ..stall().host }, ..stall() };
+        assert!(excuse(&stalled_window(), &window(unreported)).is_some(), "the pressure files play no part");
     }
 
-    /// Over a 240 ms block, half the window's rate is 36 I/Os and 360,000 bytes.
+    /// Over a 240 ms block, half the window's rate is 36 I/Os and 360,000 bytes, and half the block 120 ms.
     #[test]
     fn a_window_is_judged_unless_the_host_shows_the_storage_stalled_on_its_own_over_the_block() {
         let cases = [
-            ("less storage wait over the block than the block", block(240, 200.0, 3, 12_288)),
-            ("the disks completing half their window's I/O", block(240, 245.0, 36, 12_288)),
-            ("the disks moving half their window's bytes", block(240, 245.0, 3, 360_000)),
-            ("no storage wait reported", Block { host: Waited { io_ms: None, ..stall().host }, ..stall() }),
+            ("no disk busy half the block, as for a wait on memory or a lock", block(240, 119, 3, 12_288)),
+            ("the disks completing half their window's I/O", block(240, 240, 36, 12_288)),
+            ("the disks moving half their window's bytes", block(240, 240, 3, 360_000)),
             ("no disk I/O reported", Block { host: Waited { disk_io: None, ..stall().host }, ..stall() }),
         ];
         for (case, held) in cases {
-            assert_eq!(excuse(&stalled_window(), &held, &WINDOW, SECS), None, "{case}");
+            assert_eq!(excuse(&stalled_window(), &window(held)), None, "{case}");
         }
-        let just_under = block(240, 245.0, 35, 359_999);
-        assert!(excuse(&stalled_window(), &just_under, &WINDOW, SECS).is_some(), "just under half the window's rate");
-        for window in [Waited { disk_io: None, ..WINDOW }, Waited { disk_io: Some((0, 0)), ..WINDOW }] {
-            assert_eq!(excuse(&stalled_window(), &stall(), &window, SECS), None, "no window I/O: {window:?}");
+        let just_inside = block(240, 120, 35, 359_999);
+        assert!(excuse(&stalled_window(), &window(just_inside)).is_some(), "a disk busy half the block, under half");
+        let quiet = [
+            Storage { window: Waited { disk_io: None, ..window(stall()).window }, ..window(stall()) },
+            Storage {
+                window: Waited { disk_io: Some(DiskIo::default()), ..window(stall()).window },
+                ..window(stall())
+            },
+        ];
+        for storage in quiet {
+            assert_eq!(excuse(&stalled_window(), &storage), None, "no window I/O: {storage:?}");
         }
-        assert_eq!(excuse(&[], &stall(), &WINDOW, SECS), None, "a window that held its bar needs no excuse");
+        assert_eq!(excuse(&[], &window(stall())), None, "a window that held its bar needs no excuse");
         let slow = [breach("order_to_fill_us", "p99", 70_000.0, 35_975.0)];
-        assert!(excuse(&slow, &block(50, 50.0, 0, 0), &WINDOW, SECS).is_some(), "a block of STALLED");
-        assert_eq!(excuse(&slow, &block(49, 49.0, 0, 0), &WINDOW, SECS), None, "a block under STALLED");
+        assert!(excuse(&slow, &window(block(50, 50, 0, 0))).is_some(), "a block of STALLED");
+        assert_eq!(excuse(&slow, &window(block(49, 49, 0, 0))), None, "a block under STALLED");
     }
 
     #[test]
@@ -246,11 +280,11 @@ mod tests {
         for (case, extra) in unexplained {
             let mut breaches = stalled_window();
             breaches.push(extra);
-            assert_eq!(excuse(&breaches, &stall(), &WINDOW, SECS), None, "{case}");
+            assert_eq!(excuse(&breaches, &window(stall())), None, "{case}");
         }
         let within =
             [breach("order_to_fill_us", "p99", 275_900.0, 35_975.0), breach("stream_lag_ms", "p99", 383.0, 144.0)];
-        assert!(excuse(&within, &stall(), &WINDOW, SECS).is_some(), "tails over their bars by just under the stall");
+        assert!(excuse(&within, &window(stall())).is_some(), "tails over their bars by just under the stall");
     }
 
     #[test]
@@ -262,18 +296,28 @@ mod tests {
         assert_eq!(blocked(took, None), Duration::ZERO, "no counts, no block");
     }
 
+    /// The generator reads the probe as it closes each window: a block whose sync ended after the read
+    /// counts in the next window, whose orders and frames it held, and one that ended before it in none.
     #[test]
-    fn a_read_takes_the_longest_block_of_the_syncs_that_ended_since_the_last() {
+    fn a_read_takes_the_longest_block_of_the_syncs_that_ended_since_the_last_with_the_window_it_spans() {
         let probe = Probe { shared: Arc::new(Shared::new()) };
-        let (long, short) = (block(30, 30.0, 1, 4_096), block(12, 12.0, 1, 4_096));
+        let (long, short) = (block(30, 30, 1, 4_096), block(12, 12, 1, 4_096));
         let before = Instant::now();
         for recorded in [short, long, short] {
             probe.shared.record(recorded, Instant::now());
         }
-        assert_eq!(probe.take(), long);
-        assert_eq!(probe.take(), Block::default(), "each block is read once");
+        let first = probe.take();
+        assert_eq!(first.block, long);
+        assert!(first.secs >= 0.0 && first.secs < 60.0, "the window from the probe's start: {first:?}");
+        probe.shared.record(short, Instant::now());
+        assert_eq!(probe.take().block, short, "a sync that ended after the read counts in the next window");
+        assert_eq!(probe.take().block, Block::default(), "each block is read once");
         probe.shared.record(long, before);
-        assert_eq!(probe.take(), Block::default(), "a sync that ended before the last read belongs to its window");
+        assert_eq!(
+            probe.take().block,
+            Block::default(),
+            "a sync that ended before the last read belongs to its window"
+        );
     }
 
     #[test]

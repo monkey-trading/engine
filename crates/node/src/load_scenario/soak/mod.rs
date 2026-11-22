@@ -385,7 +385,7 @@ impl Soak {
                 self.carried = 0.0;
                 self.samples.clear();
             }
-            Line::Window { leg, index, figures } => {
+            Line::Window { leg, index, figures, .. } => {
                 let now = Snapshot::take(&self.node().metrics);
                 let breaches = judge(&figures, &now.since(&self.window));
                 // The generator's own arithmetic: a leg's windows are equal parts of its length.

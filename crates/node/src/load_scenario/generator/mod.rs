@@ -39,6 +39,8 @@ use crate::load_scenario::plan::{
     ACCOUNT_RATE, CANCELS, LAUNCH_BTC_FILLS_PER_SECOND, LAUNCH_FILLS_PER_SECOND, LIMIT_ORDERS, Leg, Line,
     MARKET_ORDERS, Plan, requests_per_second,
 };
+use crate::load_scenario::storage::Probe;
+use crate::test_support::scratch_dir;
 
 /// The generator's runtime threads.
 const WORKERS: usize = 4;
@@ -73,6 +75,9 @@ struct Scheduler {
     /// Every client's recorder, and every subscriber's.
     clients: Vec<Recorder>,
     subscribers: Vec<Recorder>,
+    /// The storage probe, read as each window closes (`storage`); None on a host that counts no
+    /// thread's time.
+    probe: Option<Arc<Probe>>,
 }
 
 #[test]
@@ -189,6 +194,10 @@ async fn run(plan: Plan) {
     }
     wait_subscribed(&stream_recorders).await;
     take_all(&client_recorders, &stream_recorders);
+    // On the node's filesystem: both take the test's temporary directory.
+    let probe_dir = scratch_dir("load-storage-probe");
+    std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
+    let probe = Probe::start(&probe_dir).expect("the storage probe starts").map(Arc::new);
     let mut scheduler = Scheduler {
         rng: Rng::new(906),
         slots,
@@ -198,12 +207,17 @@ async fn run(plan: Plan) {
         in_flight,
         clients: client_recorders,
         subscribers: stream_recorders,
+        probe,
     };
     report(&Line::Ready { traders: plan.traders, subscribers: plan.subscribers });
 
     let mut stdin = std::io::stdin().lock().lines();
     'legs: for leg in plan.steps() {
         loop {
+            // A leg's first window starts here.
+            if let Some(probe) = &scheduler.probe {
+                probe.take();
+            }
             report(&Line::Start { leg: leg.name.clone(), multiple: leg.multiple });
             let windows = if leg.windows == 0 { plan.windows } else { leg.windows };
             let figures = scheduler.drive(&leg, windows).await;
@@ -243,11 +257,13 @@ impl Scheduler {
         let window = Duration::from_secs(leg.secs) / windows.max(1);
         let (mut due, mut index, mut next_window) = (start, 0, start + window);
         let mut all = Samples::default();
-        let (clients, subscribers) = (self.clients.clone(), self.subscribers.clone());
-        // A window's samples; the last one's also count what the leg's drain left behind.
+        let (clients, subscribers, probe) = (self.clients.clone(), self.subscribers.clone(), self.probe.clone());
+        // A window's samples, and the storage probe's read with them; the last one's also count what
+        // the leg's drain left behind.
         let close = |index: u32, all: &mut Samples, unanswered: u64, behind: u64| {
             let samples = Samples { unanswered, behind, ..take_all(&clients, &subscribers) };
-            report(&Line::Window { leg: leg.name.clone(), index, figures: samples.figures() });
+            let storage = probe.as_ref().map(|probe| probe.take());
+            report(&Line::Window { leg: leg.name.clone(), index, figures: samples.figures(), storage });
             all.merge(samples);
         };
         loop {

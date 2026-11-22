@@ -304,13 +304,6 @@ fn spawn_generator(plan: &Plan) -> Generator {
 async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let Generator { mut child, mut answers, mut lines } = spawn_generator(plan);
     let resident = Resident::start();
-    // Beside the node's log, on the same filesystem.
-    let probe_dir = scratch_dir("load-storage-probe");
-    std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
-    let probe = storage::Probe::start(&probe_dir).expect("the storage probe starts");
-    if probe.is_none() {
-        println!("LOAD storage probe off: the host counts no thread's time, so no window is excused");
-    }
     let (mut start, mut window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
     let mut windows: Vec<Window> = Vec::new();
     let mut runs = Vec::new();
@@ -331,20 +324,18 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 );
                 (start, window, windows) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics), Vec::new());
                 resident.reset();
-                if let Some(probe) = &probe {
-                    probe.take();
-                }
             }
-            Line::Window { leg, index, figures } => {
+            Line::Window { leg, index, figures, storage: probe } => {
                 let now = Snapshot::take(&node.metrics);
                 let delta = now.since(&window);
                 let breaches = judge(&figures, &delta);
-                let block = probe.as_ref().map(storage::Probe::take).unwrap_or_default();
-                let excused = storage::excuse(&breaches, &block, &delta.host, delta.secs);
+                let excused = probe.as_ref().and_then(|probe| storage::excuse(&breaches, probe));
+                let blocked =
+                    probe.map_or_else(|| "n/a".to_owned(), |probe| probe.block.blocked.as_millis().to_string());
                 println!(
-                    "LOAD leg={leg} window={index} breaches={breaches:?} {} probe_blocked_ms={} excused={excused:?}",
-                    window_figures(&delta),
-                    block.blocked.as_millis()
+                    "LOAD leg={leg} window={index} breaches={breaches:?} {} probe_blocked_ms={blocked} \
+                     excused={excused:?}",
+                    window_figures(&delta)
                 );
                 window = now;
                 windows.push(Window { breaches, excused });
