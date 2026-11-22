@@ -22,7 +22,7 @@ use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_LAUNCH_DIGEST, CHILD_TEST};
 use crate::standby_key::StandbyKeys;
 use crate::tee::sealing::Release;
-use crate::test_support::{ANVIL_CONFIG, keep_scratch, scratch_dir};
+use crate::test_support::{ANVIL_CONFIG, keep_scratch, quiet_addr, scratch_dir};
 
 /// How long a node gets to serve its API after it starts.
 const SERVE_WAIT: Duration = Duration::from_secs(120);
@@ -62,7 +62,7 @@ pub(super) struct Seat {
 
 impl Seat {
     /// `name`, the candidate `candidate` with the admin key `admin` running `digest`, its liveness
-    /// caller sending from `caller`: writes its config on free ports and seals its standby key.
+    /// caller sending from `caller`: writes its config on ports no outgoing connection can take and seals its standby key.
     /// Error cases:
     /// - the config cannot be written
     pub(super) fn new(
@@ -71,8 +71,7 @@ impl Seat {
         caller: Address,
         deployment: &Deployment<'_>,
     ) -> anyhow::Result<Self> {
-        let free = || std::net::TcpListener::bind("127.0.0.1:0").map(|listener| listener.local_addr());
-        let (api, metrics, endpoint) = (free()??, free()??, free()??);
+        let (api, metrics, endpoint) = (quiet_addr(), quiet_addr(), quiet_addr());
         let dir = scratch_dir(&format!("promoted-{name}"));
         std::fs::create_dir_all(dir.join("keys"))?;
         // The node's log and data stay for inspection after the leg.

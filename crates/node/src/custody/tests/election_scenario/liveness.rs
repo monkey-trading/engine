@@ -50,7 +50,7 @@ use crate::node::member::promoted::{Record, Standing};
 use crate::standby_key::StandbyKeys;
 use crate::standby_key::chain::{StandbyDomain, StandbyState, standby_state};
 use crate::tee::EnclaveKey;
-use crate::test_support::scratch_dir;
+use crate::test_support::{quiet_addr, scratch_dir};
 use crate::trusted_time::TrustedClock;
 use rig::{Log, Rig, config, etch_arb_sys, sampling, warp};
 
@@ -138,7 +138,7 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
         .into_iter()
         .map(|(candidate, i)| {
             let dir = scratch_dir(&format!("liveness-member-{i}"));
-            let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+            let free = quiet_addr();
             Member {
                 candidate,
                 admin: k256::ecdsa::SigningKey::from_slice(&KEYS[i]).unwrap(),
