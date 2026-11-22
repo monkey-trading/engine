@@ -36,7 +36,8 @@ impl<'a> MakeWriter<'a> for Captured {
 }
 
 fn config() -> NodeConfig {
-    let mut cfg = NodeConfig::load(Path::new(DEV)).unwrap();
+    // Parsed, not loaded: a production build's load refuses the dev config's providers and origins first.
+    let mut cfg: NodeConfig = toml::from_str(&std::fs::read_to_string(DEV).unwrap()).unwrap();
     cfg.snapshots = Some(SnapshotSection {
         dir: "data/dev/snapshots".into(),
         retain: NonZeroUsize::MIN,
