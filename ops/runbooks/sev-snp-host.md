@@ -691,11 +691,18 @@ leg after the other, with `<nvme0>` and `<nvme1>` the mount points of the host's
    `<nvme1>/soak/log` and the caches and history index stay in `<nvme0>/soak`. The two paths must be on
    different drives, as `df` shows, or the leg shows nothing.
 
-Run both with the same `SOAK_HOURS`, `LOAD_ACCOUNTS` (10,000) and `SOAK_MULTIPLE` (10). Record, for each leg,
-from the soak's report, in every window it prints: `order_to_fill_us` at p50, p99 and p999, `batch_p99_us` and
-`batch_p999_us`, and the host's storage wait beside them. Then put the two legs side by side by window, with the
-worst window of each, and the count of windows over #904's order-to-fill bar. A leg whose worst p999 is 200 ms or
-more higher than the other's shows the writes stalling the log's syncs. Keep both reports.
+Run both with the same `SOAK_HOURS`, `LOAD_ACCOUNTS` (10,000) and `SOAK_MULTIPLE` (10). Keep both reports. The
+soak prints these lines for each interval, and the figures to record come from them:
+
+- the `LOAD leg=… order_to_fill_us` line, which holds the interval's `p50`, `p99`, `p999` and `max`;
+- each `LOAD leg=… window=…` line, which holds that window's `batch_p99_us`, `batch_p999_us`, `busy_share`,
+  `host_io_wait_ms`, `host_cpu_wait_ms`, `host_disk_io` and `probe_blocked_ms`, and its `breaches` against #904's
+  bars (a window prints no order-to-fill figure unless it breaches one).
+
+Put the two legs side by side: each interval's `order_to_fill_us`, and each window's `batch_p99_us`,
+`batch_p999_us` and `host_io_wait_ms`, with the number of windows that breached and the worst window of each leg.
+State which leg has the lower order-to-fill tail and the lower batch tail, and by how much. Setting a bar on the
+difference waits for these figures.
 
 ## How to tell it is done, and when to escalate
 
