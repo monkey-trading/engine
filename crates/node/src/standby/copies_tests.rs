@@ -367,7 +367,7 @@ fn replica(dir: &std::path::Path) -> anyhow::Result<Follower> {
 }
 
 /// The seqs of the commands after the last checkpoint of the log in `dir`.
-fn uncovered(dir: &std::path::Path) -> Vec<u64> {
+pub(crate) fn uncovered(dir: &std::path::Path) -> Vec<u64> {
     let entries = log_entries(dir);
     let last = entries.iter().rposition(|entry| matches!(entry, LogEntry::Checkpoint(_))).unwrap_or(0);
     entries[last..]
@@ -390,7 +390,7 @@ fn last_checkpoint(dir: &std::path::Path) -> crate::log::Checkpoint {
 }
 
 /// Seals the commands at `seqs` of the log in `dir` with `key`, in order, each over its writer's link.
-fn seal_with(dir: &std::path::Path, key: &EnclaveKey, seqs: &[u64]) {
+pub(crate) fn seal_with(dir: &std::path::Path, key: &EnclaveKey, seqs: &[u64]) {
     for seq in seqs {
         let previous = link_before(dir, *seq);
         rewrite_command(dir, *seq, |command| {
