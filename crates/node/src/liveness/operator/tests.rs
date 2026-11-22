@@ -392,7 +392,8 @@ impl Rig {
         });
         let gate = Gate::closed();
         let mock = crate::tee::sealing::MockSealer { launch_digest: [0x11; 48] };
-        let platform = Some((crate::config::TeeProvider::Mock, crate::tee::sealing::Sealer::platform(&mock).unwrap()));
+        let sealed = crate::tee::sealing::Sealer::platform(&mock).unwrap();
+        let platform = Some((crate::config::TeeProvider::Mock, Vec::new(), sealed));
         let operator = Operator {
             chain: chain.clone(),
             asking: members.clone(),

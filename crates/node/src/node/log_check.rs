@@ -257,7 +257,7 @@ pub(super) fn spawn(
         return Ok(());
     };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
-    let platform = (domain, cfg.tee.provider, store.platform());
+    let platform = (domain, cfg.tee.provider, cfg.tee.cpu_models.clone(), store.platform());
     let asker = Asker::new(vault, sequencer, due, platform, key.clone(), trusted);
     tasks.spawn(async move { ("log check", asker.run().await) });
     Ok(())

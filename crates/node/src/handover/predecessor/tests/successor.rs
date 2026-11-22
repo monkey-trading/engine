@@ -4,8 +4,6 @@
 
 use super::*;
 
-use engine_verify::Tcb;
-
 /// The final segment rides with the keys: the predecessor's sealed tail lands in the successor's
 /// log, and the successor confirms only because the log then ends at the handed-over head.
 #[tokio::test]
@@ -139,20 +137,11 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
 }
 
 #[test]
-fn a_successor_runs_under_the_same_policy_and_no_lower_tcb() {
-    let packed = |snp: u64| (8u64 << 56) | (snp << 48) | 3;
-    let own = Platform { launch_digest: RELEASE, policy: 0x30000, tcb: packed(8) };
-    let peer = |policy, snp| Peer { launch_digest: UPGRADE, policy, tcb: Some(Tcb::from_packed(packed(snp))) };
-    no_weaker(&own, &peer(0x30000, 8)).unwrap();
-    no_weaker(&own, &peer(0x30000, 9)).unwrap();
-    let err = no_weaker(&own, &peer(0x30000 | 1 << 19, 8)).unwrap_err();
+fn a_successor_runs_under_the_same_policy() {
+    let own = Platform { launch_digest: RELEASE, policy: 0x30000, tcb: (8u64 << 56) | (8 << 48) | 3 };
+    let peer = |policy| Peer { launch_digest: UPGRADE, policy };
+    same_policy(&own, &peer(0x30000)).unwrap();
+    let err = same_policy(&own, &peer(0x30000 | 1 << 19)).unwrap_err();
     assert!(err.to_string().contains("guest policy"), "a debug policy passed: {err:#}");
-    let err = no_weaker(&own, &peer(0x30000, 7)).unwrap_err();
-    assert!(err.to_string().contains("below this platform's committed"), "{err:#}");
-    // Mock peers carry no TCB.
-    no_weaker(
-        &Platform { launch_digest: RELEASE, policy: 0, tcb: 0 },
-        &Peer { launch_digest: UPGRADE, policy: 0, tcb: None },
-    )
-    .unwrap();
+    same_policy(&Platform { launch_digest: RELEASE, policy: 0, tcb: 0 }, &peer(0)).unwrap();
 }

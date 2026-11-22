@@ -9,12 +9,13 @@ use crate::config::NodeConfig;
 
 use engine_core::types::AccountId;
 use engine_verify::fixtures::{
-    LAUNCH_DIGEST, POLICY, REPORTED_TCB, collateral_of, crl_revoking, forged_report, pem_wrap, test_chain,
+    LAUNCH_DIGEST, POLICY, REPORTED_TCB, collateral_of, cpu_model, crl_revoking, forged_report, pem_wrap, test_chain,
 };
+use engine_verify::{CpuModel, MinimumTcb, Tcb};
 use hpke::Serializable;
 
 use crate::config::TeeProvider;
-use crate::handover::evidence::{Peer, Quoting, verify};
+use crate::handover::evidence::{Peer, Quoting, same_policy, verify};
 use crate::tee::MockAttestor;
 use crate::tee::sealing::Platform;
 
@@ -115,15 +116,54 @@ async fn mock_evidence_binds_its_data_and_never_passes_for_a_real_enclave() {
     let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG, READS);
     let evidence = evidence::produce(&quoting, &MockAttestor, &platform, report_data).await.unwrap();
 
-    let peer = verify(TeeProvider::Mock, &evidence, &report_data, None, None).unwrap();
-    assert_eq!(peer, Peer { launch_digest: [0x22; 48], policy: 0, tcb: None });
-    assert!(verify(TeeProvider::Mock, &evidence, &[0u8; 64], None, None).is_err(), "it verified other data");
-    let err = verify(TeeProvider::ConfigfsTsm, &evidence, &report_data, Some(0), None).unwrap_err();
+    let peer = verify(TeeProvider::Mock, &[], &evidence, &report_data, None, None).unwrap();
+    assert_eq!(peer, Peer { launch_digest: [0x22; 48], policy: 0 });
+    assert!(verify(TeeProvider::Mock, &[], &evidence, &[0u8; 64], None, None).is_err(), "it verified other data");
+    let err = verify(TeeProvider::ConfigfsTsm, &[cpu_model()], &evidence, &report_data, Some(0), None).unwrap_err();
     assert!(err.to_string().contains("never hands over to a mock one"), "{err:#}");
 }
 
 #[test]
 fn hardware_evidence_verifies_against_the_vendor_chain_and_binds_its_data() {
+    let (evidence, report_data, root) = hardware_evidence();
+    let models = [cpu_model()];
+    let now = Some(1_800_000_000);
+
+    let peer = verify(TeeProvider::ConfigfsTsm, &models, &evidence, &report_data, now, Some(&root)).unwrap();
+    assert_eq!(peer, Peer { launch_digest: LAUNCH_DIGEST, policy: POLICY });
+    let hardware = |data: &[u8; 64], now: Option<i64>, root: Option<&str>| {
+        verify(TeeProvider::ConfigfsTsm, &models, &evidence, data, now, root)
+    };
+    assert!(hardware(&[0u8; 64], now, Some(&root)).is_err(), "other data");
+    assert!(hardware(&report_data, now, None).is_err(), "an unpinned root");
+    assert!(hardware(&report_data, None, Some(&root)).is_err(), "no time");
+    let err = verify(TeeProvider::Mock, &models, &evidence, &report_data, None, None).unwrap_err();
+    assert!(err.to_string().contains("mock enclaves only"), "{err:#}");
+}
+
+#[test]
+fn a_hardware_peer_is_held_to_its_own_models_floor_and_never_to_this_platforms_tcb() {
+    let (evidence, report_data, root) = hardware_evidence();
+    let now = Some(1_800_000_000);
+    let peer =
+        |models: &[CpuModel]| verify(TeeProvider::ConfigfsTsm, models, &evidence, &report_data, now, Some(&root));
+
+    // At its model's floor: admitted, and no weaker than a platform committed above its TCB.
+    let admitted = peer(&[cpu_model()]).expect("the peer's model at its floor");
+    let ahead = Tcb { microcode: REPORTED_TCB.microcode + 1, ..REPORTED_TCB };
+    let own = Platform { launch_digest: LAUNCH_DIGEST, policy: POLICY, tcb: ahead.to_packed() };
+    same_policy(&own, &admitted).expect("the holder's own TCB is no floor");
+    // A model the table does not list, and its own model's floor above its TCB, refuse it.
+    let err = peer(&[]).unwrap_err();
+    assert!(err.to_string().ends_with("is not a model the release accepts"), "{err:#}");
+    let above = MinimumTcb { microcode: REPORTED_TCB.microcode + 1, ..cpu_model().minimum_tcb };
+    let err = peer(&[CpuModel { minimum_tcb: above, ..cpu_model() }]).unwrap_err();
+    assert!(err.to_string().starts_with("the quote's reported TCB"), "{err:#}");
+}
+
+/// A hardware peer's evidence over a handover request's report data, from the fixture chip, with the
+/// fixture chain's root to pin.
+fn hardware_evidence() -> (Evidence, [u8; 64], String) {
     let chip = [0x5a; 64];
     let chain = test_chain(chip, REPORTED_TCB);
     let report_data = request_report_data(DOMAIN, &CHALLENGE, &[7u8; 32], &CONFIG, READS);
@@ -134,16 +174,7 @@ fn hardware_evidence_verifies_against_the_vendor_chain_and_binds_its_data() {
         "collateral": String::from_utf8(collateral.to_json()).unwrap(),
     }))
     .unwrap();
-    let root = pem_wrap(&collateral.root, "CERTIFICATE");
-    let now = Some(1_800_000_000);
-
-    let peer = verify(TeeProvider::ConfigfsTsm, &evidence, &report_data, now, Some(&root)).unwrap();
-    assert_eq!(peer, Peer { launch_digest: LAUNCH_DIGEST, policy: POLICY, tcb: Some(REPORTED_TCB) });
-    assert!(verify(TeeProvider::ConfigfsTsm, &evidence, &[0u8; 64], now, Some(&root)).is_err(), "other data");
-    assert!(verify(TeeProvider::ConfigfsTsm, &evidence, &report_data, now, None).is_err(), "an unpinned root");
-    assert!(verify(TeeProvider::ConfigfsTsm, &evidence, &report_data, None, Some(&root)).is_err(), "no time");
-    let err = verify(TeeProvider::Mock, &evidence, &report_data, None, None).unwrap_err();
-    assert!(err.to_string().contains("mock enclaves only"), "{err:#}");
+    (evidence, report_data, pem_wrap(&collateral.root, "CERTIFICATE"))
 }
 
 /// Every signer epoch the vault records is read, however many, so a copy's replay accepts the seals of

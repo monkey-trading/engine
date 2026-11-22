@@ -2,6 +2,7 @@
 //! passed in as a node would relay it, and every date is checked at the `now` each test chooses.
 
 mod chain;
+mod cpu_models;
 mod releases;
 mod signature;
 mod versions;
@@ -21,6 +22,7 @@ fn a_release_quote_verifies_names_the_release_and_carries_its_validity_window() 
     assert_eq!(verified.enclave_address, [0x5e; 20]);
     assert_eq!(verified.config_name, "node.toml");
     assert_eq!(verified.tls_public_key_sha256, enclave.bundle.tls_public_key_sha256);
+    assert_eq!(verified.product_name, PRODUCT_NAME);
     // The list runs 2024-01-01 to 2049-01-01 and the certificates 1975-01-01 to 4096-01-01
     // (rcgen's default): the window is where both are valid.
     assert_eq!(verified.validity.from, ymd(2024, 1, 1));
@@ -34,7 +36,8 @@ fn a_quote_alone_verifies_and_reports_what_the_chip_signed() {
     let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
     let root = pem_wrap(&collateral.root, "CERTIFICATE");
 
-    let verified = verify_quote(&quote, &collateral, Some(&root), now()).expect("the quote verifies");
+    let models = [cpu_model()];
+    let verified = verify_quote(&quote, &collateral, Some(&root), now(), &models).expect("the quote verifies");
     assert_eq!(verified.measurement, LAUNCH_DIGEST);
     assert_eq!(verified.policy, POLICY);
     assert_eq!(verified.reported_tcb, REPORTED_TCB);
@@ -44,11 +47,14 @@ fn a_quote_alone_verifies_and_reports_what_the_chip_signed() {
     // A byte changed after signing, a revoked VCEK, and a chain that reaches no pinned root fail.
     let mut altered = quote.clone();
     altered[0x90] ^= 1;
-    assert!(verify_quote(&altered, &collateral, Some(&root), now()).is_err(), "an altered measurement verified");
+    assert!(
+        verify_quote(&altered, &collateral, Some(&root), now(), &models).is_err(),
+        "an altered measurement verified"
+    );
     let ask_serial = rcgen::SerialNumber::from_slice(&serial_of(chain.ask.der()));
     let revoked = collateral_of(&chain, &crl_revoking(&chain, &[ask_serial]));
-    assert!(verify_quote(&quote, &revoked, Some(&root), now()).is_err(), "a revoked intermediate verified");
-    assert!(verify_quote(&quote, &collateral, None, now()).is_err(), "an unpinned root verified");
+    assert!(verify_quote(&quote, &revoked, Some(&root), now(), &models).is_err(), "a revoked intermediate verified");
+    assert!(verify_quote(&quote, &collateral, None, now(), &models).is_err(), "an unpinned root verified");
 }
 
 #[test]

@@ -74,7 +74,7 @@ enum Cmd {
         #[arg(long, requires = "attestation")]
         release: Vec<PathBuf>,
         /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo
-        /// or Siena processor (Turin is not supported yet).
+        /// or Siena processor (Turin is not supported yet). The quote's VCEK must name it.
         #[arg(long, requires = "attestation")]
         processor: Option<String>,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
@@ -132,11 +132,11 @@ enum Cmd {
         /// The attestation JSON `/v1/attestation` served, saved to a file.
         #[arg(short, long)]
         attestation: PathBuf,
-        /// The release manifest of measurements and configuration hashes.
+        /// The release manifest of measurements, CPU models and configuration hashes.
         #[arg(short, long)]
         release: PathBuf,
         /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo
-        /// or Siena processor (Turin is not supported yet).
+        /// or Siena processor (Turin is not supported yet). The quote's VCEK must name it.
         #[arg(long)]
         processor: String,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.

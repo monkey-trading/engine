@@ -38,7 +38,8 @@ fn a_zero_segment_size_is_refused() {
 #[test]
 fn unsigned_requests_need_the_mock_tee_and_mock_custody() {
     let dev = std::fs::read_to_string(DEV).unwrap();
-    let tee = dev.replace("provider = \"mock\" # \"configfs_tsm\"", "provider = \"configfs_tsm\" #");
+    let tee = dev.replace("provider = \"mock\" # \"configfs_tsm\"", "provider = \"configfs_tsm\" #")
+        + crate::test_support::TEST_CPU_MODEL;
     let anvil = std::fs::read_to_string(ANVIL).unwrap();
     let custody = anvil.replace("auth = \"eip712\"", "auth = \"none\"");
     for (text, source) in [(&tee, &dev), (&custody, &anvil)] {

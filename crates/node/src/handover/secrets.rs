@@ -127,7 +127,7 @@ pub(crate) async fn fetch_secrets(
     // At the host's time, before trusted time runs: the operator's signature bounds what this accepts.
     let now = crate::clock::now_ms() / 1000;
     let bound = reply_report_data(domain, &request, &encapped_key, &ciphertext);
-    evidence::verify(cfg.tee.provider, &evidence, &bound, Some(now), None)?;
+    evidence::verify(cfg.tee.provider, &cfg.tee.cpu_models, &evidence, &bound, Some(now), None)?;
     let plaintext = delivery::open(&hpke_info(domain), &secret, &request, &encapped_key, &ciphertext)
         .context("the moved bundle does not decrypt")?;
     let signed = SignedBundle::from_bytes(&plaintext)?;

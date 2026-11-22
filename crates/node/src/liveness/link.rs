@@ -30,6 +30,7 @@ use alloy::primitives::{Address, B256};
 use anyhow::{Context, bail};
 use engine_core::eip712::Signature;
 use engine_core::types::AccountId;
+use engine_verify::CpuModel;
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
@@ -170,6 +171,8 @@ pub(crate) struct Server<C> {
     pub copy: Copy,
     pub standby: Arc<StandbyKeys>,
     pub provider: TeeProvider,
+    /// The CPU models a vouched member's quote may come from, each at its own minimum TCB.
+    pub cpu_models: Vec<CpuModel>,
     pub platform: Platform,
     pub trusted: TrustedClock,
     pub chain: C,
@@ -459,6 +462,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
             Request::Vouch { request } => {
                 let voucher = Voucher {
                     provider: self.provider,
+                    cpu_models: &self.cpu_models,
                     platform: self.platform,
                     trusted: &self.trusted,
                     chain: &self.chain,

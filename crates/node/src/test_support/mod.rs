@@ -60,6 +60,9 @@ use crate::trusted_time::{Sample, TrustedClock};
 
 pub const DEV_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/dev.toml");
 pub const ANVIL_CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.toml");
+/// The `[[tee.cpu_models]]` a test config switched to `configfs_tsm` lists: the fixture chain's model.
+pub const TEST_CPU_MODEL: &str = "\n[[tee.cpu_models]]\nproduct_name = 'Genoa-A2'\nfamily = 0x19\nmodel = 0xA0\n\
+                                  stepping = 0x02\nminimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }\n";
 /// Small, so a short test crosses several segment boundaries.
 pub const SEGMENT_COMMANDS: u64 = 4;
 pub const CHECKPOINT_EVERY: u64 = 3;

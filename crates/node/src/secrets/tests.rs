@@ -195,7 +195,7 @@ pub(crate) fn reason(reply: Reply) -> String {
 
 /// What a delivery's quote proves, for a mock enclave.
 fn peer_of(evidence: &crate::handover::Evidence, report_data: &[u8; 64]) -> Peer {
-    evidence::verify(TeeProvider::Mock, evidence, report_data, None, None).unwrap()
+    evidence::verify(TeeProvider::Mock, &[], evidence, report_data, None, None).unwrap()
 }
 
 #[tokio::test]

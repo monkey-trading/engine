@@ -37,7 +37,7 @@ async fn fetched_collateral_checks_and_round_trips_through_the_served_json() {
     let report = SnpReport::parse(&quote).unwrap();
 
     let fetched = Collateral::new(&stub.base, PROCESSOR).unwrap().relayed(&report).await.unwrap();
-    fetched.check(&report, ASN1Time::now()).expect("collateral for the node's own quote checks");
+    fetched.check(&report, PROCESSOR, ASN1Time::now()).expect("collateral for the node's own quote checks");
     assert_eq!(RelayedCollateral::from_json(&fetched.to_json()).unwrap(), fetched);
     assert!(fetched.crl_next_update().unwrap().is_some());
 }
@@ -48,32 +48,36 @@ fn the_node_refuses_collateral_that_would_not_verify_for_its_quote() {
     let quote = quote_of(&attestation);
     let report = SnpReport::parse(&quote).unwrap();
     let good = collateral_of(&chain, &crl_revoking(&chain, &[]));
-    good.check(&report, ASN1Time::now()).unwrap();
+    good.check(&report, PROCESSOR, ASN1Time::now()).unwrap();
 
     // A VCEK the vendor's intermediate signed for another chip or TCB, and one from another chain.
     let mut other_chip = enclave.chip_id;
     other_chip[0] ^= 1;
     let other_chip_vcek =
         RelayedCollateral { vcek: vcek_for(&chain, other_chip, REPORTED_TCB).der().to_vec(), ..good.clone() };
-    assert!(other_chip_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK for another chip");
+    assert!(other_chip_vcek.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served a VCEK for another chip");
     let other_tcb = Tcb { microcode: REPORTED_TCB.microcode + 1, ..REPORTED_TCB };
     let other_tcb_vcek =
         RelayedCollateral { vcek: vcek_for(&chain, enclave.chip_id, other_tcb).der().to_vec(), ..good.clone() };
-    assert!(other_tcb_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK for another TCB");
+    assert!(other_tcb_vcek.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served a VCEK for another TCB");
     let other_chain = test_chain(enclave.chip_id, REPORTED_TCB);
     let other_chain_vcek = RelayedCollateral { vcek: other_chain.vcek.der().to_vec(), ..good.clone() };
-    assert!(other_chain_vcek.check(&report, ASN1Time::now()).is_err(), "served a VCEK from another chain");
+    assert!(other_chain_vcek.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served a VCEK from another chain");
+    // A VCEK of another product line than `tee.processor` names, even beside a revoking list.
+    let err = good.check(&report, "Milan", ASN1Time::now()).unwrap_err();
+    assert_eq!(err.to_string(), "the VCEK is for product Genoa-A2, not the processor Milan names");
 
     // A list that revokes the intermediate, an expired list, and a list another key signed.
     let ask_serial = SerialNumber::from_slice(&x509_serial(chain.ask.der()));
     let revoked = collateral_of(&chain, &crl_revoking(&chain, &[ask_serial]));
-    let err = revoked.check(&report, ASN1Time::now()).expect_err("a list revoking the intermediate does not pass");
+    let err =
+        revoked.check(&report, PROCESSOR, ASN1Time::now()).expect_err("a list revoking the intermediate does not pass");
     assert!(RelayedCollateral::is_revoked(&err), "{err:#}");
     let expired = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2025, 1, 1), None));
-    assert!(expired.check(&report, ASN1Time::now()).is_err(), "served an expired list");
+    assert!(expired.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served an expired list");
     let other_key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
     let forged = collateral_of(&chain, &crl_signed(&chain, &[], (2024, 1, 1), (2049, 1, 1), Some(&other_key)));
-    assert!(forged.check(&report, ASN1Time::now()).is_err(), "served a list the root did not sign");
+    assert!(forged.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served a list the root did not sign");
 
     // A revocation outlasts its list: an authentic list naming the intermediate is a revocation
     // whatever its dates, so a skewed clock cannot turn it into an ordinary refusal.
@@ -81,7 +85,7 @@ fn the_node_refuses_collateral_that_would_not_verify_for_its_quote() {
     let old_revoking =
         collateral_of(&chain, &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2025, 1, 1), None));
     assert!(
-        RelayedCollateral::is_revoked(&old_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        RelayedCollateral::is_revoked(&old_revoking.check(&report, PROCESSOR, ASN1Time::now()).unwrap_err()),
         "an expired revoking list"
     );
     // Anything else wrong with the collateral is not an authentic revocation and is still dropped:
@@ -91,20 +95,24 @@ fn the_node_refuses_collateral_that_would_not_verify_for_its_quote() {
         &crl_signed(&chain, std::slice::from_ref(&ask_serial), (2024, 1, 1), (2049, 1, 1), Some(&other_key)),
     );
     assert!(
-        !RelayedCollateral::is_revoked(&forged_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        !RelayedCollateral::is_revoked(&forged_revoking.check(&report, PROCESSOR, ASN1Time::now()).unwrap_err()),
         "a forged revocation"
+    );
+    assert!(
+        !RelayedCollateral::is_revoked(&revoked.check(&report, "Milan", ASN1Time::now()).unwrap_err()),
+        "another processor's"
     );
     let foreign_revoking = RelayedCollateral { vcek: other_chip_vcek.vcek.clone(), ..revoked.clone() };
     assert!(
-        !RelayedCollateral::is_revoked(&foreign_revoking.check(&report, ASN1Time::now()).unwrap_err()),
+        !RelayedCollateral::is_revoked(&foreign_revoking.check(&report, PROCESSOR, ASN1Time::now()).unwrap_err()),
         "a foreign VCEK"
     );
 
     // A chain whose intermediate does not link to its root, and garbage in place of a certificate.
     let unlinked = RelayedCollateral { intermediate: chain.vcek.der().to_vec(), ..good.clone() };
-    assert!(unlinked.check(&report, ASN1Time::now()).is_err(), "served an unlinked chain");
+    assert!(unlinked.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served an unlinked chain");
     let garbage = RelayedCollateral { root: vec![1, 2, 3], ..good };
-    assert!(garbage.check(&report, ASN1Time::now()).is_err(), "served a malformed certificate");
+    assert!(garbage.check(&report, PROCESSOR, ASN1Time::now()).is_err(), "served a malformed certificate");
 }
 
 #[tokio::test]
@@ -269,6 +277,39 @@ fn a_non_snp_provider_gets_no_relay_and_an_snp_quote_needs_a_supported_report_an
     let err = Relay::new(&unset, &attestation).err().expect("an SNP quote without a processor is refused");
     assert!(err.to_string().contains("tee.processor"), "{err:#}");
     assert!(Relay::new(&tee("https://kds.example", "12h"), &attestation).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_refresh_names_why_tee_cpu_models_does_not_admit_this_nodes_chip() {
+    let (chain, _enclave, attestation) = fixtures();
+    let stub = kds_stub(&chain).await;
+    let unlisted = Relay::new(&tee(&stub.base, "12h"), &attestation).unwrap().unwrap();
+    let collateral = Collateral::new(&stub.base, PROCESSOR).unwrap();
+    let refreshed = unlisted.refresh_once(&collateral).await.unwrap();
+    let reason = refreshed.unlisted.expect("an empty list admits no chip");
+    assert!(reason.ends_with("is not a model the release accepts"), "{reason}");
+    let mut listing = tee(&stub.base, "12h");
+    listing.cpu_models = vec![cpu_model()];
+    let listed = Relay::new(&listing, &attestation).unwrap().unwrap();
+    assert_eq!(listed.refresh_once(&collateral).await.unwrap().unlisted, None);
+
+    // The relay pages Critical while its own list does not admit it, and serves the collateral still.
+    let (_guard, mut alerts) = capture_alerts();
+    let mut served = unlisted.served();
+    let task = tokio::spawn(unlisted.run());
+    timeout(Duration::from_secs(20), served.wait_for(Option::is_some)).await.unwrap().unwrap();
+    let alert = timeout(Duration::from_secs(20), async {
+        loop {
+            let alert = alerts.recv().await.unwrap();
+            if alert["alert"] == "cpu_model_unlisted" {
+                break alert;
+            }
+        }
+    })
+    .await
+    .expect("no cpu_model_unlisted page");
+    assert_eq!(alert["level"], "ERROR", "an unlisted own model is a Critical page");
+    task.abort();
 }
 
 #[tokio::test]

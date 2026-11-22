@@ -2,13 +2,15 @@
 //! signs VCEKs, and the vendor root that signs the intermediate. The roots are pinned in the
 //! binary, so nothing fetched to verify a quote enters the trust set. The VCEK's signed extensions
 //! must match the quote's chip id and reported TCB, so a served VCEK is bound to the chip that
-//! produced the report. Every date is checked against the `now` the caller passes in.
+//! produced the report, and its product name must carry the product line its root and intermediate
+//! are named for. Every date is checked against the `now` the caller passes in.
 
 use anyhow::{Context, bail, ensure};
 use x509_parser::certificate::X509Certificate;
 use x509_parser::prelude::FromDer;
 use x509_parser::time::ASN1Time;
 
+use crate::cpu::product_line;
 use crate::report::{SnpReport, Tcb};
 use crate::signature::verify_signed;
 
@@ -18,6 +20,7 @@ const VENDOR_ROOT_PEMS: &[&str] =
 
 /// The vendor's extension OIDs signed into every VCEK, binding it to the chip and TCB it serves.
 const OID_STRUCT_VERSION: &str = "1.3.6.1.4.1.3704.1.1";
+const OID_PRODUCT_NAME: &str = "1.3.6.1.4.1.3704.1.2";
 const OID_BL_SPL: &str = "1.3.6.1.4.1.3704.1.3.1";
 const OID_TEE_SPL: &str = "1.3.6.1.4.1.3704.1.3.2";
 const OID_SNP_SPL: &str = "1.3.6.1.4.1.3704.1.3.3";
@@ -168,6 +171,33 @@ impl QuoteChain {
         Ok(())
     }
 
+    /// The VCEK's product name, such as `Genoa-B1`, once the root's and the intermediate's common
+    /// names carry its product line as the vendor names them: `ARK-<line>` and `SEV-<line>`.
+    /// Error cases:
+    /// - the VCEK carries no product name, or not as a DER IA5String
+    /// - the root's or the intermediate's common name is not its line's, or names another line
+    pub fn product_name(&self) -> anyhow::Result<String> {
+        let vcek = parse_cert(&self.ders[0])?;
+        let extension = vcek
+            .extensions()
+            .iter()
+            .find(|extension| extension.oid.to_id_string() == OID_PRODUCT_NAME)
+            .with_context(|| format!("VCEK carries no extension {OID_PRODUCT_NAME}"))?;
+        let name = extension_ia5(extension)?;
+        let line = product_line(&name);
+        for (index, prefix) in [(2, "ARK-"), (1, "SEV-")] {
+            let cert = parse_cert(&self.ders[index])?;
+            let common_name = cert.subject().iter_common_name().next().and_then(|name| name.as_str().ok());
+            ensure!(
+                common_name.and_then(|name| name.strip_prefix(prefix)) == Some(line),
+                "the VCEK names product {name}, but its chain's {} is {}, not {prefix}{line}",
+                if index == 2 { "root" } else { "intermediate" },
+                common_name.unwrap_or("unnamed")
+            );
+        }
+        Ok(name)
+    }
+
     /// The VCEK's public key as its SEC 1 uncompressed point, which the verifier's signature
     /// algorithm parses.
     pub fn vcek_public_key(&self) -> anyhow::Result<Vec<u8>> {
@@ -297,6 +327,19 @@ fn extension_integer(extension: &x509_parser::extensions::X509Extension<'_>, wha
         [0, byte] => Ok(*byte),
         _ => bail!("VCEK {what} extension does not fit a u8"),
     }
+}
+
+/// A DER IA5String extension value as text.
+/// Error cases:
+/// - the value is not a DER IA5String of printable ASCII with a short-form length
+fn extension_ia5(extension: &x509_parser::extensions::X509Extension<'_>) -> anyhow::Result<String> {
+    let value = extension.value;
+    ensure!(value.first() == Some(&0x16), "VCEK product name extension is not a DER IA5String");
+    let len = *value.get(1).context("VCEK product name extension is truncated")? as usize;
+    ensure!(len < 0x80 && value.len() == 2 + len, "VCEK product name extension has a malformed length");
+    let text = &value[2..];
+    ensure!(text.iter().all(|byte| byte.is_ascii_graphic()), "VCEK product name is not printable ASCII");
+    Ok(String::from_utf8(text.to_vec()).expect("checked ASCII"))
 }
 
 /// The hardware id extension value: the vendor signs the 64 bytes with no ASN.1 tag; an OCTET

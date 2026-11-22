@@ -307,6 +307,7 @@ impl Exchange {
                 vault: successor.custody.vault.parse().unwrap(),
             },
             provider: TeeProvider::Mock,
+            cpu_models: Vec::new(),
             processor: None,
             kds_base: "https://kds.test".into(),
             signer: AccountId(old.enclave_key().unwrap().address()),

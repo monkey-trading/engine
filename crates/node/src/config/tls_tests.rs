@@ -237,7 +237,9 @@ fn real_providers_with(budgets: &str) -> String {
     let tee = cfg["tee"].as_table_mut().unwrap();
     tee.insert("provider".into(), "configfs_tsm".into());
     tee.remove("use_published_mock_key");
-    tee.insert("processor".into(), "Milan".into());
+    tee.insert("processor".into(), "Genoa".into());
+    let models: toml::Table = toml::from_str(crate::test_support::TEST_CPU_MODEL).unwrap();
+    tee.insert("cpu_models".into(), models["tee"]["cpu_models"].clone());
     let sealing = "dir = 'keys'\n[secrets]\nlisten = '127.0.0.1:9472'";
     tee.insert("sealing".into(), toml::from_str::<toml::Table>(sealing).unwrap().into());
     cfg["alerts"]["critical"] = toml::from_str::<toml::Table>("url_secret = 'alerts_critical_url'").unwrap().into();

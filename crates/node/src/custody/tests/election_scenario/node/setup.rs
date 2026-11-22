@@ -64,7 +64,7 @@ pub(super) fn asker(
     .unwrap();
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(chain.vault.into()) };
     let vault = CheckpointRpc::read_only(&section, domain, chain.usdc, chain.release_tag, 0).unwrap();
-    Asker::new(vault, sequencer, due, (domain, TeeProvider::Mock, store.platform()), key, trusted)
+    Asker::new(vault, sequencer, due, (domain, TeeProvider::Mock, Vec::new(), store.platform()), key, trusted)
 }
 
 /// The governance the chain's vote contract runs, when it has one.

@@ -265,15 +265,17 @@ write_access_config "$work/node.toml"
 grep -q FAKE "$work/node.toml" && fail "the config holds a value"
 release_toml() {
   cat <<TOML
+format = 2
 name = "dev-production-secrets"
 launch_digest = "0x$1"
 policy = "0x0"
 guest_features = "0x201"
-[minimum_tcb]
-boot_loader = 0
-tee = 0
-snp = 0
-microcode = 0
+[[cpu_models]]
+product_name = "Genoa-A2"
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }
 [config_hashes]
 "node.toml" = "0x$2"
 TOML

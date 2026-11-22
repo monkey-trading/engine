@@ -78,6 +78,29 @@ fn an_attestation_fails_with_the_verifiers_message_and_without_the_extra_root() 
 }
 
 #[test]
+fn a_quote_is_held_to_the_cpu_models_its_manifest_lists_and_an_old_manifest_is_refused() {
+    let (chain, enclave, attestation) = fixtures();
+    let attestation = serde_json::to_string(&attestation).unwrap();
+    let verify = |manifest: String| {
+        verify_attestation(&attestation, vec![manifest], &collateral(&chain), NOW_MS, Some(pem(&chain.ark))).err()
+    };
+    let genoa = release_toml().replace(PRODUCT_NAME, "Genoa-B1").replace("model = 0xa0", "model = 0x11");
+    assert_eq!(
+        verify(genoa).as_deref(),
+        Some("the quote's CPU, family 0x19 model 0xa0 stepping 0x02, is not a model the release accepts")
+    );
+    let below = release_toml().replace("microcode = 115", "microcode = 206");
+    assert!(verify(below).unwrap().starts_with("the quote's reported TCB"));
+    let format_1 = release_toml().replacen("format = 2\n", "", 1);
+    let err = verify(format_1).unwrap();
+    assert!(err.starts_with("parsing manifest 0: the release manifest names no format, so it is format 1"), "{err}");
+    let quote = forged_report_at(&chain, 2, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
+    let version_2 = serde_json::to_string(&engine_verify::fixtures::attestation(&enclave.bundle, &quote)).unwrap();
+    let err = verify_attestation(&version_2, vec![release_toml()], &collateral(&chain), NOW_MS, Some(pem(&chain.ark)));
+    assert!(err.err().unwrap().starts_with("the quote is a version 2 report"));
+}
+
+#[test]
 fn reports_of_versions_5_and_6_verify_and_version_7_is_refused() {
     let enclave = enclave();
     let chain = test_chain(enclave.chip_id, REPORTED_TCB);

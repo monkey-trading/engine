@@ -200,6 +200,7 @@ pub(super) async fn ask(
     let now = crate::clock::now_ms() / 1000;
     let peer = evidence::verify(
         cfg.tee.provider,
+        &cfg.tee.cpu_models,
         &evidence,
         &keys_report_data(domain, &request, &encapped_key, &ciphertext),
         Some(now),

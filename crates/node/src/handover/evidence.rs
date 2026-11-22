@@ -1,10 +1,13 @@
 //! A handover peer's evidence: a quote over the report data the step binds, with the vendor chain
-//! that verifies it, or, between mock enclaves, a mock quote and a claimed stand-in measurement.
+//! that verifies it, or, between mock enclaves, a mock quote and a claimed stand-in measurement. A
+//! hardware peer's CPU model must be one the verifying side lists (`tee.cpu_models`, or a release
+//! manifest's), at that model's own minimum TCB: the vendor numbers TCB values per model, so a
+//! peer is never held to the verifier's own platform numbers.
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use engine_verify::{RelayedCollateral, SnpReport, Tcb, verify_quote};
+use engine_verify::{CpuModel, RelayedCollateral, SnpReport, Tcb, verify_quote};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{TeeProvider, TeeSection};
@@ -33,8 +36,6 @@ pub(crate) struct Evidence {
 pub(crate) struct Peer {
     pub launch_digest: [u8; 48],
     pub policy: u64,
-    /// The TCB a hardware quote was issued under.
-    pub tcb: Option<Tcb>,
 }
 
 /// Where this enclave's quotes come from, and their collateral.
@@ -137,14 +138,17 @@ pub(crate) async fn produce_with(
 }
 
 /// What `evidence` shows, once it binds `report_data`. A real enclave takes a hardware quote whose
-/// chain verifies to the vendor roots, plus `root_pem` in tests, unrevoked at `now_seconds`; a mock
-/// enclave takes only a mock quote.
+/// chain verifies to the vendor roots, plus `root_pem` in tests, unrevoked at `now_seconds`, from a
+/// chip of one of `cpu_models` at no less than that model's minimum TCB; a mock enclave takes only a
+/// mock quote.
 /// Error cases:
 /// - the evidence is the other kind than `own` takes, or does not bind `report_data`
-/// - a hardware quote does not verify (see `engine_verify::verify_quote`), or has no time to check
-///   its chain at; a mock claim is not a 48-byte measurement
+/// - a hardware quote does not verify (see `engine_verify::verify_quote`), its chip is not one of
+///   `cpu_models` at that model's minimum, or it has no time to check its chain at; a mock claim is
+///   not a 48-byte measurement
 pub(crate) fn verify(
     own: TeeProvider,
+    cpu_models: &[CpuModel],
     evidence: &Evidence,
     report_data: &[u8; 64],
     now_seconds: Option<i64>,
@@ -160,35 +164,32 @@ pub(crate) fn verify(
                 .ok()
                 .and_then(|digest| digest.try_into().ok())
                 .context("the mock peer's measurement is not 48 bytes of hex")?;
-            Ok(Peer { launch_digest, policy: 0, tcb: None })
+            Ok(Peer { launch_digest, policy: 0 })
         }
         TeeProvider::ConfigfsTsm => {
             ensure!(evidence.provider != "mock", "a real enclave never hands over to a mock one");
             let collateral = evidence.collateral.as_deref().context("the peer's quote comes without collateral")?;
             let collateral = RelayedCollateral::from_json(collateral.as_bytes())?;
             let now = now_seconds.context("no trusted time to check the peer's certificates at")?;
-            let verified = verify_quote(&quote, &collateral, root_pem, now)?;
+            let verified = verify_quote(&quote, &collateral, root_pem, now, cpu_models)?;
             ensure!(verified.report_data == *report_data, "the peer's quote binds other data");
-            Ok(Peer { launch_digest: verified.measurement, policy: verified.policy, tcb: Some(verified.reported_tcb) })
+            Ok(Peer { launch_digest: verified.measurement, policy: verified.policy })
         }
     }
 }
 
-/// Requires a peer to run under the same guest policy as this release, since the launch measurement
-/// does not cover the policy and one that allowed debugging would expose what it is given, and, on
-/// hardware, at a TCB no lower than this platform's committed one.
+/// Requires a peer, a successor, a vouched standby or a member verifying the log, to run under the
+/// same guest policy as this release, since the launch measurement does not cover the policy and one
+/// that allowed debugging would expose what it is given. Its TCB is checked against its own CPU
+/// model's minimum when its evidence verifies (`verify`), never against this platform's.
 /// Error cases:
-/// - the policy differs, or the TCB is below the floor
-pub(crate) fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
+/// - the policy differs
+pub(crate) fn same_policy(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
     ensure!(
         peer.policy == own.policy,
         "the peer's guest policy {:#x} differs from this release's {:#x}",
         peer.policy,
         own.policy
     );
-    if let Some(tcb) = peer.tcb {
-        let floor = Tcb::from_packed(own.tcb);
-        ensure!(tcb.meets(floor), "the peer's TCB {tcb:?} is below this platform's committed {floor:?}");
-    }
     Ok(())
 }

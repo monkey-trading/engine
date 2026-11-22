@@ -1,11 +1,11 @@
-//! Report versions 2 to 6 on the stand-in chain: each verifies against the release with the fields its
-//! version adds read as the firmware wrote them, and a report of an unknown version, from another CPU
-//! family, or signed with a key other than the VCEK is refused with its own message even when the
-//! VCEK signed it.
+//! Report versions 2 to 6 on the stand-in chain: each from 3 verifies against the release with the
+//! fields its version adds read as the firmware wrote them, and a report of version 2, which names no
+//! CPU model, of an unknown version, from another CPU family, or signed with a key other than the
+//! VCEK is refused with its own message even when the VCEK signed it.
 
 use super::{now, verify};
 use crate::fixtures::*;
-use crate::{Cpuid, MitigationVectors, SnpReport, verify_quote};
+use crate::{MitigationVectors, SnpReport, verify_quote};
 
 #[test]
 fn reports_of_versions_5_and_6_verify_and_read_the_cpuid_and_mitigation_vectors() {
@@ -20,10 +20,10 @@ fn reports_of_versions_5_and_6_verify_and_read_the_cpuid_and_mitigation_vectors(
 
         let parsed = SnpReport::parse(&quote).unwrap();
         assert_eq!(parsed.version, version);
-        assert_eq!(parsed.cpuid, Some(Cpuid { family: 0x19, model: 0xA0, stepping: 0x01 }));
+        assert_eq!(parsed.cpuid, Some(CPUID));
         assert_eq!(parsed.mitigation_vectors, Some(MitigationVectors { launch: 0x1, current: 0x3 }));
         let root = pem_wrap(&collateral.root, "CERTIFICATE");
-        let quoted = verify_quote(&quote, &collateral, Some(&root), now()).unwrap();
+        let quoted = verify_quote(&quote, &collateral, Some(&root), now(), &[cpu_model()]).unwrap();
         assert_eq!(
             (quoted.measurement, quoted.policy, quoted.reported_tcb, quoted.report_data),
             (LAUNCH_DIGEST, POLICY, REPORTED_TCB, enclave.bundle.report_data()),
@@ -34,14 +34,24 @@ fn reports_of_versions_5_and_6_verify_and_read_the_cpuid_and_mitigation_vectors(
 }
 
 #[test]
-fn every_version_from_2_to_6_verifies_against_the_release() {
+fn every_version_from_3_to_6_verifies_and_version_2_which_names_no_cpu_is_refused() {
     let enclave = enclave();
     let chain = test_chain(enclave.chip_id, REPORTED_TCB);
     let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
+    let root = pem_wrap(&collateral.root, "CERTIFICATE");
+    let refusal = "the quote is a version 2 report, which names no CPU model: a release accepts reports of version 3 \
+                   or later";
     for version in 2..=6 {
         let quote = forged_report_at(&chain, version, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
-        verify(&attestation(&enclave.bundle, &quote), &[release()], &collateral, now())
-            .unwrap_or_else(|err| panic!("version {version}: {err:#}"));
+        let verified = verify(&attestation(&enclave.bundle, &quote), &[release()], &collateral, now());
+        let quoted = verify_quote(&quote, &collateral, Some(&root), now(), &[cpu_model()]);
+        if version == 2 {
+            assert_eq!(format!("{:#}", verified.unwrap_err()), refusal);
+            assert_eq!(format!("{:#}", quoted.unwrap_err()), refusal);
+        } else {
+            verified.unwrap_or_else(|err| panic!("version {version}: {err:#}"));
+            quoted.unwrap_or_else(|err| panic!("version {version}: {err:#}"));
+        }
     }
 }
 

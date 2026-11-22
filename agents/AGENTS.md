@@ -160,8 +160,11 @@ an index: load only the rule whose hint matches the current action.
   received), `FrameVerifier` (`verify_text` for a frame's JSON), the `SignedFrame` envelope, and
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
-  manifests, each of which must launch with Secure TSC (`guest_features`), of report versions 2 to 6
-  (`report.rs`, after the firmware ABI's revision 1.59: from version 3 a CPUID family of 19h, from
+  manifests (format 2), each of which must launch with Secure TSC (`guest_features`) and lists the CPU
+  models it accepts, each with its own minimum TCB (`cpu.rs`: a report's CPUID, its VCEK's product
+  name and its chain's product line must name one listed model, and its TCB meets that model's
+  minimum only; `verify_quote` holds a peer to a node's `[[tee.cpu_models]]` the same way), of report
+  versions 3 to 6 (`report.rs`, after the firmware ABI's revision 1.59: a CPUID family of 19h, from
   version 5 the mitigation vectors read but not required, and the VCEK as the signing key), with
   the attestation, collateral, extra root, and time passed in (no IO, no clock, no C code); names
   the release that admitted the quote and the validity window of the dates it checked. Signatures

@@ -35,7 +35,7 @@ verifyResponse(expected, 'GET', '/v1/markets', new Uint8Array(), response.status
 
 | Export | Purpose |
 | --- | --- |
-| `verifyAttestation(attestation, manifests, collateral, nowMs, extraRootPem?)` | Checks the `/v1/attestation` JSON against the pinned `release.toml` texts, using the `/v1/attestation/collateral` JSON and the browser's clock. It returns the release, the configuration, the enclave address, the TLS key's hash and the validity window (`validFromMs`, `validUntilMs`). A second clock, such as the server's signed time, must fall inside that window. |
+| `verifyAttestation(attestation, manifests, collateral, nowMs, extraRootPem?)` | Checks the `/v1/attestation` JSON against the pinned `release.toml` texts, each of manifest format 2, which lists the CPU models a release accepts, using the `/v1/attestation/collateral` JSON and the browser's clock. It returns the release, the configuration, the enclave address, the TLS key's hash and the validity window (`validFromMs`, `validUntilMs`). A second clock, such as the server's signed time, must fall inside that window. |
 | `verifyMockAttestation(attestation)` | Reads a development server's simulated attestation, which never passes `verifyAttestation`. Its result says `mock: true`. |
 | `ExpectedSigner(signer, chainId, vault, challenge)` | The verified enclave address, the deployment, and the challenge that a request or connection sent |
 | `verifyResponse(expected, method, pathAndQuery, requestBody, status, signature, time, seq, echoedChallenge, body)` | Checks a response from the request as sent, the status, the four `X-Engine-*` header values (`null` when absent) and the body as received |

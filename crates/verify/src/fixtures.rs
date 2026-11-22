@@ -1,5 +1,6 @@
 //! Test fixtures, for this crate's tests, the node's, and the dev scenarios: a stand-in vendor
-//! chain with the real shapes, forged reports of versions 2 to 6 on the firmware's wire layout, the
+//! chain with the real shapes and names of the Genoa product line, forged reports of versions 2 to 6
+//! on the firmware's wire layout from a chip shaped like the Siena part the launch host carries, the
 //! release manifest, and the collateral a node would relay for them.
 
 use p384::ecdsa::signature::Signer as _;
@@ -10,7 +11,9 @@ use rcgen::{
 };
 
 use crate::report::REPORT_LEN;
-use crate::{Attestation, AttestationBundle, Cpuid, MitigationVectors, RelayedCollateral, ReleaseManifest, Tcb};
+use crate::{
+    Attestation, AttestationBundle, CpuModel, Cpuid, MitigationVectors, RelayedCollateral, ReleaseManifest, Tcb,
+};
 
 /// A stand-in vendor chain with the real shape: a self-signed root, an intermediate, and the
 /// chip key that signs reports, plus the vendor's extension OIDs binding the VCEK to `chip_id`
@@ -30,15 +33,18 @@ pub struct TestChain {
 /// the first significant byte is set, so DER encodings of the serial carry a sign-padding zero.
 pub const VCEK_SERIAL: u64 = 0x8A11CE;
 
-pub const PROCESSOR: &str = "TestProc";
+/// The product line the stand-in chain certifies under, which `--processor` and `tee.processor` name.
+pub const PROCESSOR: &str = "Genoa";
+/// The product name the stand-in VCEK carries.
+pub const PRODUCT_NAME: &str = "Genoa-A2";
 pub const POLICY: u64 = 0x30000;
 /// SNPActive and SecureTSC, as the image launches with.
 pub const GUEST_FEATURES: u64 = 0x201;
 pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
 /// The platform's committed TCB, below the reported one as after a firmware update not yet committed.
 pub const COMMITTED_TCB: Tcb = Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 200 };
-/// The CPUID a report of version 3 or later carries: family 19h, model A0h, stepping 1.
-pub const CPUID: Cpuid = Cpuid { family: 0x19, model: 0xA0, stepping: 0x01 };
+/// The CPUID a report of version 3 or later carries: family 19h, model A0h, stepping 2, a Siena part.
+pub const CPUID: Cpuid = Cpuid { family: 0x19, model: 0xA0, stepping: 0x02 };
 /// The mitigation vectors a report of version 5 or later carries: bit 0 verified at launch, and bits
 /// 0 and 1 verified when the report was issued.
 pub const MITIGATION_VECTORS: MitigationVectors = MitigationVectors { launch: 0x1, current: 0x3 };
@@ -64,6 +70,10 @@ pub fn test_chain(chip_id: [u8; 64], tcb: Tcb) -> TestChain {
 #[derive(Default)]
 pub struct Variants<'a> {
     pub struct_version: u8,
+    /// The product line the root and intermediate are named for, in place of `PROCESSOR`.
+    pub line: Option<&'a str>,
+    /// The product name the VCEK carries, in place of `PRODUCT_NAME`.
+    pub product_name: Option<&'a str>,
     /// Signs the VCEK with this key while keeping the intermediate's issuer name, so only the
     /// signature differs; likewise for the intermediate and the root's name.
     pub vcek_signer: Option<&'a KeyPair>,
@@ -78,13 +88,14 @@ pub struct Variants<'a> {
 
 /// A chain with the given variations from the vendor shape, for the negative tests.
 pub fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_>) -> TestChain {
+    let line = variants.line.unwrap_or(PROCESSOR);
     let ark_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    let mut ark_params = ca_params("ARK-Test");
+    let mut ark_params = ca_params(&format!("ARK-{line}"));
     ark_params.serial_number = Some(SerialNumber::from(1));
     let ark = ark_params.self_signed(&ark_key).unwrap();
 
     let ask_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    let mut ask_params = ca_params("ASK-Test");
+    let mut ask_params = ca_params(&format!("SEV-{line}"));
     ask_params.serial_number = Some(SerialNumber::from(2));
     let ask_signer = variants.ask_signer.unwrap_or(&ark_key);
     let ask = ask_params.signed_by(&ask_key, &Issuer::from_params(&ark_params, ask_signer)).unwrap();
@@ -101,6 +112,10 @@ pub fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_>) -> T
     vcek_params.distinguished_name.push(DnType::CommonName, "VCEK-Test");
     vcek_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     vcek_params.custom_extensions = vcek_extensions(chip_id, tcb, variants.struct_version, variants.tagged_hwid);
+    if let Some(name) = variants.product_name {
+        vcek_params.custom_extensions[1] =
+            CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 2], der_ia5(name));
+    }
     let vcek_signer = variants.vcek_signer.unwrap_or(&ask_key);
     let vcek = vcek_params.signed_by(&vcek_key, &Issuer::from_params(&ask_params, vcek_signer)).unwrap();
     TestChain { ark, ask, vcek, vcek_key, ark_params, ark_key, ask_params, ask_key }
@@ -108,13 +123,43 @@ pub fn test_chain_with(chip_id: [u8; 64], tcb: Tcb, variants: Variants<'_>) -> T
 
 /// A genuine VCEK of `chain` (signed by its intermediate) for another chip.
 pub fn vcek_for(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb) -> Certificate {
+    vcek_issued(chain, chip_id, tcb, PRODUCT_NAME).0
+}
+
+/// A genuine VCEK of `chain` for `chip_id` at `tcb` that carries `product_name`, and its key, as
+/// the vendor issues one to each chip of a model.
+pub fn vcek_issued(chain: &TestChain, chip_id: [u8; 64], tcb: Tcb, product_name: &str) -> (Certificate, KeyPair) {
+    vcek_issued_by((&chain.ask_params, &chain.ask_key), chip_id, tcb, product_name)
+}
+
+/// A VCEK the intermediate `(params, key)` issues for `chip_id` at `tcb`, carrying `product_name`, and
+/// its key.
+pub fn vcek_issued_by(
+    (ask_params, ask_key): (&CertificateParams, &KeyPair),
+    chip_id: [u8; 64],
+    tcb: Tcb,
+    product_name: &str,
+) -> (Certificate, KeyPair) {
     let mut params = CertificateParams::new(Vec::new()).unwrap();
     params.serial_number = Some(SerialNumber::from(VCEK_SERIAL));
     params.distinguished_name.push(DnType::CommonName, "VCEK-Test");
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     params.custom_extensions = vcek_extensions(chip_id, tcb, 0, false);
+    params.custom_extensions[1] =
+        CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 2], der_ia5(product_name));
     let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
-    params.signed_by(&key, &Issuer::from_params(&chain.ask_params, &chain.ask_key)).unwrap()
+    let cert = params.signed_by(&key, &Issuer::from_params(ask_params, ask_key)).unwrap();
+    (cert, key)
+}
+
+/// An intermediate named `common_name` that `chain`'s root signs, with its parameters and key: the
+/// shape of another product line's intermediate under this root.
+pub fn intermediate_named(chain: &TestChain, common_name: &str) -> (Certificate, CertificateParams, KeyPair) {
+    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    let mut params = ca_params(common_name);
+    params.serial_number = Some(SerialNumber::from(2));
+    let cert = params.signed_by(&key, &Issuer::from_params(&chain.ark_params, &chain.ark_key)).unwrap();
+    (cert, params, key)
 }
 
 /// The vendor's VCEK extension set for `chip_id` and `tcb`.
@@ -129,7 +174,7 @@ pub fn vcek_extensions(chip_id: [u8; 64], tcb: Tcb, struct_version: u8, tagged_h
     };
     vec![
         CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 1], der_integer(struct_version)),
-        CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 2], der_ia5(PROCESSOR)),
+        CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 2], der_ia5(PRODUCT_NAME)),
         CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 3, 1], der_integer(tcb.boot_loader)),
         CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 3, 2], der_integer(tcb.tee)),
         CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 3, 3], der_integer(tcb.snp)),
@@ -237,10 +282,10 @@ pub fn enclave() -> Enclave {
     }
 }
 
-/// A version-2 report the test VCEK signs over the fixture's report data and the given release
-/// fields (see `forged_report_at`).
+/// A version-3 report, the earliest a release accepts, the test VCEK signs over the fixture's report
+/// data and the given release fields (see `forged_report_at`).
 pub fn forged_report(chain: &TestChain, measurement: [u8; 48], report_data: [u8; 64], chip_id: [u8; 64]) -> Vec<u8> {
-    forged_report_at(chain, 2, measurement, report_data, chip_id)
+    forged_report_at(chain, 3, measurement, report_data, chip_id)
 }
 
 /// A report of `version` the test VCEK signs over the fixture's report data and the given release
@@ -279,7 +324,12 @@ pub fn forged_report_at(
 /// little-endian into the first 48 bytes of its 72-byte field, so a test can change a field and
 /// sign again.
 pub fn sign_report(chain: &TestChain, report: &mut [u8]) {
-    let key = p384::ecdsa::SigningKey::from_pkcs8_der(&chain.vcek_key.serialize_der()).unwrap();
+    sign_report_with(&chain.vcek_key, report);
+}
+
+/// Signs `report` as `sign_report` does, with the VCEK key `vcek_key`.
+pub fn sign_report_with(vcek_key: &KeyPair, report: &mut [u8]) {
+    let key = p384::ecdsa::SigningKey::from_pkcs8_der(&vcek_key.serialize_der()).unwrap();
     let signature: p384::ecdsa::Signature = key.sign(&report[..0x2A0]);
     let signature = signature.to_bytes();
     for (i, byte) in signature[..48].iter().rev().enumerate() {
@@ -306,21 +356,23 @@ pub fn attestation(bundle: &AttestationBundle, quote: &[u8]) -> Attestation {
 
 pub const LAUNCH_DIGEST: [u8; 48] = [0x1d; 48];
 
-/// The release manifest the fixture verifies against, as published text: the minimum TCB sits
-/// below the fixture's reported TCB in every component.
+/// The release manifest the fixture verifies against, as published text: it lists the fixture's CPU
+/// model, whose minimum TCB sits below the fixture's reported TCB in every component.
 pub fn release_toml() -> String {
     format!(
         r#"
+format = 2
 name = "test-release-v1"
 launch_digest = "0x{}"
 policy = "0x{:x}"
 guest_features = "0x{:x}"
 
-[minimum_tcb]
-boot_loader = 3
-tee = 0
-snp = 8
-microcode = 115
+[[cpu_models]]
+product_name = "{PRODUCT_NAME}"
+family = 0x{:02x}
+model = 0x{:02x}
+stepping = 0x{:02x}
+minimum_tcb = {{ boot_loader = 3, tee = 0, snp = 8, microcode = 115 }}
 
 [config_hashes]
 "node.toml" = "0x{}"
@@ -328,12 +380,20 @@ microcode = 115
         hex::encode(LAUNCH_DIGEST),
         POLICY,
         GUEST_FEATURES,
+        CPUID.family,
+        CPUID.model,
+        CPUID.stepping,
         hex::encode([0xc0; 32])
     )
 }
 
+/// The fixture's CPU model at its release minimum, as a node's `[[tee.cpu_models]]` lists it.
+pub fn cpu_model() -> CpuModel {
+    release().cpu_models.remove(0)
+}
+
 pub fn release() -> ReleaseManifest {
-    toml::from_str(&release_toml()).unwrap()
+    ReleaseManifest::from_toml(&release_toml()).unwrap()
 }
 
 /// The standard fixtures every happy-path test shares.

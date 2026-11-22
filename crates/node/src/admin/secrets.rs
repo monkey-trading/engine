@@ -1,14 +1,13 @@
 //! `engine admin deliver-secrets` and `secrets-status`: the operator's side of a delivery
 //! (`crate::secrets`). Nothing leaves this process until the enclave's quote has passed against the
-//! release manifest: its measurement, policy, and TCB, the config hash against the manifest and this
-//! config's own file, and this connection's fresh nonce. Secrets come from a file, never the command
-//! line, and this prints their names alone.
+//! release manifest: its measurement and policy, its CPU model at that model's minimum TCB, the
+//! config hash against the manifest and this config's own file, and this connection's fresh nonce.
+//! Secrets come from a file, never the command line, and this prints their names alone.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail, ensure};
 use clap::Args;
-use engine_verify::Tcb;
 use k256::ecdsa::SigningKey;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::TcpStream;
@@ -252,12 +251,12 @@ fn check_offer(
 }
 
 /// Checks `evidence` binds `report_data` and comes from `manifest`'s release: its measurement, its
-/// guest policy, and a TCB at least the manifest's, with dates checked at `now` in Unix seconds.
-/// `engine_verify` checks the same for an attestation; a delivery's quote binds other report data,
-/// since its enclave may not hold its keys yet.
+/// guest policy, and a CPU model the manifest lists at no less than that model's minimum TCB, with
+/// dates checked at `now` in Unix seconds. `engine_verify` checks the same for an attestation; a
+/// delivery's quote binds other report data, since its enclave may not hold its keys yet.
 /// Error cases:
-/// - the quote does not verify (see `evidence::verify`)
-/// - the measurement, policy, or TCB does not match the release
+/// - the quote does not verify, or its CPU model or TCB does not (see `evidence::verify`)
+/// - the measurement or policy does not match the release
 fn check_quote(
     own: TeeProvider,
     evidence: &Evidence,
@@ -266,7 +265,7 @@ fn check_quote(
     root: Option<&str>,
     now: i64,
 ) -> anyhow::Result<()> {
-    let peer = evidence::verify(own, evidence, report_data, Some(now), root)?;
+    let peer = evidence::verify(own, &manifest.cpu_models, evidence, report_data, Some(now), root)?;
     ensure!(
         peer.launch_digest == manifest.launch_digest,
         "the quote's launch measurement is not release {}'s",
@@ -279,10 +278,6 @@ fn check_quote(
         manifest.name,
         manifest.policy
     );
-    if let Some(reported) = peer.tcb {
-        let minimum: Tcb = manifest.minimum_tcb.into();
-        ensure!(reported.meets(minimum), "the quote's reported TCB {reported:?} is below the release's {minimum:?}");
-    }
     Ok(())
 }
 

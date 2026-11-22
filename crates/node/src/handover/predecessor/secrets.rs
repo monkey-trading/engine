@@ -29,7 +29,8 @@ impl<C: CheckpointChain> Predecessor<C> {
 
     /// Sends the secrets to a release the vault names through an approved upgrade.
     /// Error cases:
-    /// - the requester fails `admit`: its quote, its policy and TCB, or the vault's current release
+    /// - the requester fails `admit`: its quote, its CPU model and TCB, its policy, or the vault's
+    ///   current release
     /// - the registry has rotation on, so this release change is an election's or a promotion's, or
     ///   it cannot be read
     /// - this release holds no secrets, or encrypting, quoting, or sending fails

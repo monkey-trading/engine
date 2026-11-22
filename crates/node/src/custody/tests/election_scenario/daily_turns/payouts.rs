@@ -287,7 +287,7 @@ async fn refuse_own(node: &Node, b: &Member) {
         handover_endpoint: b.endpoint.clone(),
     };
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
-    let checks = Checks { domain, provider: TeeProvider::Mock, own: &own, now_seconds: None };
+    let checks = Checks { domain, provider: TeeProvider::Mock, cpu_models: &[], own: &own, now_seconds: None };
     let refused = admit(&checks, (&nonce, &statement), &source, &due.excluded, answer).unwrap_err();
     assert!(format!("{refused:#}").contains("sequenced part of the range"), "{refused:#}");
     let (reply, taken) = oneshot::channel();

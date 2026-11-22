@@ -1,6 +1,7 @@
 //! The node config `scripts/snp-local-chain.sh` writes for an SEV-SNP guest, through
 //! `scripts/snp-node-config.py`, loads and validates as a node config with real attestation: the guest
-//! seals its keys under `/data`, takes delivered secrets, names the Genoa certificate chain, reaches
+//! seals its keys under `/data`, takes delivered secrets, names the Genoa certificate chain and the
+//! Siena CPU model a peer guest's quote may come from, reaches
 //! the chain only over HTTPS at the proxy's ports, credits deposits at `latest`, and posts checkpoints
 //! through its relayer. A change to `config/anvil.toml` that the script's edits no longer match fails
 //! here, as the script does.
@@ -32,7 +33,7 @@ fn the_guest_config_the_local_chain_script_writes_loads_with_real_attestation() 
         .arg(SCRIPT)
         .arg(ANVIL)
         .arg(&path)
-        .args([HOST, VAULT, USDC, RELAYER, &public_key, "Genoa", "18545", "18546", "18547", "18548"])
+        .args([HOST, VAULT, USDC, RELAYER, &public_key, "Genoa", "Genoa-A2", "18545", "18546", "18547", "18548"])
         .output()
         .expect("python3 runs");
     assert!(written.status.success(), "the script failed: {}", String::from_utf8_lossy(&written.stderr));
@@ -40,6 +41,8 @@ fn the_guest_config_the_local_chain_script_writes_loads_with_real_attestation() 
     let cfg = NodeConfig::load(&path).unwrap_or_else(|err| panic!("the guest config does not load: {err:#}"));
     assert_eq!(cfg.tee.provider, TeeProvider::ConfigfsTsm);
     assert_eq!(cfg.tee.processor.as_deref(), Some("Genoa"));
+    let models: Vec<_> = cfg.tee.cpu_models.iter().map(|m| (m.product_name.as_str(), m.cpuid())).collect();
+    assert_eq!(models, [("Genoa-A2", engine_verify::Cpuid { family: 0x19, model: 0xA0, stepping: 0x02 })]);
     let sealing = cfg.tee.sealing.as_ref().expect("[tee.sealing]");
     assert_eq!(sealing.dir, Path::new("/data/keys"));
     assert_eq!(sealing.secrets.as_ref().expect("[tee.sealing.secrets]").listen, "0.0.0.0:9472".parse().unwrap());

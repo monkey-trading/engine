@@ -33,6 +33,12 @@ says, and change the step once the server has answered it.
   name `Genoa`. The guest's `tee.processor` and `engine verify-attestation --processor` therefore
   take `Genoa`. **UNVERIFIED: that the EPYC 8224P reports Secure TSC,** which
   [the host check](#run-the-host-check) reads.
+- **The release accepts one CPU model: Siena.** AMD numbers each firmware and microcode security
+  version per CPU model, so a release lists each model it accepts with that model's own minimum,
+  and refuses a quote from any other. Siena reports CPUID family 19h, model A0h and stepping 2 (the
+  A2 stepping of AMD's bulletins). Its VCEK names a product, such as `Genoa-A2`, that the release
+  lists beside the CPUID. **UNVERIFIED: the product name that the EPYC 8224P's VCEK carries,**
+  which [Verify each guest's attestation](#verify-each-guests-attestation) reads.
 - **The launch measurement does not depend on the host's processor generation.** The digest in
   `measurement.json` covers the firmware, kernel, initramfs, command line and each vCPU's state.
   That state carries the vCPU type that QEMU presents (`EPYC-v4`) and the SEV features `0x201`
@@ -58,11 +64,11 @@ says, and change the step once the server has answered it.
   measured reported a firmware version below that service's minimum. Read the version that the
   host reports in [Check SEV-SNP on the host](#check-sev-snp-on-the-host), and compare it with
   AMD's latest SEV security bulletin for the processor.
-- **`engine verify-attestation` reads attestation reports of versions 2 to 6, and refuses any
-  later one.** Revision 1.59 of AMD's firmware specification defines versions 2, 3, 5 and 6, and
-  the verifier reads the unpublished version 4, which SEV firmware 1.55.31 issues, as version 3.
-  From version 3 a report names the processor's CPUID family, and the verifier refuses every
-  family but 19h, which covers Milan, Genoa, Bergamo and Siena. It also refuses a report signed
+- **`engine verify-attestation` accepts attestation reports of versions 3 to 6.** Revision 1.59
+  of AMD's firmware specification defines versions 2, 3, 5 and 6, and the verifier reads the
+  unpublished version 4, which SEV firmware 1.55.31 issues, as version 3. From version 3 a report
+  names the processor's CPUID family, model and stepping. The verifier refuses version 2, which
+  names none, and every family but 19h, which covers Milan, Genoa, Bergamo and Siena. It also refuses a report signed
   with a VLEK or with the chip-secret VCEK, because only the VCEK that AMD's key distribution
   service issues can be checked. [Verify each guest's attestation](#verify-each-guests-attestation)
   prints the version and the family. A guest reads its own report before it opens its keys, so
@@ -457,6 +463,8 @@ report data's binding of the enclave address, the configuration and the TLS key.
      echo "$guest version $(xxd -p -l 4 $report) policy $(xxd -p -s 0x08 -l 8 $report) key $(xxd -p -s 0x48 -l 1 $report)"
      echo "$guest reported TCB $(xxd -p -s 0x180 -l 8 $report) CPUID $(xxd -p -s 0x188 -l 3 $report)"
      echo "$guest digest $(xxd -p -s 0x90 -l 48 $report | tr -d '\n')"
+     curl -sk https://127.0.0.1:${spec#*:}/v1/attestation/collateral | jq -r .vcek | cut -c3- | xxd -r -p \
+       | openssl x509 -inform der -noout -text | grep -A1 '1.3.6.1.4.1.3704.1.2'
    done
    jq -r .launch_digest $SNP/image-dev/measurement.json
    ```
@@ -465,14 +473,18 @@ report data's binding of the enclave address, the configuration and the TLS key.
    `0000030000000000`, the key byte is `00`, which names the VCEK as the report's signing key, and
    the digest equals the last line, which is `measurement.json`'s `launch_digest`. Record the reported TCB. Its bytes are, in order, the boot loader, the TEE, four
    reserved bytes, the SNP firmware and the microcode security versions. Record the CPUID bytes,
-   which are the processor's family, model and stepping from version `03000000`, and zero before
-   it. From version `03000000` the family byte is `19`.
+   which are the processor's family, model and stepping: `19a002` on a Siena host. Record the VCEK's
+   product name, which follows the extension `1.3.6.1.4.1.3704.1.2` after two characters of
+   encoding, such as `..Genoa-A2`.
 
-   **UNVERIFIED: the report version, the family, the key and the digest.** The verifier refuses a
-   version above `06000000`, from version `03000000` a family byte other than `19`, and a key byte
-   that names a VLEK, the chip-secret VCEK or no key, and needs a change before step 3 can pass. A
-   digest that differs from `measurement.json` means that `sev-snp-measure` and this QEMU disagree
-   about the launch. Record the values and stop.
+   **UNVERIFIED: the report version, the CPUID, the product name, the key and the digest.** The
+   verifier refuses a version below `03000000` or above `06000000`, a family byte other than `19`,
+   and a key byte that names a VLEK, the chip-secret VCEK or no key, and needs a change before step
+   3 can pass. A CPUID other than `19a002` is not a Siena part, and the release does not accept it.
+   A product name other than `Genoa-A2` means the guests' `release.toml` and `node.toml` must name
+   it: prepare the guests again with `PRODUCT_NAME` set to it. A digest that differs from
+   `measurement.json` means that `sev-snp-measure` and this QEMU disagree about the launch. Record
+   the values and stop.
 
 3. Run the verifier for each guest:
 
@@ -485,9 +497,14 @@ report data's binding of the enclave address, the configuration and the TLS key.
 
    Each run prints `verified: release <guest>, enclave 0x..., config node.toml`.
 
-4. Set each `release.toml`'s `[minimum_tcb]` to the minimum that AMD's latest bulletin gives for
-   EPYC 8004 processors, and run step 3 again. A reported TCB below that minimum fails the check,
+4. Set the Siena entry's `minimum_tcb` in each `release.toml` to the floor that AMD's bulletins give
+   for EPYC 8004 processors, and run step 3 again. Take each component's highest level across the
+   bulletins' EPYC 8004 rows whose fix has shipped: TCB[SNP] 0x1D from AMD-SB-3038 and
+   TCB[MICROCODE] 0x1B from AMD-SB-3027 as of 2026-11-22, with the boot loader and TEE at 0, since
+   no bulletin sets them. Never take a number from another model's row: the same microcode level
+   on a Genoa or Milan part stands for other fixes. A reported TCB below the floor fails the check,
    and needs the BIOS update that [Check SEV-SNP on the host](#check-sev-snp-on-the-host) describes.
+   The production configuration's `[[tee.cpu_models]]` carries the same entry.
 
 5. Check the collateral that each guest relays, which a browser verifier uses:
 
@@ -667,9 +684,9 @@ The host is ready, and the image is proven on it, when each of these holds:
 - Each guest's console shows `SecureTSC` in its `SEV: Status` line.
 - Each guest's report carries `measurement.json`'s launch digest and policy `0x30000`, and its
   report data starts with the SHA-256 of the bundle that `/v1/attestation` serves.
-- `engine verify-attestation` verifies each guest against its `release.toml`, with a
-  `[minimum_tcb]` from AMD's latest bulletin, both from AMD's service and from the guest's relayed
-  collateral.
+- `engine verify-attestation` verifies each guest against its `release.toml`, whose Siena entry
+  carries the host's product name and AMD's floor for EPYC 8004, both from AMD's service and from
+  the guest's relayed collateral.
 - Each guest, once registered, serves its whole API and has a checkpoint accepted by its vault, and
   a restarted guest opens its sealed keys.
 - The production variant launches and refuses the simulated providers.
@@ -679,9 +696,8 @@ Escalate to the owner, with the step and its output, when any of these holds:
 
 - the processor reports no Secure TSC, or the BIOS cannot enable SEV-SNP and OVHcloud will not;
 - the SEV firmware is below AMD's minimum, and OVHcloud has no BIOS update that raises it;
-- a report's version is above 6, a report from version 3 names a CPUID family other than 19h, a
-  report names a signing key other than the VCEK, or a report's digest differs from
-  `measurement.json`;
+- a report's version is below 3 or above 6, a report's CPUID is not Siena's `19a002`, a report
+  names a signing key other than the VCEK, or a report's digest differs from `measurement.json`;
 - a guest stops with `clocksource_unprotected`.
 
 ## Sources
@@ -721,6 +737,20 @@ Each source was read on 2026-11-22.
   https://packages.ubuntu.com/resolute/qemu-system-x86
 - virtee `snpguest`, which fetches Siena's and Bergamo's certificates under the name `Genoa`:
   https://github.com/virtee/snpguest/blob/main/src/fetch.rs
+- virtee `sev`, which maps CPUID family 19h models 10h to 1Fh and A0h to AFh to Genoa's certificate
+  chain and models 00h to 0Fh to Milan's: https://github.com/virtee/sev/blob/main/src/lib.rs
+- The Linux firmware repository's AMD microcode list, where family 19h model A0h has steppings 1
+  and 2, whose patches are numbered `0x0aa001..` and `0x0aa002..`:
+  https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/amd-ucode/README
+- AMD-SB-3027 (StackWarp, CVE-2025-29943), whose EPYC 8004 row fixes Siena A2 with microcode
+  `0x0AA0021B` and whose Bergamo row sets TCB[MICROCODE] 0x1B for the same microcode:
+  https://www.amd.com/en/resources/product-security/bulletin/amd-sb-3027.html
+- AMD-SB-3038 (published 2026-11-10), whose EPYC 8004 row sets TCB[SNP] 0x1D with GenoaPI 1.0.0.J
+  of 2026-06-26: https://www.amd.com/en/resources/product-security/bulletin/AMD-SB-3038.html
+- AMD-SB-3059 and AMD-SB-3061, whose EPYC 8004 fixes (TCB[SNP] 0x1E with GenoaPI 1.0.0.K, and Siena
+  A2 microcode `0x0AA0021F`) are planned for December and November 2026:
+  https://www.amd.com/en/resources/product-security/bulletin/amd-sb-3059.html and
+  https://www.amd.com/en/resources/product-security/bulletin/amd-sb-3061.html
 - AMD, the SEV Secure Nested Paging Firmware ABI Specification, publication 56860, revision 1.59
   (August 2026), whose Table 27 defines the attestation report of version 6 and the fields that
   versions 3 and 5 added: https://docs.amd.com/v/u/en-US/56860_PUB_SEV_SNP

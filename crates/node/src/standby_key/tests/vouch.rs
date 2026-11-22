@@ -1,14 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine_verify::Tcb;
 use tokio::sync::watch;
 
 use super::*;
 use crate::clock::Clock;
 use crate::clock::test_clock::TestClock;
 use crate::config::TeeProvider;
-use crate::handover::evidence::{self, Peer, Quoting, no_weaker};
+use crate::handover::evidence::{self, Peer, Quoting, same_policy};
 use crate::standby_key::vouch::{
     MAX_VOUCH_LIFETIME, StandbyRegistration, VouchReply, VouchRequest, Voucher, answer, quoted, report_data, request,
     vouch_digest,
@@ -88,7 +87,7 @@ async fn a_request_quotes_its_own_report_data_with_a_fresh_nonce_and_a_bounded_e
     assert_eq!(first.tls_public_key_sha256.0, keys.tls_public_key_sha256());
     let tls = keys.tls_public_key_sha256();
     let bound = report_data(&DOMAIN, CANDIDATE, keys.address(), &tls, &release(), first.nonce, first.expiry);
-    let peer = evidence::verify(TeeProvider::Mock, &first.evidence, &bound, None, None).unwrap();
+    let peer = evidence::verify(TeeProvider::Mock, &[], &first.evidence, &bound, None, None).unwrap();
     assert_eq!(peer.launch_digest, LAUNCH);
 }
 
@@ -247,16 +246,12 @@ async fn only_the_vaults_signer_or_a_promotable_standby_key_may_vouch() {
 }
 
 #[test]
-fn a_peer_runs_under_the_same_policy_and_no_lower_tcb() {
-    let packed = |snp: u64| (8u64 << 56) | (snp << 48) | 3;
-    let own = Platform { launch_digest: LAUNCH, policy: 0x30000, tcb: packed(8) };
-    let peer = |policy, snp| Peer { launch_digest: LAUNCH, policy, tcb: Some(Tcb::from_packed(packed(snp))) };
-    no_weaker(&own, &peer(0x30000, 8)).unwrap();
-    no_weaker(&own, &peer(0x30000, 9)).unwrap();
-    let err = no_weaker(&own, &peer(0x30000 | 1 << 19, 8)).unwrap_err();
+fn a_peer_runs_under_the_same_policy() {
+    let own = Platform { launch_digest: LAUNCH, policy: 0x30000, tcb: (8u64 << 56) | (8 << 48) | 3 };
+    let peer = |policy| Peer { launch_digest: LAUNCH, policy };
+    same_policy(&own, &peer(0x30000)).unwrap();
+    let err = same_policy(&own, &peer(0x30000 | 1 << 19)).unwrap_err();
     assert!(err.to_string().contains("guest policy"), "a debug policy passed: {err:#}");
-    let err = no_weaker(&own, &peer(0x30000, 7)).unwrap_err();
-    assert!(err.to_string().contains("below this platform's committed"), "{err:#}");
 }
 
 // ── Helpers ──
@@ -276,7 +271,7 @@ fn voucher<'a>(
     standby: Option<&'a StandbyKeys>,
 ) -> Voucher<'a, FakeChain> {
     let platform = Platform { launch_digest: LAUNCH, policy: 0, tcb: 0 };
-    Voucher { provider: TeeProvider::Mock, platform, trusted, chain, domain: DOMAIN, signer, standby }
+    Voucher { provider: TeeProvider::Mock, cpu_models: &[], platform, trusted, chain, domain: DOMAIN, signer, standby }
 }
 
 /// A chain registering `CANDIDATE` on the tests' release, approved.

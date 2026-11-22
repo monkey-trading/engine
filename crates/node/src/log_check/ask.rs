@@ -13,6 +13,7 @@ use anyhow::{Context, anyhow, bail};
 use engine_core::eip712::B256;
 use engine_core::turns::TURN_MS;
 use engine_core::types::AccountId;
+use engine_verify::CpuModel;
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -22,7 +23,7 @@ use tracing::{Instrument, info, info_span, warn};
 use crate::checkpoints::{CheckpointChain, HandoverSource, View};
 use crate::config::TeeProvider;
 use crate::handover::evidence;
-use crate::handover::{MESSAGE_TIMEOUT, no_weaker, receive, send};
+use crate::handover::{MESSAGE_TIMEOUT, receive, same_policy, send};
 use crate::log::CheckpointDomain;
 use crate::log_check::{Answer, Ask, Due, Sequencers, Statement, ask_digest, report_data};
 use crate::sequencer::Request;
@@ -52,7 +53,9 @@ pub(crate) struct Asker<C> {
     due: watch::Receiver<Option<Due>>,
     domain: CheckpointDomain,
     provider: TeeProvider,
-    /// This enclave's platform, which no verifier's policy or TCB may be weaker than.
+    /// The CPU models a verifier's quote may come from, each at its own minimum TCB.
+    cpu_models: Vec<CpuModel>,
+    /// This enclave's platform, whose guest policy a verifier's must be.
     platform: Platform,
     /// The enclave key that signs this node's checkpoints, and so its questions.
     key: Arc<EnclaveKey>,
@@ -67,11 +70,11 @@ impl<C: CheckpointChain> Asker<C> {
         vault: C,
         sequencer: &mpsc::Sender<Request>,
         due: watch::Receiver<Option<Due>>,
-        (domain, provider, platform): (CheckpointDomain, TeeProvider, Platform),
+        (domain, provider, cpu_models, platform): (CheckpointDomain, TeeProvider, Vec<CpuModel>, Platform),
         key: Arc<EnclaveKey>,
         trusted: TrustedClock,
     ) -> Self {
-        Self { vault, sequencer: sequencer.downgrade(), due, domain, provider, platform, key, trusted }
+        Self { vault, sequencer: sequencer.downgrade(), due, domain, provider, cpu_models, platform, key, trusted }
     }
 
     /// Asks for each check due until the sequencer stops.
@@ -190,7 +193,13 @@ impl<C: CheckpointChain> Asker<C> {
         send(&mut stream, &Ask { nonce: hex::encode(nonce), statement: *statement, signature }).await?;
         let answer: Answer = receive(&mut stream).await?;
         let now = self.trusted.since_sample_ms().map(|ms| ms / 1000);
-        let checks = Checks { domain: self.domain, provider: self.provider, own: &self.platform, now_seconds: now };
+        let checks = Checks {
+            domain: self.domain,
+            provider: self.provider,
+            cpu_models: &self.cpu_models,
+            own: &self.platform,
+            now_seconds: now,
+        };
         admit(&checks, (&nonce, statement), member, excluded, answer)
     }
 
@@ -213,11 +222,13 @@ impl<C: CheckpointChain> Asker<C> {
     }
 }
 
-/// What a verification is checked against: this deployment, this enclave's quote provider and
-/// platform, and trusted time in seconds, which a hardware quote's chain is checked at.
+/// What a verification is checked against: this deployment, this enclave's quote provider, the CPU
+/// models it takes quotes from, and its platform, and trusted time in seconds, which a hardware
+/// quote's chain is checked at.
 pub(crate) struct Checks<'a> {
     pub domain: CheckpointDomain,
     pub provider: TeeProvider,
+    pub cpu_models: &'a [CpuModel],
     pub own: &'a Platform,
     pub now_seconds: Option<i64>,
 }
@@ -233,8 +244,9 @@ pub(crate) fn qualifying<'a>(order: &'a [HandoverSource], due: &'a Due) -> impl 
 }
 
 /// The release `member`'s `answer` to `nonce` and `statement` proves, when it counts as the check:
-/// its quote binds them and the config hash it names, under a guest policy and TCB no weaker than
-/// this enclave's, and the measurement with that config is the release `member`'s candidacy
+/// its quote binds them and the config hash it names, from a CPU model `checks` lists at that
+/// model's minimum TCB and under this enclave's guest policy, and the measurement with that config
+/// is the release `member`'s candidacy
 /// registered, neither of which sequenced any of the covered range (`excluded`).
 /// Error cases:
 /// - the member refused, or any of those checks fails
@@ -254,8 +266,8 @@ pub(crate) fn admit(
         .and_then(|config| config.try_into().ok())
         .context("the config hash is not 32 bytes of hex")?;
     let bound = report_data(checks.domain, nonce, statement, &config_sha256);
-    let peer = evidence::verify(checks.provider, &evidence, &bound, checks.now_seconds, None)?;
-    no_weaker(checks.own, &peer)?;
+    let peer = evidence::verify(checks.provider, checks.cpu_models, &evidence, &bound, checks.now_seconds, None)?;
+    same_policy(checks.own, &peer)?;
     let release = B256::from(Release { launch_digest: peer.launch_digest, config_sha256 }.id());
     anyhow::ensure!(
         release == B256::from(member.release),

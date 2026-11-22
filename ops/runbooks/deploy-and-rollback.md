@@ -160,11 +160,14 @@ Use this procedure before any deployment or upgrade. None of its steps touches a
    again. A single changed byte makes another release.**
 
 9. Write `release.toml`, in the format that [Release](../../image/README.md#release) in the image's
-   README shows. It holds the release name; `measurement.json`'s `launch_digest`, `policy` and
-   `guest_features`; the minimum reported TCB; and `[config_hashes]` holding
-   `"node.toml" = "0x<hash>"`. The minimum TCB is marked `OWNER`. Take it from the host's
-   firmware. Confirm that `guest_features` is `0x201`, because a verifier refuses a release without
-   Secure TSC.
+   README shows. It holds `format = 2`; the release name; `measurement.json`'s `launch_digest`,
+   `policy` and `guest_features`; each CPU model the release accepts, with that model's minimum
+   reported TCB; and `[config_hashes]` holding `"node.toml" = "0x<hash>"`. Copy the
+   `[[cpu_models]]` entries from `node.toml`'s `[[tee.cpu_models]]`, entry for entry, so that a
+   verifier and a peer enclave take the same models at the same floors. The launch release accepts
+   Siena alone, at the floor that [SEV-SNP host](sev-snp-host.md#verify-each-guests-attestation)
+   derives from AMD's bulletins for EPYC 8004. Confirm that `guest_features` is `0x201`, because a
+   verifier refuses a release without Secure TSC.
 
 10. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
     verifier package. The configuration holds no credential, only the names of the secrets that the

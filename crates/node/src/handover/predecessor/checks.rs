@@ -1,22 +1,18 @@
-//! The predecessor's checks before it stops: whether the tail fits the handover, whether its own log
-//! accepted the daily turn a successor takes, or, once it has stopped, will accept it, and whether a
-//! peer's platform is no weaker than its own.
+//! The predecessor's checks before it stops: whether the tail fits the handover, and whether its own
+//! log accepted the daily turn a successor takes, or, once it has stopped, will accept it.
 
 use std::path::Path;
 
 use anyhow::{Context, anyhow, ensure};
 use engine_core::turns::{DailyTurns, TURN_MS};
 use engine_core::types::AccountId;
-use engine_verify::Tcb;
 use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::checkpoints::{CheckpointChain, ScheduledTurn};
 use crate::handover::Predecessor;
-use crate::handover::evidence::Peer;
 use crate::log::Manifest;
 use crate::sequencer::Request;
-use crate::tee::sealing::Platform;
 
 impl<C: CheckpointChain> Predecessor<C> {
     /// Whether the segments past `tip` can be handed over: each within the frame bound, and the
@@ -188,24 +184,4 @@ pub(crate) fn tail_over(log_dir: &Path, after: u64, bound: u64) -> bool {
             true
         }
     }
-}
-
-/// Requires a peer, a successor or a member verifying the log, to run under the same guest policy as
-/// this release, since the launch measurement does not cover the policy and one that allowed
-/// debugging would expose the keys or its replay, and, on hardware, at a TCB no lower than this
-/// platform's committed one.
-/// Error cases:
-/// - the policy differs, or the TCB is below the floor
-pub(crate) fn no_weaker(own: &Platform, peer: &Peer) -> anyhow::Result<()> {
-    ensure!(
-        peer.policy == own.policy,
-        "the peer's guest policy {:#x} differs from this release's {:#x}",
-        peer.policy,
-        own.policy
-    );
-    if let Some(tcb) = peer.tcb {
-        let floor = Tcb::from_packed(own.tcb);
-        ensure!(tcb.meets(floor), "the peer's TCB {tcb:?} is below this platform's committed {floor:?}");
-    }
-    Ok(())
 }

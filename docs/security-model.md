@@ -963,8 +963,17 @@ Known limits:
 The trading server runs inside an SEV-SNP enclave built from a reproducible image. Its attestation
 report binds the enclave's signing address, the SHA-256 hash of its configuration file and the hash
 of its TLS key. `engine verify-attestation`, and the browser build of the same code, check a
-report's certificate chain, measurement, policy, firmware versions and configuration against a
-release manifest.
+report's certificate chain, measurement, policy, CPU model, firmware versions and configuration
+against a release manifest.
+
+AMD numbers each firmware and microcode security version per CPU model, so a release manifest lists
+each CPU model it accepts, with the lowest versions it takes from that model, and a report's
+versions are compared with its own model's only. A report names its model three ways, and all three
+must agree with one entry: its CPUID family, model and stepping, which reports carry from version
+3, so a version 2 report is refused; its VCEK's product name; and the product line that the AMD
+root and intermediate above that VCEK are named for. `--processor` and `tee.processor` must name
+that product line too. The launch release accepts Siena (EPYC 8004) alone, and accepting another
+model takes a new release, with that model's own minimum.
 
 The enclave's keys are sealed on the host's disk under a key that the SEV-SNP firmware derives from
 the chip, the launch measurement, the guest policy and the committed firmware versions, with the
@@ -980,7 +989,12 @@ timelock has superseded therefore never signs again from its old sealed file, ev
 again later.
 
 The keys move to a new release only after the vault names it, and only after each release attests
-the other over a challenge fresh to the connection. They travel encrypted to the new release's
+the other over a challenge fresh to the connection. An enclave takes a peer's quote, in a handover,
+a standby key's vouch or a log check, only from a CPU model that its attested configuration's
+`[[tee.cpu_models]]` lists, the release manifest's entries, at that model's own minimum, never at
+its own platform's versions. A trading server whose own processor its list does not admit raises
+the Critical `cpu_model_unlisted`. The operator's tool holds an enclave receiving secrets to the release
+manifest's entries the same way. The keys travel encrypted to the new release's
 attested one-time key, and the new release takes them only if the vault already names their signing
 key. A release that has stopped in order to hand over its keys serves new releases until one
 confirms. A trading server that the vault does not name as signer signs nothing and serves only its
@@ -1000,10 +1014,18 @@ Known limits:
 
 - The SEV-SNP sealing key, the hardware quotes exchanged in a handover and the image's Secure TSC
   launch are built to the firmware's guest interface, but have not yet run on SEV-SNP hardware.
-- A release sets its firmware floor only as a minimum of the reported firmware versions. The
-  verifier reads a report's mitigation vectors, which record the vulnerability fixes the host has
-  had the firmware verify, but requires none, so a fix that needs that host step rather than a
-  newer firmware version is not enforced.
+- A release sets its firmware floor only as a minimum of the reported firmware versions for each
+  CPU model. The verifier reads a report's mitigation vectors, which record the vulnerability fixes
+  the host has had the firmware verify, but requires none, so a fix that needs that host step rather
+  than a newer firmware version is not enforced.
+- Each CPU model's floor is only as current as the release that sets it. A fix that AMD ships after
+  the release, with a higher version for the model, is enforced only by a new release with a higher
+  floor. An enclave holds a peer to that floor, not to its own platform's versions, so a peer of
+  the same model whose firmware is behind the holder's, but at or above the floor, is admitted.
+- The configuration and the release manifest carry the CPU model table separately: the manifest
+  cannot name the configuration it lists the hash of. If they differ, a verifier and an enclave
+  take quotes from different CPU models or at different floors, so the release process keeps them
+  equal.
 - AMD has not published the layout of version 4 of the attestation report, and the verifier reads
   it with version 3's layout, which is an assumption. If version 4 placed bytes that the host or
   guest chooses (`HOST_DATA`, `REPORT_DATA`, or the ID block's `FAMILY_ID` and `IMAGE_ID`) at an

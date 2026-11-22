@@ -15,17 +15,23 @@ dates. The crate performs no input or output, reads no clock and builds no C cod
 
 `verify_attestation` passes only if all of the following hold:
 
-- the report is of version 2, 3, 5 or 6, as revision 1.59 of AMD's SEV-SNP firmware specification
-  defines them, or of the unpublished version 4, read as version 3; and from version 3, which names
-  the processor, it comes from CPUID family 19h (Milan, Genoa, Bergamo or Siena), the only family
+- the report is of version 3, 5 or 6, as revision 1.59 of AMD's SEV-SNP firmware specification
+  defines them, or of the unpublished version 4, read as version 3, each of which names the
+  processor; and it comes from CPUID family 19h (Milan, Genoa, Bergamo or Siena), the only family
   whose security-version layout the crate reads;
 - the report's certificate chain leads to a vendor root that is compiled into the binary;
 - the chip's certificate (the VCEK) matches the report's chip id and reported security version;
+- the report's CPUID, the VCEK's product name and the product line that the root and intermediate
+  are named for identify one CPU model;
 - the root's revocation list is current and does not revoke the intermediate certificate;
 - the report names the VCEK as its signing key and the VCEK signed it, and the report data binds
   the bundle the server serves;
-- a release in the list admits the report by its launch measurement, guest policy, minimum security
-  version and configuration hashes.
+- a release in the list admits the report by its launch measurement, guest policy, configuration
+  hashes, and CPU model, which it lists with the minimum security version it takes from that model.
+
+AMD numbers security versions per CPU model, so a report's versions are compared only with the
+minimum its own model's entry sets. A model that a release does not list is refused, whatever its
+versions.
 
 A release whose `guest_features` lack SNPActive or SecureTSC admits no report. The report does not
 carry the guest features, but the launch measurement covers every vCPU's features, so a report that
@@ -49,12 +55,15 @@ println!("{} runs {} with {}", hex::encode(verified.enclave_address), verified.r
 
 The crate also provides:
 
-- `verify_quote`, which runs the same chain, revocation and signature checks on a report matched to
-  no release, and returns its measurement, policy, security version and report data for the caller
-  to judge, as an enclave does before it hands its keys to the next release;
+- `verify_quote`, which runs the same chain, revocation, signature and CPU model checks on a report
+  matched to no release, against a list of CPU models the caller gives, and returns its measurement,
+  policy, security version and report data for the caller to judge, as an enclave does before it
+  hands its keys to the next release;
 - `verify_mock_attestation`, which reads a development server's simulated report and returns only
   the bundle it binds, because a simulated report never verifies;
-- `ReleaseManifest`, the release's published TOML, which refuses unknown keys;
+- `ReleaseManifest`, the release's published TOML, of format 2, which refuses unknown keys and a
+  manifest of another format;
+- `CpuModel`, one CPU model a release accepts, which a manifest and a server's configuration list;
 - `RelayedCollateral`, the vendor's certificates and revocation list as the server relays them,
   with the bounds and checks the server applies before it serves them;
 - `Attestation` and `AttestationBundle`, the attestation's JSON and the bundle its report data
@@ -70,6 +79,7 @@ refused.
 | --- | --- |
 | `src/lib.rs` | `verify_attestation`, `verify_quote`, `verify_mock_attestation` and the matching of releases |
 | `src/attestation.rs`, `src/report.rs`, `src/release.rs`, `src/collateral.rs` | The attestation and its bundle, the SEV-SNP report, the release manifest and the relayed collateral |
+| `src/cpu.rs` | The CPU models a release accepts, and the matching of a report's model to one |
 | `src/chain.rs`, `src/signature.rs`, `src/roots/` | The certificate chain, its signatures and revocation list, and the vendor roots compiled in |
 | `src/fixtures.rs` | A stand-in vendor chain, forged reports and a release manifest, behind the `test-fixtures` feature |
 | `src/tests/` | Unit tests, with the vendor's real intermediate certificates |

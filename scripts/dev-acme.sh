@@ -253,9 +253,10 @@ node_pid=""
 
 step "build the production binary and run it on a config without [api.tls.acme]"
 (cd "$root" && cargo build -p engine-node --features production --locked --quiet)
-# config/anvil.toml with every provider real: a configfs-tsm TEE, a fresh operator key nobody
-# publishes, credit at latest, live venues, the checkpoints hardware custody requires, and no plain
-# HTTP browser origin. The node refuses it at load, before it reaches any of them.
+# config/anvil.toml with every provider real: a configfs-tsm TEE listing its CPU model, a fresh
+# operator key nobody publishes, credit at latest, live venues, the checkpoints hardware custody
+# requires, and no plain HTTP browser origin. The node refuses it at load, before it reaches any of
+# them.
 operator_key="0x$(openssl ecparam -name secp256k1 -genkey -noout 2> /dev/null \
   | openssl ec -pubout -conv_form uncompressed -outform DER 2> /dev/null | tail -c 65 | od -An -v -tx1 | tr -d ' \n')"
 [[ "$operator_key" =~ ^0x04[0-9a-f]{128}$ ]] || fail "no fresh operator key: '$operator_key'"
@@ -276,6 +277,12 @@ rpc_url = "http://127.0.0.1:8545"
 relayer = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 retry_interval = "5s"
 rpc_timeout = "5s"
+[[tee.cpu_models]]
+product_name = "Genoa-A2"
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }
 TOML
 grep -q '^allowed_origins' "$work/production.toml" && fail "production config edit missing: no allowed_origins"
 for edit in 'provider = "configfs_tsm"' 'finality_tag = "latest"' 'provider = "venues"' '[feeds.venues]'; do

@@ -158,6 +158,7 @@ impl Rig {
                 copy: member.copy.clone(),
                 standby: member.standby.clone(),
                 provider: crate::config::TeeProvider::Mock,
+                cpu_models: Vec::new(),
                 platform: member.standby.platform(),
                 trusted: trusted.clone(),
                 chain: crate::custody::StandbyReader::connect_named(&cfg.custody, domain.log_heads, "member_link")
