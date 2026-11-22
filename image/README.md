@@ -117,7 +117,9 @@ The launch flags must match `measurement.json`. `cbitpos` is 51 on Milan and lat
 KVM sets the guest's TSC frequency to the host's unless `tsc-frequency` names another. The guest
 kernel refuses virtio devices without `iommu_platform=on`.
 
-The data disk holds the configuration as `config.toml`. Configuration keys call a running trading
+The guest takes two disks. The data disk, the first, holds the configuration as `config.toml`, and the log
+disk, the second, is mounted at `/data/log` and holds the log alone, since the writes of the other stores
+on the data disk would otherwise hold the log's syncs. Configuration keys call a running trading
 server a node, as the first one below does. In that configuration:
 
 - `node.listen` is `0.0.0.0:8080` and `tee.provider` is `"configfs_tsm"`;
@@ -127,7 +129,8 @@ server a node, as the first one below does. In that configuration:
 - `[[tee.cpu_models]]` lists the release manifest's `cpu_models`, entry for entry. A successor, a
   standby key's vouch and a log check take a peer enclave's quote only from a model listed there,
   at that model's minimum;
-- `node.log_dir`, `history.dir`, `alerts.outbox.dir`, `custody.evm.cursor_path` and
+- `node.log_dir` is `/data/log`, the log disk's mount point; `history.dir`, `alerts.outbox.dir`,
+  `custody.evm.cursor_path` and
   `tee.sealing.dir` are under `/data`;
 - for the production variant, `[api.tls.acme]` names the API's domain, and the host forwards its
   port 443 to the guest's port 8080 for the authority's validation. The `dev` variant accepts
@@ -138,6 +141,7 @@ The first boot seals new keys, so its disk carries `/data/new-key`:
 ```shell
 mkdir disk && cp node.toml disk/config.toml && touch disk/new-key
 mke2fs -t ext4 -d disk data.img 1G
+mke2fs -t ext4 log.img 1G
 
 qemu-system-x86_64 -enable-kvm -cpu EPYC-v4 -smp 4 -m 4G -nographic -no-reboot \
   -machine q35,confidential-guest-support=sev0 \
@@ -146,6 +150,8 @@ qemu-system-x86_64 -enable-kvm -cpu EPYC-v4 -smp 4 -m 4G -nographic -no-reboot \
   -append "$(jq -r .cmdline measurement.json)" \
   -drive if=none,id=data,format=raw,file=data.img \
   -device virtio-blk-pci,drive=data,disable-legacy=on,iommu_platform=on \
+  -drive if=none,id=log,format=raw,file=log.img \
+  -device virtio-blk-pci,drive=log,disable-legacy=on,iommu_platform=on \
   -netdev user,id=net0,hostfwd=tcp::8080-:8080 \
   -device virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on,romfile=
 ```
@@ -172,7 +178,7 @@ prints the `launch_digest` from `measurement.json`, and the third prints the rep
 the report data.
 
 `scripts/check-image.sh out/image` runs the checks that need no SEV-SNP hardware, and needs
-`qemu-system-x86_64`. It boots the image under plain QEMU with `config/dev.toml` on its data disk.
+`qemu-system-x86_64`. It boots the image under plain QEMU with `config/dev.toml` on its data disk and an empty log disk.
 A production image must refuse the simulated providers and power off. A `dev` image must serve an
 attestation whose bundle matches its report data, serve TLS under the key the bundle names, and
 refuse a log directory outside `/data`. The check boots QEMU's default firmware, because the

@@ -382,6 +382,7 @@ impl NodeConfig {
         }
         cfg.refuse_environment_secrets_at_load(PRODUCTION_BUILD)
             .with_context(|| format!("validating {}", path.display()))?;
+        cfg.check_log_volume(PRODUCTION_BUILD && !cfg!(test))?;
         cfg.file_sha256 = Sha256::digest(text.as_bytes()).into();
         Ok(cfg)
     }
@@ -450,6 +451,7 @@ mod origins;
 mod test_keys;
 pub(crate) use test_keys::is_published_operator;
 mod validation;
+mod volumes;
 
 #[cfg(test)]
 mod api_tests;

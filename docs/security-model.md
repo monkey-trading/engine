@@ -600,6 +600,11 @@ Known limits:
 - Once the oldest unsynced batch has waited 5 seconds, the trading server accepts no further request
   and raises the Critical alert `log_sync_held`. Nothing is stamped behind a held batch, so a hold
   of the log's disk alone is raised within 5 seconds.
+- The log's batch syncs also wait behind other writers' buffered data on their disk, and a flush of
+  hundreds of megabytes held them for 200 ms to over a second. A production build therefore refuses
+  a log directory on the same device as the history index, the marks cache, the recovery caches or
+  the daily snapshots. The check reads device ids at load, so it does not see two volumes that share
+  one physical drive.
 - The alert's webhook page is first written to the alert outbox on the same disk, so a hold of the
   whole disk delays it, and a kill during the hold loses it. Meanwhile the `engine_log_sync_held`
   gauge, served from memory on the metrics listener, reports the hold (`EngineLogSyncHeld`),

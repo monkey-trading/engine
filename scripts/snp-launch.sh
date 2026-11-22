@@ -6,7 +6,9 @@
 # first. QEMU runs in the foreground with the guest's serial console on standard output, and exits
 # when the guest powers off, which it does when the engine exits.
 #
-# Usage: scripts/snp-launch.sh [options] <image-dir> <data-disk>
+# Usage: scripts/snp-launch.sh [options] <image-dir> <data-disk> <log-disk>
+# The log disk is the guest's second virtio disk, which init mounts at /data/log, apart from the data disk's
+# device. With --initrd, whose own init mounts what it needs, the data disk alone is attached.
 #   --memory <size>          guest memory in QEMU's syntax (4G); the launch digest does not cover it
 #   --forward <host>:<guest> forward TCP from [address:]port on the host (address 127.0.0.1 unless
 #                            given) to the guest's port; repeatable
@@ -20,7 +22,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 [--memory <size>] [--forward [<address>:]<port>:<guest-port>]... [--initrd <file> [--smp <count>]] [--dry-run] <image-dir> <data-disk>" >&2
+  echo "usage: $0 [--memory <size>] [--forward [<address>:]<port>:<guest-port>]... [--initrd <file> [--smp <count>]] [--dry-run] <image-dir> <data-disk> [<log-disk>]" >&2
   exit 2
 }
 
@@ -41,11 +43,18 @@ while [[ $# -gt 0 ]]; do
     *) args+=("$1"); shift ;;
   esac
 done
-[[ ${#args[@]} -eq 2 ]] || usage
+want=3
+[[ -z "$initrd" ]] || want=2
+[[ ${#args[@]} -eq $want ]] || usage
 image=${args[0]}
 disk=${args[1]}
+log_disk=${args[2]-}
 [[ -z "$smp" || -n "$initrd" ]] || { echo "--smp changes the launch digest, so it needs --initrd" >&2; exit 2; }
 [[ -f "$disk" ]] || { echo "no data disk at $disk" >&2; exit 1; }
+if [[ -z "$initrd" && ! -f "$log_disk" ]]; then
+  echo "no log disk at $log_disk" >&2
+  exit 1
+fi
 
 # Every file the launch reads must be the one the image's build hashed.
 (cd "$image" && sha256sum --quiet -c SHA256SUMS) || { echo "the files in $image do not match its SHA256SUMS" >&2; exit 1; }
@@ -73,6 +82,12 @@ done
 if [[ -n "$initrd" ]]; then
   echo "booting $initrd: the launch digest will not be measurement.json's" >&2
 fi
+log_drive=()
+# shellcheck disable=SC2054 # QEMU's options separate their values with commas.
+if [[ -n "$log_disk" ]]; then
+  log_drive=(-drive "if=none,id=log,format=raw,file=$log_disk"
+    -device virtio-blk-pci,drive=log,disable-legacy=on,iommu_platform=on)
+fi
 # shellcheck disable=SC2054 # QEMU's options separate their values with commas.
 command=(
   "${QEMU:-qemu-system-x86_64}" -enable-kvm -cpu "$vcpu_type" -smp "${smp:-$vcpus}" -m "$memory" -nographic -no-reboot
@@ -82,6 +97,7 @@ command=(
   -append "$cmdline"
   -drive "if=none,id=data,format=raw,file=$disk"
   -device virtio-blk-pci,drive=data,disable-legacy=on,iommu_platform=on
+  ${log_drive[@]+"${log_drive[@]}"}
   -netdev "user,id=net0$hostfwd"
   -device virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on,romfile=
 )

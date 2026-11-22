@@ -178,3 +178,17 @@ fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
         );
     }
 }
+
+/// The log is a mount point of its own volume: no store the production build keeps off the log's device is a path
+/// inside the log directory (which would put it on that volume), and the template says so.
+#[test]
+fn the_template_keeps_the_log_on_a_volume_of_its_own() {
+    let cfg = assembled("log-volume");
+    let log = &cfg.node.log_dir;
+    let snapshots = cfg.snapshots.as_ref().map(|s| &s.dir);
+    let daily = cfg.daily_snapshots.as_ref().map(|s| &s.dir);
+    for dir in [Some(&cfg.history.dir), snapshots, daily].into_iter().flatten() {
+        assert!(!dir.starts_with(log) && !log.starts_with(dir), "{} is not apart from the log", dir.display());
+    }
+    assert!(template().contains("a mount point of its own"), "the template states the layout");
+}

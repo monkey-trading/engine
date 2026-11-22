@@ -1570,7 +1570,7 @@ Run from the repo root:
   the cargo build stays `--frozen`, and checks the build's download retries, without building
   (needs Docker and `python3`)
 - SEV-SNP host: `sudo scripts/snp-host-check.sh` checks a host before a launch, and
-  `scripts/snp-launch.sh [--dry-run] <image-dir> <data-disk>` launches the image as an SEV-SNP guest
+  `scripts/snp-launch.sh [--dry-run] <image-dir> <data-disk> <log-disk>` launches the image as an SEV-SNP guest
   (`ops/runbooks/sev-snp-host.md`); their fixture tests are `scripts/snp-host-check-test.sh` and
   `scripts/snp-launch-test.sh` (need only `python3`, `jq` and `sha256sum`), and the guest config
   `scripts/snp-local-chain.sh` writes loads in `cargo test -p engine-node --test snp_guest_config`

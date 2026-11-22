@@ -94,7 +94,10 @@ Advance-5 configurator:
 
 - [ ] **Server:** Advance-5, AMD EPYC 8224P, 24 cores and 48 threads at 2.55 GHz (3.0 GHz boost).
 - [ ] **Memory:** 192 GB. The configurator offers 96 GB to 576 GB.
-- [ ] **Storage:** at least 2 × 1.92 TB NVMe. The confidential computing page lists 2 × 960 GB to
+- [ ] **Storage:** at least 2 × 1.92 TB NVMe. Each guest's log goes on one drive and its derived
+  stores, which are the history index, the marks cache, the recovery caches and the daily snapshots,
+  on the other. Their buffered writes hold the log's batch syncs when they share its disk, and a
+  production build refuses a log directory on the device of any of them. The confidential computing page lists 2 × 960 GB to
   8 × 7.68 TB. Which sizes the configurator offers for this server is **UNVERIFIED**.
 - [ ] **Public bandwidth:** the default 1 Gbit/s.
 - [ ] **Operating system:** Ubuntu Server 26.04 LTS, without a hypervisor template.
@@ -385,11 +388,12 @@ files under `disk/`.
    Each run ends with `prepared ...: vault 0x..., release named`. The relayers are Anvil's
    accounts 3, 4 and 5.
 
-2. Make each guest's data disk. The file `new-key` on the disk makes the first boot seal new keys:
+2. Make each guest's data disk and its log disk, which are the guest's first and second virtio disks and which belong on the host's two NVMe drives, one each. The file `new-key` on the disk makes the first boot seal new keys:
 
    ```shell
    for guest in a b c; do
      mke2fs -q -t ext4 -d $SNP/$guest/disk $SNP/$guest/data.img 64G
+     mke2fs -q -t ext4 $SNP/$guest/log.img 64G
    done
    ```
 
@@ -411,7 +415,7 @@ command without running it.
      sudo tmux new-session -d -s guest-$guest -c "$PWD" \
        "QEMU=/opt/qemu/bin/qemu-system-x86_64 scripts/snp-launch.sh --memory 16G \
         --forward $api:8080 --forward $metrics:9464 \
-        $SNP/image-dev $SNP/$guest/data.img 2>&1 | tee $SNP/$guest/console.log"
+        $SNP/image-dev $SNP/$guest/data.img $SNP/$guest/log.img 2>&1 | tee $SNP/$guest/console.log"
    done
    ```
 
@@ -576,8 +580,9 @@ the simulated providers:
 ```shell
 mkdir $SNP/production && grep -v '^allowed_origins' config/dev.toml > $SNP/production/config.toml
 mke2fs -q -t ext4 -d $SNP/production $SNP/production.img 1G
+mke2fs -q -t ext4 $SNP/production-log.img 1G
 sudo QEMU=/opt/qemu/bin/qemu-system-x86_64 scripts/snp-launch.sh \
-  $SNP/image-production $SNP/production.img | tee $SNP/production-console.log
+  $SNP/image-production $SNP/production.img $SNP/production-log.img | tee $SNP/production-console.log
 grep -E 'SEV: Status|a production build refuses mock providers' $SNP/production-console.log
 ```
 

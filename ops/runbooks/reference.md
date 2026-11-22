@@ -365,7 +365,7 @@ instructions, is not in it.
 
 ## Where things live on the host
 
-The image mounts one data disk at `/data`, and nothing else persists.
+The image mounts a data disk at `/data` and a log disk at `/data/log`, and nothing else persists.
 
 | Path | What it holds | Keep a copy? |
 | --- | --- | --- |
