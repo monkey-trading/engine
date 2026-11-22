@@ -4,6 +4,7 @@
 mod alerts;
 mod copy;
 pub(crate) mod events;
+mod ports;
 mod readers;
 mod rewrite;
 mod scratch;
@@ -11,6 +12,7 @@ mod staking_rpc;
 pub use alerts::{capture_alerts, capture_alerts_and_resolutions, capture_alerts_everywhere, capture_field};
 pub use copy::copy_dir;
 pub use events::every_event;
+pub use ports::quiet_addr;
 pub use readers::{marks_reader, stats};
 pub use rewrite::{
     drop_last_checkpoint, drop_last_checkpoint_domain, rewrite_command, rewrite_last_checkpoint_signer, unprefixed,

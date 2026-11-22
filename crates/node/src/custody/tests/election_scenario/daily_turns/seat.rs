@@ -32,7 +32,7 @@ use crate::node::ready::{Moved, Start};
 use crate::sequencer::Request;
 use crate::tee::MockAttestor;
 use crate::tee::sealing::{KeyStore, MockSealer, Release};
-use crate::test_support::{dev_config, scratch_dir};
+use crate::test_support::{dev_config, quiet_addr, scratch_dir};
 use crate::trusted_time::Sample;
 
 /// A registered candidate: its admin key, which its node's config names as the operator key, the
@@ -54,23 +54,22 @@ pub(super) struct Member {
 }
 
 impl Member {
-    /// `name`, as `candidate` with the admin key `key` running `digest`, posting from `relayer`, on free
-    /// handover and API ports.
+    /// `name`, as `candidate` with the admin key `key` running `digest`, posting from `relayer`, on handover and API ports no outgoing
+    /// connection can take.
     pub(super) fn new(
         name: &'static str,
         candidate: Address,
         (key, digest): ([u8; 32], [u8; 48]),
         relayer: Address,
     ) -> Self {
-        let free = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         Self {
             name,
             candidate,
             key: SigningKey::from_slice(&key).unwrap(),
             digest,
             relayer,
-            endpoint: free().to_string(),
-            api: free(),
+            endpoint: quiet_addr().to_string(),
+            api: quiet_addr(),
             dir: scratch_dir(&format!("daily-turns-{name}")),
             keys: scratch_dir(&format!("daily-turns-{name}-keys")),
         }
