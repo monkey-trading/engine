@@ -424,6 +424,17 @@ fn spawn_retrying(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration) -> 
 
 /// `spawn_retrying`, its clock starting at true time `at.0` and its sample `at.1` milliseconds behind it.
 fn spawn_retrying_at(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration, at: (Millis, Millis)) -> Drive {
+    spawn_sampled(chain, keys, retry, at, true).0
+}
+
+/// As `spawn_retrying_at`, with the sampler's sender, and no first sample yet unless `sampled`.
+fn spawn_sampled(
+    chain: FakeChain,
+    keys: Option<HeldKeys>,
+    retry: Duration,
+    at: (Millis, Millis),
+    sampled: bool,
+) -> (Drive, watch::Sender<Option<Sample>>) {
     let (true_ms, behind) = at;
     let (tip, rx) = watch::channel(Head::default());
     let (released, released_rx) = watch::channel(Released::default());
@@ -436,7 +447,8 @@ fn spawn_retrying_at(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration, 
         earliest_ms: true_ms - behind - 3_000,
         latest_ms: true_ms - behind + 3_000,
     };
-    let trusted = TrustedClock::new(clock.clone(), watch::channel(Some(sample)).1, Duration::from_secs(10));
+    let (samples, samples_rx) = watch::channel(sampled.then_some(sample));
+    let trusted = TrustedClock::new(clock.clone(), samples_rx, Duration::from_secs(10));
     let gate = Gate::default();
     let heartbeat = Heartbeat {
         keys,
@@ -463,7 +475,7 @@ fn spawn_retrying_at(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration, 
     };
     let (sequencer, _from_poster) = tokio::sync::mpsc::channel(8);
     let task = tokio::spawn(poster.run(rx, sequencer));
-    Drive { released, signing, hold, gate, signed, clock, trusted, tip, task }
+    (Drive { released, signing, hold, gate, signed, clock, trusted, tip, task }, samples)
 }
 
 /// Turn 20,400 at position 2 in `generation`, on a 60 s interval, read at block 100.

@@ -295,6 +295,15 @@ impl TrustedClock {
         Some(sample.latest_ms.saturating_add(widened_millis(elapsed, slow_ppm)))
     }
 
+    /// Completes once a first sample is held, at once if one is; never if no sample can come, the sampler
+    /// having stopped.
+    pub async fn first_sample(&self) {
+        let mut samples = self.samples.clone();
+        if samples.wait_for(Option::is_some).await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+
     /// The latest sample's lower and upper bounds moved on by the monotonic time since, each widened for a
     /// monotonic clock running up to `drift_ppm` parts per million slow or as fast, from one reading of the
     /// sample and of monotonic time; `None` before the first sample.
