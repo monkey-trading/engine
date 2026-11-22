@@ -157,7 +157,7 @@ if [[ -n "$mnt_source" && "$mnt_source" != "$(findmnt -n -o SOURCE -T /tmp)" ]];
   sudo mkdir -p /mnt/exp-load && sudo chown "$(id -u):$(id -g)" /mnt/exp-load
   arms="$arms b_mnt:/mnt/exp-load"
 fi
-arms="$arms c_disk:/tmp"
+arms="$arms c_disk:/tmp f_disk:/tmp g_disk:/tmp"
 if [[ "$root_options" != *nobarrier* ]]; then
   arms="$arms d_nobarrier:/tmp e_disk:/tmp"
 fi
