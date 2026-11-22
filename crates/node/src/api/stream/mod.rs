@@ -99,9 +99,9 @@ pub(crate) struct Feed {
 }
 
 impl Feed {
-    /// A feed that starts at `start`, or with the next live message if `None`. `live` must be
-    /// subscribed before the feed first reads the disk, so that every message is either on disk by
-    /// then or still to come live.
+    /// A feed that starts at `start`, or with the next live message if `None`. Each read of the disk
+    /// first subscribes to `live` again, so every message is either on disk by then or still to come
+    /// live: the sequencer publishes a batch as flushed before it sends the batch's messages.
     pub(crate) fn new(
         live: broadcast::Receiver<Arc<StreamMsg>>,
         log_dir: PathBuf,
@@ -134,6 +134,10 @@ impl Feed {
                 let from = self.next.expect("a feed catches up from a known offset");
                 let permit: OwnedSemaphorePermit =
                     self.backfills.clone().acquire_owned().await.expect("the backfill semaphore is never closed");
+                // The channel keeps each message until every subscriber has taken it, so a feed reading
+                // the disk would hold all it was sent meanwhile, up to the channel's capacity. What was
+                // sent before this read is on disk for it.
+                self.live = self.live.resubscribe();
                 let (dir, manifest, reader) = (self.log_dir.clone(), self.manifest.clone(), self.reader.take());
                 let (reader, batch) = read_holding(permit, move || read_batch(&dir, manifest, from, reader))
                     .await
@@ -486,6 +490,8 @@ fn read_batch(
     Ok((Some(reader), batch))
 }
 
+#[cfg(test)]
+mod feed_tests;
 #[cfg(test)]
 mod notice_tests;
 #[cfg(test)]
