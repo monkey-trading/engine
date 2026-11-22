@@ -1,7 +1,7 @@
 //! The node's side of each leg's figures: its metrics read before and after, as an operator's
 //! Prometheus reads them, the CPU and resident memory of the process, which holds the node, the venue
-//! stand-ins and the screening source, and the leg judged against #904's launch bar together with
-//! what the generator saw.
+//! stand-ins and the screening source, the host's storage and CPU waits, and the leg judged against
+//! #904's launch bar together with what the generator saw.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::common::rerun::{scale, scaled};
+use crate::load_scenario::host::{Waited, Waits};
 use crate::load_scenario::plan::{
     BUSY_SHARE, Figures, ORDER_TO_FILL_US, PRICE_TO_STAMP_S, Quantiles, STREAM_LAG_P99_MS,
 };
@@ -42,13 +43,14 @@ pub(super) struct Histogram {
     pub count: u64,
 }
 
-/// The node's metrics, the process's CPU time and the time they were read at.
+/// The node's metrics, the process's CPU time, the host's waits and the time they were read at.
 #[derive(Clone, Debug)]
 pub(super) struct Snapshot {
     at: Instant,
     histograms: BTreeMap<String, Histogram>,
     counters: BTreeMap<String, f64>,
     cpu_s: f64,
+    waits: Waits,
 }
 
 /// What the node did between two snapshots.
@@ -62,6 +64,7 @@ pub(super) struct Delta {
     pub busy_share: f64,
     pub cpu_cores: f64,
     pub commands: f64,
+    pub host: Waited,
 }
 
 /// A budget a leg broke: what, at which quantile, the figure and the bar.
@@ -116,10 +119,10 @@ impl Histogram {
 }
 
 impl Snapshot {
-    /// The node's metrics now, from their text, and the process's CPU time.
+    /// The node's metrics now, from their text, the process's CPU time and the host's waits.
     pub(super) fn take(metrics: &Metrics) -> Self {
         let (histograms, counters) = parse(&metrics.encode());
-        Snapshot { at: Instant::now(), histograms, counters, cpu_s: process().0 }
+        Snapshot { at: Instant::now(), histograms, counters, cpu_s: process().0, waits: Waits::now() }
     }
 
     /// What the node did from `earlier` to this.
@@ -141,6 +144,7 @@ impl Snapshot {
             busy_share: counter(BUSY) / secs,
             cpu_cores: (self.cpu_s - earlier.cpu_s) / secs,
             commands: counter(COMMANDS),
+            host: self.waits.since(&earlier.waits),
         }
     }
 }
@@ -189,6 +193,14 @@ pub(super) fn process() -> (f64, u64) {
     let cpu = fields.next().map_or(0.0, cpu_seconds);
     let rss_kib: u64 = fields.next().and_then(|rss| rss.parse().ok()).unwrap_or(0);
     (cpu, rss_kib >> 10)
+}
+
+/// What a window prints beside its breaches: the batch time at p99, which the log's sync and the
+/// release behind it make up, the sequencer's busy share, which a checkpoint's root work on its thread
+/// counts in, and the host's waits.
+pub(super) fn window_figures(node: &Delta) -> String {
+    let batch_p99_us = node.batch.quantile(0.99) * 1e6;
+    format!("batch_p99_us={batch_p99_us:.0} busy_share={:.3} {}", node.busy_share, node.host)
 }
 
 /// `[[dd-]hh:]mm:ss[.ss]` as seconds.
@@ -369,8 +381,9 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     println!("LOAD leg={leg} stream_send_us(node) {}", node_us(&node.stream_lag));
     println!("LOAD leg={leg} sequencer_batch_us {}", node_us(&node.batch));
     println!(
-        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} process_resident_mib={rss_mib}",
-        node.busy_share, node.cpu_cores
+        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} \
+         process_resident_mib={rss_mib} {}",
+        node.busy_share, node.cpu_cores, node.host
     );
     let verdict = if breaches.is_empty() { "within".to_owned() } else { format!("OVER {breaches:?}") };
     println!("LOAD bar leg={leg} multiple={multiple} {verdict}");
@@ -429,6 +442,28 @@ mod tests {
         }
         let idle = Snapshot::take(&metrics);
         assert_eq!(unmeasured(&clean, &idle.since(&idle)), ["no price stamped"]);
+    }
+
+    #[test]
+    fn a_window_prints_its_batch_p99_busy_share_and_host_waits() {
+        let metrics = Metrics::new();
+        let earlier = Snapshot::take(&metrics);
+        metrics.batch_seconds.observe(0.25);
+        let window = Snapshot::take(&metrics).since(&earlier);
+        let window = Delta { busy_share: 0.5, host: Waited { io_ms: Some(12.0), cpu_ms: None }, ..window };
+        // The batch p99 is interpolated within the bucket from 0.2048 s to 0.4096 s, as Prometheus does.
+        assert_eq!(
+            window_figures(&window),
+            "batch_p99_us=407552 busy_share=0.500 host_io_wait_ms=12 host_cpu_wait_ms=n/a"
+        );
+    }
+
+    #[test]
+    fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
+        let earlier =
+            Snapshot { waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000) }, ..Snapshot::take(&Metrics::new()) };
+        let later = Snapshot { waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500) }, ..earlier.clone() };
+        assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5) });
     }
 
     #[test]
