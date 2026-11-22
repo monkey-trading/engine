@@ -1,7 +1,7 @@
 //! The launch deployment's inputs, `ops/runbooks/production-deployment.toml`, hold the owner's decision
-//! of 2026-11-14 on #436 for the contracts' constructors and the operator's two initialisations, and of
-//! 2026-11-21 on #1175 for the operator schedule's heartbeat rule, the contracts would accept them, and
-//! the deploy runbook's commands carry them.
+//! of 2026-11-14 on #436 for the contracts' constructors and the operator's two initialisations, and on
+//! #1175 for the operator schedule's and the parameter vote's, the contracts would accept them, and the
+//! deploy runbook's commands carry them.
 
 use std::fs;
 
@@ -175,12 +175,18 @@ fn the_runbooks_commands_carry_the_inputs() {
 }
 
 #[test]
-fn the_heartbeat_rule_is_the_owners_decision_of_2026_11_21() {
-    let Schedule { liveness, take_window, .. } = inputs().schedule;
-    let Liveness { heartbeat_interval, head_tolerance, heartbeat_misses, .. } = liveness;
+fn every_schedule_and_vote_value_is_the_owners_decision_on_1175() {
+    let Inputs { schedule, parameter_vote, .. } = inputs();
+    let Schedule { switch_budget, block_millis, liveness, liveness_minimums, liveness_maximums, take_window } =
+        schedule;
+    let rule = |rule: Liveness| (rule.heartbeat_interval, rule.head_tolerance, rule.heartbeat_misses, rule.head_blocks);
     // A promotion passes `heartbeatMisses` to `heartbeatMisses + 1` intervals after the last head's slot:
     // 7 to 9.3 minutes, and at most ten with the tolerance.
-    assert_eq!((heartbeat_interval, head_tolerance, heartbeat_misses, take_window.slots), (140, 40, 3, 2));
+    assert_eq!(rule(liveness), (140, 40, 3, 200));
+    assert_eq!((rule(liveness_minimums), rule(liveness_maximums)), ((90, 30, 3, 120), (140, 60, 5, 256)));
+    assert_eq!((take_window.slots, take_window.minimum, take_window.maximum), (2, 2, 4));
+    assert_eq!((switch_budget, block_millis), (20, 250));
+    assert_eq!((parameter_vote.normal_window, parameter_vote.fast_window), (3 * DAY, 3_600));
 }
 
 #[test]

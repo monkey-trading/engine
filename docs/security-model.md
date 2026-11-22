@@ -1270,10 +1270,9 @@ The schedule's deployment sets the heartbeat interval, the number of missed slot
 promotion (`heartbeatMisses`) and the take window (`takeWindow`), within bounds that the contract
 enforces. At launch the interval is 140 seconds, a live head's signing time may differ from its block's
 by up to 40 seconds, a promotion needs three missed slots, and the take window is two slots. The
-deployment fixes the bounds that the timelock can later move these values within. The proposed
-bounds are 90 to 140 seconds for the interval, 30 to 60 seconds for the tolerance, three to five
-slots for the misses, and two to four slots for the take window, under a proposed switch budget
-of 20 seconds.
+deployment fixes the bounds that the timelock can later move these values within: 90 to 140
+seconds for the interval, 30 to 60 seconds for the tolerance, three to five slots for the misses,
+and two to four slots for the take window, under a switch budget of 20 seconds.
 
 While the turn's set has another member, the enclave signs a head or a checkpoint only at a sequence
 number that another member's enclave confirmed holding. The operator therefore runs, and posts

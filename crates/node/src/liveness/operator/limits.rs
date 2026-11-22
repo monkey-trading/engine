@@ -70,10 +70,13 @@ mod tests {
         let secs = |s| Some(Duration::from_secs(s));
         assert!(read_due(every, None, None, None), "the first read is due at once");
         assert!(!read_due(every, secs(14), Some((time, 60)), Some(ms)));
-        assert!(read_due(every, secs(15), Some((time, 60)), Some(ms)), "60 s slots: the configured 15 s");
+        assert!(read_due(every, secs(15), Some((time, 60)), Some(ms)), "60 s slots: four reads a slot");
         assert!(!read_due(every, secs(4), Some((time, 20)), Some(ms)));
         assert!(read_due(every, secs(5), Some((time, 20)), Some(ms)), "20 s slots: four reads a slot");
-        assert!(!read_due(every, secs(14), Some((time, 0)), None), "no schedule: the configured interval");
+        assert!(!read_due(every, secs(34), Some((time, 140)), Some(ms)), "140 s slots: not at the configured 15 s");
+        assert!(read_due(every, secs(35), Some((time, 140)), Some(ms)), "140 s slots: four reads a slot");
+        assert!(!read_due(every, secs(14), Some((time, 0)), None));
+        assert!(read_due(every, secs(15), Some((time, 0)), None), "no schedule: the configured interval");
         assert!(!read_due(every, secs(1), Some((time, 60)), Some(boundary - 1)));
         assert!(read_due(every, secs(1), Some((time, 60)), Some(boundary)), "at the turn boundary, at once");
     }

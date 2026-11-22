@@ -237,7 +237,8 @@ async fn a_caller_whose_endpoint_fails_pages_once_until_a_call_goes_through() {
     let task = tokio::spawn(caller.run());
     tokio::time::sleep(TEST_POLL * 3).await;
     *sent.down.lock().unwrap() = false;
-    tokio::time::sleep(TEST_POLL * 2).await;
+    // The next read, a quarter of the fake chain's 60 s interval on.
+    tokio::time::sleep(Duration::from_secs(15)).await;
     task.abort();
     let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
     let failed = raised.iter().filter(|alert| alert["alert"] == "liveness_caller_send_failed").count();

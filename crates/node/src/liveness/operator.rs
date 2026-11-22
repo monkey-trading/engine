@@ -1,6 +1,6 @@
-//! The operator's side of the liveness rule. It reads the chain at the latest agreed block every
-//! `[liveness] read_interval`, at least four times a heartbeat interval, and once trusted time reaches
-//! the turn boundary after the last read's block; every `POLL` it asks the members under the last read
+//! The operator's side of the liveness rule. It reads the chain at the latest agreed block four times a
+//! heartbeat interval, or every `[liveness] read_interval` while it knows no interval, and once trusted
+//! time reaches the turn boundary after the last read's block; every `POLL` it asks the members under the last read
 //! and, while a turn names the operator and its set has another member:
 //! - asks each other member for its status, over a fresh nonce, and takes a status that recovers to
 //!   the member's promotable standby key, or, while it has none, to the key whose attestation this
@@ -142,7 +142,7 @@ pub(crate) struct Operator<C, A> {
     pub vault_signer: watch::Sender<Option<VaultSigner>>,
     /// How often it asks the members: `POLL`.
     pub poll: Duration,
-    /// The longest between its reads of the chain: `[liveness] read_interval`.
+    /// Its read period while it knows no heartbeat interval: `[liveness] read_interval`.
     pub read_every: Duration,
     /// For a promoted operator, the block its start read the promotion at: an older latest block, as a
     /// lagging provider majority serves, still names the outgoing key, so it counts as no read.

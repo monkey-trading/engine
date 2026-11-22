@@ -61,6 +61,5 @@ following parts says so where it does:
   against the parts that run locally, but not end to end.
 - **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on the vendor
   accounts and the screening source. The contracts' launch values are set in
-  [production-deployment.toml](production-deployment.toml). The opening day, the schedule's switch
-  budget, held-head blocks and bounds, and the parameter vote's windows are proposed and still to be
+  [production-deployment.toml](production-deployment.toml), and only the opening day is still to be
   confirmed.

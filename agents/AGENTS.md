@@ -667,11 +667,11 @@ an index: load only the rule whose hint matches the current action.
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
   `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
   posting intervals, not three. The optional `[liveness]` (#595) names a member's liveness caller, an
-  account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`; its
-  `read_interval` (15 s by default) paces the caller's and the operator's liveness rule's chain reads, at
-  least four a heartbeat interval, and its `fallback_interval` (30 s by default and at most that in a
-  production build, within the 256 blocks a fixed fallback block's hash can be recorded for) the
-  fallback fixer's.
+  account the checkpoint endpoint signs for apart from every relayer, and its `min_balance`; the caller
+  and the operator's liveness rule read the chain four times a heartbeat interval, and every
+  `read_interval` (15 s by default) while no interval is known, and its `fallback_interval` (30 s by
+  default and at most that in a production build, within the 256 blocks a fixed fallback block's hash can
+  be recorded for) paces the fallback fixer's reads.
   `ct-watch.toml` is the Certificate Transparency watcher's config, documenting what it needs: the
   domain, the node and its release manifest, the logs to follow, and alert routing.
   A field reads a delivered secret by name, never its value: `{name}` in a URL's path or query,
@@ -1041,8 +1041,8 @@ an index: load only the rule whose hint matches the current action.
   inputs, the owner's #436 values: the timelock's delay, the vault's period budget, exit period,
   claim window and staleness, `Staking`'s epoch and cooldown, the liquidity floor and the opening
   day's start, and `OperatorSchedule`'s constructor, the owner's heartbeat rule of 2026-11-21 (140 s,
-  40 s tolerance, three misses, a two-slot take window) with the proposed switch budget, held-head
-  blocks and bounds, and `ParameterVote`'s proposed windows, with a test that holds each to the decision
+  40 s tolerance, three misses, a two-slot take window) with its switch budget, held-head blocks and
+  bounds, and `ParameterVote`'s windows, all decided on #1175, with a test that holds each to the decision
   and to the contracts' limits, and the deploy runbook's `init-emissions`, `init-staking` and rotation
   contract deployments to the file.
 - **.github/workflows/** — `ci.yaml`: fmt, the file line cap, clippy, tests (and the node's

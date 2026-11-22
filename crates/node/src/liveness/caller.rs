@@ -97,7 +97,7 @@ pub(crate) struct Caller<C, S> {
     pub copy: Copy,
     /// Below this many wei, `liveness_caller_unfunded` fires.
     pub min_balance: U256,
-    /// The longest between its reads of the chain: `[liveness] read_interval`.
+    /// Its read period while it knows no heartbeat interval: `[liveness] read_interval`.
     pub poll: Duration,
     /// The caller's own clock, which it judges slots by when it is ahead of the latest block: `Reached`
     /// over the member's trusted time.
@@ -205,7 +205,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                     continue;
                 }
             };
-            // Four reads a slot at least, however the rule's interval moves.
+            // Four reads a slot, however the rule's interval moves.
             let every = read_every(self.poll, view.rule.interval);
             if poll.period() != every {
                 poll = interval_at(tokio::time::Instant::now() + every, every);
