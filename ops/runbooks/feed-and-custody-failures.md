@@ -713,16 +713,16 @@ a send as slow as that poll still fit inside the 64 s.
 Per provider account, a day's load is the operator in effect's readers plus the other two members'.
 The operator's are the watcher, the liveness rule, the log-head reads, the relayer balance read, the
 standby renewal, the fixer and the seed relay. Each member's are the liveness caller, the follow
-stints, the fixer and the seed relay. While a turn names the operator, the harness counts 694,779 calls
+stints, the fixer and the seed relay. While a turn names the operator, the harness counts 692,722 calls
 a day before the seed relays and the operator list:
 
-- 395,979 `eth_call`
+- 393,922 `eth_call`
 - 226,121 `eth_getBlockByNumber`
 - 60,871 `eth_chainId`
 - 11,520 `eth_getLogs`
 - 288 `eth_getBalance`
 
-The three seed relays add about 51,000, so the account sees about 746,000 calls a day, about 9 a
+The three seed relays add about 51,000, so the account sees about 744,000 calls a day, about 9 a
 second on average. The costs below count the seed relays' calls at the price of an `eth_call`.
 
 Before the registry names a schedule, no turn names the operator and members run no caller. The liveness rule still reads every 15 s, 10 calls a read that stop at the registry, and the
@@ -731,9 +731,9 @@ The harness counts 295,488 calls a day for three nodes then, about 346,000 with 
 
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |
-| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 17 million units a day, 505 million a month, and about 195 a second on average | The free tier does not fit. Pay as you go fits, at about $265 a month. |
+| Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 17 million units a day, 504 million a month, and about 194 a second on average | The free tier does not fit. Pay as you go fits, at about $264 a month. |
 | Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 57 million credits a day | Team fits, at $225 a month, using 76% of its daily credits. The operator list's reads, when `registry.lens` is set, take it to about 79%. |
-| dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 447 million units per 30 days, 22 million requests | The free tier does not fit. Pay as you go fits, at about $135 a month. |
+| dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 446 million units per 30 days, 22 million requests | The free tier does not fit. Pay as you go fits, at about $134 a month. |
 | PublicNode | None published ([publicnode.com](https://www.publicnode.com/)) | | Cannot be budgeted. A free public endpoint can limit any client without notice, so it counts as a provider that may fail, never as one the quorum can rest on. |
 
 Check each limit on the provider's page before relying on it, because they change.

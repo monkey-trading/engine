@@ -270,7 +270,7 @@ async fn reads() -> BTreeMap<&'static str, ByMethod> {
         view(&block, &domain).await.unwrap();
     }
     out.insert("rule read", take());
-    // Its members, read at the same block as a rule read, every minute.
+    // Its members, read at the same block as a rule read once its list is a minute old.
     {
         let block = reader.latest().await.unwrap();
         take();
