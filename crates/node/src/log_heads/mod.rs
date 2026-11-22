@@ -9,6 +9,8 @@
 pub(crate) mod prefix;
 mod read;
 pub(crate) use read::PostedHeads;
+mod rollback;
+pub(crate) use rollback::check_rollback;
 mod rpc;
 pub(crate) use rpc::StartupHeads;
 #[cfg(test)]
@@ -25,7 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use alloy::primitives::{Address, B256};
-use anyhow::{Context, bail};
+use anyhow::bail;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval, interval_at};
@@ -36,8 +38,8 @@ use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
 
 /// With the v2 heartbeat's inputs, as wherever the liveness rule runs, the longest between the poster's
-/// reads, each reading whether a turn names the operator: a turn's start moves it to v2 heads within half
-/// a 60 s heartbeat interval, well inside the take window. In a turn it reads the turn before each post.
+/// reads, each reading whether a turn names the operator, beside its reads from each turn's boundary
+/// (`v2::BoundaryReads`), which find a new turn at its start. In a turn it reads the turn before each post.
 const TURN_READ_EVERY: Duration = Duration::from_secs(30);
 
 /// A rollback freeze latch shared between the log-head poster and the sequencer. The poster sets
@@ -171,10 +173,11 @@ pub(crate) struct Poster<R> {
 impl<R: HeadsChain> Poster<R> {
     /// Records each released head as it changes, and reads the chain on the retry timer, or, if that is
     /// sooner, every `TURN_READ_EVERY` with the heartbeat's inputs and at least every sixth of the heartbeat
-    /// interval while a turn names the operator; posts at most once per interval, or per half heartbeat interval in a
-    /// turn, once the head moves. A rollback — an on-chain head past this node's released head, or one
-    /// naming another prefix at a seq this node retains — logs Critical `log_rollback` naming it,
-    /// freezes the sequencer, and returns, which stops the node.
+    /// interval while a turn names the operator, and from each turn's boundary while none does or a turn it
+    /// found has had no head yet; posts at most once per interval, or per half heartbeat interval in a turn, its
+    /// v2 heads paced apart from its v1 heads, once the head moves. A rollback — an on-chain head past this
+    /// node's released head, or one naming another prefix at a seq this node retains — logs Critical
+    /// `log_rollback` naming it, freezes the sequencer, and returns, which stops the node.
     /// Error cases:
     /// - a rollback is detected (the alert names the range)
     pub(crate) async fn run(
@@ -233,11 +236,19 @@ impl<R: HeadsChain> Poster<R> {
         // every `TURN_READ_EVERY`, and before each post.
         let mut turn: Option<TurnHeads> = None;
         let mut turn_read: Option<tokio::time::Instant> = None;
+        // The reads from each turn's boundary, made while no turn names the operator and until the first head of
+        // a turn they found goes out (`first_head_due`).
+        let trusted = self.heartbeat.as_ref().map(|heartbeat| &heartbeat.trusted);
+        let (mut boundary, mut first_head_due) = (v2::BoundaryReads::default(), false);
+        // When the last v2 head was sent, which alone paces the next: a v1 head sent just before a turn's start
+        // holds none back by this pace, only at the relayer until its send lands (`PostOutcome::Waiting`).
+        let mut posted_v2_at: Option<tokio::time::Instant> = None;
         loop {
             // A release only extends the evidence; reads run on the retry cadence, whatever the
             // release rate, so the poster never adds more than one quorum read per tick to the
             // custody providers' load.
             // Paces count from each read's tick, so a slow read does not push the next post a tick later.
+            let mut at_boundary = false;
             let tick = tokio::select! {
                 // Not before the first release, as on an empty log: a tick then would push the first read a period on.
                 tick = retry.tick(), if released.borrow().seq != 0 => Some(tick),
@@ -246,6 +257,10 @@ impl<R: HeadsChain> Poster<R> {
                         return Ok(());
                     }
                     None
+                }
+                tick = boundary.next(trusted), if turn.is_none() || first_head_due => {
+                    at_boundary = true;
+                    Some(tick)
                 }
             };
             let head = *released.borrow();
@@ -334,11 +349,16 @@ impl<R: HeadsChain> Poster<R> {
             // While a turn names the operator, the head is the heartbeat: it goes out twice per heartbeat
             // interval, as v2.
             let pace = turn.map_or(self.interval, |turn| v2::cadence(turn.interval, self.retry).1);
-            let due = posted_at.is_none_or(|at| tick.saturating_duration_since(at) >= pace);
+            let last_post = turn.map_or(posted_at, |_| posted_v2_at);
+            let due = last_post.is_none_or(|at| tick.saturating_duration_since(at) >= pace);
             let turn_due = turn_read.is_none_or(|at| tick.saturating_duration_since(at) >= TURN_READ_EVERY);
-            if self.heartbeat.is_some() && (due || turn_due) {
+            if self.heartbeat.is_some() && (due || turn_due || at_boundary) {
                 match self.chain.turn().await {
-                    Ok(read) => (turn, turn_read) = (read, Some(tick)),
+                    // A turn found anew waits for its first head; boundary reads leave the turn reads' cadence alone.
+                    Ok(read) => {
+                        first_head_due |= turn.is_none() && read.is_some();
+                        (turn, turn_read) = (read, if at_boundary { turn_read } else { Some(tick) });
+                    }
                     Err(cause) => {
                         warn!(alert = "log_head_read_failed", "reading the turn naming the operator failed: {cause:#}");
                         read_failed = true;
@@ -377,8 +397,8 @@ impl<R: HeadsChain> Poster<R> {
                 );
             }
             // The contract holds no head at or past ours: post ours if the interval since the last
-            // send allows. A failed send still paced the gate; the read-back confirms inclusion.
-            if posted_at.is_some_and(|at| tick.saturating_duration_since(at) < pace) {
+            // send of its version allows. A failed send still paced the gate; the read-back confirms inclusion.
+            if turn.map_or(posted_at, |_| posted_v2_at).is_some_and(|at| tick.saturating_duration_since(at) < pace) {
                 continue;
             }
             if let (Some(turn), Some(heartbeat)) = (turn, &self.heartbeat) {
@@ -405,8 +425,14 @@ impl<R: HeadsChain> Poster<R> {
                 let digest = next.digest(self.domain.chain_id, Address::from(self.domain.vault.0), epoch);
                 let signature = self.key.sign_digest(digest);
                 last_signed = last_signed.max(next.signed_at);
-                posted_at = Some(tick);
+                let (paced_v2, first_head) = (posted_v2_at, first_head_due);
+                (posted_at, posted_v2_at, first_head_due) = (Some(tick), Some(tick), false);
                 first_post = first_post.or(posted_at);
+                if at_boundary {
+                    // A turn's first head was tried between read ticks: the next ones count from this attempt.
+                    retry = interval_at(tick + retry.period(), retry.period());
+                    retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                }
                 heartbeat.signed.send_replace(Some(SignedHead { epoch, head: next, signature: signature.clone() }));
                 match self.chain.post_v2(epoch, &next, &signature).await {
                     Ok(PostOutcome::Accepted) => {
@@ -414,6 +440,9 @@ impl<R: HeadsChain> Poster<R> {
                             info!(alert_resolved = "log_head_post_failed", "posting the log head recovered");
                         }
                     }
+                    // Nothing went out, as behind a pending v1 send: the next read, from the boundary or on a read
+                    // tick, tries the turn's first head again.
+                    Ok(PostOutcome::Waiting) if first_head => (posted_v2_at, first_head_due) = (paced_v2, true),
                     Ok(PostOutcome::Waiting) => {}
                     Err(cause) => {
                         post_failed = true;
@@ -457,43 +486,4 @@ impl<R: HeadsChain> Poster<R> {
             }
         }
     }
-}
-
-/// Compares the posted head with the recovered log before anything is written. `link_at` returns
-/// the link the replay captured at the posted seq from the bytes it authenticated, or `None`
-/// where the seq sits at or under an attested snapshot base: the snapshot determines the content
-/// there, and so the link, without the replay reaching it.
-/// Error cases:
-/// - the log ends before the posted head, the replay holds no command at the posted seq, or the
-///   posted link differs at the posted seq
-pub(crate) fn check_rollback(
-    posted: Head,
-    last_seq: u64,
-    link_at: impl FnOnce(u64) -> anyhow::Result<Option<B256>>,
-) -> anyhow::Result<()> {
-    if posted.seq > last_seq {
-        error!(
-            alert = "log_rollback",
-            posted_seq = posted.seq,
-            log_seq = last_seq,
-            "the on-chain log head names seqs {}..={} this log does not hold: refusing to start",
-            last_seq + 1,
-            posted.seq
-        );
-        bail!("log lacks the posted head's seqs {}..={}", last_seq + 1, posted.seq);
-    }
-    if let Some(link) = link_at(posted.seq).context("locating the posted head in the log")?
-        && link != posted.link
-    {
-        error!(
-            alert = "log_rollback",
-            seq = posted.seq,
-            posted_link = %posted.link,
-            log_link = %link,
-            "the on-chain log head's link differs at seq {}: refusing to start",
-            posted.seq
-        );
-        bail!("the log's link at the posted head's seq {} differs", posted.seq);
-    }
-    Ok(())
 }

@@ -374,13 +374,14 @@ async fn rpc_budget() {
         ("fallback fixers, three nodes", &reads["fallback read"], 3.0 * DAY / 30.0),
     ];
     day("one operator and two members while a turn names the operator", &in_turn);
-    // Before the registry names a schedule: the rule reads at 15 s, and the poster reads the
-    // posted head and the turn every 30 s; three nodes' fixers read at 30 s.
+    // Before the registry names a schedule: the rule reads at 15 s, and the poster reads the posted head and
+    // the turn every 30 s, and every second from just before the day's turn boundary for 30 s and its trusted
+    // time sample's width, 36 reads with a sample 3 s either side of true time; three nodes' fixers read at 30 s.
     let unscheduled: Readers = vec![
         ("operator's deposit watcher", &watcher, DAY / 15.0),
         ("operator's liveness rule", &reads["rule read, no schedule"], DAY / 15.0),
-        ("operator's log-head reads", &reads["log-head read"], DAY / 30.0),
-        ("operator's log-head turn reads", &reads["log-head turn read, no schedule"], DAY / 30.0),
+        ("operator's log-head reads", &reads["log-head read"], DAY / 30.0 + 36.0),
+        ("operator's log-head turn reads", &reads["log-head turn read, no schedule"], DAY / 30.0 + 36.0),
         ("operator's relayer balance", &reads["relayer balance read"], DAY / 300.0),
         ("fallback fixers, three nodes", &reads["fallback read, no schedule"], 3.0 * DAY / 30.0),
     ];

@@ -36,8 +36,12 @@ struct FakeState {
     posted_v2_at: Vec<tokio::time::Instant>,
     /// How long each turn read takes.
     turn_latency: std::time::Duration,
+    /// How many turn reads there were.
+    turn_reads: usize,
     /// Refuse every v2 send, as an endpoint that cannot pay for gas would.
     fail_v2: bool,
+    /// Answer the next v2 sends with `Waiting`, as a send pending at the relayer's nonce would.
+    wait_v2: usize,
 }
 
 /// A chain whose posted head, epoch, and read failures the test drives. `post` enforces the
@@ -73,6 +77,11 @@ impl FakeChain {
 
     pub(super) fn reads(&self) -> usize {
         self.0.lock().unwrap().reads
+    }
+
+    /// How many turn reads there were.
+    pub(super) fn turn_reads(&self) -> usize {
+        self.0.lock().unwrap().turn_reads
     }
 
     pub(super) fn fail_next_reads(&self, count: usize) {
@@ -120,6 +129,11 @@ impl FakeChain {
     /// Refuses every v2 send from now on.
     pub(super) fn fail_v2_posts(&self) {
         self.0.lock().unwrap().fail_v2 = true;
+    }
+
+    /// Answers the next `count` v2 sends with `Waiting`, sending nothing.
+    pub(super) fn wait_next_v2_posts(&self, count: usize) {
+        self.0.lock().unwrap().wait_v2 = count;
     }
 
     /// A turn names the operator from now on, as `turn` reads it.
@@ -198,7 +212,11 @@ impl HeadsChain for FakeChain {
     }
 
     async fn turn(&self) -> anyhow::Result<Option<TurnHeads>> {
-        let latency = self.0.lock().unwrap().turn_latency;
+        let latency = {
+            let mut state = self.0.lock().unwrap();
+            state.turn_reads += 1;
+            state.turn_latency
+        };
         tokio::time::sleep(latency).await;
         Ok(self.0.lock().unwrap().turn)
     }
@@ -207,6 +225,10 @@ impl HeadsChain for FakeChain {
         let mut state = self.0.lock().unwrap();
         let turn = state.turn.ok_or_else(|| anyhow::anyhow!("UseV1"))?;
         anyhow::ensure!(!state.fail_v2, "the endpoint refused the send");
+        if state.wait_v2 > 0 {
+            state.wait_v2 -= 1;
+            return Ok(PostOutcome::Waiting);
+        }
         let held = head.hold != Hold::Live;
         // `LogHeads.postV2`'s rules: the parent is the held head, the seq newer (a held head may repeat
         // it), a live head newer in signing time, a held head's block newer than the bound one.

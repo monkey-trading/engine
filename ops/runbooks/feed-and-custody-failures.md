@@ -727,8 +727,9 @@ second on average. The costs below count the seed relays' calls at the price of 
 
 Before the registry names a schedule, no turn names the operator and members run no caller. The
 liveness rule still reads every 15 s, 10 calls a read that stop at the registry, and the log-head
-poster reads the posted head and whether a turn names the operator every 30 s, 6 and 7 calls. The
-harness counts 295,488 calls a day for three nodes then, about 346,000 with the seed relays.
+poster reads the posted head and whether a turn names the operator every 30 s, and every second from
+just before each turn's boundary for 30 s and its trusted time sample's width, about 36 reads, 6 and 7
+calls. The harness counts 295,956 calls a day for three nodes then, about 346,000 with the seed relays.
 
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |

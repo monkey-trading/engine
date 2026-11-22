@@ -294,6 +294,18 @@ impl TrustedClock {
         let elapsed = self.clock.instant().saturating_duration_since(sample.at);
         Some(sample.latest_ms.saturating_add(widened_millis(elapsed, slow_ppm)))
     }
+
+    /// The latest sample's lower and upper bounds moved on by the monotonic time since, each widened for a
+    /// monotonic clock running up to `drift_ppm` parts per million slow or as fast, from one reading of the
+    /// sample and of monotonic time; `None` before the first sample.
+    pub fn drift_bounds_ms(&self, drift_ppm: u64) -> Option<(Millis, Millis)> {
+        let sample = (*self.samples.borrow())?;
+        let elapsed = self.clock.instant().saturating_duration_since(sample.at);
+        let widened = widened_millis(elapsed, drift_ppm);
+        let drift = widened.saturating_sub(ceil_millis(elapsed));
+        let lower = sample.earliest_ms.saturating_add(floor_millis(elapsed)).saturating_sub(drift);
+        Some((lower, sample.latest_ms.saturating_add(widened)))
+    }
 }
 
 /// `elapsed` on a clock up to `slow_ppm` parts per million slow, as true time, in whole milliseconds

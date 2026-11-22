@@ -194,6 +194,21 @@ fn the_upper_bound_widens_the_time_since_the_sample_by_the_slowest_clock_rate_an
     assert_eq!(estimate.upper_bound_ms(0), estimate.since_sample_ms(), "no drift widens nothing");
 }
 
+#[test]
+fn the_drift_bounds_widen_both_ways_from_one_sample() {
+    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let (samples, latest) = watch::channel(None);
+    let estimate = TrustedClock::new(clock.clone(), latest, MAX_DRIFT);
+    assert_eq!(estimate.drift_bounds_ms(500), None, "before the first sample");
+    samples.send_replace(Some(sample(clock.instant())));
+    clock.advance(Duration::from_secs(3_600));
+    // An hour at up to 500 ppm either way: 1,801 ms more on the upper bound, as much off the lower.
+    let (lower, upper) = (TRUE_MS - 3_000 + 3_600_000 - 1_801, TRUE_MS + 3_000 + 3_600_000 + 1_801);
+    assert_eq!(estimate.drift_bounds_ms(500), Some((lower, upper)));
+    assert_eq!(Some(upper), estimate.upper_bound_ms(500), "the upper bound is upper_bound_ms's");
+    assert_eq!(estimate.drift_bounds_ms(0), estimate.reached_ms().zip(estimate.since_sample_ms()));
+}
+
 // ── Helpers ──
 
 /// A sample taken at `at`, when true time was `TRUE_MS` ± 3s.

@@ -10,12 +10,16 @@ use std::time::Duration;
 use alloy::primitives::{Address, B256, keccak256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
+use engine_core::turns::{BOUNDARY_OFFSET_MS, TURN_MS};
+use engine_core::types::Millis;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
+use tokio::time::Instant;
 
 use crate::liveness::operator::Signing;
-use crate::liveness::{Released, Signable};
+use crate::liveness::{MAX_SLOW_PPM, Released, Signable};
 use crate::log_heads::Head;
+use crate::trusted_time::TrustedClock;
 
 // `LogHeads.postV2`'s ABI, as `contracts/src/LogHeads.sol` declares it.
 sol! {
@@ -42,6 +46,12 @@ sol! {
 const DOMAIN: &[u8] = b"engine.log-head.v2";
 /// The shortest read period a heartbeat interval sets, against a zero interval.
 const MIN_READ_EVERY: Duration = Duration::from_millis(100);
+/// While no turn names the operator, how long past each turn's boundary the poster reads whether one does,
+/// as the agreed block may still trail the boundary: every `BOUNDARY_READ_EVERY`, from when true time may
+/// have reached the boundary until it has certainly passed it by this much.
+const BOUNDARY_SEARCH_MS: Millis = 30_000;
+/// How often the poster reads from a boundary while it searches.
+const BOUNDARY_READ_EVERY: Duration = Duration::from_secs(1);
 
 /// What a head is signed under: live, or held through one of the two stops a heartbeat continues
 /// through, as `LogHeads` numbers them.
@@ -162,6 +172,39 @@ pub(crate) struct Inputs {
     pub last_signed: u64,
     /// The vault's signer epoch the head is signed under.
     pub epoch: u64,
+}
+
+/// The poster's reads from each turn's boundary while no turn names the operator, and until the first head
+/// of a turn they found goes out, so that it goes out from the boundary rather than from a later read tick.
+#[derive(Debug, Default)]
+pub(crate) struct BoundaryReads {
+    /// The boundary the last of them was for, and when it was made.
+    last: Option<(Millis, Instant)>,
+}
+
+impl BoundaryReads {
+    /// Waits for the next read due from a turn's boundary as the latest trusted time sample places it, on
+    /// monotonic time, whatever the host clock reads: from when true time may have reached the boundary, on
+    /// a monotonic clock running up to `MAX_SLOW_PPM` slow or as fast, every `BOUNDARY_READ_EVERY` until it
+    /// has certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
+    /// `trusted`, nor before its first sample.
+    pub(crate) async fn next(&mut self, trusted: Option<&TrustedClock>) -> Instant {
+        let bounds = trusted.and_then(|trusted| trusted.drift_bounds_ms(MAX_SLOW_PPM));
+        let Some((earliest, latest)) = bounds else { return std::future::pending().await };
+        let now = Instant::now();
+        // The latest boundary true time may have reached, and whether it may still be in the search after it.
+        let boundary = latest - latest.saturating_sub(BOUNDARY_OFFSET_MS).rem_euclid(TURN_MS);
+        let searching = earliest < boundary.saturating_add(BOUNDARY_SEARCH_MS);
+        let (read_for, at) = match self.last {
+            Some((read_for, made)) if searching && read_for == boundary => (boundary, made + BOUNDARY_READ_EVERY),
+            _ if searching => (boundary, now),
+            _ => (boundary + TURN_MS, now + Duration::from_millis((boundary + TURN_MS - latest).unsigned_abs())),
+        };
+        tokio::time::sleep_until(at).await;
+        let made = Instant::now();
+        self.last = Some((read_for, made));
+        made
+    }
 }
 
 impl Assignment {
