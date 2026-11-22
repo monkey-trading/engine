@@ -15,7 +15,10 @@ fn only_a_mock_node_may_run_without_a_critical_route() {
     let dev = std::fs::read_to_string(DEV).unwrap().replace("auth = \"none\"", "auth = \"eip712\"");
     let anvil = std::fs::read_to_string(ANVIL).unwrap();
     let evm = anvil.replace("[alerts.critical]\nurl_env = \"ENGINE_ALERTS_CRITICAL_URL\"\n", "");
-    let tee = |text: &str| text.replace("[tee]\nprovider = \"mock\"", "[tee]\nprovider = \"configfs_tsm\"");
+    let tee = |text: &str| {
+        text.replace("[tee]\nprovider = \"mock\"", "[tee]\nprovider = \"configfs_tsm\"")
+            + crate::test_support::TEST_CPU_MODEL
+    };
     // (config, needs a route): the dev config, with a real TEE, with EVM custody, and with both.
     let rows = [(dev.clone(), false), (tee(&dev), true), (evm.clone(), true), (tee(&evm), true)];
     for (text, _) in &rows[1..] {

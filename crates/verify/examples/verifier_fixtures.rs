@@ -1,6 +1,7 @@
 //! Writes the attestation fixtures `scripts/dev-wasm-verifier.sh` checks with both the CLI and the
-//! browser build: test-signed SEV-SNP reports of versions 2, 5 and 6 for the enclave address given,
-//! the release manifests and collateral to verify them with, and the cases that must pass or fail.
+//! browser build: test-signed SEV-SNP reports of versions 2, 3, 5 and 6 for the enclave address given,
+//! from the CPU model the release lists and from others, the release manifests and collateral to
+//! verify them with, and the cases that must pass or fail.
 //!
 //! Usage: `verifier_fixtures <out-dir> <enclave address>`
 
@@ -43,6 +44,22 @@ fn main() -> anyhow::Result<()> {
         sign_report(&chain, &mut quote);
         serde_json::to_vec(&attestation(&bundle, &quote))
     };
+    // A version-3 report the VCEK `issuer` issues under `product_name` signs, and its collateral.
+    let issued = |issuer, product_name| -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+        let (vcek, key) = vcek_issued_by(issuer, chip_id, REPORTED_TCB, product_name);
+        let mut quote = forged_report_at(&chain, 3, LAUNCH_DIGEST, bundle.report_data(), chip_id);
+        sign_report_with(&key, &mut quote);
+        let collateral =
+            RelayedCollateral { vcek: vcek.der().to_vec(), ..collateral_of(&chain, &crl_revoking(&chain, &[])) };
+        Ok((serde_json::to_vec(&attestation(&bundle, &quote))?, collateral.to_json()))
+    };
+    let (other_product, other_product_collateral) = issued((&chain.ask_params, &chain.ask_key), "Genoa-B2")?;
+    let (milan_ask, milan_ask_params, milan_ask_key) = intermediate_named(&chain, "SEV-Milan");
+    let (milan_intermediate, mut milan_intermediate_collateral) =
+        issued((&milan_ask_params, &milan_ask_key), PRODUCT_NAME)?;
+    let mut milan_collateral = RelayedCollateral::from_json(&milan_intermediate_collateral)?;
+    milan_collateral.intermediate = milan_ask.der().to_vec();
+    milan_intermediate_collateral = milan_collateral.to_json();
     let unlisted = AttestationBundle { config_sha256: [0xc1; 32], ..bundle };
     let mut corrupted = forged_report(&chain, LAUNCH_DIGEST, bundle.report_data(), chip_id);
     corrupted[0x2A0] ^= 1;
@@ -56,13 +73,19 @@ fn main() -> anyhow::Result<()> {
     other_chip[0] ^= 1;
     let good = collateral_of(&chain, &crl_revoking(&chain, &[]));
     let foreign = RelayedCollateral { vcek: vcek_for(&chain, other_chip, REPORTED_TCB).der().to_vec(), ..good.clone() };
-    let files: [(&str, Vec<u8>); 21] = [
+    let files: [(&str, Vec<u8>); 28] = [
         ("root.pem", pem(&chain.ark).into_bytes()),
         ("attestation.json", report(LAUNCH_DIGEST, &bundle)?.into_bytes()),
+        ("attestation-v2.json", report_at(2)?),
         ("attestation-v5.json", report_at(5)?),
         ("attestation-v6.json", report_at(6)?),
         ("version-7.json", edited(|quote| quote[0x00..0x04].copy_from_slice(&7u32.to_le_bytes()))?),
         ("family-1a.json", edited(|quote| quote[0x188] = 0x1A)?),
+        ("milan-cpuid.json", edited(|quote| quote[0x189] = 0x01)?),
+        ("other-product.json", other_product),
+        ("collateral-other-product.json", other_product_collateral),
+        ("milan-intermediate.json", milan_intermediate),
+        ("collateral-milan-intermediate.json", milan_intermediate_collateral),
         ("vlek-signed.json", edited(|quote| quote[0x48] = 0b0_0100)?),
         ("mock.json", serde_json::to_vec(&mock)?),
         ("unlisted-config.json", report(LAUNCH_DIGEST, &unlisted)?.into_bytes()),
@@ -71,6 +94,14 @@ fn main() -> anyhow::Result<()> {
         ("release.toml", release_toml().into_bytes()),
         ("previous-release.toml", previous_release().into_bytes()),
         ("high-tcb-release.toml", release_toml().replace("microcode = 115", "microcode = 206").into_bytes()),
+        (
+            "other-model-release.toml",
+            release_toml()
+                .replace(PRODUCT_NAME, "Genoa-B1")
+                .replace("model = 0xa0", "model = 0x11")
+                .replace("stepping = 0x02", "stepping = 0x01")
+                .into_bytes(),
+        ),
         (
             "no-secure-tsc-release.toml",
             release_toml()
@@ -112,16 +143,26 @@ fn cases() -> serde_json::Value {
             case("the test-signed report", "attestation.json", release, "collateral.json", true),
             case("a version 5 report", "attestation-v5.json", release, "collateral.json", true),
             case("a version 6 report", "attestation-v6.json", release, "collateral.json", true),
+            case("a version 2 report, which names no CPU model", "attestation-v2.json", release, "collateral.json",
+                false),
             case("a version 7 report", "version-7.json", release, "collateral.json", false),
             case("a report from a family 1Ah CPU", "family-1a.json", release, "collateral.json", false),
             case("a report signed with a VLEK", "vlek-signed.json", release, "collateral.json", false),
+            case("a CPU model the release does not list", "attestation.json", &["other-model-release.toml"],
+                "collateral.json", false),
+            case("a CPUID outside its VCEK's product line", "milan-cpuid.json", release, "collateral.json", false),
+            case("a VCEK naming another product than the release", "other-product.json", release,
+                "collateral-other-product.json", false),
+            case("an intermediate named for another product line", "milan-intermediate.json", release,
+                "collateral-milan-intermediate.json", false),
             case("the previous and current releases", "attestation.json",
                 &["previous-release.toml", "release.toml"], "collateral.json", true),
             case("a mock quote", "mock.json", release, "collateral.json", false),
             case("an unlisted configuration hash", "unlisted-config.json", release, "collateral.json", false),
             case("an altered measurement", "altered-measurement.json", release, "collateral.json", false),
             case("a corrupted report signature", "corrupted-signature.json", release, "collateral.json", false),
-            case("a TCB below the minimum", "attestation.json", &["high-tcb-release.toml"], "collateral.json", false),
+            case("a TCB below its model's minimum", "attestation.json", &["high-tcb-release.toml"], "collateral.json",
+                false),
             case("a release without Secure TSC", "attestation.json", &["no-secure-tsc-release.toml"],
                 "collateral.json", false),
             case("a revoked intermediate", "attestation.json", release, "collateral-revoked.json", false),

@@ -282,8 +282,9 @@ cargo run -p engine-node -- verify-attestation --attestation attestation.json \
 `release.toml` is the manifest that each release will publish, and `--processor` names the product
 under which AMD's key distribution service issues the host's certificates: `Milan`, or `Genoa` for a
 Genoa, Bergamo or Siena host. The check passes only if AMD's certificate chain signed the
-report, the launch measurement matches the release's image, and the report binds the signing key and
-a configuration that the release lists. Anyone can [rebuild the image](image/README.md) to confirm
+report, the launch measurement matches the release's image, the processor is a CPU model that the
+release lists, at that model's minimum firmware and microcode versions, and the report binds the
+signing key and a configuration that the release lists. Anyone can [rebuild the image](image/README.md) to confirm
 its measurement. Against the local server, which simulates its enclave, the command prints
 `the quote is not an SEV-SNP attestation report; a mock quote never verifies`.
 

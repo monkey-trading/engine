@@ -78,8 +78,20 @@ contact = "mailto:ops@example.com" # REPLACE
 [tee]
 provider = "configfs_tsm"
 # The vendor's product name for the host's certificate chain, whose collateral the node relays:
-# Milan, or Genoa for a Genoa, Bergamo or Siena host.
+# Milan, or Genoa for a Genoa, Bergamo or Siena host. The host's VCEK must name this product line.
 processor = "Genoa" # OWNER: the host's product name
+
+# Each CPU model a peer enclave's quote may come from, with the lowest TCB taken from that model: a
+# successor's, a vouched standby key's and a log check's. It is the release manifest's `cpu_models`,
+# entry for entry. The launch release takes Siena (EPYC 8004) alone; another model needs a new
+# release with its own floor. The floor is AMD's for EPYC 8004: TCB[SNP] 0x1D (AMD-SB-3038) and
+# TCB[MICROCODE] 0x1B (AMD-SB-3027); the bulletins set no boot loader or TEE level.
+[[tee.cpu_models]]
+product_name = "Genoa-A2" # REPLACE: the productName the host's VCEK carries
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0x1D, microcode = 0x1B }
 
 [tee.sealing]
 dir = "/data/keys"

@@ -14,13 +14,14 @@ use alloy::sol_types::SolValue;
 use anyhow::{Context, bail, ensure};
 use engine_core::eip712::{self, Signature};
 use engine_core::types::{AccountId, Millis};
+use engine_verify::CpuModel;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tracing::info;
 
 use crate::config::TeeProvider;
-use crate::handover::evidence::{self, Evidence, Quoting, no_weaker};
+use crate::handover::evidence::{self, Evidence, Quoting, same_policy};
 use crate::handover::padded;
 use crate::standby_key::StandbyKeys;
 use crate::standby_key::chain::{StandbyChain, StandbyDomain, vouch_view};
@@ -85,7 +86,9 @@ pub(crate) struct StandbyRegistration {
 pub(crate) struct Voucher<'a, C> {
     /// This enclave's attestation, which takes peers of its own kind only.
     pub provider: TeeProvider,
-    /// This release's platform, whose policy and TCB a peer's must match or exceed.
+    /// The CPU models a peer's quote may come from, each at its own minimum TCB.
+    pub cpu_models: &'a [CpuModel],
+    /// This release's platform, whose policy a peer's must match.
     pub platform: Platform,
     pub trusted: &'a TrustedClock,
     pub chain: &'a C,
@@ -169,10 +172,10 @@ pub(super) async fn quoted(
 
 /// Vouches for `request`'s standby key: its expiry lies after trusted time's upper bound and within
 /// `MAX_VOUCH_LIFETIME` of its lower bound; its quote binds the request's report data at trusted
-/// time, proves the request's measurement, and runs under a policy and TCB no weaker than this
-/// release's; and, at the latest agreed block, the candidate is registered on the release the quote
-/// proves, approved for it. Signs with the vault's signer key while this enclave holds it, else with
-/// its standby key while the schedule lists it as promotable.
+/// time from a CPU model the voucher lists at that model's minimum TCB, proves the request's
+/// measurement, and runs under this release's policy; and, at the latest agreed block, the candidate
+/// is registered on the release the quote proves, approved for it. Signs with the vault's signer key
+/// while this enclave holds it, else with its standby key while the schedule lists it as promotable.
 /// Error cases:
 /// - no trusted time sample, or any of those checks fails
 /// - the chain cannot be read
@@ -194,7 +197,7 @@ pub(crate) async fn answer<C: StandbyChain>(
         MAX_VOUCH_LIFETIME.as_secs()
     );
     let domain = &voucher.domain;
-    let release = admit(request, domain, (voucher.provider, &voucher.platform), latest / 1000)?;
+    let release = admit(request, domain, (voucher.provider, voucher.cpu_models, &voucher.platform), latest / 1000)?;
     let own = voucher.standby.map(StandbyKeys::address);
     let view = vouch_view(voucher.chain, domain, request.candidate, own).await?;
     let registered = view.release.with_context(|| format!("candidate {} is not registered", request.candidate))?;
@@ -219,26 +222,28 @@ pub(crate) async fn answer<C: StandbyChain>(
 }
 
 /// The release `request`'s quote proves, once the quote binds the request's report data in `domain` at
-/// `at_secs` (Unix seconds), proves the request's measurement, and runs under a policy and TCB no
-/// weaker than `platform`'s, as a handover's predecessor checks a successor's.
+/// `at_secs` (Unix seconds) from one of `cpu_models` at that model's minimum TCB, proves the
+/// request's measurement, and runs under `platform`'s policy, as a handover's predecessor checks a
+/// successor's.
 /// Error cases:
-/// - the quote does not verify, proves another measurement, or runs under a weaker policy or TCB
+/// - the quote does not verify, comes from an unlisted model or below its model's minimum, proves
+///   another measurement, or runs under another policy
 pub(crate) fn admit(
     request: &VouchRequest,
     domain: &StandbyDomain,
-    (provider, platform): (TeeProvider, &Platform),
+    (provider, cpu_models, platform): (TeeProvider, &[CpuModel], &Platform),
     at_secs: i64,
 ) -> anyhow::Result<Release> {
     let release = Release { launch_digest: request.launch_digest.0, config_sha256: request.config_sha256.0 };
     let tls = request.tls_public_key_sha256.0;
     let bound = report_data(domain, request.candidate, request.key, &tls, &release, request.nonce, request.expiry);
-    let peer = evidence::verify(provider, &request.evidence, &bound, Some(at_secs), None)?;
+    let peer = evidence::verify(provider, cpu_models, &request.evidence, &bound, Some(at_secs), None)?;
     ensure!(
         peer.launch_digest == release.launch_digest,
         "the quote proves measurement 0x{}, not the request's",
         hex::encode(peer.launch_digest)
     );
-    no_weaker(platform, &peer)?;
+    same_policy(platform, &peer)?;
     Ok(release)
 }
 
@@ -297,6 +302,7 @@ pub(super) fn vouch_digest(
 /// the first members before rotation is on.
 pub(crate) struct Service<C> {
     pub provider: TeeProvider,
+    pub cpu_models: Vec<CpuModel>,
     pub platform: Platform,
     pub trusted: TrustedClock,
     pub chain: C,
@@ -309,13 +315,14 @@ pub(crate) struct Service<C> {
 impl<C: StandbyChain> Service<C> {
     /// Vouching with `signer` over `chain`.
     pub(crate) fn new(
-        (provider, platform): (TeeProvider, Platform),
+        (provider, cpu_models, platform): (TeeProvider, Vec<CpuModel>, Platform),
         trusted: TrustedClock,
         chain: C,
         deployment: (u64, Address),
         signer: std::sync::Arc<EnclaveKey>,
     ) -> Self {
-        Self { provider, platform, trusted, chain, deployment, signer, domain: tokio::sync::OnceCell::new() }
+        let domain = tokio::sync::OnceCell::new();
+        Self { provider, cpu_models, platform, trusted, chain, deployment, signer, domain }
     }
 
     /// The vouch for `request` (see `answer`).
@@ -326,6 +333,7 @@ impl<C: StandbyChain> Service<C> {
         let domain = *self.domain.get_or_try_init(|| StandbyDomain::read(&self.chain, chain_id, vault)).await?;
         let voucher = Voucher {
             provider: self.provider,
+            cpu_models: &self.cpu_models,
             platform: self.platform,
             trusted: &self.trusted,
             chain: &self.chain,

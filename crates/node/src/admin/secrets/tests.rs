@@ -3,8 +3,9 @@
 use super::*;
 
 use engine_verify::fixtures::{
-    LAUNCH_DIGEST, POLICY, REPORTED_TCB, collateral_of, crl_revoking, forged_report, pem_wrap, test_chain,
+    LAUNCH_DIGEST, POLICY, REPORTED_TCB, collateral_of, cpu_model, crl_revoking, forged_report, pem_wrap, test_chain,
 };
+use engine_verify::{CpuModel, MANIFEST_FORMAT, MinimumTcb};
 use tokio::net::TcpListener;
 
 use crate::handover::evidence::Quoting;
@@ -20,8 +21,9 @@ fn manifest(name: &str, launch_digest: [u8; 48], config: [u8; 32]) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("release.toml");
     let text = format!(
-        "name = 'test-release'\nlaunch_digest = '0x{}'\nguest_features = '0x201'\npolicy = '0x0'\n\
-         [minimum_tcb]\nboot_loader = 0\ntee = 0\nsnp = 0\nmicrocode = 0\n\
+        "format = 2\nname = 'test-release'\nlaunch_digest = '0x{}'\nguest_features = '0x201'\npolicy = '0x0'\n\
+         [[cpu_models]]\nproduct_name = 'Genoa-A2'\nfamily = 0x19\nmodel = 0xA0\nstepping = 0x02\n\
+         minimum_tcb = {{ boot_loader = 0, tee = 0, snp = 0, microcode = 0 }}\n\
          [config_hashes]\n'node.toml' = '0x{}'\n",
         hex::encode(launch_digest),
         hex::encode(config)
@@ -277,15 +279,16 @@ fn a_hardware_quote_must_match_the_manifest_and_a_mock_one_never_does() {
     }))
     .unwrap();
     let root = pem_wrap(&collateral.root, "CERTIFICATE");
-    let release = |digest: [u8; 48], policy: u64, tcb: engine_verify::MinimumTcb| ReleaseManifest {
+    let release = |digest: [u8; 48], policy: u64, tcb: MinimumTcb| ReleaseManifest {
+        format: MANIFEST_FORMAT,
         name: "hardware".into(),
         launch_digest: digest,
         guest_features: engine_verify::fixtures::GUEST_FEATURES,
         policy,
-        minimum_tcb: tcb,
+        cpu_models: vec![CpuModel { minimum_tcb: tcb, ..cpu_model() }],
         config_hashes: [("node.toml".to_owned(), CONFIG)].into_iter().collect(),
     };
-    let met = engine_verify::MinimumTcb {
+    let met = MinimumTcb {
         boot_loader: REPORTED_TCB.boot_loader,
         tee: REPORTED_TCB.tee,
         snp: REPORTED_TCB.snp,
@@ -300,9 +303,17 @@ fn a_hardware_quote_must_match_the_manifest_and_a_mock_one_never_does() {
         ("another measurement", release([0x22; 48], POLICY, met), "launch measurement"),
         ("another policy", release(LAUNCH_DIGEST, POLICY ^ 1, met), "guest policy"),
         (
-            "a higher minimum TCB",
-            release(LAUNCH_DIGEST, POLICY, engine_verify::MinimumTcb { snp: met.snp + 1, ..met }),
-            "below the release's",
+            "a higher minimum TCB for its model",
+            release(LAUNCH_DIGEST, POLICY, MinimumTcb { snp: met.snp + 1, ..met }),
+            "below the release minimum",
+        ),
+        (
+            "no entry for its model",
+            ReleaseManifest {
+                cpu_models: vec![CpuModel { model: 0x11, ..cpu_model() }],
+                ..release(LAUNCH_DIGEST, POLICY, met)
+            },
+            "is not a model the release accepts",
         ),
     ] {
         let err = check_quote(own, &evidence, &report_data, &manifest, root_pem, now).unwrap_err().to_string();

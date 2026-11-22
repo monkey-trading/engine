@@ -9,6 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, anyhow, ensure};
 use engine_core::eip712::{self, B256, Signature};
 use engine_core::types::AccountId;
+use engine_verify::CpuModel;
 use ring::rand::{SecureRandom, SystemRandom};
 use sha2::Digest as _;
 use tokio::net::{TcpListener, TcpStream};
@@ -19,7 +20,7 @@ use tracing::{Instrument, error, info, info_span, warn};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::assigned::{Assigned, Assignments};
-use crate::handover::evidence::{self, Quoting};
+use crate::handover::evidence::{self, Quoting, same_policy};
 use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
     Challenge, Confirm, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest,
@@ -43,6 +44,8 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     listener: TcpListener,
     domain: CheckpointDomain,
     provider: TeeProvider,
+    /// The CPU models a successor's quote may come from, each at its own minimum TCB.
+    cpu_models: Vec<CpuModel>,
     processor: Option<String>,
     kds_base: String,
     store: Arc<KeyStore>,
@@ -109,6 +112,7 @@ impl Predecessor {
             listener,
             domain,
             provider: cfg.tee.provider,
+            cpu_models: cfg.tee.cpu_models.clone(),
             processor: cfg.tee.processor.clone(),
             kds_base: cfg.tee.kds_base.clone(),
             store: store.clone(),
@@ -346,10 +350,10 @@ impl<C: CheckpointChain> Predecessor<C> {
     }
 
     /// The successor's release, the measurement its quote proves and the config hash it binds,
-    /// once its quote binds `report_data`, its policy and TCB are no weaker than this release's, and
-    /// the vault names that release at finality, or the finalised schedule names it for the turn
-    /// trusted time has reached (`turns`) and this release's log accepted it, or the latest agreed
-    /// block's assignment does as `admit_turn` states.
+    /// once its quote binds `report_data` from a CPU model `tee.cpu_models` lists at that model's
+    /// minimum TCB, its policy is this release's, and the vault names that release at finality, or
+    /// the finalised schedule names it for the turn trusted time has reached (`turns`) and this
+    /// release's log accepted it, or the latest agreed block's assignment does as `admit_turn` states.
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -360,8 +364,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     ) -> anyhow::Result<Release> {
         // Sampling stops with sequencing, so a retry after the stop reads the last sample moved on.
         let now = self.trusted.since_sample_ms().map(|ms| ms / 1000);
-        let peer = evidence::verify(self.provider, &request.evidence, report_data, now, None)?;
-        no_weaker(&self.store.platform(), &peer)?;
+        let peer = evidence::verify(self.provider, &self.cpu_models, &request.evidence, report_data, now, None)?;
+        same_policy(&self.store.platform(), &peer)?;
         let release = Release { launch_digest: peer.launch_digest, config_sha256 };
         let at = self.vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
         self.admit_turn(request.binding.as_ref(), &release, &at).await?;
@@ -468,7 +472,6 @@ fn unconfirmed(why: &str) -> Served {
 
 mod assignment;
 pub(super) mod checks;
-pub(crate) use checks::no_weaker;
 mod secrets;
 mod tail;
 

@@ -29,6 +29,7 @@ fn public_mock_authority_is_opt_in_and_real_attestation_refuses_it_even_without_
     assert_eq!(first.address(), second.address());
     assert_eq!(first.address(), EnclaveKey::test_key().address());
     cfg.tee.provider = TeeProvider::ConfigfsTsm;
+    cfg.tee.cpu_models = vec![engine_verify::fixtures::cpu_model()];
     cfg.node.auth = AuthMode::Eip712;
     cfg.operator.public_key = own_operator_key();
     assert!(cfg.validate().unwrap_err().to_string().contains("use_published_mock_key"));

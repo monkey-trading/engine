@@ -5,8 +5,9 @@
 //! --attestation` fetch these and call this crate, and the browser build (`engine-verify-wasm`)
 //! runs the same code. Verification proves the quote's certificate chain up to a pinned vendor
 //! root, the launch measurement and guest policy against a release that launches with Secure TSC,
-//! the reported TCB against the release's minimum, and the report data's binding of the enclave
-//! address and a configuration the release lists. A mock quote never verifies;
+//! the chip's CPU model, named alike by its report, its VCEK and its chain, against the models the
+//! release lists, the reported TCB against that model's minimum, and the report data's binding of
+//! the enclave address and a configuration the release lists. A mock quote never verifies;
 //! `verify_mock_attestation` reads one for development.
 
 use anyhow::{Context, bail, ensure};
@@ -20,10 +21,13 @@ use chain::{QuoteChain, Roots};
 pub use chain::{Window, pem_certificates};
 mod collateral;
 pub use collateral::RelayedCollateral;
+mod cpu;
+use cpu::Chip;
+pub use cpu::{CpuModel, product_line};
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod fixtures;
 mod release;
-pub use release::{MinimumTcb, ReleaseManifest};
+pub use release::{MANIFEST_FORMAT, MinimumTcb, ReleaseManifest};
 mod report;
 pub use report::{Cpuid, MitigationVectors, SnpReport, Tcb};
 mod signature;
@@ -46,6 +50,8 @@ pub struct VerifiedAttestation {
     pub config_name: String,
     /// SHA-256 of the DER SubjectPublicKeyInfo of the API's TLS key, which the report data binds.
     pub tls_public_key_sha256: [u8; 32],
+    /// The product name of the chip's CPU model, as its VCEK and the release name it.
+    pub product_name: String,
     /// The Unix seconds at which every date check passes: from the latest of the VCEK's and the
     /// intermediate's not-before and the revocation list's this-update, to the earliest of their
     /// not-after and the list's next-update. The verdict holds for a time inside it only, so a
@@ -61,8 +67,10 @@ pub struct VerifiedAttestation {
 /// - `now` is out of the certificate time range
 /// - the quote is not an SEV-SNP attestation report, its chain does not verify to a pinned root,
 ///   its signature does not verify, or its report data does not bind the served bundle
+/// - the report is of version 2, or its CPUID, its VCEK's product name and its chain do not name one
+///   product line (see `QuoteChain::product_name`)
 /// - no release admits the quote: with one release, the first of its guest feature, measurement,
-///   policy, TCB, and configuration checks that fails; with several, each one's
+///   policy, CPU model, TCB, and configuration checks that fails; with several, each one's
 pub fn verify_attestation(
     attestation: &Attestation,
     releases: &[ReleaseManifest],
@@ -71,34 +79,39 @@ pub fn verify_attestation(
     now: i64,
 ) -> anyhow::Result<VerifiedAttestation> {
     let quote = unhex(&attestation.quote).context("decoding the quote")?;
-    let (report, validity) = signed_report(&quote, collateral, root_pem, now)?;
+    let (report, chip, validity) = signed_report(&quote, collateral, root_pem, now)?;
 
     let (bundle, report_data) = served_bundle(attestation)?;
     ensure!(report.report_data[..] == report_data[..], "the quote's report data differs from the served one");
 
-    let (release_name, config_name) = match_release(&report, &bundle, releases)?;
+    let (release_name, config_name) = match_release(&report, &chip, &bundle, releases)?;
     Ok(VerifiedAttestation {
         release_name,
         enclave_address: bundle.enclave_address,
         config_name,
         tls_public_key_sha256: bundle.tls_public_key_sha256,
+        product_name: chip.product_name,
         validity,
     })
 }
 
 /// Verifies that `quote` is an SEV-SNP report from a chip whose certificate chain in `collateral`
 /// verifies to the compiled-in vendor roots, plus `root_pem` when given, unrevoked at `now` in Unix
-/// seconds, and returns what it reports. Unlike `verify_attestation` it matches no release: the
-/// caller decides whether the measurement, policy, TCB, and report data are ones it accepts.
+/// seconds, whose CPU model is one of `cpu_models` at no less than that model's minimum TCB, and
+/// returns what it reports. Unlike `verify_attestation` it matches no release: the caller decides
+/// whether the measurement, policy, and report data are ones it accepts.
 /// Error cases:
-/// - as `verify_attestation`, up to and including the quote's signature
+/// - as `verify_attestation`, up to and including the quote's signature and its CPU model's names
+/// - no entry of `cpu_models` admits the chip at its reported TCB (see `CpuModel`)
 pub fn verify_quote(
     quote: &[u8],
     collateral: &RelayedCollateral,
     root_pem: Option<&str>,
     now: i64,
+    cpu_models: &[CpuModel],
 ) -> anyhow::Result<VerifiedQuote> {
-    let (report, validity) = signed_report(quote, collateral, root_pem, now)?;
+    let (report, chip, validity) = signed_report(quote, collateral, root_pem, now)?;
+    cpu::admit(&chip, report.reported_tcb, cpu_models)?;
     Ok(VerifiedQuote {
         measurement: report.measurement,
         policy: report.policy,
@@ -108,18 +121,20 @@ pub fn verify_quote(
     })
 }
 
-/// `quote` parsed as an SEV-SNP report once its chain, revocation list, and signature verify, and
-/// the window in which those date checks pass.
+/// `quote` parsed as an SEV-SNP report once its chain, revocation list, and signature verify, the
+/// chip its CPUID and VCEK name, and the window in which those date checks pass.
 /// Error cases:
 /// - `now` is out of the certificate time range
 /// - the quote is not an SEV-SNP attestation report, its chain does not verify to a pinned root, the
 ///   list revokes it, or its signature does not verify
+/// - the report is of version 2, or its CPUID, its VCEK's product name and its chain do not name one
+///   product line
 fn signed_report<'a>(
     quote: &'a [u8],
     collateral: &RelayedCollateral,
     root_pem: Option<&str>,
     now: i64,
-) -> anyhow::Result<(SnpReport<'a>, Window)> {
+) -> anyhow::Result<(SnpReport<'a>, Chip, Window)> {
     let now = ASN1Time::from_timestamp(now).map_err(|_| anyhow::anyhow!("the time {now} is out of range"))?;
     let report = SnpReport::parse(quote)
         .context("the quote is not an SEV-SNP attestation report; a mock quote never verifies")?;
@@ -131,9 +146,10 @@ fn signed_report<'a>(
         now,
     )?;
     let current = collateral::check_collateral(&chain, &collateral.crl, &report, now)?;
+    let chip = cpu::identify(report.cpuid, chain.product_name()?)?;
     let certificates = chain.validity()?;
     let validity = Window { from: certificates.from.max(current.from), until: certificates.until.min(current.until) };
-    Ok((report, validity))
+    Ok((report, chip, validity))
 }
 
 /// What a verified quote reports about the enclave that produced it.
@@ -206,12 +222,13 @@ fn served_bundle(attestation: &Attestation) -> anyhow::Result<(AttestationBundle
 /// - no release admits the quote: one release's own refusal, or every release's refusal by name
 fn match_release(
     report: &SnpReport<'_>,
+    chip: &Chip,
     bundle: &AttestationBundle,
     releases: &[ReleaseManifest],
 ) -> anyhow::Result<(String, String)> {
     let mut refusals = Vec::new();
     for release in releases {
-        match check_release(report, bundle, release) {
+        match check_release(report, chip, bundle, release) {
             Ok(config_name) => return Ok((release.name.clone(), config_name)),
             Err(err) => refusals.push((release.name.as_str(), err)),
         }
@@ -223,18 +240,28 @@ fn match_release(
     Err(refusals.pop().map(|(_, err)| err).unwrap_or_else(|| anyhow::anyhow!("no release manifest to verify against")))
 }
 
-/// The configuration `release` runs that the quote's bundle names, once the release launches with
-/// Secure TSC and the quote's measurement, policy, and reported TCB match it. The report carries no
-/// SEV features, but its measurement covers every vCPU's, so matching the launch digest holds the
-/// quote's launch to the release's.
+/// The configuration `release` runs that the quote's bundle names, once the release is of
+/// `MANIFEST_FORMAT` and launches with Secure TSC, the quote's measurement and policy match it, and
+/// `chip` is a CPU model it lists at no less than that model's minimum TCB. The report carries no SEV
+/// features, but its measurement covers every vCPU's, so matching the launch digest holds the
+/// quote's launch to the release's. A manifest parsed with `from_toml` has passed its other
+/// structural checks already.
 /// Error cases:
-/// - the release's guest features lack SNPActive or SecureTSC
-/// - the measurement, policy, or TCB does not match, or the bundle's configuration hash is not listed
+/// - the release is of another manifest format, or its guest features lack SNPActive or SecureTSC
+/// - the measurement or policy does not match, the release lists no entry for the chip's CPUID or
+///   one naming another product, the TCB is below that entry's minimum, or the bundle's
+///   configuration hash is not listed
 fn check_release(
     report: &SnpReport<'_>,
+    chip: &Chip,
     bundle: &AttestationBundle,
     release: &ReleaseManifest,
 ) -> anyhow::Result<String> {
+    ensure!(
+        release.format == MANIFEST_FORMAT,
+        "unsupported release manifest format {}, want {MANIFEST_FORMAT}",
+        release.format
+    );
     ensure!(
         release.guest_features & REQUIRED_GUEST_FEATURES == REQUIRED_GUEST_FEATURES,
         "the release launches without Secure TSC: its guest features 0x{:x} lack 0x{:x}",
@@ -251,13 +278,7 @@ fn check_release(
         report.policy,
         release.policy
     );
-    let minimum: Tcb = release.minimum_tcb.into();
-    ensure!(
-        report.reported_tcb.meets(minimum),
-        "the quote's reported TCB {:?} is below the release minimum {:?}",
-        report.reported_tcb,
-        minimum
-    );
+    cpu::admit(chip, report.reported_tcb, &release.cpu_models)?;
     Ok(release
         .config_name(&bundle.config_sha256)
         .context("the bundle's configuration hash matches no release configuration")?

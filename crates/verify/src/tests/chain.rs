@@ -1,13 +1,15 @@
-//! The chain's signatures and its revocation list: the vendor's own RSASSA-PSS certificates verify,
-//! only the two accepted algorithms are tried, and the root-issued list is enforced against the
-//! intermediate it issued, never against the VCEK, whose serial is unique only within its own
-//! issuer's scope.
+//! The chain's signatures, its revocation list and its names: the vendor's own RSASSA-PSS
+//! certificates verify, only the two accepted algorithms are tried, the root-issued list is enforced
+//! against the intermediate it issued, never against the VCEK, whose serial is unique only within its
+//! own issuer's scope, and the VCEK's product name is one printable IA5String of the chain's line.
 
 use rcgen::{KeyPair, SerialNumber};
 
 use super::{now, serial_of, ymd};
 use crate::chain::{QuoteChain, Roots, check_revocation, check_signed_by};
-use crate::fixtures::{ca_params, crl_revoking, crl_signed, fixtures, pem};
+use crate::fixtures::{
+    REPORTED_TCB, TestChain, VCEK_SERIAL, ca_params, crl_revoking, crl_signed, der_ia5, fixtures, pem, vcek_extensions,
+};
 
 #[test]
 fn the_pinned_vendor_intermediates_verify_against_their_roots() {
@@ -111,7 +113,63 @@ fn the_root_list_scopes_revoked_serials_to_the_intermediate() {
     }
 }
 
+#[test]
+fn a_vcek_product_name_must_be_one_printable_ia5_string_of_its_chains_line() {
+    let (chain, enclave, _attestation) = fixtures();
+    let name = |content: Option<Vec<u8>>| {
+        let vcek = vcek_with_product_name(&chain, enclave.chip_id, content);
+        let linked = QuoteChain::link(vcek, chain.ask.der().to_vec(), chain.ark.der().to_vec(), at(now())).unwrap();
+        linked.product_name().map_err(|err| err.to_string())
+    };
+    assert_eq!(name(Some(der_ia5("Genoa-A2"))), Ok("Genoa-A2".to_owned()));
+    let mut long_form = vec![0x16, 0x81, 8];
+    long_form.extend_from_slice(b"Genoa-A2");
+    for (content, refusal) in [
+        (None, "VCEK carries no extension 1.3.6.1.4.1.3704.1.2"),
+        (
+            Some(vec![0x0C, 8, b'G', b'e', b'n', b'o', b'a', b'-', b'A', b'2']),
+            "VCEK product name extension is not a DER IA5String",
+        ),
+        (Some(vec![0x16]), "VCEK product name extension is truncated"),
+        (
+            Some(vec![0x16, 9, b'G', b'e', b'n', b'o', b'a', b'-', b'A', b'2']),
+            "VCEK product name extension has a malformed length",
+        ),
+        (
+            Some(vec![0x16, 7, b'G', b'e', b'n', b'o', b'a', b'-', b'A', b'2']),
+            "VCEK product name extension has a malformed length",
+        ),
+        (Some(long_form), "VCEK product name extension has a malformed length"),
+        (Some(der_ia5("Genoa A2")), "VCEK product name is not printable ASCII"),
+        (Some(der_ia5("Genoa-A2\0")), "VCEK product name is not printable ASCII"),
+        (
+            Some(der_ia5("Milan-B0")),
+            "the VCEK names product Milan-B0, but its chain's root is ARK-Genoa, not ARK-Milan",
+        ),
+    ] {
+        assert_eq!(name(content), Err(refusal.to_owned()));
+    }
+}
+
 // ── Helpers ──
+
+/// A VCEK `chain`'s intermediate issues for `chip_id` whose product name extension holds `content`
+/// as signed, or that carries none.
+fn vcek_with_product_name(chain: &TestChain, chip_id: [u8; 64], content: Option<Vec<u8>>) -> Vec<u8> {
+    let mut params = rcgen::CertificateParams::new(Vec::new()).unwrap();
+    params.serial_number = Some(SerialNumber::from(VCEK_SERIAL));
+    params.distinguished_name.push(rcgen::DnType::CommonName, "VCEK-Test");
+    params.custom_extensions = vcek_extensions(chip_id, REPORTED_TCB, 0, false);
+    match content {
+        Some(content) => {
+            params.custom_extensions[1] =
+                rcgen::CustomExtension::from_oid_content(&[1, 3, 6, 1, 4, 1, 3704, 1, 2], content)
+        }
+        None => drop(params.custom_extensions.remove(1)),
+    }
+    let key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+    params.signed_by(&key, &rcgen::Issuer::from_params(&chain.ask_params, &chain.ask_key)).unwrap().der().to_vec()
+}
 
 /// The fixture chain, pinned to its own root.
 fn quote_chain(chain: &crate::fixtures::TestChain) -> QuoteChain {

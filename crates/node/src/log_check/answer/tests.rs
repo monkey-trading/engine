@@ -29,9 +29,12 @@ async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn(
     let config: [u8; 32] = hex::decode(config_sha256).unwrap().try_into().unwrap();
     assert_eq!(config, dev_config().file_sha256);
     let bound = report_data(answering.domain, &nonce, &asked, &config);
-    assert_eq!(verify(TeeProvider::Mock, &evidence, &bound, None, None).unwrap().launch_digest, DIGEST);
+    assert_eq!(verify(TeeProvider::Mock, &[], &evidence, &bound, None, None).unwrap().launch_digest, DIGEST);
     let other = report_data(answering.domain, &nonce, &statement(head(41)), &config);
-    assert!(verify(TeeProvider::Mock, &evidence, &other, None, None).is_err(), "the quote binds another statement");
+    assert!(
+        verify(TeeProvider::Mock, &[], &evidence, &other, None, None).is_err(),
+        "the quote binds another statement"
+    );
 
     let refused = [
         ("another root", statement(VerifiedHead { root: B256::repeat_byte(9), ..head(40) }), "another log"),

@@ -31,8 +31,9 @@ use sha2::{Digest, Sha256};
 use crate::log::ReplayWorkers;
 
 mod benchmarks;
-mod collateral;
+mod tee;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
+pub use tee::TeeSection;
 mod access;
 pub use access::AccessSection;
 pub use standby::StandbySection;
@@ -186,28 +187,6 @@ pub struct NodeSection {
 pub struct LoggingSection {
     /// A `tracing` filter directive, e.g. `"info"` or `"info,engine_node=debug"`.
     pub level: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TeeSection {
-    pub provider: TeeProvider,
-    /// Uses the public development signer only with simulated attestation.
-    #[serde(default)]
-    pub use_published_mock_key: bool,
-    /// The vendor's product name, which keys its certificate chain: Milan, or Genoa for a Genoa,
-    /// Bergamo or Siena processor. Required with an SEV-SNP quote; the node relays that quote's
-    /// collateral.
-    pub processor: Option<String>,
-    /// The vendor's key-distribution service the node fetches collateral from.
-    #[serde(default = "collateral::default_kds_base")]
-    pub kds_base: String,
-    /// How often the node refetches the collateral.
-    #[serde(default = "collateral::default_refresh", with = "humantime_serde")]
-    pub collateral_refresh: Duration,
-    /// Seals the enclave's keys on the data disk, so a restart keeps them and the next release can
-    /// take them over. A hardware enclave refuses to start without it.
-    pub sealing: Option<SealingSection>,
 }
 
 #[derive(Debug, Deserialize)]

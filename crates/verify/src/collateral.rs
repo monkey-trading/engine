@@ -19,6 +19,7 @@ use x509_parser::prelude::FromDer as _;
 use x509_parser::time::ASN1Time;
 
 use crate::chain::{IntermediateRevoked, QuoteChain, Window, check_revocation};
+use crate::cpu::{self, CpuModel, product_line};
 use crate::report::SnpReport;
 
 /// The most bytes one relayed certificate or revocation list may carry. Vendor certificates are
@@ -51,17 +52,40 @@ struct CollateralDocument {
 
 impl RelayedCollateral {
     /// Requires the collateral to link, bind to `report`, and sign it at `now`, as a verifier does
-    /// except for the root pin: the chain is in date and linked, the VCEK certifies the report's
-    /// chip and TCB, the VCEK signed the report, and the list is the root's, current, and does not
-    /// revoke the intermediate. The node passes the host's clock, so a skewed clock can only make
-    /// the node refuse collateral, never accept something a verifier would refuse.
+    /// except for the root pin: the chain is in date and linked, the VCEK's product line is
+    /// `processor`'s and its chain's, the VCEK certifies the report's chip and TCB, the VCEK signed
+    /// the report, and the list is the root's, current, and does not revoke the intermediate. The
+    /// node passes the host's clock, so a skewed clock can only make the node refuse collateral,
+    /// never accept something a verifier would refuse.
     /// Error cases:
     /// - any of the checks above fails
     /// - the list revokes the intermediate and every other check passed (`is_revoked` tells it
     ///   apart): the collateral is authentic, and it is what a verifier must be shown
-    pub fn check(&self, report: &SnpReport<'_>, now: ASN1Time) -> anyhow::Result<()> {
+    pub fn check(&self, report: &SnpReport<'_>, processor: &str, now: ASN1Time) -> anyhow::Result<()> {
         let chain = QuoteChain::link(self.vcek.clone(), self.intermediate.clone(), self.root.clone(), now)?;
+        let product_name = chain.product_name()?;
+        ensure!(
+            product_line(&product_name) == processor,
+            "the VCEK is for product {product_name}, not the processor {processor} names"
+        );
         check_collateral(&chain, &self.crl, report, now).map(drop)
+    }
+
+    /// Requires the chip that produced `report`, as its CPUID and this collateral's VCEK name it, to be
+    /// one of `cpu_models` at no less than that model's minimum TCB: how a node checks that its own
+    /// configuration admits its own quote, as a peer running that configuration requires.
+    /// Error cases:
+    /// - the chain does not link at `now`, or the report and its VCEK do not name one CPU model
+    /// - no entry of `cpu_models` admits the chip at its reported TCB
+    pub fn check_cpu_model(
+        &self,
+        report: &SnpReport<'_>,
+        cpu_models: &[CpuModel],
+        now: ASN1Time,
+    ) -> anyhow::Result<()> {
+        let chain = QuoteChain::link(self.vcek.clone(), self.intermediate.clone(), self.root.clone(), now)?;
+        let chip = cpu::identify(report.cpuid, chain.product_name()?)?;
+        cpu::admit(&chip, report.reported_tcb, cpu_models).map(drop)
     }
 
     /// Whether `err`, from `check`, is the intermediate's revocation by an authentic list.

@@ -59,9 +59,10 @@ fn each_release_check_refuses_a_quote_outside_it() {
             (|r: &mut ReleaseManifest| r.launch_digest = [0x1e; 48]) as fn(&mut ReleaseManifest),
             "the quote's launch measurement matches no release launch digest",
         ),
+        ("format", |r| r.format = 3, "unsupported release manifest format 3, want 2"),
         ("guest features", |r| r.guest_features = 0x1, "the release launches without Secure TSC"),
         ("policy", |r| r.policy = POLICY + 1, "the quote's guest policy 0x0000000000030000 differs"),
-        ("TCB", |r| r.minimum_tcb.microcode = 206, "the quote's reported TCB"),
+        ("TCB", |r| r.cpu_models[0].minimum_tcb.microcode = 206, "the quote's reported TCB"),
         ("config", |r| r.config_hashes.clear(), "the bundle's configuration hash matches no release configuration"),
     ] {
         let mut release = release();

@@ -7,7 +7,8 @@
 //! - 3 adds the signing chip's CPUID family, model and stepping. The family selects the layout of
 //!   every TCB value, and only family 19h's (Milan and Genoa, and the Bergamo and Siena parts the
 //!   vendor certifies under Genoa) is implemented, so a report from another family is refused. The
-//!   model is not matched against a release: the launch measurement does not depend on it.
+//!   vendor numbers TCB values per model, so a verifier holds the CPUID to a model the release lists
+//!   (`cpu`), and refuses a version 2 report, which names none.
 //! - 4 is unpublished. It is read as 3, as public parsers read the version-4 reports SEV firmware
 //!   1.55.31 issues; every field read here sits at the same offset in 3 and 5.
 //! - 5 (revision 1.58, May 2025) adds the launch and current mitigation vectors. They are read but
@@ -53,7 +54,7 @@ const SUPPORTED_VERSIONS: RangeInclusive<u32> = 2..=6;
 const CPUID_FROM_VERSION: u32 = 3;
 const MITIGATION_VECTORS_FROM_VERSION: u32 = 5;
 /// The CPUID family whose TCB layout `Tcb::from_packed` decodes (Table 5 of the specification).
-const FAMILY_19H: u8 = 0x19;
+pub(crate) const FAMILY_19H: u8 = 0x19;
 /// 1 means ECDSA with the P-384 curve and SHA-384.
 const ECDSA_P384_SHA384: u32 = 1;
 /// SIGNING_KEY 0: the VCEK the vendor's key-distribution service issues.

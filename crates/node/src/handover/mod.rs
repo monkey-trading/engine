@@ -8,13 +8,15 @@
 //!
 //! The new release (the successor, `take`) connects to the running release's handover listener
 //! (the predecessor, `Predecessor`), which answers with a fresh challenge, and sends a quote over
-//! the challenge, a fresh HPKE (RFC 9180) public key, and its config's hash. The predecessor checks the quote against the vendor's chain at trusted time; the
-//! release it proves, the measurement and that config, against the vault's current release at
-//! custody finality, once the vault's generation has folded it; and the guest policy and TCB
-//! against its own. It then stops sequencing, takes its final checkpoint, seals the log's tail segment — the archive
-//! serves only completed segments, and the API is already down when the successor could fetch it —
-//! and sends the keys, that checkpoint, and the segment encrypted to the successor's key, with its
-//! own quote over the ciphertext. The successor checks that quote, opens the keys, accepts them
+//! the challenge, a fresh HPKE (RFC 9180) public key, and its config's hash. The predecessor checks
+//! the quote against the vendor's chain at trusted time; the release it proves, the measurement and
+//! that config, against the vault's current release at custody finality, once the vault's
+//! generation has folded it; the chip's CPU model against `tee.cpu_models`, at that model's own
+//! minimum TCB; and the guest policy against its own. It then stops sequencing, takes its final
+//! checkpoint, seals the log's tail segment — the archive serves only completed segments, and the
+//! API is already down when the successor could fetch it — and sends the keys, that checkpoint, and
+//! the segment encrypted to the successor's key, with its own quote over the ciphertext. The
+//! successor checks that quote, its CPU model included, opens the keys, accepts them
 //! only if the vault already names their signing key, seals them for its own release, writes the
 //! segment, requires the log to end at the handed-over checkpoint, and confirms by signing with the
 //! handed-over key; the predecessor, which stopped sequencing, then exits or, as a rotation-set
@@ -71,13 +73,13 @@ use crate::tee::sealing::Release;
 pub(crate) mod assigned;
 pub(crate) mod discovery;
 pub(crate) mod evidence;
-pub(crate) use evidence::Evidence;
+pub(crate) use evidence::{Evidence, same_policy};
 pub(crate) mod hostname;
 pub(crate) use hostname::check_operator_hostname;
 mod predecessor;
 #[cfg(test)]
 pub(crate) use predecessor::checks::{tail_over, tail_room};
-pub(crate) use predecessor::{DrainReply, Predecessor, no_weaker};
+pub(crate) use predecessor::{DrainReply, Predecessor};
 mod published;
 pub(crate) use published::Published;
 pub(crate) mod secrets;

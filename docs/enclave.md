@@ -15,14 +15,17 @@ running trading server a node, as the first one below does.
   answers the ACME authority's TLS-ALPN-01 validations, so the host forwards port 443 to it.
 - **The handover port**, `tee.sealing.handover.listen`, where the next release asks for the
   enclave's keys. The request and the answer are attested and the keys are encrypted, so the host
-  only carries them.
+  only carries them. Each side takes the other's quote only from a CPU model that its configuration's
+  `[[tee.cpu_models]]` lists, at that model's minimum firmware and microcode versions, so a host
+  cannot offer a peer on a processor whose versions mean fewer fixes.
 - **The delivery port**, `tee.sealing.secrets.listen`, where the operator delivers the server's
   secrets. The offer and the receipt are attested and the bundle is encrypted and signed.
 - **The metrics port**, `metrics.listen`, which serves `GET /metrics` over plain HTTP.
 - **The outbound network**: the venue feeds over TLS, the custody and checkpoint RPC endpoints over
   HTTPS, the ACME directory, alert webhooks, Roughtime servers, and DNS from the resolvers that DHCP
   names. The server also fetches its chip's certificates from AMD's key distribution service at
-  `tee.kds_base`, so the deployment must allow outbound HTTPS to that address.
+  `tee.kds_base`, so the deployment must allow outbound HTTPS to that address. It relays them only
+  when the chip's certificate names the product line `tee.processor` names.
 - **The wall clock**, which stamps every command and which signed Roughtime readings bound.
 - **The data disk**, an ext4 filesystem on the first virtio disk, mounted at `/data` with `nosuid`,
   `nodev` and `noexec`. It holds `config.toml`, the log, the history index, the alert outbox, the

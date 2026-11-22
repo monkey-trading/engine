@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256};
 use engine_core::types::AccountId;
+use engine_verify::CpuModel;
 use tokio::sync::{mpsc, watch};
 use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, error, info, warn};
@@ -117,6 +118,10 @@ pub(super) type Holders = BTreeMap<AccountId, Option<AccountId>>;
 /// the standby keys' holders.
 type Rounds<'a> = (&'a mut Stamps, &'a mut Option<(Scope, Signable)>, &'a mut Holders);
 
+/// This enclave's attestation provider, the CPU models it takes a peer's quote from, each at its own
+/// minimum TCB, and its sealed platform, whose guest policy a peer's must be.
+pub(crate) type PeerChecks = (TeeProvider, Vec<CpuModel>, Platform);
+
 /// The operator's liveness rule.
 pub(crate) struct Operator<C, A> {
     pub chain: C,
@@ -147,9 +152,9 @@ pub(crate) struct Operator<C, A> {
     /// For a promoted operator, the block its start read the promotion at: an older latest block, as a
     /// lagging provider majority serves, still names the outgoing key, so it counts as no read.
     pub floor: u64,
-    /// This enclave's attestation provider and sealed platform, which a member's standby key's
-    /// attestation is checked against; `None` without sealed keys, when only promotable keys count.
-    pub platform: Option<(TeeProvider, Platform)>,
+    /// What a member's standby key's attestation is checked against; `None` without sealed keys,
+    /// when only promotable keys count.
+    pub platform: Option<PeerChecks>,
     /// The attested keys it verified, which a failed re-check keeps (`attested`).
     pub kept: attested::Kept,
 }

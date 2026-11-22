@@ -40,6 +40,22 @@ async fn a_release_quote_verifies_and_names_the_release() {
 }
 
 #[tokio::test]
+async fn the_processor_must_name_the_product_line_of_the_quotes_vcek() {
+    let (chain, _enclave, attestation) = fixtures();
+    let collateral = collateral_of(&chain, &crl_revoking(&chain, &[]));
+    let root = pem(&chain.ark);
+    let options = |processor| Options {
+        processor,
+        kds_base: "https://127.0.0.1:9",
+        root_pem: Some(&root),
+        collateral: Some(&collateral),
+    };
+    verify_attestation(&attestation, &release(), &options(PROCESSOR)).await.expect("the VCEK's own line");
+    let err = verify_attestation(&attestation, &release(), &options("Milan")).await.err().expect("another line");
+    assert_eq!(err.to_string(), "the quote's VCEK is for product Genoa-A2, not the processor Milan names");
+}
+
+#[tokio::test]
 async fn a_mock_quote_never_verifies() {
     let (chain, enclave, _) = fixtures();
     let stub = kds_stub(&chain).await;
@@ -126,10 +142,8 @@ async fn an_altered_measurement_policy_or_tcb_fails_verification() {
         let mut release = release();
         release.launch_digest = measurement;
         release.policy = policy;
-        release.minimum_tcb.boot_loader = minimum_tcb.0;
-        release.minimum_tcb.tee = minimum_tcb.1;
-        release.minimum_tcb.snp = minimum_tcb.2;
-        release.minimum_tcb.microcode = minimum_tcb.3;
+        let minimum = &mut release.cpu_models[0].minimum_tcb;
+        (minimum.boot_loader, minimum.tee, minimum.snp, minimum.microcode) = minimum_tcb;
 
         assert!(
             verify_attestation(&attestation, &release, &options(&stub, &pem(&chain.ark))).await.is_err(),

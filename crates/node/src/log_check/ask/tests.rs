@@ -25,7 +25,8 @@ const CONFIG: [u8; 32] = [0xc1; 32];
 #[tokio::test]
 async fn a_verification_counts_only_from_the_registered_release_outside_the_range_binding_what_was_asked() {
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
-    let checks = Checks { domain: domain(), provider: TeeProvider::Mock, own: &own, now_seconds: None };
+    let checks =
+        Checks { domain: domain(), provider: TeeProvider::Mock, cpu_models: &[], own: &own, now_seconds: None };
     let (c, b) = (member(0xc, ""), member(0xb, ""));
     // B's member on another release, as after an upgrade.
     let b_upgraded = HandoverSource { release: release_of(0xd).0, ..member(0xb, "") };
@@ -264,7 +265,8 @@ fn slow_asker(
 ) -> Asker<Order> {
     let own = Platform { launch_digest: [0; 48], policy: 0, tcb: 0 };
     let trusted = crate::test_support::trusted(Arc::new(crate::clock::test_clock::TestClock::default()));
-    Asker::new(Order { order, delay, reassigned }, sequencer, due, (domain(), TeeProvider::Mock, own), key(), trusted)
+    let platform = (domain(), TeeProvider::Mock, Vec::new(), own);
+    Asker::new(Order { order, delay, reassigned }, sequencer, due, platform, key(), trusted)
 }
 
 /// The operator enclave's key, which signs its checkpoints and its questions.

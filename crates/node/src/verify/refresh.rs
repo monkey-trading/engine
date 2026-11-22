@@ -6,9 +6,9 @@
 //! - the vendor's answers: each is capped at 1 MiB and 15 s, retried three times, with no redirect
 //!   or proxy, over TLS to the compiled-in public roots (`Collateral`), then each item is capped
 //!   again at what a vendor certificate or list can be (`RelayedCollateral::ensure_bounded`);
-//! - what is fetched: a candidate replaces the served copy only if it links, binds to this
-//!   node's quote, carries a current list, and the VCEK signed the quote
-//!   (`RelayedCollateral::check`); anything else is dropped. The one candidate that fails the
+//! - what is fetched: a candidate replaces the served copy only if it links, names the product line
+//!   `tee.processor` names, binds to this node's quote, carries a current list, and the VCEK signed
+//!   the quote (`RelayedCollateral::check`); anything else is dropped. The one candidate that fails the
 //!   check and is served anyway is otherwise-valid collateral whose authentic list revokes the
 //!   intermediate: the relay never hides vendor data that makes a verifier refuse this node, so
 //!   verifiers learn of the revocation and the Critical `collateral_revoked` pages the operator;
@@ -18,6 +18,11 @@
 //! - the refresh cadence: `tee.collateral_refresh` is bounded in config, and one refresh has a
 //!   deadline, so a slow vendor cannot stall the loop or make it hammer the vendor;
 //! - the service URL and processor name: config, which the attestation binds by hash.
+//!
+//! Each refresh also checks this node's own chip, as its report and VCEK name it, against
+//! `tee.cpu_models`, which a peer running this configuration holds its quote to, and the Critical
+//! `cpu_model_unlisted` pages while that list does not admit it. The collateral is still served: a
+//! verifier judges it against the release manifest.
 //!
 //! A blocked, slowed, or lying network therefore costs only staleness: the last good copy keeps
 //! being served until a verifier's own date checks refuse it, and `collateral_stale` pages once the
@@ -31,7 +36,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
-use engine_verify::{RelayedCollateral, SnpReport};
+use engine_verify::{CpuModel, RelayedCollateral, SnpReport};
 use tokio::sync::watch;
 use tokio::time::{Instant, sleep, timeout};
 use tracing::{error, info, warn};
@@ -57,19 +62,23 @@ const STALE_WINDOW_SECS: i64 = 24 * 60 * 60;
 /// The kernel's configfs-tsm provider name for an SEV-SNP guest report.
 const SNP_PROVIDER: &str = "sev_guest";
 
-/// One refresh's result: the document to serve, the list's `nextUpdate`, and whether its authentic
-/// list revokes the intermediate.
+/// One refresh's result: the document to serve, the list's `nextUpdate`, whether its authentic
+/// list revokes the intermediate, and why `tee.cpu_models` does not admit this node's own chip, if
+/// it does not.
 #[derive(Debug)]
 pub(super) struct Refreshed {
     pub(super) json: Bytes,
     pub(super) next_update: Option<i64>,
     pub(super) revoked: bool,
+    pub(super) unlisted: Option<String>,
 }
 
 /// A node's collateral relay: what to fetch, and where the result goes.
 pub struct Relay {
     quote: Vec<u8>,
     processor: String,
+    /// The CPU models a peer running this configuration admits, which this node's own chip must be.
+    cpu_models: Vec<CpuModel>,
     kds_base: String,
     refresh: Duration,
     served: watch::Sender<Option<Bytes>>,
@@ -93,6 +102,7 @@ impl Relay {
         Ok(Some(Self {
             quote,
             processor,
+            cpu_models: tee.cpu_models.clone(),
             kds_base: tee.kds_base.clone(),
             refresh: tee.collateral_refresh,
             served: watch::channel(None).0,
@@ -130,6 +140,16 @@ impl Relay {
                     } else {
                         info!(alert_resolved = "collateral_revoked", "attestation chain is not revoked");
                     }
+                    match &fetched.unlisted {
+                        Some(reason) => error!(
+                            alert = "cpu_model_unlisted",
+                            "tee.cpu_models does not admit this node's own CPU model, so a peer running this \
+                             configuration refuses its quote: {reason}"
+                        ),
+                        None => {
+                            info!(alert_resolved = "cpu_model_unlisted", "tee.cpu_models admits this node's CPU model")
+                        }
+                    }
                     held = Some(fetched.next_update);
                     self.served.send_replace(Some(fetched.json));
                     next_wait(self.refresh, fetched.next_update, unix_now())
@@ -159,12 +179,18 @@ impl Relay {
             .await
             .context("the refresh exceeded its deadline")??;
         let now = x509_parser::time::ASN1Time::from_timestamp(unix_now()).context("the host clock is out of range")?;
-        let revoked = match fetched.check(&report, now) {
+        let revoked = match fetched.check(&report, &self.processor, now) {
             Ok(()) => false,
             Err(err) if RelayedCollateral::is_revoked(&err) => true,
             Err(err) => return Err(err.context("the fetched collateral is not valid for this node's quote")),
         };
-        Ok(Refreshed { json: Bytes::from(fetched.to_json()), next_update: fetched.crl_next_update()?, revoked })
+        let unlisted = fetched.check_cpu_model(&report, &self.cpu_models, now).err().map(|err| format!("{err:#}"));
+        Ok(Refreshed {
+            json: Bytes::from(fetched.to_json()),
+            next_update: fetched.crl_next_update()?,
+            revoked,
+            unlisted,
+        })
     }
 }
 

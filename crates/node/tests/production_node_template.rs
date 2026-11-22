@@ -46,6 +46,11 @@ fn the_template_holds_what_a_production_build_requires() {
     assert!(cfg.api.allowed_origins.iter().all(|origin| origin.starts_with("https://")));
     assert!(cfg.alerts.critical.is_some(), "real attestation needs a Critical route");
     assert!(cfg.checkpoints.is_some() && cfg.tee.sealing.is_some(), "hardware custody needs both");
+    // The launch release takes quotes from Siena (EPYC 8004) alone, at AMD's floor for it.
+    let models: Vec<_> = cfg.tee.cpu_models.iter().map(|model| (model.cpuid(), model.minimum_tcb)).collect();
+    let siena = engine_verify::Cpuid { family: 0x19, model: 0xA0, stepping: 0x02 };
+    let floor = engine_verify::MinimumTcb { boot_loader: 0, tee: 0, snp: 0x1D, microcode: 0x1B };
+    assert_eq!(models, [(siena, floor)]);
     // A rotation-set member witnesses, promotes and relays heads through its own funded caller.
     assert!(cfg.log_heads.is_some() && cfg.liveness.is_some(), "[log_heads] and [liveness] run the heartbeat rule");
     let evm = cfg.custody.evm.as_ref().expect("EVM custody");
@@ -143,7 +148,7 @@ fn the_futures_markets_price_from_massive_alone_by_the_decision_of_2026_11_20() 
 
 #[test]
 fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
-    const PLACEHOLDERS: [&str; 14] = [
+    const PLACEHOLDERS: [&str; 15] = [
         "example.com",
         "0x1111111111111111",
         "0x2222222222222222",
@@ -158,6 +163,7 @@ fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
         "0xbbbbbbbbbbbbbbbb",
         "start_block = 1 ",
         "processor = ",
+        "product_name = ",
     ];
     for (n, line) in template().lines().enumerate() {
         let code = line.split('#').next().unwrap();

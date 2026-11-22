@@ -31,7 +31,7 @@ mod tests;
 /// Where the quote's certificate chain comes from, and which processor's chain it is.
 pub struct Options<'a> {
     /// The processor product name the key-distribution service's chain is keyed by: Milan, or
-    /// Genoa for a Genoa, Bergamo or Siena processor.
+    /// Genoa for a Genoa, Bergamo or Siena processor. The quote's VCEK must name this product line.
     pub processor: &'a str,
     /// The key-distribution service's base URL; the vendor's service unless overridden.
     pub kds_base: &'a str,
@@ -101,21 +101,21 @@ pub async fn verify_attestation_files(
 
 /// Loads and validates the release manifest at `path`.
 /// Error cases:
-/// - the file cannot be read or parsed, or a field fails its structural checks
+/// - the file cannot be read, is of another manifest format, or does not parse, or a field fails its
+///   structural checks (see `ReleaseManifest::from_toml`)
 pub fn load_release(path: &Path) -> anyhow::Result<ReleaseManifest> {
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let manifest: ReleaseManifest = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-    manifest.validate()?;
-    Ok(manifest)
+    ReleaseManifest::from_toml(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// Verifies `attestation` against `release` with `engine_verify`, taking the collateral from
 /// `options` or fetching it from the key-distribution service, and checking dates on the system
 /// clock. On success the quote proved the enclave address runs the named release with a listed
-/// configuration.
+/// configuration, on a CPU model the release lists, whose VCEK names `options.processor`'s line.
 /// Error cases:
 /// - the quote is not an SEV-SNP attestation report, or its collateral cannot be fetched
 /// - see `engine_verify::verify_attestation`
+/// - the VCEK names another product line than `options.processor`
 pub async fn verify_attestation(
     attestation: &Attestation,
     release: &ReleaseManifest,
@@ -141,6 +141,12 @@ pub async fn verify_attestation(
         options.root_pem,
         now,
     )?;
+    ensure!(
+        engine_verify::product_line(&verified.product_name) == options.processor,
+        "the quote's VCEK is for product {}, not the processor {} names",
+        verified.product_name,
+        options.processor
+    );
     Ok(VerifiedAttestation {
         release_name: verified.release_name,
         enclave_address: AccountId(verified.enclave_address),

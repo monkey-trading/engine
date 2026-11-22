@@ -1,17 +1,19 @@
 """Writes an SEV-SNP guest's node.toml from config/anvil.toml for scripts/snp-local-chain.sh: real
-attestation with sealed keys and delivered secrets, paths under /data, listeners on every address,
+attestation with sealed keys and delivered secrets, the Siena CPU model under the given product name
+as the one a peer guest's quote may come from, paths under /data, listeners on every address,
 the chain reached over TLS at <rpc-host> on four ports (three custody providers and the checkpoint
 endpoint), deposits credited at `latest`, and the given vault, token, checkpoint relayer and operator
 key. crates/node/tests/snp_guest_config.rs loads what it writes.
 
 Usage: python3 -I scripts/snp-node-config.py <anvil.toml> <out> <rpc-host> <vault> <usdc> <relayer>
-       <operator-public-key> <processor> <custody-port> <custody-port> <custody-port> <checkpoint-port>
+       <operator-public-key> <processor> <product-name> <custody-port> <custody-port> <custody-port>
+       <checkpoint-port>
 """
 
 import sys
 from pathlib import Path
 
-source, target, host, vault, usdc, relayer, public_key, processor, *ports = sys.argv[1:]
+source, target, host, vault, usdc, relayer, public_key, processor, product_name, *ports = sys.argv[1:]
 assert len(ports) == 4, "four ports: three custody providers and the checkpoint endpoint"
 text = Path(source).read_text()
 old_key = text.split('public_key = "', 1)[1].split('"', 1)[0]
@@ -19,9 +21,14 @@ for literal, replacement in {
     '[node]\nlisten = "127.0.0.1:8080"': '[node]\nlisten = "0.0.0.0:8080"',
     '"data/anvil/': '"/data/',
     'provider = "mock"\nuse_published_mock_key = true # Public development identity; forbidden with real attestation.':
-        'provider = "configfs_tsm"\nprocessor = "%s"\n\n[tee.sealing]\ndir = "/data/keys"\n\n'
+        'provider = "configfs_tsm"\nprocessor = "%s"\n\n'
+        '# The CPU model a peer guest\'s quote may come from: Siena, as its VCEK names it, with no TCB\n'
+        '# floor on this local chain. release.toml lists the same model.\n'
+        '[[tee.cpu_models]]\nproduct_name = "%s"\nfamily = 0x19\nmodel = 0xA0\nstepping = 0x02\n'
+        'minimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }\n\n'
+        '[tee.sealing]\ndir = "/data/keys"\n\n'
         '# Where the operator delivers secrets, such as the Critical alert route.\n'
-        '[tee.sealing.secrets]\nlisten = "0.0.0.0:9472"' % processor,
+        '[tee.sealing.secrets]\nlisten = "0.0.0.0:9472"' % (processor, product_name),
     old_key: public_key,
     'vault = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"': 'vault = "%s"' % vault,
     'usdc = "0x5FbDB2315678afecb367f032d93F642f64180aa3"': 'usdc = "%s"' % usdc,

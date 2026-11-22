@@ -73,14 +73,19 @@ and bytes 32 to 64 are zero. The bundle is 105 bytes long:
 
 `engine verify-attestation` accepts a report only when all of the following hold:
 
-- the report is of version 2 to 6, names the VCEK as its signing key and, from version 3, names a
-  processor of CPUID family 19h (Milan, Genoa, Bergamo or Siena);
+- the report is of version 3 to 6, names the VCEK as its signing key, and names a processor of
+  CPUID family 19h (Milan, Genoa, Bergamo or Siena);
 - the report's signature verifies against the chip's certificate (the VCEK), and that certificate's
   chain leads to an AMD root compiled into the binary;
+- the report's CPUID family, model and stepping, the VCEK's product name, and the product line that
+  AMD's root and intermediate are named for all identify one CPU model, and the release lists that
+  model, with `--processor` naming its product line;
 - the release's `guest_features` include SNPActive and SecureTSC;
 - the guest policy at offset `0x08` equals the release's `policy`, which keeps debugging and the
   migration agent disabled, and which the launch measurement does not cover;
-- the reported firmware and microcode security versions are at or above the release's minimum;
+- the reported firmware and microcode security versions are at or above the release's minimum for
+  that CPU model. AMD numbers these versions per model, so the same number on another model can
+  lack the fixes that the minimum stands for;
 - the launch measurement at offset `0x90` equals the release's `launch_digest`;
 - the report data at offset `0x50` is the SHA-256 of the served bundle followed by 32 zero bytes,
   and the bundle names a configuration file that the release lists.
@@ -118,7 +123,10 @@ server a node, as the first one below does. In that configuration:
 - `node.listen` is `0.0.0.0:8080` and `tee.provider` is `"configfs_tsm"`;
 - `tee.processor` names the product under which AMD's key distribution service issues the host's
   certificates (`"Milan"`, or `"Genoa"` for a Genoa, Bergamo or Siena host), and the server refuses
-  to start without it;
+  to start without it and relays no certificate for another product;
+- `[[tee.cpu_models]]` lists the release manifest's `cpu_models`, entry for entry. A successor, a
+  standby key's vouch and a log check take a peer enclave's quote only from a model listed there,
+  at that model's minimum;
 - `node.log_dir`, `history.dir`, `alerts.outbox.dir`, `custody.evm.cursor_path` and
   `tee.sealing.dir` are under `/data`;
 - for the production variant, `[api.tls.acme]` names the API's domain, and the host forwards its
@@ -184,23 +192,28 @@ refuse a log directory outside `/data`. The check boots QEMU's default firmware,
    `release.toml` manifest that ties them together for `engine verify-attestation`:
 
    ```toml
+   format = 2                   # the manifest format; a manifest without it is refused
    name = "v0.1.0"              # the release this manifest verifies
    launch_digest = "0x…"        # measurement.json's launch_digest
    policy = "0x30000"           # measurement.json's policy
    guest_features = "0x201"     # measurement.json's guest_features: SNPActive and SecureTSC
 
-   [minimum_tcb]                # the lowest reported security versions this release accepts
-   boot_loader = 0
-   tee = 0
-   snp = 8
-   microcode = 115
+   [[cpu_models]]               # one per CPU model the release accepts: Siena (EPYC 8004) at launch
+   product_name = "Genoa-A2"    # the productName its VCEK carries, as read from the host's VCEK
+   family = 0x19                # the CPUID family, model and stepping its reports carry
+   model = 0xA0
+   stepping = 0x02
+   minimum_tcb = { boot_loader = 0, tee = 0, snp = 0x1D, microcode = 0x1B } # AMD's floor for it
 
    [config_hashes]              # every configuration file the release runs with
    "node.toml" = "0x…"
    ```
 
-   `--processor` takes the product under which AMD's key distribution service issues the host's
-   certificates: `Milan`, or `Genoa` for a Genoa, Bergamo or Siena host. Turin is not supported.
+   Set each model's `minimum_tcb` from AMD's latest security bulletins for that model only, and list
+   the same entries under `[[tee.cpu_models]]` in the configuration. Accepting another CPU model is
+   a new release, with that model's own floor. `--processor` takes the product under which AMD's
+   key distribution service issues the host's certificates: `Milan`, or `Genoa` for a Genoa,
+   Bergamo or Siena host. Turin is not supported.
 5. Attach the browser verifier from the same CI run. These are the files that
    `scripts/build-wasm-verifier.sh` wrote: `engine_verify_bg.wasm`, `engine_verify.js`, the
    TypeScript types `engine_verify.d.ts` and `engine_verify_bg.wasm.d.ts`, and `package.json`.

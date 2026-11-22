@@ -352,6 +352,7 @@ async fn listener_over(
         listener: TcpListener::bind("127.0.0.1:0").await.unwrap(),
         domain: exchange.domain(),
         provider: TeeProvider::Mock,
+        cpu_models: Vec::new(),
         processor: None,
         kds_base: "https://kds.test".into(),
         signer: AccountId(store.keys().enclave_key().unwrap().address()),

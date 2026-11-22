@@ -223,6 +223,7 @@ impl Standby {
                 copy: self.copy.clone(),
                 standby: self.keys.clone(),
                 provider: cfg.tee.provider,
+                cpu_models: cfg.tee.cpu_models.clone(),
                 platform,
                 trusted: TrustedClock::new(clock, samples.clone(), cfg.time.max_drift),
                 chain: StandbyReader::connect_named(&cfg.custody, log_heads.contract, "member_link")?,

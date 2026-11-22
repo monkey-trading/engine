@@ -157,13 +157,13 @@ impl<C: StandbyChain, A: Asking> Operator<C, A> {
         domain: &StandbyDomain,
         member: &Member,
     ) -> anyhow::Result<(AccountId, B256)> {
-        let (provider, platform) = self.platform.as_ref().context("this enclave has no sealed platform")?;
+        let (provider, cpu_models, platform) = self.platform.as_ref().context("this enclave has no sealed platform")?;
         let at = self.trusted.since_sample_ms().context("no trusted time sample to verify the quote at")?;
         let asked = tokio::time::timeout(STATUS_TIMEOUT, self.asking.ask(&member.endpoint, &Request::Attestation));
         let reply = asked.await.map_err(|_| anyhow::anyhow!("no answer within {STATUS_TIMEOUT:?}"))??;
         let Reply::Attestation { request } = reply else { bail!("no attestation: {}", describe(&reply)) };
         ensure!(request.candidate == member.candidate, "the attestation is candidate {}'s", request.candidate);
-        let quoted = B256::from(admit(&request, domain, (*provider, platform), at / 1000)?.id());
+        let quoted = B256::from(admit(&request, domain, (*provider, cpu_models, platform), at / 1000)?.id());
         let registered = registered_release(block, domain, member.candidate).await?;
         let read = |approved| Registration { registered, approved };
         if registered != Some(quoted) {

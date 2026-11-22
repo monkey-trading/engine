@@ -18,7 +18,8 @@
 # dependencies (`forge soldeer install` in contracts/). RPC is the Anvil URL on this host
 # (http://127.0.0.1:8545); RPC_PORTS the proxy's ports for the three custody providers and the
 # checkpoint endpoint ("18545 18546 18547 18548"); RELAYER_INDEX the Anvil account that posts this
-# guest's checkpoints (3), one per guest; PROCESSOR the guest's tee.processor (Genoa).
+# guest's checkpoints (3), one per guest; PROCESSOR the guest's tee.processor (Genoa); PRODUCT_NAME
+# the product name the host's VCEK carries (Genoa-A2, unverified until a guest's collateral shows it).
 #
 # Usage: scripts/snp-local-chain.sh prepare <guest-dir> <image-dir> <rpc-host>
 #        scripts/snp-local-chain.sh register <guest-dir> <enclave-address>
@@ -93,7 +94,7 @@ prepare() {
   (umask 077 && echo "$operator_key" > "$guest/operator.key")
 
   python3 -I "$root/scripts/snp-node-config.py" "$root/config/anvil.toml" "$guest/node.toml" "$host" "$vault" "$usdc" \
-    "$relayer" "$public_key" "${PROCESSOR:-Genoa}" "${rpc_ports[@]}"
+    "$relayer" "$public_key" "${PROCESSOR:-Genoa}" "${PRODUCT_NAME:-Genoa-A2}" "${rpc_ports[@]}"
   config_hash="0x$(sha256sum "$guest/node.toml" | cut -d' ' -f1)"
   digest="0x$(jq -er .launch_digest "$measurement")"
 
@@ -103,18 +104,21 @@ prepare() {
     die "the vault does not name the release"
 
   cat > "$guest/release.toml" << EOF
+format = 2
 name = "$(basename "$guest")"
 launch_digest = "$digest"
 policy = "$(jq -er .policy "$measurement")"
 guest_features = "$(jq -er .guest_features "$measurement")"
 
-# The lowest reported TCB this release accepts. Zero accepts any; set each value from AMD's latest
-# security bulletin for the processor once the first report has shown the host's.
-[minimum_tcb]
-boot_loader = 0
-tee = 0
-snp = 0
-microcode = 0
+# The CPU model this release accepts: Siena (EPYC 8004), CPUID family 19h, model A0h, stepping 2, as
+# its VCEK names it. Its lowest reported TCB is zero, which accepts any; set each value from AMD's
+# latest security bulletins for EPYC 8004 once the first report has shown the host's.
+[[cpu_models]]
+product_name = "${PRODUCT_NAME:-Genoa-A2}"
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }
 
 [config_hashes]
 "node.toml" = "$config_hash"

@@ -158,15 +158,17 @@ wait_listening "http://127.0.0.1:$hook_port/"
 
 step "write the watcher config"
 cat > "$work/release.toml" <<EOF
+format = 2
 name = "dev-release"
 launch_digest = "0x$(printf '00%.0s' $(seq 1 48))"
 policy = "0x30000"
 guest_features = "0x201"
-[minimum_tcb]
-boot_loader = 0
-tee = 0
-snp = 0
-microcode = 0
+[[cpu_models]]
+product_name = "Genoa-A2"
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0, microcode = 0 }
 [config_hashes]
 "node.toml" = "0x$(printf '00%.0s' $(seq 1 32))"
 EOF

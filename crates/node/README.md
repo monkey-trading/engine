@@ -83,7 +83,7 @@ default. Every section refuses keys it does not know.
 | --- | --- |
 | `[node]`, `[logging]` | The API's address, the log directory and segment size, the checkpoint interval, client authentication, the threads that check instruction seals in a replay, and the log level |
 | `[api]` | Connection and request limits, timeouts, browser origins, the PROXY protocol and the ACME certificate |
-| `[tee]`, `[operator]` | Attestation, key sealing, the handover and secrets listeners, and the operator's public key |
+| `[tee]`, `[operator]` | Attestation, the CPU models a peer enclave's quote may come from, key sealing, the handover and secrets listeners, and the operator's public key |
 | `[custody]`, `[checkpoints]`, `[log_heads]` | The vault, its RPC providers, the operator registry's contracts, checkpoint posting and log head posting |
 | `[liveness]`, `[seed_relay]`, `[standby]` | A rotation member's liveness caller, the turn-seed relayer and standby mode |
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |

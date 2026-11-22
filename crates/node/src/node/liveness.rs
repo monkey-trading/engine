@@ -18,7 +18,7 @@ use crate::api::Signing;
 use crate::config::{CustodyProvider, NodeConfig, default_liveness_read_interval};
 use crate::custody::StandbyReader;
 use crate::liveness::link::Tcp;
-use crate::liveness::operator::{Operator, Signing as Signable};
+use crate::liveness::operator::{Operator, PeerChecks, Signing as Signable};
 use crate::liveness::{Gate, Released};
 use crate::log_heads::SignedHead;
 use crate::log_heads::setup::{Liveness, Setup};
@@ -138,7 +138,7 @@ pub(super) fn start(
         tasks.spawn(async move { ("standby renewal", renewal.run(trusted).await) });
     }
     let floor = started.promoted.map_or(0, |promotion| promotion.block);
-    let platform = started.store.map(|store| (cfg.tee.provider, store.platform()));
+    let platform = started.store.map(|store| (cfg.tee.provider, cfg.tee.cpu_models.clone(), store.platform()));
     spawn(cfg, wiring, (key, floor, platform), released, sequencer, trusted, tasks)?;
     Ok(Serving { shared: Some(shared), vouching })
 }
@@ -196,7 +196,7 @@ pub(super) async fn watch_release(
 fn spawn(
     cfg: &NodeConfig,
     wiring: Wiring,
-    (key, floor, platform): (AccountId, u64, Option<(crate::config::TeeProvider, crate::tee::sealing::Platform)>),
+    (key, floor, platform): (AccountId, u64, Option<PeerChecks>),
     released: watch::Receiver<Released>,
     sequencer: &mpsc::Sender<Request>,
     trusted: TrustedClock,
@@ -250,8 +250,8 @@ fn vouching(
     }
     let chain = StandbyReader::connect_named(&cfg.custody, log_heads.contract, "vouching")?;
     let vault = Address::from(cfg.custody.vault.parse::<AccountId>()?.0);
-    let service =
-        Service::new((cfg.tee.provider, store.platform()), trusted, chain, (cfg.custody.chain_id, vault), key.clone());
+    let platform = (cfg.tee.provider, cfg.tee.cpu_models.clone(), store.platform());
+    let service = Service::new(platform, trusted, chain, (cfg.custody.chain_id, vault), key.clone());
     Ok(Some(Arc::new(service)))
 }
 
