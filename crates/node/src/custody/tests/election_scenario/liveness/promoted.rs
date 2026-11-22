@@ -147,7 +147,7 @@ async fn run() -> anyhow::Result<()> {
 
     // Load on A: the trader declares, fills an order and has a withdrawal approved and authorized.
     let a = seats[0].client(vault)?;
-    a.declare(&trader).await?;
+    seats[0].declare_when_accepting(vault, &trader).await?;
     a.wait_balance(&trader, "100").await?;
     let filled = a.order(&trader, Side::Buy, "1").await?;
     ensure!(filled.iter().any(|event| matches!(event, Event::Fill(_))), "A filled no order: {filled:?}");

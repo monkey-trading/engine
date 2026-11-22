@@ -16,7 +16,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::custody::tests::election_scenario::chain::Chain;
 use crate::custody::tests::election_scenario::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS};
-use crate::sequencer::withdrawal_scenario::client::Client;
+use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::node::ChildProcess;
 use crate::sequencer::withdrawal_scenario::services::Services;
 use crate::sequencer::withdrawal_scenario::{CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_LAUNCH_DIGEST, CHILD_TEST};
@@ -26,6 +26,9 @@ use crate::test_support::{ANVIL_CONFIG, keep_scratch, scratch_dir};
 
 /// How long a node gets to serve its API after it starts.
 const SERVE_WAIT: Duration = Duration::from_secs(120);
+/// How long a node that serves may refuse its first command: a node whose heads latched the turn can
+/// still be before its start check or between liveness confirmations.
+const ACCEPT_WAIT: Duration = Duration::from_secs(60);
 /// How long the scenario's one market counts a quote, from its venue stamp.
 pub(super) const MAX_AGE_MS: Millis = 3_000;
 
@@ -159,6 +162,41 @@ impl Seat {
         })
         .await
         .with_context(|| format!("{}'s node did not serve: {}", self.name, self.log().display()))?
+    }
+
+    /// Declares `trader` on its node, retrying while the node answers 503 "engine unavailable", which
+    /// it does while the sequencer holds commands, until `ACCEPT_WAIT`.
+    /// Error cases:
+    /// - the node exits, answers anything but a 503 refusal, or still refuses at `ACCEPT_WAIT`, naming
+    ///   the last refusal, the node's `/v1/status` and the end of its log
+    pub(super) async fn declare_when_accepting(&mut self, vault: Address, trader: &User) -> anyhow::Result<()> {
+        let client = self.client(vault)?;
+        let mut refusal = String::new();
+        let accepted = timeout(ACCEPT_WAIT, async {
+            loop {
+                self.check()?;
+                match client.declare(trader).await {
+                    Ok(()) => return anyhow::Ok(()),
+                    Err(e) if format!("{e:#}").contains("503 Service Unavailable") => refusal = format!("{e:#}"),
+                    Err(e) => return Err(e),
+                }
+                sleep(Duration::from_millis(500)).await;
+            }
+        })
+        .await;
+        match accepted {
+            Ok(done) => done,
+            Err(_) => {
+                let status = client.get("/v1/status").await.map_or_else(|e| format!("{e:#}"), |v| v.to_string());
+                anyhow::bail!(
+                    "{}'s node refused commands for {}s: {refusal}\nits status: {status}\nits log {}:\n{}",
+                    self.name,
+                    ACCEPT_WAIT.as_secs(),
+                    self.log().display(),
+                    crate::sequencer::withdrawal_scenario::exit_log::log_tail(&self.log())
+                )
+            }
+        }
     }
 
     /// Its node's log file.
