@@ -31,6 +31,7 @@ variables and the checks that the other runbooks use.
 | Stand for election as the operator, take daily turns, or hand the trading server to or from the operator in effect | [Standing as an operator candidate](operator-candidate.md) |
 | Run a standby, take over after a promotion, or recover when no standby qualifies | [Running as a standby](standby.md) |
 | Run the seed relayer, or act when one of its alerts fires | [Seed relay](seed-relay.md) |
+| Set up an SEV-SNP host, boot the image on it, verify its attestation and measure it there | [SEV-SNP host](sev-snp-host.md) |
 
 ## How the steps are marked
 
