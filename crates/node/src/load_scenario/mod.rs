@@ -8,8 +8,10 @@
 //! `SATURATED` of the time, a request is refused, or the traders reach their rate. Each leg prints order-to-fill and
 //! price-to-stamp at p50, p99 and p999, the sequencer's batch time, stream lag, the sequencer's busy
 //! share, and the process's CPU and resident memory, judged against #904's launch bar (`report`),
-//! and the ramp the first multiple at which each budget broke. The screening source answers each call
-//! after a remote source's round trip (`SOURCE_DELAY_MS`), and the bar holds the market orders of
+//! and the ramp the first multiple at which each budget broke. On Linux each leg and each window also
+//! print how long the host's tasks waited on storage, so a window broken by a disk stall says so. The
+//! screening source answers each call after a remote source's round trip (`SOURCE_DELAY_MS`), and the
+//! bar holds the market orders of
 //! traders that sent a screened request within its bound, whose decisions the node's refreshes keep
 //! fresh, so any of them that waits for the source counts against it. The orders of traders it keeps
 //! no decision for, which wait for the source, of those between, and of fresh traders queued behind
@@ -52,7 +54,7 @@ use crate::clock::now_ms;
 use crate::common::launch_book::{Mix, NamedCounts, Origin, build};
 use crate::load_scenario::node::Node;
 use crate::load_scenario::plan::{Leg, Line, Plan, Ramp};
-use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, judge, print, unmeasured};
+use crate::load_scenario::report::{BUDGETS, Breach, Resident, Snapshot, io_wait, judge, print, unmeasured};
 use crate::load_scenario::venues::Moves;
 use crate::sequencer::Request;
 use crate::test_support::scratch_dir;
@@ -283,8 +285,9 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
             }
             Line::Window { leg, index, figures } => {
                 let now = Snapshot::take(&node.metrics);
-                let breaches = judge(&figures, &now.since(&window));
-                println!("LOAD leg={leg} window={index} breaches={breaches:?}");
+                let delta = now.since(&window);
+                let breaches = judge(&figures, &delta);
+                println!("LOAD leg={leg} window={index} breaches={breaches:?}{}", io_wait(&delta));
                 window = now;
                 windows.push(breaches);
             }

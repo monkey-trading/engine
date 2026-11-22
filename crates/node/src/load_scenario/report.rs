@@ -49,6 +49,8 @@ pub(super) struct Snapshot {
     histograms: BTreeMap<String, Histogram>,
     counters: BTreeMap<String, f64>,
     cpu_s: f64,
+    /// The host's IO wait so far (`host_io_wait_us`).
+    io_wait_us: Option<u64>,
 }
 
 /// What the node did between two snapshots.
@@ -62,6 +64,10 @@ pub(super) struct Delta {
     pub busy_share: f64,
     pub cpu_cores: f64,
     pub commands: f64,
+    /// How long any of the host's tasks waited on storage, the node's own log syncs included, where
+    /// the host reports it: a window whose tail breaks its bar with far more than the node's syncs
+    /// take names the disk.
+    pub host_io_wait_ms: Option<f64>,
 }
 
 /// A budget a leg broke: what, at which quantile, the figure and the bar.
@@ -119,7 +125,7 @@ impl Snapshot {
     /// The node's metrics now, from their text, and the process's CPU time.
     pub(super) fn take(metrics: &Metrics) -> Self {
         let (histograms, counters) = parse(&metrics.encode());
-        Snapshot { at: Instant::now(), histograms, counters, cpu_s: process().0 }
+        Snapshot { at: Instant::now(), histograms, counters, cpu_s: process().0, io_wait_us: host_io_wait_us() }
     }
 
     /// What the node did from `earlier` to this.
@@ -141,6 +147,10 @@ impl Snapshot {
             busy_share: counter(BUSY) / secs,
             cpu_cores: (self.cpu_s - earlier.cpu_s) / secs,
             commands: counter(COMMANDS),
+            host_io_wait_ms: self
+                .io_wait_us
+                .zip(earlier.io_wait_us)
+                .map(|(now, then)| now.saturating_sub(then) as f64 / 1_000.0),
         }
     }
 }
@@ -189,6 +199,23 @@ pub(super) fn process() -> (f64, u64) {
     let cpu = fields.next().map_or(0.0, cpu_seconds);
     let rss_kib: u64 = fields.next().and_then(|rss| rss.parse().ok()).unwrap_or(0);
     (cpu, rss_kib >> 10)
+}
+
+/// How long any task on the host has waited on storage, in microseconds: Linux's IO pressure stall
+/// total (`/proc/pressure/io`), or None on a host without it.
+fn host_io_wait_us() -> Option<u64> {
+    std::fs::read_to_string("/proc/pressure/io").ok().as_deref().and_then(io_some_total_us)
+}
+
+/// The `total` of the `some` line of a pressure stall file: the time at least one task stalled.
+fn io_some_total_us(text: &str) -> Option<u64> {
+    let some = text.lines().find(|line| line.starts_with("some "))?;
+    some.split_whitespace().find_map(|field| field.strip_prefix("total="))?.parse().ok()
+}
+
+/// A delta's host IO wait for a figure line, or nothing where the host reports none.
+pub(super) fn io_wait(node: &Delta) -> String {
+    node.host_io_wait_ms.map_or_else(String::new, |ms| format!(" host_io_wait_ms={ms:.0}"))
 }
 
 /// `[[dd-]hh:]mm:ss[.ss]` as seconds.
@@ -369,8 +396,11 @@ pub(super) fn print(leg: &str, multiple: f64, figures: &Figures, node: &Delta, r
     println!("LOAD leg={leg} stream_send_us(node) {}", node_us(&node.stream_lag));
     println!("LOAD leg={leg} sequencer_batch_us {}", node_us(&node.batch));
     println!(
-        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} process_resident_mib={rss_mib}",
-        node.busy_share, node.cpu_cores
+        "LOAD leg={leg} sequencer_busy_share={:.3} bar={BUSY_SHARE} process_cpu_cores={:.2} \
+         process_resident_mib={rss_mib}{}",
+        node.busy_share,
+        node.cpu_cores,
+        io_wait(node)
     );
     let verdict = if breaches.is_empty() { "within".to_owned() } else { format!("OVER {breaches:?}") };
     println!("LOAD bar leg={leg} multiple={multiple} {verdict}");
@@ -429,6 +459,15 @@ mod tests {
         }
         let idle = Snapshot::take(&metrics);
         assert_eq!(unmeasured(&clean, &idle.since(&idle)), ["no price stamped"]);
+    }
+
+    #[test]
+    fn the_host_io_wait_is_the_pressure_files_some_total() {
+        let pressure = "some avg10=1.50 avg60=0.40 avg300=0.10 total=412345\n\
+                        full avg10=1.20 avg60=0.30 avg300=0.08 total=365000\n";
+        assert_eq!(io_some_total_us(pressure), Some(412_345), "the some line's total, not the full line's");
+        assert_eq!(io_some_total_us("full avg10=0.00 avg60=0.00 avg300=0.00 total=9\n"), None);
+        assert_eq!(io_some_total_us(""), None);
     }
 
     #[test]
