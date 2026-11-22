@@ -27,9 +27,11 @@ mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
 /// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
-/// 2 stores each node as its JSON or as upstream's compact borsh form, which its first byte tells apart, and
-/// this release reads both; a release before compact nodes reads JSON alone, so it refuses a store holding a
-/// compact node at the first one it meets, and its recovery falls back as for any unreadable cache.
+/// 2 stores each node as its JSON or as upstream's compact borsh form, and logical format 2 each value as a
+/// descriptor and chunks or, up to one chunk, whole in its own leaf; a first byte tells each pair apart, and
+/// this release reads all four. A release before compact nodes and values stored whole reads JSON nodes and
+/// descriptors alone, so it refuses a store holding either at the first one it meets, and its recovery falls
+/// back as for any unreadable cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -110,7 +112,7 @@ struct WriteFiles {
 #[derive(Default)]
 struct Runtime {
     namespaces: BTreeMap<[u8; 32], Namespace>,
-    /// The namespaces whose new nodes are written compact.
+    /// The namespaces whose new nodes are written compact, and their values of up to one chunk whole.
     compact: BTreeSet<[u8; 32]>,
     poisoned: bool,
 }

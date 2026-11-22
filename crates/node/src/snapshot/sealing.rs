@@ -1,8 +1,9 @@
-//! A bounded checkpoint capture waits for the exact history fence on the storage owner's queue.
+//! A bounded checkpoint capture waits in the storage owner's capture slot for the exact history fence.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, ensure};
 use engine_core::types::Millis;
@@ -12,6 +13,7 @@ use tracing::info;
 use crate::authenticated::CODEC;
 use crate::config::SnapshotSection;
 use crate::history::authenticated::Index;
+#[cfg(test)]
 use crate::history::runtime::Input;
 use crate::log::CatalogBoundary;
 use crate::log::catalog::LazyCatalogView;
@@ -27,10 +29,18 @@ use crate::tee::EnclaveKey;
 /// more than an encode takes behind a full worker queue, so only a job never delivered reaches it.
 pub(crate) const ENCODE_WAIT: Duration = Duration::from_secs(300);
 
-/// One optional in-flight snapshot bounds engine captures independently of writer lag.
+/// How often a wait for an encoding looks at whether the history owner has been stopped.
+const STOP_POLL: Duration = Duration::from_millis(100);
+
+/// One optional in-flight snapshot bounds engine captures independently of writer lag: a capture has a
+/// slot of its own beside the history feed's queue, so an index behind the log still takes it, and
+/// completes it once it reaches the capture's checkpoint.
 #[derive(Clone)]
 pub(crate) struct Endpoint {
+    /// The history owner's queue, which tests inspect through.
+    #[cfg(test)]
     tx: mpsc::Sender<Input>,
+    seals: mpsc::Sender<Box<Capture>>,
     permits: Arc<Semaphore>,
     pub write_alert: WriteAlert,
     /// The sequenced time between captures (`[snapshots] interval`), in milliseconds.
@@ -41,13 +51,16 @@ pub(crate) struct Endpoint {
     /// How many calls currently wait for no capture to be in flight.
     #[cfg(test)]
     pub(crate) waiting: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many polls of the captures' encoding waits have ended without the encoding.
+    #[cfg(test)]
+    pub(crate) encode_polls: Arc<std::sync::atomic::AtomicUsize>,
     pub catalog_store: StoreId,
     /// The step of the next capture that fails, once, for tests.
     #[cfg(test)]
     fail: Arc<Mutex<Option<CaptureStage>>>,
 }
 
-/// A step of a capture after its queue slot is reserved, which a test can fail.
+/// A step of a capture after its slot is reserved, which a test can fail.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CaptureStage {
@@ -94,10 +107,13 @@ pub(crate) struct Capture {
     pub catalog: CatalogBoundary,
     pub catalog_pin: Arc<LazyCatalogView>,
     pub _permit: OwnedSemaphorePermit,
+    /// The endpoint's count of polls ended without an encoding.
+    #[cfg(test)]
+    pub encode_polls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-/// A slot in the history owner's queue, held while a capture is prepared.
-pub(crate) struct Slot<'a>(mpsc::Permit<'a, Input>);
+/// The capture slot of the history owner, held while a capture is prepared.
+pub(crate) struct Slot<'a>(mpsc::Permit<'a, Box<Capture>>);
 
 /// The engine at a capture's checkpoint: encoded on the sequencer's thread, or due from the stats
 /// worker's copy (`stats::background::Job::Encode`).
@@ -122,11 +138,13 @@ impl Endpoint {
         received.await.map_err(|_| anyhow::anyhow!("history owner stopped before inspection"))
     }
 
-    /// Connects the sequencer directly to the same bounded queue used by the history feed, taking a
-    /// capture every `interval` of sequenced time; one too long to count in milliseconds never comes.
-    pub(crate) fn new(tx: mpsc::Sender<Input>, catalog_store: StoreId, interval: Duration) -> Self {
+    /// Connects the sequencer to the history owner's capture slot, `seals`, taking a capture every
+    /// `interval` of sequenced time; one too long to count in milliseconds never comes.
+    pub(crate) fn new(seals: mpsc::Sender<Box<Capture>>, catalog_store: StoreId, interval: Duration) -> Self {
         Self {
-            tx,
+            #[cfg(test)]
+            tx: mpsc::channel(1).0,
+            seals,
             permits: Arc::new(Semaphore::new(1)),
             write_alert: WriteAlert(Arc::new(Mutex::new(true))),
             interval_ms: Millis::try_from(interval.as_millis()).unwrap_or(Millis::MAX),
@@ -134,6 +152,8 @@ impl Endpoint {
             taken: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(test)]
             waiting: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            encode_polls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             catalog_store,
             #[cfg(test)]
             fail: Arc::default(),
@@ -153,14 +173,20 @@ impl Endpoint {
         (*fail == Some(stage)).then(|| *fail = None).is_some()
     }
 
+    /// This endpoint, inspecting the owner through its queue, `tx`.
+    #[cfg(test)]
+    pub(crate) fn inspecting(self, tx: mpsc::Sender<Input>) -> Self {
+        Self { tx, ..self }
+    }
+
     /// Whether the history owner has stopped taking input.
     #[cfg(test)]
     pub(crate) fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
 
-    /// Takes every free slot of the owner's queue until the returned permits drop, so `reserve` refuses
-    /// as it does behind a lagging index.
+    /// Takes every free slot of the owner's queue until the returned permits drop, as an index behind
+    /// the log leaves it.
     #[cfg(test)]
     pub(crate) fn hold_queue(&self) -> Vec<mpsc::OwnedPermit<Input>> {
         std::iter::from_fn(|| self.tx.clone().try_reserve_owned().ok()).collect()
@@ -180,19 +206,21 @@ impl Endpoint {
         let _ = self.permits.acquire().await;
     }
 
-    /// Reserves the owner's queue slot for a capture before its work is done, so a capture the queue
-    /// would refuse costs nothing, and one prepared is always taken.
+    /// Reserves the owner's capture slot before a capture's work is done, so a capture it would refuse
+    /// costs nothing, and one prepared is always taken.
     /// Error cases:
-    /// - the optional storage queue is full or its supervised owner has stopped
+    /// - the supervised owner has stopped, or its slot holds a capture it has not taken, which the one
+    ///   capture permit (`try_permit`) taken first rules out
     pub(crate) fn reserve(&self) -> Result<Slot<'_>> {
-        self.tx.try_reserve().map(Slot).map_err(|_| anyhow::anyhow!("optional snapshot queue unavailable"))
+        self.seals.try_reserve().map(Slot).map_err(|_| anyhow::anyhow!("the history owner takes no capture"))
     }
 }
 
 impl Slot<'_> {
-    /// Queues control before the checkpoint's flush frontier or events are published.
+    /// Hands the capture over before the checkpoint's flush frontier or events are published, so the
+    /// owner takes it before it takes the checkpoint.
     pub(crate) fn submit(self, capture: Capture) {
-        self.0.send(Input::Seal(Box::new(capture)));
+        self.0.send(Box::new(capture));
     }
 }
 
@@ -225,24 +253,34 @@ impl WriteAlert {
 }
 
 impl Encoding {
-    /// The encoding, waiting up to `within` for the stats worker's when it is due from there. A worker
-    /// that stopped drops the job and its reply; a job a stopping sequencer never delivered fails the
-    /// wait, so the history owner is never held past it.
+    /// The encoding, waiting up to `within` for the stats worker's when it is due from there, and no
+    /// longer once `stopped` answers true, which it is asked at the end of each poll of `STOP_POLL`, so a
+    /// stopped history owner is not held by it. A worker that stopped drops the job and its reply; a job a
+    /// stopping sequencer never delivered fails the wait, so the history owner is never held past it.
     /// Error cases:
-    /// - the worker stopped, its copy is not at the checkpoint or did not encode, or no encoding came
-    ///   within `within`
-    pub(crate) fn wait(self, within: Duration) -> Result<String> {
-        match self {
-            Self::Encoded(engine) => Ok(engine),
-            Self::Pending(reply) => match reply.recv_timeout(within) {
+    /// - the worker stopped, its copy is not at the checkpoint or did not encode, no encoding came within
+    ///   `within`, or `stopped` answered true first
+    pub(crate) fn wait(self, within: Duration, mut stopped: impl FnMut() -> bool) -> Result<String> {
+        let reply = match self {
+            Self::Encoded(engine) => return Ok(engine),
+            Self::Pending(reply) => reply,
+        };
+        let deadline = Instant::now() + within;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match reply.recv_timeout(left.min(STOP_POLL)) {
                 Ok(encoded) => {
-                    encoded.map_err(|reason| anyhow::anyhow!("the stats worker encoded no engine: {reason}"))
+                    return encoded.map_err(|reason| anyhow::anyhow!("the stats worker encoded no engine: {reason}"));
                 }
+                Err(RecvTimeoutError::Timeout) if stopped() => {
+                    anyhow::bail!("the history owner stopped before the engine was encoded")
+                }
+                Err(RecvTimeoutError::Timeout) if left > STOP_POLL => {}
                 Err(RecvTimeoutError::Timeout) => anyhow::bail!("the stats worker encoded no engine within {within:?}"),
                 Err(RecvTimeoutError::Disconnected) => {
                     anyhow::bail!("the stats worker stopped before encoding the engine")
                 }
-            },
+            }
         }
     }
 }
@@ -266,8 +304,8 @@ impl Capture {
         mut self,
         cfg: &SnapshotSection,
         history: &mut HistorySeal<'_>,
-        key: &EnclaveKey,
-        lifecycle: &Lifecycle,
+        (key, lifecycle): (&EnclaveKey, &Lifecycle),
+        stopped: &AtomicBool,
     ) -> Result<()> {
         let prefix = self.prefix();
         ensure!(
@@ -305,7 +343,12 @@ impl Capture {
         self.snapshot.schema = 3;
         self.snapshot.pair = Some(pair);
         // Last before staging, so the worker encodes while the history head is proved and signed.
-        self.snapshot.engine = self.engine.wait(ENCODE_WAIT)?;
+        let polled = || {
+            #[cfg(test)]
+            self.encode_polls.fetch_add(1, Ordering::AcqRel);
+            stopped.load(Ordering::Acquire)
+        };
+        self.snapshot.engine = self.engine.wait(ENCODE_WAIT, polled)?;
         let staged = snapshot::stage(cfg, &self.snapshot, key)?;
         let payloads = lifecycle.payloads();
         let mut publication = lifecycle.publication()?;
@@ -325,7 +368,7 @@ mod tests {
 
     use tracing::warn;
 
-    use super::{Encoding, Endpoint, WriteAlert};
+    use super::{ENCODE_WAIT, Encoding, Endpoint, STOP_POLL, WriteAlert};
     use crate::alerts::capture;
 
     /// A stored capture resolves the episode open when it started completing, but not a failure
@@ -346,28 +389,52 @@ mod tests {
         assert_eq!(firing, [true, false], "one failure, then one resolve by the next stored capture: {lines:#?}");
     }
 
-    /// An engine due from the stats worker is taken when it comes, and a wait fails, never hangs, when
-    /// the worker stops without it, refuses it, or it never comes.
+    /// An engine due from the stats worker is taken when it comes, after several polls too, and a wait
+    /// fails, never hangs, when the worker stops without it, refuses it, or it never comes, or once the
+    /// history owner is stopped, which the wait asks at the end of each poll.
     #[test]
     fn a_pending_encoding_is_taken_when_it_comes_and_fails_when_it_does_not() {
         let within = Duration::from_millis(50);
+        let running = || false;
         let pending = || std::sync::mpsc::sync_channel::<crate::stats::background::Encoded>(1);
-        assert_eq!(Encoding::Encoded("{}".into()).wait(within).unwrap(), "{}");
+        assert_eq!(Encoding::Encoded("{}".into()).wait(within, running).unwrap(), "{}");
         let (reply, encoded) = pending();
         reply.send(Ok("{\"engine\":1}".into())).unwrap();
-        assert_eq!(Encoding::Pending(encoded).wait(within).unwrap(), "{\"engine\":1}");
+        assert_eq!(Encoding::Pending(encoded).wait(within, running).unwrap(), "{\"engine\":1}");
         let (reply, encoded) = pending();
         reply.send(Err("the copy is at None".into())).unwrap();
-        let refused = Encoding::Pending(encoded).wait(within).unwrap_err();
+        let refused = Encoding::Pending(encoded).wait(within, running).unwrap_err();
         assert!(format!("{refused:#}").contains("the copy is at None"), "{refused:#}");
         let (reply, encoded) = pending();
         drop(reply);
-        let stopped = Encoding::Pending(encoded).wait(within).unwrap_err();
+        let stopped = Encoding::Pending(encoded).wait(within, running).unwrap_err();
         assert!(format!("{stopped:#}").contains("stopped before encoding"), "{stopped:#}");
         // A job never delivered: the sender lives on, unsent.
         let (_reply, encoded) = pending();
-        let never = Encoding::Pending(encoded).wait(within).unwrap_err();
+        let never = Encoding::Pending(encoded).wait(within, running).unwrap_err();
         assert!(format!("{never:#}").contains("within"), "{never:#}");
+        // An encoding that comes after several polls is taken.
+        let (reply, encoded) = pending();
+        let late = std::thread::spawn(move || {
+            std::thread::sleep(STOP_POLL * 3);
+            reply.send(Ok("{\"engine\":2}".into())).unwrap();
+        });
+        assert_eq!(Encoding::Pending(encoded).wait(ENCODE_WAIT, running).unwrap(), "{\"engine\":2}");
+        late.join().unwrap();
+        // An owner stopped while the wait polls for a job never delivered: the stop comes after the first
+        // poll ends, and the wait leaves at the end of the second, not at its bound.
+        let (_reply, encoded) = pending();
+        let polls = std::sync::atomic::AtomicUsize::new(0);
+        let stopped_after_one = || polls.fetch_add(1, Ordering::AcqRel) >= 1;
+        let started = Instant::now();
+        let error = Encoding::Pending(encoded).wait(Duration::from_secs(10), stopped_after_one).unwrap_err();
+        assert!(format!("{error:#}").contains("history owner stopped"), "{error:#}");
+        assert_eq!(polls.load(Ordering::Acquire), 2, "the wait asked for the stop at each poll's end");
+        assert!(
+            started.elapsed() < STOP_POLL * 20,
+            "two polls took {:?}, not one poll's length each",
+            started.elapsed()
+        );
     }
 
     /// A shutdown capture wait ends by cancellation when it times out, or by abort on task drop;
@@ -375,8 +442,8 @@ mod tests {
     /// leaked waiter after the shutdown path ran.
     #[tokio::test]
     async fn a_dropped_idle_wait_releases_its_waiter_count() {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
-        let endpoint = Endpoint::new(tx, crate::snapshot::head::StoreId([0x42; 32]), Duration::ZERO);
+        let (seals, _seals) = tokio::sync::mpsc::channel(1);
+        let endpoint = Endpoint::new(seals, crate::snapshot::head::StoreId([0x42; 32]), Duration::ZERO);
         let in_flight = endpoint.try_permit().expect("no capture is in flight");
         let deadline = Instant::now() + Duration::from_secs(5);
 

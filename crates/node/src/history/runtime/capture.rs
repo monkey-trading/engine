@@ -2,12 +2,35 @@
 
 use std::fmt::Display;
 
+use anyhow::{Result, ensure};
 use tracing::{warn, warn_span};
 
 use crate::history::runtime::Actor;
 use crate::snapshot::sealing::{Capture, HistorySeal};
 
 impl Actor {
+    /// Holds `capture` until the index reaches its checkpoint, or completes it at once when the index stands
+    /// there.
+    /// Error cases:
+    /// - another capture is in flight, or indexing the turn's commands fails
+    pub(super) fn seal(&mut self, capture: Box<Capture>) -> Result<()> {
+        ensure!(self.pending.is_none(), "more than one in-flight history capture");
+        if let Err(error) = self.settle_pins() {
+            warn!(alert = "snapshot_cleanup_failed", "skipping another optional capture: {error:#}");
+        } else if self.last_entry == Some(capture.snapshot.offset) {
+            // Shutdown's capture of the checkpoint this owner has just taken: the index stands exactly
+            // at it once the turn's commands are indexed.
+            self.index_commands()?;
+            let checkpoint = self.at_checkpoint.clone();
+            self.complete_capture(capture, checkpoint.as_ref());
+        } else if self.last_entry.is_some_and(|last| last > capture.snapshot.offset) {
+            self.capture_failed(capture.snapshot.offset.seq, "optional checkpoint fence was already crossed");
+        } else {
+            self.pending = Some(capture);
+        }
+        Ok(())
+    }
+
     /// Publishes the paired cache for a capture whose checkpoint is the last entry taken, `taken`
     /// when that entry is a checkpoint; any other entry drops the capture.
     pub(super) fn complete_capture(&mut self, capture: Box<Capture>, taken: Option<&crate::log::Checkpoint>) {
@@ -27,7 +50,7 @@ impl Actor {
             index: &self.current.index,
             pins: &mut self.pins,
         };
-        match (*capture).complete(&self.cfg, &mut history, &self.key, &self.lifecycle) {
+        match (*capture).complete(&self.cfg, &mut history, (&self.key, &self.lifecycle), &self.stopped) {
             Ok(()) => {
                 // The pair's history certificate is a signed head at this checkpoint.
                 let head = self.current.index.head();

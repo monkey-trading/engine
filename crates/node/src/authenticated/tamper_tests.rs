@@ -6,7 +6,7 @@ use anyhow::Result;
 use rusqlite::params;
 
 use crate::authenticated::tests::{fresh, put, raw, row_count};
-use crate::authenticated::{MAX_NODE_BYTES, MAX_STORED_VALUE, Root, codec, key_hash};
+use crate::authenticated::{MAX_NODE_BYTES, MAX_STORED_VALUE, Root, caller_key, codec, key_hash};
 
 #[test]
 fn exact_value_tampering_and_omission_cannot_become_absence() -> Result<()> {
@@ -18,6 +18,28 @@ fn exact_value_tampering_and_omission_cannot_become_absence() -> Result<()> {
     conn.execute("DELETE FROM value_rows", [])?;
     assert!(store.read(&root, b"a").is_err());
     assert_eq!(store.read(&root, b"missing")?, None);
+    Ok(())
+}
+
+/// A value stored whole in its leaf is read only as the root proves it: a forged one, a forged
+/// descriptor in its place, and an omitted one all fail.
+#[test]
+fn a_forged_value_stored_whole_cannot_be_read() -> Result<()> {
+    let (dir, store) = fresh()?;
+    store.write_compactly([14; 32])?;
+    let root = store.update(&Root::empty([14; 32]), vec![put(b"a", b"trusted")])?;
+    let conn = raw(&dir)?;
+    let key = caller_key(&[14; 32], b"a")?.0;
+    let stored =
+        conn.query_row("SELECT data FROM value_rows WHERE key=?1", [&key[..]], |row| row.get::<_, Vec<u8>>(0))?;
+    assert_eq!(stored, b"\0trusted", "the value is its leaf");
+    let forge = |data: &[u8]| conn.execute("UPDATE value_rows SET data=?1 WHERE key=?2", params![data, &key[..]]);
+    forge(b"\0forged!")?;
+    assert!(store.read(&root, b"a").is_err(), "a forged value stored whole was read");
+    forge(format!(r#"{{"length":7,"digest":{:?}}}"#, [0u8; 32]).as_bytes())?;
+    assert!(store.read(&root, b"a").is_err(), "a forged descriptor was read");
+    conn.execute("DELETE FROM value_rows WHERE key=?1", [&key[..]])?;
+    assert!(store.read(&root, b"a").is_err(), "an omitted value stored whole became absence");
     Ok(())
 }
 

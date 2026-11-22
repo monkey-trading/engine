@@ -225,8 +225,10 @@ pub(crate) fn publish_now(dir: &Path, job: Job) -> anyhow::Result<Listed> {
 /// - the engine's encoding failed or did not come within `ENCODE_WAIT`, or the checkpoint's root does not
 ///   parse, or the file or the manifest cannot be written or synced
 fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Listed> {
-    // Bounded, so a job a failing sequencer never delivered cannot hold the writer's drop.
-    let engine = RawValue::from_string(job.engine.wait(ENCODE_WAIT)?).context("the engine's encoding is not JSON")?;
+    // Bounded, so a job a failing sequencer never delivered cannot hold the writer's drop; nothing stops
+    // the writer mid-job.
+    let encoded = job.engine.wait(ENCODE_WAIT, || false)?;
+    let engine = RawValue::from_string(encoded).context("the engine's encoding is not JSON")?;
     let state: [u8; 32] = Sha256::digest(engine.get().as_bytes()).into();
     let root = job.checkpoint.root.parse().context("the snapshot's checkpoint root")?;
     let (state, signature) = (hex::encode(state), job.signing.sign(job.offset, root, state));

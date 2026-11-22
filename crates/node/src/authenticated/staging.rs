@@ -7,10 +7,10 @@ use anyhow::{Result, ensure};
 use jmt::{KeyHash, SimpleHasher};
 use rusqlite::Connection;
 
-use crate::authenticated::blobs::{self, Blob, Points};
+use crate::authenticated::blobs::{self, Blob, Points, Stored};
 use crate::authenticated::reader::Checked;
 use crate::authenticated::receipts::{self, Queue};
-use crate::authenticated::{Hasher, MAX_UPDATES, Root, batch};
+use crate::authenticated::{CHUNK_BYTES, Hasher, MAX_UPDATES, Root, batch};
 
 pub(super) struct Staging<'a> {
     conn: &'a Connection,
@@ -22,13 +22,14 @@ pub(super) struct Staging<'a> {
     queue: Queue,
     pending: BTreeMap<KeyHash, Option<Vec<u8>>>,
     wrote: bool,
-    /// Whether the update writes its nodes compact.
+    /// Whether the update writes its nodes compact and each value of at most one chunk whole in its leaf.
     compact: bool,
 }
 
 impl<'a> Staging<'a> {
     /// Proves the original maintenance queue before accepting logical changes, sharing the nodes
-    /// `checked` across the update's reads, and writing its nodes `compact` or as JSON.
+    /// `checked` across the update's reads, and writing `compact`: its nodes in borsh form and each value of
+    /// at most one chunk whole in its leaf, or its nodes as JSON and every value in chunks.
     /// Error cases:
     /// - a queue/root proof or cursor check fails
     pub(super) fn new(conn: &'a Connection, root: &Root, checked: &'a Checked, compact: bool) -> Result<Self> {
@@ -44,34 +45,40 @@ impl<'a> Staging<'a> {
         })
     }
 
-    /// Stages an exact length-delimited logical value or deletion using finite physical chunks.
+    /// Stages an exact length-delimited logical value or deletion: whole in its own leaf when the update
+    /// writes compact and it fits one chunk, otherwise as a descriptor and finite physical chunks.
     /// Error cases:
     /// - invalid old descriptor, incomplete/excess source bytes, failed proofs or persistence failure
     pub(super) fn value(&mut self, key: KeyHash, input: Option<(u64, &mut impl Read)>) -> Result<()> {
         let old = blobs::descriptor(&mut self.points, key)?;
-        let old_chunks = old.as_ref().map_or(0, Blob::chunks);
-        let descriptor = if let Some((length, source)) = input {
-            let mut remaining = length;
-            let mut index = 0u64;
-            let mut hasher = <Hasher as SimpleHasher>::new();
-            while remaining != 0 {
-                let bytes = blobs::input_chunk(source, remaining)?;
-                hasher.update(&bytes);
-                remaining -= bytes.len() as u64;
-                self.push(blobs::chunk_key(&self.root.namespace, key, index)?, Some(bytes))?;
-                index = index.checked_add(1).ok_or_else(|| anyhow::anyhow!("chunk ordinal overflow"))?;
+        let old_chunks = old.as_ref().map_or(0, Stored::chunks);
+        let (leaf, new_chunks) = match input {
+            Some((length, source)) if self.compact && length <= CHUNK_BYTES as u64 => {
+                let bytes = blobs::input_chunk(source, length)?;
+                drained(source)?;
+                (Some(blobs::inline(&bytes)), 0)
             }
-            let mut extra = [0u8; 1];
-            ensure!(source.read(&mut extra)? == 0, "source exceeds declared logical length");
-            Some(Blob { length, digest: hasher.finalize() })
-        } else {
-            None
+            Some((length, source)) => {
+                let mut remaining = length;
+                let mut index = 0u64;
+                let mut hasher = <Hasher as SimpleHasher>::new();
+                while remaining != 0 {
+                    let bytes = blobs::input_chunk(source, remaining)?;
+                    hasher.update(&bytes);
+                    remaining -= bytes.len() as u64;
+                    self.push(blobs::chunk_key(&self.root.namespace, key, index)?, Some(bytes))?;
+                    index = index.checked_add(1).ok_or_else(|| anyhow::anyhow!("chunk ordinal overflow"))?;
+                }
+                drained(source)?;
+                let blob = Blob { length, digest: hasher.finalize() };
+                (Some(serde_json::to_vec(&blob)?), blob.chunks())
+            }
+            None => (None, 0),
         };
-        let new_chunks = descriptor.as_ref().map_or(0, Blob::chunks);
         for index in new_chunks..old_chunks {
             self.push(blobs::chunk_key(&self.root.namespace, key, index)?, None)?;
         }
-        self.push(key, descriptor.map(|blob| serde_json::to_vec(&blob)).transpose()?)?;
+        self.push(key, leaf)?;
         Ok(())
     }
 
@@ -111,4 +118,13 @@ impl<'a> Staging<'a> {
         self.wrote = true;
         Ok(())
     }
+}
+
+/// Checks that `source` holds nothing past the value's declared length.
+/// Error cases:
+/// - the source holds more, or cannot be read
+fn drained(source: &mut impl Read) -> Result<()> {
+    let mut extra = [0u8; 1];
+    ensure!(source.read(&mut extra)? == 0, "source exceeds declared logical length");
+    Ok(())
 }

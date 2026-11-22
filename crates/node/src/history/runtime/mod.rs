@@ -27,6 +27,7 @@ use crate::tee::EnclaveKey;
 
 mod capture;
 mod heads;
+mod stop;
 
 /// Commands indexed between signed heads outside captured checkpoints and shutdown, and between
 /// collections of retired versions. Both cost several fsyncs, so they run at this cadence rather
@@ -44,7 +45,6 @@ const INDEX_BATCH: usize = 128;
 
 pub(crate) enum Input {
     Entry(Arc<StreamMsg>),
-    Seal(Box<Capture>),
     Repair,
     Drain(oneshot::Sender<()>),
     Stop,
@@ -107,6 +107,8 @@ struct Actor {
     domain: CheckpointDomain,
     key: Arc<EnclaveKey>,
     pins: Pins,
+    /// The sequencer's next capture, handed over before the checkpoint it captures is published.
+    seals: mpsc::Receiver<Box<Capture>>,
     pending: Option<Box<Capture>>,
     /// Shared with the sealing endpoint: whether a `snapshot_write_failed` episode may be open.
     write_alert: WriteAlert,
@@ -145,9 +147,12 @@ impl Runtime {
         let initial = Published::new(current.store.clone(), head, generation.clone())?;
         let (published, published_rx) = watch::channel(Some(initial));
         let (input, received) = mpsc::channel(super::QUEUE);
+        let (seal_tx, seals) = mpsc::channel(1);
         let (repair_tx, repair) = mpsc::channel(1);
         let reader = Reader::authenticated(ready_rx, published_rx, repair_tx);
-        let endpoint = Endpoint::new(input.clone(), catalog_store, cfg.interval);
+        let endpoint = Endpoint::new(seal_tx, catalog_store, cfg.interval);
+        #[cfg(test)]
+        let endpoint = endpoint.inspecting(input.clone());
         let stopped = Arc::new(AtomicBool::new(false));
         Ok(Self {
             actor: Actor {
@@ -160,6 +165,7 @@ impl Runtime {
                 domain,
                 key,
                 pins,
+                seals,
                 pending: None,
                 write_alert: endpoint.write_alert.clone(),
                 commands: Vec::new(),
@@ -217,7 +223,7 @@ impl Runtime {
     /// - verified backfill fails or the supervised storage owner stops
     pub(crate) async fn run(self, mut feed: Feed, deriver: Deriver) -> Result<()> {
         let Self { actor, input, received, mut repair, stopped, .. } = self;
-        let guard = Stop { input: input.clone(), stopped: stopped.clone() };
+        let guard = stop::Stop { input: input.clone(), stopped: stopped.clone() };
         let deriver = deriver.stopped_by(stopped.clone());
         // A test's collector sees the blocking owner's alerts; production logs to the global subscriber.
         #[cfg(test)]
@@ -243,11 +249,7 @@ impl Runtime {
                     }
                 }
             }
-            let (drained, done) = oneshot::channel();
-            if input.send(Input::Drain(drained)).await.is_ok() {
-                done.await.context("history owner stopped before draining its physical input")?;
-            }
-            Ok(())
+            stop::drain(&input, &stopped).await
         };
         let outcome = tokio::select! {
             result = forward => result,
@@ -302,31 +304,20 @@ impl Actor {
         Ok(())
     }
 
-    /// Repair signals are wakeups; current generation validity decides whether repair is needed.
+    /// Takes a capture waiting in its slot before `input`, which a checkpoint the capture names follows
+    /// (`Slot::submit`). Repair signals are wakeups; current generation validity decides whether repair is
+    /// needed.
     /// Error cases:
     /// - full verified repair or an exact command update fails
     fn take(&mut self, input: Input, deriver: &mut Deriver) -> Result<()> {
         if !self.generation.valid() {
             self.repair()?;
         }
+        if let Ok(capture) = self.seals.try_recv() {
+            self.seal(capture)?;
+        }
         match input {
             Input::Entry(message) => self.entry(message, deriver)?,
-            Input::Seal(capture) => {
-                ensure!(self.pending.is_none(), "more than one in-flight history capture");
-                if let Err(error) = self.settle_pins() {
-                    warn!(alert = "snapshot_cleanup_failed", "skipping another optional capture: {error:#}");
-                } else if self.last_entry == Some(capture.snapshot.offset) {
-                    // Shutdown's capture of the checkpoint this owner has just taken: the index
-                    // stands exactly at it once the turn's commands are indexed.
-                    self.index_commands()?;
-                    let checkpoint = self.at_checkpoint.clone();
-                    self.complete_capture(capture, checkpoint.as_ref());
-                } else if self.last_entry.is_some_and(|last| last > capture.snapshot.offset) {
-                    self.capture_failed(capture.snapshot.offset.seq, "optional checkpoint fence was already crossed");
-                } else {
-                    self.pending = Some(capture);
-                }
-            }
             Input::Repair | Input::Stop => {}
             Input::Drain(done) => {
                 self.index_commands()?;
@@ -472,26 +463,5 @@ impl Actor {
         self.certify_latest();
         info!(alert_resolved = "history_index_damaged", "verified history generation rebuilt");
         Ok(())
-    }
-}
-
-impl Stopper {
-    /// Stops the owner after its current turn; `History::run` then returns without an error.
-    pub(crate) fn stop(&self) {
-        self.stopped.store(true, Ordering::Release);
-        let _ = self.input.try_send(Input::Stop);
-    }
-}
-
-/// Cancellation wakes an idle owner and a full queue already guarantees a pending wakeup.
-struct Stop {
-    input: mpsc::Sender<Input>,
-    stopped: Arc<AtomicBool>,
-}
-
-impl Drop for Stop {
-    fn drop(&mut self) {
-        self.stopped.store(true, Ordering::Release);
-        let _ = self.input.try_send(Input::Stop);
     }
 }

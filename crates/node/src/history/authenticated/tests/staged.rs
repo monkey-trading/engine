@@ -86,21 +86,29 @@ fn a_commands_private_stages_sync_once_with_its_complete_stage() {
     assert_eq!(index.store.syncs() - before, 1, "only the complete stage syncs");
 }
 
-/// The index writes its new nodes compact, in upstream's borsh form, whose first byte is a node tag.
+/// The index writes its new nodes compact, in upstream's borsh form, whose first byte is a node tag, and
+/// its values, each well under a chunk, whole in their leaves, whose first byte is 0: those of the 40
+/// events at least.
 #[test]
-fn the_index_writes_its_nodes_compact() {
+fn the_index_writes_its_nodes_compact_and_its_values_whole() {
     let (mut index, path) = fixture("compact-nodes", 1_000);
     index.ingest(fanout(0, 0, 40)).expect("a command");
     let root = index.head().root;
     let conn = rusqlite::Connection::open(&path).expect("the store");
-    let mut rows = conn.prepare("SELECT data FROM nodes WHERE namespace = ?1 AND version = ?2").expect("a query");
     let version = i64::try_from(root.version.expect("a version")).expect("a version in range");
-    let firsts = rows
-        .query_map((&root.namespace[..], version), |row| Ok(row.get::<_, Vec<u8>>(0)?[0]))
-        .expect("rows")
-        .collect::<rusqlite::Result<Vec<u8>>>()
-        .expect("node rows");
-    assert!(!firsts.is_empty() && firsts.iter().all(|tag| *tag <= 2), "{firsts:?}");
+    let firsts = |table: &str, condition: &str| {
+        let query = format!("SELECT data FROM {table} WHERE namespace = ?1 AND version {condition} ?2");
+        let mut rows = conn.prepare(&query).expect("a query");
+        rows.query_map((&root.namespace[..], version), |row| Ok(row.get::<_, Vec<u8>>(0)?[0]))
+            .expect("rows")
+            .collect::<rusqlite::Result<Vec<u8>>>()
+            .expect("rows")
+    };
+    let nodes = firsts("nodes", "=");
+    assert!(!nodes.is_empty() && nodes.iter().all(|tag| *tag <= 2), "{nodes:?}");
+    // The update's values span its physical batches, each a version of its own.
+    let values = firsts("value_rows", "<=");
+    assert!(values.iter().filter(|tag| **tag == 0).count() > 40, "the 40 events' values are not whole: {values:?}");
 }
 
 #[test]

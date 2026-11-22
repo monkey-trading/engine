@@ -61,7 +61,8 @@ fn query(account: AccountId) -> PageQuery {
 #[tokio::test]
 async fn unread_payload_damage_is_diagnosed_by_first_dependent_query_then_withholds_the_generation() {
     let mut f = fixture("auth-reader-lazy-diagnosis");
-    let bytes = serde_json::to_vec(&f.events[0]).unwrap();
+    // The index stores the payload whole in its leaf, after a 0 byte.
+    let bytes = [&[0u8][..], &serde_json::to_vec(&f.events[0]).unwrap()].concat();
     let changed =
         Connection::open(&f.path).unwrap().execute("DELETE FROM value_rows WHERE data = ?1", [bytes]).unwrap();
     assert!(changed > 0, "a real packed payload is unavailable");

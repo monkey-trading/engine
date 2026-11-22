@@ -8,7 +8,7 @@ mod paired_recovery;
 use anyhow::Context;
 use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
-use tracing::warn;
+use tracing::{warn, warn_span};
 
 use crate::daily_snapshots::Job as DailyJob;
 use crate::log::{Checkpoint, CheckpointDomain, Offset};
@@ -18,6 +18,10 @@ use crate::snapshot::sealing::CaptureStage;
 use crate::snapshot::sealing::Encoding;
 use crate::snapshot::{self, RecoveryContext, Snapshot};
 use crate::stats::background::Job;
+
+/// The least sequenced time a capture in flight waits for the history index before a capture due behind it
+/// alerts, when the interval between captures is shorter.
+const CAPTURE_LATE: Millis = 60_000;
 
 /// A checkpoint whose capture waits, with its progress and recovery facts as they stood then.
 pub(super) struct Deferred {
@@ -34,6 +38,9 @@ pub(super) struct Captures {
     pub(super) uncaptured: Option<Deferred>,
     /// The stamp from which a checkpoint's capture is due; `None` until the first capture.
     due: Option<Millis>,
+    /// The checkpoint seq of the last capture handed to the history owner, which holds it until its index
+    /// reaches the checkpoint, and the stamp at which it was handed over.
+    handed: Option<(u64, Millis)>,
     /// Approvals mock custody has yet to sign, with their event indices: it signs them once the
     /// checkpoint covering them is written, so a capture of that checkpoint still owes them.
     unsigned: Vec<((AccountId, u64), usize)>,
@@ -164,22 +171,40 @@ impl Sequencer {
     }
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
-    /// status may have moved on since; with a capture in flight, the history owner's queue full, or a step failing,
-    /// keeps it for shutdown instead, and the capture stays due. No command has been applied since the checkpoint, and no withdrawal
+    /// status may have moved on since; with a capture in flight, the history owner stopped, or a step failing, keeps it
+    /// for shutdown instead, and the capture stays due. An owner behind the log takes the capture and completes it once
+    /// it reaches the checkpoint. No command has been applied since the checkpoint, and no withdrawal
     /// entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
         let Some(endpoint) = self.sealing.clone() else { return Ok(()) };
         let Some(permit) = endpoint.try_permit() else {
+            // A capture still in flight past the interval, and a minute at least, waits for an index
+            // behind the log: no cache is written until the index reaches it.
+            let late = endpoint.interval_ms.max(CAPTURE_LATE);
+            if let Some((seq, handed)) = self.captures.handed
+                && self.engine.now().saturating_sub(handed) >= late
+            {
+                let waited = self.engine.now().saturating_sub(handed) / 1_000;
+                endpoint.write_alert.failed(|| {
+                    warn_span!("capture", seq).in_scope(|| {
+                        warn!(
+                            alert = "snapshot_write_failed",
+                            "checkpoint remains in log: the last capture still waits for the history index to reach \
+                             it, after {waited} s"
+                        )
+                    })
+                });
+            }
             // Shutdown captures it after all if no later checkpoint follows.
             self.captures.uncaptured = Some(deferred);
             return Ok(());
         };
         #[cfg(test)]
         let started = std::time::Instant::now();
-        // A full queue, behind a lagging history index, would refuse the handover: nothing is synced,
-        // sealed or encoded for it, and the capture stays due. One prepared in the slot is taken.
+        // A stopped owner would refuse the handover: nothing is synced, sealed or encoded for it, and the
+        // capture stays due. One prepared in the slot is taken.
         let slot = match endpoint.reserve() {
             Ok(slot) => slot,
             Err(reason) => {
@@ -188,7 +213,7 @@ impl Sequencer {
                 endpoint
                     .write_alert
                     .failed(|| warn!(alert = "snapshot_write_failed", "checkpoint remains in log: {reason:#}"));
-                // Shutdown captures it once the queue drains if no later checkpoint follows.
+                // Shutdown tries it again if no later checkpoint follows.
                 self.captures.uncaptured = Some(deferred);
                 return Ok(());
             }
@@ -203,7 +228,7 @@ impl Sequencer {
             self.captures.uncaptured = Some(deferred);
             return Err(reason);
         }
-        let prepared = (|| -> anyhow::Result<()> {
+        let prepared = (|| -> anyhow::Result<u64> {
             #[cfg(test)]
             self.fault(&endpoint, CaptureStage::Seal)?;
             let (catalog, catalog_pin) = self.log.seal_catalog_boundary_unpublished()?;
@@ -217,7 +242,8 @@ impl Sequencer {
             )?;
             #[cfg(test)]
             self.fault(&endpoint, CaptureStage::Encode)?;
-            let (engine, job) = self.encoding(snapshot.checkpoint.seq)?;
+            let seq = snapshot.checkpoint.seq;
+            let (engine, job) = self.encoding(seq)?;
             slot.submit(crate::snapshot::sealing::Capture {
                 snapshot,
                 engine,
@@ -226,18 +252,23 @@ impl Sequencer {
                 catalog,
                 catalog_pin,
                 _permit: permit,
+                #[cfg(test)]
+                encode_polls: endpoint.encode_polls.clone(),
             });
-            // Staged only once the history owner took the capture: a refused one, as when the owner's
-            // queue is full behind a lagging index, costs the worker no encoding.
+            // Staged only once the capture is in the owner's slot: a refused one, as when the owner has
+            // stopped, costs the worker no encoding.
             if let (Some(job), Some(stats)) = (job, self.marks.stats()) {
                 stats.stage_job(job);
             }
-            Ok(())
+            Ok(seq)
         })();
         #[cfg(test)]
         self.captures.held.push(started.elapsed());
         match prepared {
-            Ok(()) => self.captures.due = Some(self.engine.now().saturating_add(endpoint.interval_ms)),
+            Ok(seq) => {
+                self.captures.handed = Some((seq, self.engine.now()));
+                self.captures.due = Some(self.engine.now().saturating_add(endpoint.interval_ms));
+            }
             Err(reason) => {
                 endpoint
                     .write_alert

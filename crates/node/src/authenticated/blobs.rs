@@ -1,4 +1,5 @@
-//! Logical values use a proved descriptor and fixed-size, independently proved chunk leaves.
+//! Logical values use a proved descriptor and fixed-size, independently proved chunk leaves, or, in a
+//! namespace written compactly, a value of at most one chunk stored whole in its own leaf.
 
 use std::io::{Read, Write};
 
@@ -27,6 +28,15 @@ pub(super) struct Points<'a> {
 pub(super) struct Blob {
     pub length: u64,
     pub digest: [u8; 32],
+}
+
+/// The first byte of a value stored whole in its own leaf, which no descriptor's JSON starts with.
+const INLINE_TAG: u8 = 0;
+
+/// A logical value's proved leaf: the descriptor of its chunks, or the value itself.
+pub(super) enum Stored {
+    Chunked(Blob),
+    Inline(Vec<u8>),
 }
 
 impl<'a> Points<'a> {
@@ -62,15 +72,37 @@ impl Blob {
     }
 }
 
-/// Locates the descriptor only after upstream membership/nonmembership verification.
+impl Stored {
+    /// The chunk leaves the value has besides its own: none for a value stored whole.
+    pub(super) fn chunks(&self) -> u64 {
+        match self {
+            Self::Chunked(blob) => blob.chunks(),
+            Self::Inline(_) => 0,
+        }
+    }
+}
+
+/// The leaf of `value`, of at most one chunk, stored whole.
+pub(super) fn inline(value: &[u8]) -> Vec<u8> {
+    [&[INLINE_TAG], value].concat()
+}
+
+/// Locates the descriptor, or the value stored whole, only after upstream membership/nonmembership
+/// verification.
 /// Error cases:
-/// - failed proof, malformed descriptor or excessive fixed descriptor size
-pub(super) fn descriptor(points: &mut Points<'_>, key: KeyHash) -> Result<Option<Blob>> {
+/// - failed proof, malformed descriptor, excessive fixed descriptor size or a value stored whole past one
+///   chunk
+pub(super) fn descriptor(points: &mut Points<'_>, key: KeyHash) -> Result<Option<Stored>> {
     points
         .get(key)?
-        .map(|raw| {
+        .map(|mut raw| {
+            if raw.first() == Some(&INLINE_TAG) {
+                ensure!(raw.len() <= CHUNK_BYTES + 1, "oversized inline logical value");
+                raw.remove(0);
+                return Ok(Stored::Inline(raw));
+            }
             ensure!(raw.len() <= 512, "oversized logical value descriptor");
-            Ok(serde_json::from_slice(&raw)?)
+            Ok(Stored::Chunked(serde_json::from_slice(&raw)?))
         })
         .transpose()
 }
@@ -89,7 +121,14 @@ pub(super) fn chunk_key(namespace: &[u8; 32], key: KeyHash, index: u64) -> Resul
 /// Error cases:
 /// - any missing/forged chunk, inconsistent length/digest or sink failure
 pub(super) fn read_to(points: &mut Points<'_>, key: KeyHash, sink: &mut impl Write) -> Result<Option<u64>> {
-    let Some(blob) = descriptor(points, key)? else { return Ok(None) };
+    let blob = match descriptor(points, key)? {
+        None => return Ok(None),
+        Some(Stored::Inline(value)) => {
+            sink.write_all(&value)?;
+            return Ok(Some(value.len() as u64));
+        }
+        Some(Stored::Chunked(blob)) => blob,
+    };
     let mut hasher = <Hasher as SimpleHasher>::new();
     let mut remaining = blob.length;
     for index in 0..blob.chunks() {
@@ -110,7 +149,11 @@ pub(super) fn read_to(points: &mut Points<'_>, key: KeyHash, sink: &mut impl Wri
 /// Error cases:
 /// - unavailable allocation, unrepresentable length, bad proof or malformed logical value
 pub(super) fn read(points: &mut Points<'_>, key: KeyHash) -> Result<Option<Vec<u8>>> {
-    let Some(blob) = descriptor(points, key)? else { return Ok(None) };
+    let blob = match descriptor(points, key)? {
+        None => return Ok(None),
+        Some(Stored::Inline(value)) => return Ok(Some(value)),
+        Some(Stored::Chunked(blob)) => blob,
+    };
     let length = usize::try_from(blob.length)?;
     let mut value = Vec::new();
     value.try_reserve_exact(length)?;

@@ -59,6 +59,32 @@ fn interruption_after_many_physical_batches_preserves_every_old_logical_value() 
     Ok(())
 }
 
+/// In a namespace written compactly, where a value of up to one chunk is stored whole, a stream short of
+/// or past its declared length writes nothing, at zero length and at the chunk boundary too, and the
+/// root stays writable.
+#[test]
+fn compact_streaming_short_or_excess_sources_write_nothing() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let namespace = [56; 32];
+    store.write_compactly(namespace)?;
+    let mut root = store.update(&Root::empty(namespace), vec![put(b"keep", b"old")])?;
+    for length in [0, 5, CHUNK_BYTES] {
+        let rows = || Ok::<_, anyhow::Error>((row_count(&raw(&dir)?, "nodes")?, row_count(&raw(&dir)?, "value_rows")?));
+        let before = rows()?;
+        let excess = vec![6u8; length + 1];
+        assert!(store.write_stream(&root, b"a", length as u64, Cursor::new(&excess)).is_err(), "excess at {length}");
+        if length > 0 {
+            let short = &excess[2..];
+            assert!(store.write_stream(&root, b"a", length as u64, Cursor::new(short)).is_err(), "short at {length}");
+        }
+        assert_eq!(rows()?, before, "a refused stream of {length} bytes wrote rows");
+        root = store.write_stream(&root, b"a", length as u64, Cursor::new(&excess[..length]))?;
+        assert_eq!(store.read(&root, b"a")?, Some(excess[..length].to_vec()));
+        assert_eq!(store.read(&root, b"keep")?, Some(b"old".to_vec()));
+    }
+    Ok(())
+}
+
 #[test]
 fn streaming_short_or_excess_sources_roll_back_all_chunks() -> Result<()> {
     let (dir, store) = fresh()?;

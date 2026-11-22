@@ -228,8 +228,9 @@ impl Store {
         self.publish(root)
     }
 
-    /// Writes the nodes of `namespace`'s later versions compact, in upstream's borsh form, where its earlier
-    /// ones stay JSON; every read takes either.
+    /// Writes the nodes of `namespace`'s later versions compact, in upstream's borsh form, and each value of at
+    /// most one chunk they write whole in its own leaf, where earlier ones stay JSON nodes and chunked values;
+    /// every read takes either.
     /// Error cases:
     /// - poisoned runtime lock
     pub fn write_compactly(&self, namespace: [u8; 32]) -> Result<()> {
@@ -237,7 +238,7 @@ impl Store {
         Ok(())
     }
 
-    /// Whether `namespace`'s new nodes are written compact.
+    /// Whether `namespace`'s new nodes are written compact, and its values of up to one chunk whole.
     /// Error cases:
     /// - poisoned runtime lock
     pub(super) fn compact(&self, namespace: &[u8; 32]) -> Result<bool> {
