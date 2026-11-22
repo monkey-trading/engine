@@ -119,11 +119,55 @@ TRACE
   systemctl list-timers --all --no-pager || true
   ps -eo pid,ppid,user,ni,stat,pcpu,rss,comm --sort=-pcpu | head -40
 } 2>&1 | sed 's/^/EXPHOST /'
+cat > "$exp/probe.pl" <<'PROBE'
+# Appends a page to a file and syncs it every 50 ms; prints each second's longest sync.
+use strict;
+use warnings;
+use IO::Handle;
+use Time::HiRes qw(time sleep);
+$| = 1;
+my ($path) = @ARGV;
+open my $f, '>>', $path or die "$path: $!";
+my ($second, $longest, $count) = (int(time), 0, 0);
+while (1) {
+    my $began = time;
+    print {$f} "\0" x 4096;
+    $f->flush;
+    $f->sync or die "sync: $!";
+    my $took = time - $began;
+    $longest = $took if $took > $longest;
+    $count++;
+    if (int(time) != $second) {
+        printf "EXPPROBE %d %.1f %d\n", $second, $longest * 1000, $count;
+        ($second, $longest, $count) = (int(time), 0, 0);
+    }
+    sleep 0.05;
+}
+PROBE
 sudo perl "$exp/trace.pl" &
 tracer=$!
-trap 'sudo kill $tracer 2>/dev/null || true' EXIT
-for at in a_disk:/tmp b_tmpfs:/dev/shm c_disk:/tmp; do
+probe_dir="$(mktemp -d -p /tmp)"
+perl "$exp/probe.pl" "$probe_dir/probe" &
+prober=$!
+trap 'sudo kill $tracer 2>/dev/null || true; kill $prober 2>/dev/null || true; rm -rf "$probe_dir"' EXIT
+arms="a_disk:/tmp"
+root_options="$(findmnt -n -o OPTIONS /)"
+mnt_source="$(findmnt -n -o SOURCE -T /mnt 2>/dev/null || true)"
+if [[ -n "$mnt_source" && "$mnt_source" != "$(findmnt -n -o SOURCE -T /tmp)" ]]; then
+  sudo mkdir -p /mnt/exp-load && sudo chown "$(id -u):$(id -g)" /mnt/exp-load
+  arms="$arms b_mnt:/mnt/exp-load"
+fi
+arms="$arms c_disk:/tmp"
+if [[ "$root_options" != *nobarrier* ]]; then
+  arms="$arms d_nobarrier:/tmp e_disk:/tmp"
+fi
+echo "EXPHOST arms=$arms root_options=$root_options mnt=$mnt_source"
+for at in $arms; do
   name="${at%%:*}"
+  case "$name" in
+    d_nobarrier) sudo mount -o remount,nobarrier / && echo "EXPHOST remounted $(findmnt -n -o OPTIONS /)" ;;
+    e_disk) sudo mount -o remount,barrier / && echo "EXPHOST remounted $(findmnt -n -o OPTIONS /)" ;;
+  esac
   dir="$(mktemp -d -p "${at#*:}")"
   echo "EXPRUN $name start $(date +%s.%N) TMPDIR=$dir"
   if TMPDIR="$dir" CARGO_INCREMENTAL=0 "${cargo_test[@]}" --nocapture; then
