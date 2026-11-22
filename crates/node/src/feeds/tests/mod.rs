@@ -264,7 +264,15 @@ async fn stale_quotes_do_not_count_as_the_venue_quoting() {
     stream(ws, move || vec![kraken_book("BTC/USD", "100", "101", stuck)]);
     let (market, quotes) = next_prices(&mut rx).await;
     assert_eq!((market, quotes[0].source.as_str()), (1, "kraken"));
-    let alert = next_alert(&mut alerts).await;
+    // The stale run and the silence count both time out at the 300 ms `timeout`, and one check that runs late
+    // finds both due and raises `venue_stale` first, so the silence alert is the first one that is not it.
+    let alert = loop {
+        let alert = next_alert(&mut alerts).await;
+        if alert["alert"] != "venue_stale" {
+            break alert;
+        }
+        assert_eq!(alert["symbol"], "BTC/USD");
+    };
     assert_eq!((alert["alert"].as_str(), alert["symbol"].as_str()), ("venue_symbol_silent", "BTC/USD"));
 }
 
