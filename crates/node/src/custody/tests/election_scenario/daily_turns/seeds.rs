@@ -57,6 +57,7 @@ impl Seeds {
     /// relayer has relayed each of `turns`, returning their seeds. Once the last seed is recorded
     /// no ticket waits to be delivered, so the scenario's own timed blocks are not interleaved.
     pub(super) async fn relay(&self, chain: &Chain, at: u64, turns: [u64; 2]) -> [B256; 2] {
+        println!("STAGE: relaying the seeds of turns {turns:?} at {at}");
         finalize_beacon(&self.ethereum, &self.beacon, at).await;
         chain.mine_at(at).await;
         let mut seeds = [B256::ZERO; 2];
