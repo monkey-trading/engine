@@ -189,11 +189,7 @@ impl BoundaryReads {
     /// has certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
     /// `trusted`, nor before its first sample.
     pub(crate) async fn next(&mut self, trusted: Option<&TrustedClock>) -> Instant {
-        let bounds = trusted.and_then(|trusted| {
-            let (plain, widened) = (trusted.since_sample_ms()?, trusted.upper_bound_ms(MAX_SLOW_PPM)?);
-            // The lower bound narrowed by as much, for a clock running as fast.
-            Some((trusted.reached_ms()?.saturating_sub(widened - plain), widened))
-        });
+        let bounds = trusted.and_then(|trusted| trusted.drift_bounds_ms(MAX_SLOW_PPM));
         let Some((earliest, latest)) = bounds else { return std::future::pending().await };
         let now = Instant::now();
         // The latest boundary true time may have reached, and whether it may still be in the search after it.

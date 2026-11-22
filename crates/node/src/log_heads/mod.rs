@@ -429,7 +429,7 @@ impl<R: HeadsChain> Poster<R> {
                 (posted_at, posted_v2_at, first_head_due) = (Some(tick), Some(tick), false);
                 first_post = first_post.or(posted_at);
                 if at_boundary {
-                    // The turn's first head went out between read ticks: the next ones count from it.
+                    // A turn's first head was tried between read ticks: the next ones count from this attempt.
                     retry = interval_at(tick + retry.period(), retry.period());
                     retry.set_missed_tick_behavior(MissedTickBehavior::Skip);
                 }

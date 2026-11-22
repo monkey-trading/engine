@@ -11,8 +11,8 @@ import {LivenessTest} from "./helpers/LivenessTest.sol";
 /// member that also held the turn before posts it and as the poster, reading from each turn's boundary,
 /// finds the first turn after none named the operator, or, if later, within 30 s and a read tick, a sixth
 /// of an interval, a margin past those. With any one head failing, or one a read tick late, with the rest
-/// following it, at every second of that phase, no promotion or skip comes due. Once a head of the signer epoch has landed, the promotion also stays further off than the
-/// operator's stop margin. Before one has, as at the first turn after rotation turns on, the boundary's
+/// following it, at every second of that phase, no promotion or skip comes due. Once a head of the signer
+/// epoch has landed, the promotion also stays further off than the operator's stop margin. Before one has, as at the first turn after rotation turns on, the boundary's
 /// slot and the one before it start the count, and under the tightest rule a failed first head can bring
 /// the operator's stop, though not the promotion, before its next head lands.
 abstract contract HeartbeatPaceTest is LivenessTest {
