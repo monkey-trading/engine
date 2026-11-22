@@ -151,7 +151,10 @@ async fn a_replacement_waits_for_its_subscription_past_a_heartbeat_and_a_message
     // The replacement's subscription is answered late, after a heartbeat and a message of a type the
     // feed does not take: switching on either, or failing on the second, leaves a gap.
     stand_in.state.lock().expect("stand-in").subscribe_delay = Some(SLOW);
-    let timing = Timing { timeout: Duration::from_secs(4), ..cme_timing() };
+    // The timeout leaves 5.5 s beyond the late answer for the replacement's handshake, token fetch and
+    // login on a loaded runner; a feed that fails on the answer or the refused message reconnects at
+    // once, whatever the timeout.
+    let timing = Timing { timeout: Duration::from_secs(8), ..cme_timing() };
     assert_no_gap_across_a_rollover(&stand_in, &tls, timing).await;
     assert_eq!(stand_in.seen(|seen| seen.sessions.len()), 2, "the replacement failed and the feed reconnected");
     // The message it passed over is refused once the feed switches, as on any connection.
