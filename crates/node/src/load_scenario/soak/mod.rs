@@ -26,7 +26,8 @@
 //! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300, the template's), `SOAK_MULTIPLE`
 //! (10), `SOAK_SHORT` (1 for a run that tests the harness, as CI's does: an interval with every window
 //! excused passes and memory is not bounded), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_DIR`
-//! (a scratch directory, removed with the run; named, it is kept) set the run, and
+//! (a scratch directory, removed with the run; named, it is kept) and `SOAK_LOG_DIR` (the log's directory
+//! apart from `SOAK_DIR`, always kept) set the run, and
 //! `LOAD_ACCOUNTS`, `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_CRYPTO_RATE`, `LOAD_RWA_MOVES` and
 //! `LOAD_SOURCE_DELAY_MS` size the load as they do the load scenario's.
 
@@ -110,7 +111,10 @@ async fn run() {
         Ok(dir) => (PathBuf::from(dir), true),
         Err(_) => (scratch_dir("soak"), false),
     };
-    let durable = Durable::new(&dir, config.snapshot);
+    let mut durable = Durable::new(&dir, config.snapshot);
+    if let Some(log) = &config.log_dir {
+        durable.cfg.node.log_dir = log.join("log");
+    }
     let (listener, api) = crate::load_scenario::node::listen().await;
     let node =
         Node::start(Boot::Book(Box::new(base.engine())), &durable.cfg.node.log_dir, listener, &venues, Some(&durable))

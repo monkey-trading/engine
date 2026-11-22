@@ -1,5 +1,6 @@
 //! The soak's length and cadences, from the environment's variables.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::load_scenario::generator::traders::SESSION_LIFE_MS;
@@ -21,6 +22,9 @@ pub(super) struct Config {
     /// Alerts the run raises however it goes, each a known issue it does not fail on (`SOAK_KNOWN_ALERTS`,
     /// comma-separated names).
     pub(super) known_alerts: Vec<String>,
+    /// A directory for the log apart from `SOAK_DIR`'s caches and history index (`SOAK_LOG_DIR`), as a node
+    /// whose log has a volume of its own has it; the log is its `log` directory, kept with the run.
+    pub(super) log_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -48,6 +52,7 @@ impl Config {
             known_alerts: get("SOAK_KNOWN_ALERTS")
                 .map(|names| names.split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect())
                 .unwrap_or_default(),
+            log_dir: get("SOAK_LOG_DIR").map(PathBuf::from),
         };
         assert!(!config.total.is_zero() && !config.window.is_zero(), "SOAK_HOURS and SOAK_WINDOW_SECS are above 0");
         assert!(config.report >= config.window, "SOAK_REPORT_MINUTES holds at least one window");
@@ -134,6 +139,8 @@ mod tests {
         assert_eq!(tiny.legs().iter().map(|leg| leg.secs).collect::<Vec<_>>(), [1_800], "a run under one interval");
         let names = self::config(&[("SOAK_KNOWN_ALERTS", "a,b")]).known_alerts;
         assert_eq!(names, ["a", "b"]);
+        assert_eq!(self::config(&[]).log_dir, None, "the log is beside the caches unless named");
+        assert_eq!(self::config(&[("SOAK_LOG_DIR", "/logs")]).log_dir, Some(PathBuf::from("/logs")));
     }
 
     #[test]
