@@ -38,6 +38,7 @@ use crate::load_scenario::durable::{self, Durable, Owner};
 use crate::load_scenario::venues::{Venues, template};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
+use crate::sequencer::pipeline::SyncEnd;
 use crate::sequencer::{Request, Sequencer, SequencerConfig};
 use crate::sequencer_thread::Worker;
 use crate::stats::Stats;
@@ -57,6 +58,8 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(10);
 const CHANNEL_CAPACITY: usize = 65_536;
 /// How long the sequencer has to drain and write its final checkpoint.
 const DRAIN: Duration = Duration::from_secs(120);
+/// How long the log-sync thread of a stopped node has to finish what it was handed.
+const SYNC_END: Duration = Duration::from_secs(60);
 
 /// How a node begins: by taking over the launch book, or by recovering the log a node of the same run
 /// wrote.
@@ -78,6 +81,8 @@ pub(super) struct Node {
     /// While set, trusted time takes no sample, as when the node's Roughtime servers are out.
     pub time_out: Arc<AtomicBool>,
     sequencer: Worker,
+    /// Whether the log-sync thread has ended, which a stopped node waits for before anything reopens the log.
+    sync_end: Option<SyncEnd>,
     history: Option<Owner>,
     tasks: Vec<AbortHandle>,
 }
@@ -152,6 +157,7 @@ impl Node {
         }
         seq.track_stats(stats.clone());
         seq.pipeline_log_syncs().expect("the log sync thread");
+        let sync_end = seq.log_sync_end();
         let history = history.map(|history| history.run(&seq, dir, &manifest));
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let sequencer = Worker::start(seq.run(rx), None).expect("the sequencer's thread");
@@ -219,7 +225,7 @@ impl Node {
         tasks.push(tokio::spawn(serving).abort_handle());
         tasks.push(tokio::spawn(crate::limits::run_retain(limits)).abort_handle());
         let signer = AccountId(key.address());
-        Node { tx, metrics, stats, signer, log_dir: dir.to_owned(), api, time_out, sequencer, history, tasks }
+        Node { tx, metrics, stats, signer, log_dir: dir.to_owned(), api, time_out, sequencer, sync_end, history, tasks }
     }
 
     /// Stops every task, then lets the sequencer drain its queue and write its final checkpoint.
@@ -228,13 +234,14 @@ impl Node {
     /// - the history owner failed, or with `publishes` did not take the final cache in time: a stop that
     ///   nothing starts after leaves the owner to end its turn
     pub(super) async fn stop(self, publishes: bool) -> anyhow::Result<()> {
-        let Node { tx, sequencer, tasks, history, .. } = self;
+        let Node { tx, sequencer, sync_end, tasks, history, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
         // Every sender but this one went with the tasks; the sequencer drains once it goes.
         drop(tx);
         let mut sequencer = sequencer;
         let outcome = timeout(DRAIN, &mut sequencer.outcome).await.context("the sequencer did not drain in time")?;
         outcome.context("the sequencer's thread ended")??;
+        log_sync_ended(sync_end).await?;
         match history {
             Some(history) if publishes => history.stop().await,
             Some(history) => history.abort().await,
@@ -258,7 +265,7 @@ impl Node {
     /// Error cases:
     /// - the sequencer's thread did not end within `DRAIN`
     pub(super) async fn kill(self) -> anyhow::Result<()> {
-        let Node { tx, mut sequencer, tasks, history, .. } = self;
+        let Node { tx, mut sequencer, sync_end, tasks, history, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
         let outcome = std::mem::replace(&mut sequencer.outcome, oneshot::channel().1);
         // Dropping the worker cancels the sequencer at its next async boundary, before `tx` can drain it.
@@ -268,11 +275,25 @@ impl Node {
         // Only the worker's own cancellation: any other error is the sequencer failing before the kill.
         let cancelled = matches!(&ended, Ok(Err(error)) if format!("{error:#}").contains("cancelled after supervisor"));
         anyhow::ensure!(cancelled, "the sequencer did not end by cancellation: {ended:?}");
+        log_sync_ended(sync_end).await?;
         match history {
             Some(history) => history.abort().await,
             None => Ok(()),
         }
     }
+}
+
+/// Waits for the log-sync thread to end, which the batches it was handed are written before.
+/// Error cases:
+/// - the thread has not ended within `SYNC_END`
+async fn log_sync_ended(end: Option<SyncEnd>) -> anyhow::Result<()> {
+    let Some(end) = end else { return Ok(()) };
+    let ended = async {
+        while !end.ended() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    timeout(SYNC_END, ended).await.context("the log-sync thread did not end in time")
 }
 
 /// Gives the sequencer, and the API's signing, a trusted time sample every `SAMPLE_EVERY`, but while

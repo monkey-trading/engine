@@ -36,7 +36,7 @@ mod payout_schedule;
 #[cfg(test)]
 mod payout_tests;
 mod payouts;
-mod pipeline;
+pub(crate) mod pipeline;
 pub(crate) mod prefixes;
 mod roots;
 mod stamped;

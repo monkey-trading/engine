@@ -61,7 +61,7 @@ use crate::load_scenario::soak::faults::{Done, Rig, priced_within};
 use crate::load_scenario::soak::hours::{
     Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure, workload_gaps,
 };
-use crate::load_scenario::soak::support::{Reaper, log_quiet, newest_cache, rebind};
+use crate::load_scenario::soak::support::{Reaper, newest_cache, rebind};
 use crate::load_scenario::soak::timeline::{FEED_ALERTS, Timeline, WINDOW_SETTLE, restart_alerts, start_alerts};
 use crate::load_scenario::venues::{self, Venues};
 use crate::load_scenario::{
@@ -339,9 +339,6 @@ impl Soak {
         let stopped = if abrupt { old.kill().await } else { old.stop(true).await };
         if let Err(error) = stopped {
             panic!("the node did not stop for its restart, so the soak ends rather than start beside it: {error:#}");
-        }
-        if let Err(error) = log_quiet(&self.durable.cfg.node.log_dir).await {
-            panic!("the stopped node's log did not settle, so the soak ends rather than start beside it: {error:#}");
         }
         let down = stopping.elapsed();
         let listener = rebind(self.api).await;

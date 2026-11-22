@@ -142,6 +142,20 @@ impl Shared {
     }
 }
 
+/// Whether the sync thread has ended, for a test that must not reopen the log beside it: a dropped
+/// sequencer leaves the thread to write the batches already queued to it.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct SyncEnd(Arc<Shared>);
+
+#[cfg(test)]
+impl SyncEnd {
+    /// Whether the thread has returned: nothing it was handed is still being written.
+    pub(crate) fn ended(&self) -> bool {
+        self.0.closed.load(Ordering::Acquire)
+    }
+}
+
 /// The sync thread and the batches waiting on it.
 pub(super) struct Pipeline {
     jobs: Sender<Arc<SyncJob>>,
@@ -273,6 +287,12 @@ impl Sequencer {
         self.pipeline = Some(Pipeline::start()?);
         self.log.defer_seals();
         Ok(())
+    }
+
+    /// The sync thread's end, which `SyncEnd::ended` reports; `None` before `pipeline_log_syncs`.
+    #[cfg(test)]
+    pub(crate) fn log_sync_end(&self) -> Option<SyncEnd> {
+        self.pipeline.as_ref().map(|pipeline| SyncEnd(pipeline.shared.clone()))
     }
 
     /// `pipeline_log_syncs` with `sync` doing each job's sync.
