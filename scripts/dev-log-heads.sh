@@ -155,6 +155,14 @@ for port in "$rpc_a_port" "$rpc_b_port" "$rpc_c_port"; do
   done
 done
 
+# How often the poster reads the posted head back, which is how soon it sees an overtaking head (the
+# default is 30 s). Leg 4 waits for the freeze that read causes: up to one read interval after the post,
+# plus the read itself, bounded by `checkpoints.rpc_timeout` (5 s), plus a margin for a slow runner.
+read_interval_secs=2
+rpc_timeout_secs=5
+freeze_margin_secs=10
+freeze_wait_secs=$((read_interval_secs + rpc_timeout_secs + freeze_margin_secs))
+
 step "Write the node's config: anvil.toml's rewrites plus [checkpoints] and [log_heads]"
 # Rewrite original config tokens once so destination ports cannot cascade into later matches.
 python3 - "$root/config/anvil.toml" "$work" "$rpc_a_port" "$rpc_b_port" "$rpc_c_port" "$api_port" "$metrics_port" >"$work/anvil.toml" <<'PY_CONFIG'
@@ -184,12 +192,13 @@ cat >> "$work/anvil.toml" <<CONFIG
 rpc_url = "http://127.0.0.1:$anvil_port"
 relayer = "$checkpoint_relayer"
 retry_interval = "2s"
-rpc_timeout = "5s"
+rpc_timeout = "${rpc_timeout_secs}s"
 
 [log_heads]
 contract = "$logheads"
 relayer = "$heads_relayer"
 interval = "10s"
+read_interval = "${read_interval_secs}s"
 CONFIG
 for edit in "127.0.0.1:$api_port" "127.0.0.1:$metrics_port" "$work/log" "segment_commands = 2" "[log_heads]" "$logheads"; do
   grep -qF "$edit" "$work/anvil.toml" || fail "config edit missing: $edit"
@@ -364,13 +373,13 @@ signature="$(cast wallet sign --no-hash --private-key "$mock_key" "$digest")"
 cast send "$logheads" "post(uint64,bytes32,uint64,bytes32,bytes)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link" "$signature" \
   --private-key "$junk_relayer_key" --rpc-url "$rpc" >/dev/null
 # The poster reads at a majority-agreed latest block: the overtaking head is visible to its next
-# read without advancing the chain.
+# read, at most `read_interval_secs` away, without advancing the chain.
 frozen=""
-for _ in $(seq 1 150); do
+for _ in $(seq 1 $((freeze_wait_secs * 5))); do
   kill -0 "$node_pid" 2>/dev/null || { frozen=yes; break; }
   sleep 0.2
 done
-[[ -n "$frozen" ]] || fail "the node did not stop after the overtaking head"
+[[ -n "$frozen" ]] || fail "the node did not stop within ${freeze_wait_secs}s of the overtaking head"
 if wait "$node_pid"; then fail "the frozen node exited zero"; fi
 node_pid=""
 grep -q 'alert="log_rollback"' "$work/node4.log" || fail "no Critical log_rollback in the freeze: $(tail -n 5 "$work/node4.log")"
