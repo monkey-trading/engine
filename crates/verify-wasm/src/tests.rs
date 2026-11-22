@@ -78,6 +78,31 @@ fn an_attestation_fails_with_the_verifiers_message_and_without_the_extra_root() 
 }
 
 #[test]
+fn reports_of_versions_5_and_6_verify_and_version_7_is_refused() {
+    let enclave = enclave();
+    let chain = test_chain(enclave.chip_id, REPORTED_TCB);
+    let verify = |quote: &[u8]| {
+        let attestation = serde_json::to_string(&engine_verify::fixtures::attestation(&enclave.bundle, quote)).unwrap();
+        verify_attestation(&attestation, vec![release_toml()], &collateral(&chain), NOW_MS, Some(pem(&chain.ark)))
+    };
+    for version in [5, 6] {
+        let quote = forged_report_at(&chain, version, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
+        let verified = verify(&quote).unwrap_or_else(|err| panic!("version {version}: {err}"));
+        assert_eq!(verified.release_name.as_deref(), Some("test-release-v1"), "version {version}");
+    }
+    let mut quote = forged_report_at(&chain, 6, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
+    quote[0x00..0x04].copy_from_slice(&7u32.to_le_bytes());
+    sign_report(&chain, &mut quote);
+    assert_eq!(
+        verify(&quote).err().as_deref(),
+        Some(
+            "the quote is not an SEV-SNP attestation report; a mock quote never verifies: \
+             unsupported attestation report version 7, want 2 to 6"
+        )
+    );
+}
+
+#[test]
 fn a_mock_attestation_reads_only_through_the_mock_entry_point_and_says_so() {
     let (_chain, enclave, attestation) = fixtures();
     let mut mock_quote = engine_verify::MOCK_QUOTE_MARKER.to_vec();

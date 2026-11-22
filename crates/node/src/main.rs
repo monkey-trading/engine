@@ -73,8 +73,8 @@ enum Cmd {
         /// The release manifest each `--attestation` verifies against, in the same order.
         #[arg(long, requires = "attestation")]
         release: Vec<PathBuf>,
-        /// The vendor processor name for the certificate chain, as the vendor publishes it
-        /// (the CPU generation's codename, for example Milan or Genoa; Turin is not supported yet).
+        /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo
+        /// or Siena processor (Turin is not supported yet).
         #[arg(long, requires = "attestation")]
         processor: Option<String>,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.
@@ -135,8 +135,8 @@ enum Cmd {
         /// The release manifest of measurements and configuration hashes.
         #[arg(short, long)]
         release: PathBuf,
-        /// The vendor processor name for the certificate chain, as the vendor publishes it
-        /// (the CPU generation's codename, for example Milan or Genoa; Turin is not supported yet).
+        /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo
+        /// or Siena processor (Turin is not supported yet).
         #[arg(long)]
         processor: String,
         /// The vendor key-distribution service's base URL; the vendor's service unless overridden.

@@ -1000,6 +1000,10 @@ Known limits:
 
 - The SEV-SNP sealing key, the hardware quotes exchanged in a handover and the image's Secure TSC
   launch are built to the firmware's guest interface, but have not yet run on SEV-SNP hardware.
+- A release sets its firmware floor only as a minimum of the reported firmware versions. The
+  verifier reads a report's mitigation vectors, which record the vulnerability fixes the host has
+  had the firmware verify, but requires none, so a fix that needs that host step rather than a
+  newer firmware version is not enforced.
 - With the mock enclave, the stand-in for the sealing key is derived from public values, so anyone
   can compute it.
 - Two copies of the current release that the host runs from copies of one disk can both open the

@@ -77,8 +77,9 @@ contact = "mailto:ops@example.com" # REPLACE
 
 [tee]
 provider = "configfs_tsm"
-# The codename of the host's CPU generation; the node relays that generation's vendor collateral.
-processor = "Genoa" # OWNER: the host's CPU generation
+# The vendor's product name for the host's certificate chain, whose collateral the node relays:
+# Milan, or Genoa for a Genoa, Bergamo or Siena host.
+processor = "Genoa" # OWNER: the host's product name
 
 [tee.sealing]
 dir = "/data/keys"

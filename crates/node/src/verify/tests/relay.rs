@@ -288,6 +288,24 @@ async fn the_relay_serves_the_collateral_it_fetched() {
 }
 
 #[tokio::test]
+async fn the_relay_serves_the_collateral_for_a_version_6_quote() {
+    // Current SEV firmware issues reports above version 2, keyed on the same chip id and reported TCB.
+    let enclave = enclave();
+    let chain = test_chain(enclave.chip_id, REPORTED_TCB);
+    let quote = forged_report_at(&chain, 6, LAUNCH_DIGEST, enclave.bundle.report_data(), enclave.chip_id);
+    let stub = kds_stub(&chain).await;
+    let attestation = engine_verify::fixtures::attestation(&enclave.bundle, &quote);
+    let relay = Relay::new(&tee(&stub.base, "12h"), &attestation).unwrap().unwrap();
+    let mut served = relay.served();
+
+    let task = tokio::spawn(relay.run());
+    let json =
+        timeout(Duration::from_secs(20), served.wait_for(Option::is_some)).await.unwrap().unwrap().clone().unwrap();
+    assert_eq!(RelayedCollateral::from_json(&json).unwrap().vcek, chain.vcek.der().to_vec());
+    task.abort();
+}
+
+#[tokio::test]
 async fn a_refresh_that_fails_its_checks_leaves_nothing_served_and_pages_stale() {
     let enclave = enclave();
     // The service answers with a VCEK for another chip, so the checks must refuse it.

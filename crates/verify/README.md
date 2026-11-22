@@ -15,10 +15,14 @@ dates. The crate performs no input or output, reads no clock and builds no C cod
 
 `verify_attestation` passes only if all of the following hold:
 
+- the report is of version 2 to 6, the versions of AMD's SEV-SNP firmware specification up to its
+  revision 1.59, and from version 3, which names the processor, comes from CPUID family 19h (Milan,
+  Genoa, Bergamo or Siena), the only family whose security-version layout the crate reads;
 - the report's certificate chain leads to a vendor root that is compiled into the binary;
 - the chip's certificate (the VCEK) matches the report's chip id and reported security version;
 - the root's revocation list is current and does not revoke the intermediate certificate;
-- the chip's certificate signed the report, and the report data binds the bundle the server serves;
+- the report names the VCEK as its signing key and the VCEK signed it, and the report data binds
+  the bundle the server serves;
 - a release in the list admits the report by its launch measurement, guest policy, minimum security
   version and configuration hashes.
 

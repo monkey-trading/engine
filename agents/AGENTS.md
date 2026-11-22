@@ -160,12 +160,14 @@ an index: load only the rule whose hint matches the current action.
   received), `FrameVerifier` (`verify_text` for a frame's JSON), the `SignedFrame` envelope, and
   known-answer vectors (`tests/vectors.json`) the browser verifier replays. No IO and no runtime.
 - **crates/verify/** — `engine-verify`: SEV-SNP attestation verification against a list of release
-  manifests, each of which must launch with Secure TSC (`guest_features`), with the attestation,
-  collateral, extra root, and time passed in (no IO, no clock, no
-  C code); names the release that admitted the quote and the validity window of the dates it
-  checked. Signatures on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384
-  only). Holds the attestation and bundle types the node builds, the relayed collateral document,
-  the pinned vendor roots, and, behind `test-fixtures`, the stand-in vendor chain the node's tests
+  manifests, each of which must launch with Secure TSC (`guest_features`), of report versions 2 to 6
+  (`report.rs`, after the firmware ABI's revision 1.59: from version 3 a CPUID family of 19h, from
+  version 5 the mitigation vectors read but not required, and the VCEK as the signing key), with
+  the attestation, collateral, extra root, and time passed in (no IO, no clock, no C code); names
+  the release that admitted the quote and the validity window of the dates it checked. Signatures
+  on RustCrypto (`p384`, `rsa`: RSASSA-PSS/SHA-384 and ECDSA P-384/SHA-384 only). Holds the
+  attestation and bundle types the node builds, the relayed collateral document, the pinned vendor
+  roots, and, behind `test-fixtures`, the stand-in vendor chain the node's tests
   and `examples/verifier_fixtures.rs` use.
 - **crates/verify-wasm/** — `engine-verify-wasm`: `engine-verify` and `engine-wire` built for
   browsers with wasm-bindgen (`verifyAttestation`, the development-only `verifyMockAttestation`,
@@ -1027,8 +1029,9 @@ an index: load only the rule whose hint matches the current action.
   `snp-host-check.sh`, which checks without changing anything that a host can launch the image as an
   SEV-SNP guest with Secure TSC, `snp-launch.sh`, which launches the image as one with
   `measurement.json`'s flags, `snp-local-chain.sh`, which deploys a guest's vault on a local Anvil
-  chain reached over TLS, names its release and installs its attested key, and `snp-bench-guest.sh`,
-  which builds the benchmark guest and runs the same benchmarks on the host, with
+  chain reached over TLS, names its release and installs its attested key, writing the guest's
+  config with `snp-node-config.py`, which `engine-node`'s `tests/snp_guest_config.rs` loads, and
+  `snp-bench-guest.sh`, which builds the benchmark guest and runs the same benchmarks on the host, with
   `snp-host-check-test.sh` and `snp-launch-test.sh` testing the first two on fixtures.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, a webhook
@@ -1068,7 +1071,7 @@ an index: load only the rule whose hint matches the current action.
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots and member snapshot start), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
-  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the browser verifier
+  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
@@ -1562,7 +1565,8 @@ Run from the repo root:
 - SEV-SNP host: `sudo scripts/snp-host-check.sh` checks a host before a launch, and
   `scripts/snp-launch.sh [--dry-run] <image-dir> <data-disk>` launches the image as an SEV-SNP guest
   (`ops/runbooks/sev-snp-host.md`); their fixture tests are `scripts/snp-host-check-test.sh` and
-  `scripts/snp-launch-test.sh` (need only `python3`, `jq` and `sha256sum`)
+  `scripts/snp-launch-test.sh` (need only `python3`, `jq` and `sha256sum`), and the guest config
+  `scripts/snp-local-chain.sh` writes loads in `cargo test -p engine-node --test snp_guest_config`
 - Review-delta script tests: `agents/skills/agent-code-review/scripts/review-delta-test.sh` (builds
   a scratch git repository; needs only `git`, `sed`, and `diff`)
 - Merge approval gate tests: `scripts/check-merge-approved-test.sh` (stubs the GitHub API; needs

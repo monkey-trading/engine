@@ -58,11 +58,13 @@ says, and change the step once the server has answered it.
   measured reported a firmware version below that service's minimum. Read the version that the
   host reports in [Check SEV-SNP on the host](#check-sev-snp-on-the-host), and compare it with
   AMD's latest SEV security bulletin for the processor.
-- **`engine verify-attestation` reads attestation reports of versions 2 and 3 only.** Newer SEV
-  firmware can issue versions 5 and 6, which add fields after those the verifier reads. Whether
-  this server's firmware issues a version the verifier reads is **UNVERIFIED**:
-  [Verify each guest's attestation](#verify-each-guests-attestation) prints it. A later version
-  needs a change to the verifier before the attestation can verify.
+- **`engine verify-attestation` reads attestation reports of versions 2 to 6,** the versions that
+  SEV firmware issues up to revision 1.59 of AMD's firmware specification, and refuses any later
+  one. From version 3 a report names the processor's CPUID family, and the verifier refuses every
+  family but 19h, which covers Milan, Genoa, Bergamo and Siena. It also refuses a report signed
+  with a VLEK or with the chip-secret VCEK, because only the VCEK that AMD's key distribution
+  service issues can be checked. [Verify each guest's attestation](#verify-each-guests-attestation)
+  prints the version and the family.
 - **A guest with real attestation reaches the chain only over HTTPS, with a certificate that a
   public authority issued.** The trading server refuses plain HTTP to any address other than its own
   loopback, and it trusts only the public roots compiled into it. The local chain therefore sits
@@ -449,21 +451,23 @@ report data's binding of the enclave address, the configuration and the TLS key.
      curl -sk https://127.0.0.1:${spec#*:}/v1/attestation > $SNP/$guest/attestation.json
      jq -r .quote $SNP/$guest/attestation.json | cut -c3- | xxd -r -p > $report
      echo "$guest version $(xxd -p -l 4 $report) policy $(xxd -p -s 0x08 -l 8 $report)"
-     echo "$guest reported TCB $(xxd -p -s 0x180 -l 8 $report)"
+     echo "$guest reported TCB $(xxd -p -s 0x180 -l 8 $report) CPUID $(xxd -p -s 0x188 -l 3 $report)"
      echo "$guest digest $(xxd -p -s 0x90 -l 48 $report | tr -d '\n')"
    done
    jq -r .launch_digest $SNP/image-dev/measurement.json
    ```
 
-   For each guest, the version is `02000000` or `03000000`, the policy is `0000030000000000`, and
-   the digest equals the last line, which is `measurement.json`'s `launch_digest`. Record the
-   reported TCB. Its bytes are, in order, the boot loader, the TEE, four reserved bytes, the SNP
-   firmware and the microcode security versions.
+   For each guest, the version is one of `02000000` to `06000000`, the policy is
+   `0000030000000000`, and the digest equals the last line, which is `measurement.json`'s
+   `launch_digest`. Record the reported TCB. Its bytes are, in order, the boot loader, the TEE, four
+   reserved bytes, the SNP firmware and the microcode security versions. Record the CPUID bytes,
+   which are the processor's family, model and stepping from version `03000000` and zero before it.
+   The family byte is `19`.
 
-   **UNVERIFIED: the report version and the digest.** A version of `05000000` or `06000000` is
-   refused by today's verifier, which needs a change before step 3 can pass. A digest that differs
-   from `measurement.json` means that `sev-snp-measure` and this QEMU disagree about the launch.
-   Record both values and stop.
+   **UNVERIFIED: the report version, the family and the digest.** The verifier refuses a version
+   above `06000000`, and a family byte other than `19`, and needs a change before step 3 can pass.
+   A digest that differs from `measurement.json` means that `sev-snp-measure` and this QEMU disagree
+   about the launch. Record the values and stop.
 
 3. Run the verifier for each guest:
 
@@ -670,7 +674,8 @@ Escalate to the owner, with the step and its output, when any of these holds:
 
 - the processor reports no Secure TSC, or the BIOS cannot enable SEV-SNP and OVHcloud will not;
 - the SEV firmware is below AMD's minimum, and OVHcloud has no BIOS update that raises it;
-- a report's version is above 3, or its digest differs from `measurement.json`;
+- a report's version is above 6, its CPUID family is not 19h, or its digest differs from
+  `measurement.json`;
 - a guest stops with `clocksource_unprotected`.
 
 ## Sources
@@ -710,5 +715,11 @@ Each source was read on 2026-11-22.
   https://packages.ubuntu.com/resolute/qemu-system-x86
 - virtee `snpguest`, which fetches Siena's and Bergamo's certificates under the name `Genoa`:
   https://github.com/virtee/snpguest/blob/main/src/fetch.rs
+- AMD, the SEV Secure Nested Paging Firmware ABI Specification, publication 56860, revision 1.59
+  (August 2026), whose Table 27 defines the attestation report of version 6 and the fields that
+  versions 3 and 5 added: https://docs.amd.com/v/u/en-US/56860_PUB_SEV_SNP
+- Google `go-sev-guest`, which reads the version-4 reports that SEV firmware 1.55.31 issues with
+  version 3's layout:
+  https://github.com/google/go-sev-guest/commit/b8d75ce2a7d4891d9e36e3dba4071f41ea7e73cd
 - virtee `sev`, which reads attestation reports of versions 2, 3, 5 and 6:
   https://github.com/virtee/sev/blob/main/src/firmware/guest/types/snp.rs

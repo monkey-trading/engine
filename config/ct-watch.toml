@@ -40,7 +40,8 @@ log_stale_after = "1h"
 url = "https://api.example.com"
 # The release manifest the attestation is verified against (see `engine verify-attestation`).
 release = "release.toml"
-# The vendor processor name for the quote's certificate chain, such as Milan or Genoa.
+# The vendor's product name for the quote's certificate chain: Milan, or Genoa for a Genoa, Bergamo
+# or Siena processor.
 processor = "Milan"
 # kds = "https://kdsintf.amd.com"   # the vendor key-distribution service; this is the default
 # root = "extra-root.pem"           # an extra root to pin the quote's chain, for test chains only
