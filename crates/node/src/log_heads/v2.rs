@@ -50,6 +50,7 @@ const MIN_READ_EVERY: Duration = Duration::from_millis(100);
 /// as the agreed block may still trail the boundary: every `BOUNDARY_READ_EVERY`, from when true time may
 /// have reached the boundary until it has certainly passed it by this much.
 const BOUNDARY_SEARCH_MS: Millis = 30_000;
+/// How often the poster reads from a boundary while it searches.
 const BOUNDARY_READ_EVERY: Duration = Duration::from_secs(1);
 
 /// What a head is signed under: live, or held through one of the two stops a heartbeat continues
@@ -184,11 +185,15 @@ pub(crate) struct BoundaryReads {
 impl BoundaryReads {
     /// Waits for the next read due from a turn's boundary as the latest trusted time sample places it, on
     /// monotonic time, whatever the host clock reads: from when true time may have reached the boundary, on
-    /// a monotonic clock running up to `MAX_SLOW_PPM` slow, every `BOUNDARY_READ_EVERY` until it has
-    /// certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
+    /// a monotonic clock running up to `MAX_SLOW_PPM` slow or as fast, every `BOUNDARY_READ_EVERY` until it
+    /// has certainly passed it by `BOUNDARY_SEARCH_MS`, then from the next boundary. Never completes without
     /// `trusted`, nor before its first sample.
     pub(crate) async fn next(&mut self, trusted: Option<&TrustedClock>) -> Instant {
-        let bounds = trusted.and_then(|trusted| trusted.reached_ms().zip(trusted.upper_bound_ms(MAX_SLOW_PPM)));
+        let bounds = trusted.and_then(|trusted| {
+            let (plain, widened) = (trusted.since_sample_ms()?, trusted.upper_bound_ms(MAX_SLOW_PPM)?);
+            // The lower bound narrowed by as much, for a clock running as fast.
+            Some((trusted.reached_ms()?.saturating_sub(widened - plain), widened))
+        });
         let Some((earliest, latest)) = bounds else { return std::future::pending().await };
         let now = Instant::now();
         // The latest boundary true time may have reached, and whether it may still be in the search after it.

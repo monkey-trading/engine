@@ -34,8 +34,9 @@ struct FakeState {
     posts_v2: Vec<(u64, HeadV2)>,
     /// When each v2 head was posted, by the runtime's clock.
     posted_v2_at: Vec<tokio::time::Instant>,
-    /// How long each turn read takes, and how many there were.
+    /// How long each turn read takes.
     turn_latency: std::time::Duration,
+    /// How many turn reads there were.
     turn_reads: usize,
     /// Refuse every v2 send, as an endpoint that cannot pay for gas would.
     fail_v2: bool,

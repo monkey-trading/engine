@@ -123,9 +123,9 @@ async fn on_an_empty_log_the_first_read_comes_at_the_first_release() {
 /// At the first turn after none named the operator, the poster reads the chain from the turn's boundary as
 /// trusted time places it, whatever the phase of its 30 s reads and the host clock's offset, and sends the
 /// turn's first head at the first read once the agreed block names the turn and a member has confirmed the
-/// log, though it sent a v1 head just before: within half an interval of the boundary under the tightest rule
-/// at 49 s slots, the block or the confirmation a few seconds late or not. Its reads from the boundary end
-/// there, and the next head goes out half an interval after the first.
+/// log, though it sent a v1 head, already included, just before: within half an interval of the boundary
+/// under the tightest rule at 49 s slots, the block or the confirmation a few seconds late or not. Its reads
+/// from the boundary end there, and the next head goes out half an interval after the first.
 #[tokio::test(start_paused = true)]
 async fn a_new_turns_first_head_goes_out_from_its_boundary_within_half_an_interval() {
     let boundary = engine_core::turns::boundary(turn(GENERATION).turn).expect("the turn has a boundary");
@@ -212,33 +212,36 @@ async fn a_first_head_held_back_on_a_read_tick_goes_out_at_the_next_tick() {
     assert_eq!(first, Some(tick), "held back at the start's read, sent at the next tick");
 }
 
-/// A day with no fresh trusted time sample, on a monotonic clock running the 500 ppm slow the liveness rule
-/// allows, leaves the sample's bounds 43.2 s behind true time: the poster still reads from the boundary before
-/// true time reaches it, from the bound widened for that drift, and sends the turn's first head at once.
+/// A day with no fresh trusted time sample, on a monotonic clock running the 500 ppm the liveness rule allows,
+/// leaves the sample's bounds 43.2 s off true time: slow, behind it, and fast, ahead of it. The poster still
+/// reads from the boundary from before true time reaches it until after it, by the bounds widened for that
+/// drift, and sends the turn's first head as soon as the turn is named.
 #[tokio::test(start_paused = true)]
-async fn a_day_old_sample_on_a_slow_monotonic_clock_still_reads_from_the_boundary() {
+async fn a_day_old_sample_on_a_drifting_monotonic_clock_still_reads_from_the_boundary() {
     let boundary = engine_core::turns::boundary(turn(GENERATION).turn).expect("the turn has a boundary");
-    let (day, drift) = (Duration::from_secs(86_400), 43_200);
-    let chain = FakeChain::new(None);
-    let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
-    let start = boundary - 86_400_000 - 10_000;
-    let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), (start, drift));
-    drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
-    drive.release(1);
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    // A day on, 10 s before the boundary; a release wakes the poster to place it again.
-    drive.clock.advance(day - Duration::from_secs(1));
-    drive.release(2);
-    pass(&drive, 10).await;
-    chain.name_turn(turn(GENERATION));
-    chain.change_turn(|turn| turn.interval = TIGHTEST_INTERVAL);
-    drive.release(3);
-    drive.confirm(3, 0xc1);
-    let named = tokio::time::Instant::now();
-    pass(&drive, 3).await;
-    let first = chain.posted_v2_at().first().map(|at| *at - named);
-    drive.stop().await;
-    assert!(first.is_some_and(|first| first <= Duration::from_secs(1)), "{first:?} after the turn was named");
+    let day = Duration::from_secs(86_400);
+    for (clock, drift) in [("slow", 43_200), ("fast", -43_200)] {
+        let chain = FakeChain::new(None);
+        let keys: HeldKeys = Arc::new(|| (RELEASE, GENERATION));
+        let start = boundary - 86_400_000 - 10_000;
+        let drive = spawn_retrying_at(chain.clone(), Some(keys), Duration::from_secs(30), (start, drift));
+        drive.signing.send_replace(Signing::Tip(None, boundary.unsigned_abs()));
+        drive.release(1);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        // A day on, 10 s before the boundary; a release wakes the poster to place it again.
+        drive.clock.advance(day - Duration::from_secs(1));
+        drive.release(2);
+        pass(&drive, 10).await;
+        chain.name_turn(turn(GENERATION));
+        chain.change_turn(|turn| turn.interval = TIGHTEST_INTERVAL);
+        drive.release(3);
+        drive.confirm(3, 0xc1);
+        let named = tokio::time::Instant::now();
+        pass(&drive, 3).await;
+        let first = chain.posted_v2_at().first().map(|at| *at - named);
+        drive.stop().await;
+        assert!(first.is_some_and(|first| first <= Duration::from_secs(1)), "{clock}: {first:?} after the turn");
+    }
 }
 
 /// Where no turn names the operator from a boundary, the poster reads the chain every second from when true

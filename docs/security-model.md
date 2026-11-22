@@ -1255,10 +1255,11 @@ first head under its assignment must land within the take window, at least two s
 first head still leaves the next in time. At the first turn after none named the operator, the
 trading server reads the chain every second from the moment its latest trusted time sample allows
 that true time has reached the turn's boundary, on a monotonic clock running up to 500 parts per
-million slow and whatever the host clock reads, until true time has certainly passed the boundary
-by 30 seconds or the turn's first head has gone out. A head it posted
-before the turn does not hold that head back: it goes out at the first of those reads after the
-chain names the turn and a member has confirmed the log. Under the tightest rule at 49-second
+million slow or fast and whatever the host clock reads, until true time has certainly passed the boundary
+by 30 seconds or the turn's first head has gone out. The pace of a head it posted before the turn
+does not hold that head back: it goes out at the first of those reads after the chain names the turn
+and a member has confirmed the log, once any send the relayer still has pending from before the
+turn has landed, as the next paragraph bounds it. Under the tightest rule at 49-second
 slots, that is within half an interval of the boundary unless the agreed block and the confirmation
 together trail the boundary by about 23 seconds. A first head 30 seconds and a read after the
 boundary that then failed would, under an interval shorter than 90 seconds with a tolerance near

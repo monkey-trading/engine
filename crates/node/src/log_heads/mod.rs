@@ -241,7 +241,7 @@ impl<R: HeadsChain> Poster<R> {
         let trusted = self.heartbeat.as_ref().map(|heartbeat| &heartbeat.trusted);
         let (mut boundary, mut first_head_due) = (v2::BoundaryReads::default(), false);
         // When the last v2 head was sent, which alone paces the next: a v1 head sent just before a turn's start
-        // holds none back.
+        // holds none back by this pace, only at the relayer until its send lands (`PostOutcome::Waiting`).
         let mut posted_v2_at: Option<tokio::time::Instant> = None;
         loop {
             // A release only extends the evidence; reads run on the retry cadence, whatever the
