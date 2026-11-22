@@ -59,6 +59,9 @@ const LATER_MS: Millis = 600_000;
 /// The version before `V82`, which holds a listed market's calendar to a seven-day notice: a test that
 /// shuts a market at once, to stand in for a venue's close mid-stream, runs under it.
 const BEFORE_CALENDAR_NOTICE: ProtocolVersion = ProtocolVersion::V81;
+/// The version before `V87`, which holds a futures market's contracts to a seven-day notice: a test that
+/// brings a roll forward at once, to stand in for a roll time reached mid-stream, runs under it.
+const BEFORE_CONTRACT_NOTICE: ProtocolVersion = ProtocolVersion::V86;
 
 #[tokio::test]
 async fn quotes_stamped_while_a_market_is_closed_are_held_back_without_a_silence_alert() {
@@ -176,7 +179,8 @@ async fn contracts_the_market_does_not_take_are_held_back_without_an_alert() {
         ];
         MarketSpec { schedule: around_the_clock(None), contracts, ..listing(US500) }
     };
-    let node = Node::boot("roll", &genesis(vec![listing(AAPL), futures(start + LATER_MS)])).await;
+    let node =
+        Node::boot_at("roll", &genesis(vec![listing(AAPL), futures(start + LATER_MS)]), BEFORE_CONTRACT_NOTICE).await;
     let applied = node.record();
     let symbols = [(US500, "ESZ6", Some("ESZ6")), (US500, "ESH7", Some("ESH7")), (US500, "ESM7", Some("ESM7"))];
     start_venue(&node, Venue::Kraken, &symbols).await;

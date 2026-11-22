@@ -260,9 +260,9 @@ venues disagree, or when executions look wrong.
 
    **Do not widen `max_divergence_bps`, or change a market's price rules, during an incident.** They
    are protocol parameters, and changing them is the owner's decision, with a notice period that the
-   engine enforces. Looser price rules apply only seven days after a listing notice, given with
-   `announce-listing --price-rules-from`, or after a vote, and never beyond the market's launch
-   rules.
+   engine enforces. Price rules, tighter or looser, apply only seven days after a listing notice,
+   given with `announce-listing --price-rules-from`, or after a vote, whether or not the market is
+   reduce-only, and looser ones never beyond the market's launch rules.
 
 A market's spread bands and margin bands change only seven days after a listing notice given with
 `announce-listing`, and only within the market's launch bands. During an incident, you therefore

@@ -137,6 +137,7 @@ fn doubled_bands_and_a_lowered_ceiling_each_re_key_the_levels_they_bring_into_re
         weekend_margin_bps: None,
         price_rules: None,
         min_level_distance_bps: None,
+        contracts: None,
         effective_at: doubled_at,
     };
     assert!(h.operate(AdminCommand::AnnounceListing { market: BTC, notice }).contains(&Event::AdminApplied));

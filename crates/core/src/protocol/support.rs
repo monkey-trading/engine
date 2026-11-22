@@ -4,7 +4,7 @@ use crate::protocol::ProtocolVersion;
 
 impl ProtocolVersion {
     /// The newest version this build implements.
-    pub const LATEST: ProtocolVersion = ProtocolVersion::V86;
+    pub const LATEST: ProtocolVersion = ProtocolVersion::V87;
 
     /// Whether access screening applies; the standalone legacy V25 rules predate access.
     pub fn supports_access(self) -> bool {

@@ -3,8 +3,8 @@
 //! price an FX pair from both, and an index and a commodity from front futures contracts and a US
 //! share from Massive alone, through the sequencer.
 //! The share's market is closed while the vendors start quoting it; once setup is done, a signed
-//! relisting opens it two seconds on, and another rolls the index onto its next contract. The log
-//! then replays with `engine replay`'s checks.
+//! relisting opens it two seconds on, and another adds the index's next contract, rolling in half a
+//! second on, after its last. The log then replays with `engine replay`'s checks.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -44,8 +44,9 @@ async fn dev_scenario_rwa_price_feeds() {
     let open_at = Arc::new(AtomicI64::new(start + LATER_MS));
     let apple =
         |open: Millis| MarketSpec { schedule: around_the_clock(Some((start - 60_000, open))), ..one_vendor(AAPL) };
-    let us500 = |roll_at: Millis| {
-        let contracts = vec![contract("ESZ6", start - 86_400_000), contract("ESH7", roll_at)];
+    let us500 = |roll_at: Option<Millis>| {
+        let next = roll_at.map(|roll_at| contract("ESH7", roll_at));
+        let contracts = [Some(contract("ESZ6", start - 86_400_000)), next].into_iter().flatten().collect();
         MarketSpec { schedule: around_the_clock(None), contracts, ..one_vendor(US500) }
     };
     let gold = MarketSpec {
@@ -54,7 +55,7 @@ async fn dev_scenario_rwa_price_feeds() {
         ..one_vendor(GOLD)
     };
     let eurusd = MarketSpec { schedule: around_the_clock(None), ..listing(EURUSD) };
-    let genesis = genesis(vec![eurusd, us500(start + LATER_MS), gold, apple(start + LATER_MS)]);
+    let genesis = genesis(vec![eurusd, us500(None), gold, apple(start + LATER_MS)]);
     let mut node = Node::boot("rwa", &genesis).await;
     let applied = node.record();
     let vendors = start_vendors(&node, &open_at).await;
@@ -80,7 +81,7 @@ async fn dev_scenario_rwa_price_feeds() {
     assert!(priced(&applied, AAPL).iter().all(|(ts, _)| *ts >= opens), "Apple priced before its open");
 
     // US 500 rolls onto March, 40 above December, without its index moving.
-    node.relist(us500(now_ms() + 500)).await;
+    node.relist(us500(Some(now_ms() + 500))).await;
     let rolled = Event::MarketRolled { market: US500, contract: "ESH7".into(), adjustment: "-40".parse().unwrap() };
     wait_for(WAIT, || events_of(&applied).contains(&rolled).then_some(())).await;
     assert_eq!(fill_index(&node.buy(US500, "6000.5").await), Some("6000.5".parse().unwrap()));

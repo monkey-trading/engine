@@ -63,6 +63,7 @@ pub(crate) fn session(h: &mut Harness) {
         price_rules: None,
         effective_at: h.ts + NOTICE_MS,
         min_level_distance_bps: None,
+        contracts: None,
     };
     refused(&h.operate_as(TURN_SEED, AdminCommand::AnnounceListing { market: AAPL, notice }));
     h.advance(NOTICE_MS);

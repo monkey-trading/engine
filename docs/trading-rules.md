@@ -28,7 +28,10 @@ A market can be traded only during its exchange's trading hours, and a quote rec
 hours never sets its price. Index and commodity markets are priced from their front-month futures
 contract. Massive is the only source for these markets, so they have no price while Massive is
 unavailable, and no second source checks a Massive quote. When the contract rolls to the next month, the engine adds the price gap between the two
-contracts, so that the roll does not move the market's price.
+contracts, so that the roll does not move the market's price. If a contract stops being quoted before that gap has
+been measured, the market has no price until the contract has had none for seven days, closed hours included, while
+the next contract is listed, counted again from each change of the next contract. It then rolls at the next
+contract's first quote past its roll time, with its price continuing from its last price.
 
 Accounts are held in US dollars. JP225 is quoted in yen, and its profits and losses are converted at
 the engine's own USD-JPY price. JP225 therefore has no price whenever USD-JPY has none.
@@ -336,9 +339,10 @@ splits, and can suspend new positions in one market or in all of them. No operat
 prevent you from reducing or closing a position in a market that is open and has a price. Every
 operator action is a signed instruction in the public log.
 
-The profit fee, spreads, margins, financing markups, stress settings, volume tiers and weekend
-margins can change only after seven days' public notice. Some of them can also change only within
-limits set at launch:
+The profit fee, spreads, margins, financing markups, stress settings, volume tiers, weekend margins,
+each market's minimum venues, quote age and divergence limit, and the futures contracts a market rolls
+through can change only after seven days' public notice, though a later futures contract can be added
+at once. Some of them can also change only within limits set at launch:
 
 - the base profit fee can rise to at most one and a half times its launch rate, and never fall below
   it;

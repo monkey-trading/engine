@@ -205,9 +205,21 @@ processes. The bounds are:
 - The daily rollover time moves only after seven days' notice. A new rollover time keeps the
   rollover already due. Each rollover charges one day's financing for each day of sequenced time
   since the previous rollover, and financing charged faster than this is in scope.
-- A listed market's price rules are loosened only after seven days' notice, and never beyond the
-  market's launch rules. Tighter price rules apply at once. Price rules loosened beyond these bounds
-  are in scope.
+- A listed market's price rules change only after seven days' notice, tighter as well as looser and
+  whether or not the market is reduce-only, and are never loosened beyond the market's launch rules. A
+  change outside a vote with no notice, or price rules loosened beyond these bounds, is in scope.
+- A futures market's contracts, from the one it prices from on, change only after seven days' notice,
+  though a contract can be added after the last at once. A contract renamed, dropped or moved outside a
+  vote with no notice is in scope. A market with no gap recorded to its next contract rolls onto it
+  once its front contract has had no price for seven days, at the first command past the next
+  contract's roll time at which the next contract has a price, from the market's last mark, so the move
+  between the last mark and that price is never booked. The seven days count sequenced time, the
+  market's closed hours included, only while a next contract is listed, and start again whenever the
+  next contract changes. A front that stops being quoted before a gap is measured therefore leaves the
+  market without a price for at least seven days, and longer when the next contract is listed after
+  the front stops. While the front's venues quote it, a roll from the mark takes seven days in which
+  the front has had no price, closed hours included: an outage of those venues together with the
+  closed hours before, within and after it. A market rolled from its mark sooner is in scope.
 - A calendar change by the operator cannot close a listed market within seven days at any time its
   calendar in force has it open, whatever the market's weekend margin and whether or not it holds
   positions. The bound does not hold back a change that only adds trading hours, or one that closes

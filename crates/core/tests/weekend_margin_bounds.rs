@@ -277,6 +277,7 @@ fn notice(market: MarketId, weekend_margin_bps: i64, effective_at: Millis) -> Ad
         price_rules: None,
         effective_at,
         min_level_distance_bps: None,
+        contracts: None,
     };
     AdminCommand::AnnounceListing { market, notice }
 }

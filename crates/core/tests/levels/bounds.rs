@@ -76,6 +76,7 @@ fn a_distance_moves_only_by_a_notice_from_its_launch_value_to_twice_it_and_level
         weekend_margin_bps: None,
         price_rules: None,
         min_level_distance_bps: Some(bps),
+        contracts: None,
         effective_at,
     };
     let at = h.ts + NOTICE_MS;

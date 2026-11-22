@@ -513,4 +513,12 @@ pub enum ProtocolVersion {
     /// unrealised PnL at the marks without the closed positions, so each member is scored at the stress level its fill
     /// pays.
     V86,
+    /// A relisting changes a listed market's price rules, tighter as well as looser, and a futures market's
+    /// contracts from the one it prices from on, but for contracts added after the last, only as a listing notice
+    /// of at least seven days or a vote names them, whether or not the market is reduce-only or holds positions
+    /// (`listing_bounds`). A futures market with no gap recorded rolls once its front has had no index for seven
+    /// days while it has a next contract, counted afresh from each change of it, at the first command past that
+    /// contract's roll time at which it has an index, on the gap from the market's mark, so its index takes up from
+    /// the last mark (`futures`).
+    V87,
 }

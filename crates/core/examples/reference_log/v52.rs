@@ -81,6 +81,7 @@ pub(crate) fn session(h: &mut Harness) {
         price_rules: None,
         effective_at: due,
         min_level_distance_bps: None,
+        contracts: None,
     };
     refused(&sign(h, AdminCommand::AnnounceListing { market: BTC, notice: notice(scaled(3)) }));
     applied(&sign(h, AdminCommand::AnnounceListing { market: BTC, notice: notice(scaled(2)) }));

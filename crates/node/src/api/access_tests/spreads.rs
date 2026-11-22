@@ -316,6 +316,7 @@ async fn dev_scenario_every_fill_pays_its_spread_and_curves_move_only_after_noti
         price_rules: None,
         effective_at: due,
         min_level_distance_bps: None,
+        contracts: None,
     };
     operator.applies(&node, AdminCommand::AnnounceListing { market: BTC, notice }).await;
     node.move_time((NOTICE_MS - 1) as u64).await;
