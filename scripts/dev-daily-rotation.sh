@@ -38,6 +38,13 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$root/contracts" && forge build)
 
+# A failed test keeps its scratch directories, and each child node's `node.log` is in one, which a CI
+# runner discards. With SCENARIO_LOG_DIR set they go there, where the job uploads them.
+if [[ -n "${SCENARIO_LOG_DIR:-}" ]]; then
+  mkdir -p "$SCENARIO_LOG_DIR"
+  export TMPDIR="$SCENARIO_LOG_DIR"
+fi
+
 # Each test is bounded well under the CI job's 60 minutes (the longest passes in about 12), so a hang
 # fails that test by name, with the output it had printed, where the job's own timeout keeps none. The
 # tests are built first, so the bound covers the run and not the compile.
