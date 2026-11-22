@@ -491,6 +491,8 @@ fn read_batch(
 }
 
 #[cfg(test)]
+mod feed_tests;
+#[cfg(test)]
 mod notice_tests;
 #[cfg(test)]
 mod status_tests;
