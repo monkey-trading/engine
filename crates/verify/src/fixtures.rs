@@ -39,8 +39,8 @@ pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 2
 pub const COMMITTED_TCB: Tcb = Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 200 };
 /// The CPUID a report of version 3 or later carries: family 19h, model A0h, stepping 1.
 pub const CPUID: Cpuid = Cpuid { family: 0x19, model: 0xA0, stepping: 0x01 };
-/// The mitigation vectors a report of version 5 or later carries: one bit verified since launch and
-/// one since.
+/// The mitigation vectors a report of version 5 or later carries: bit 0 verified at launch, and bits
+/// 0 and 1 verified when the report was issued.
 pub const MITIGATION_VECTORS: MitigationVectors = MitigationVectors { launch: 0x1, current: 0x3 };
 
 /// A DER INTEGER extension value, the encoding the vendor signs: values with the high bit set

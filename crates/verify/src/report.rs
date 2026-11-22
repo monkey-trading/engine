@@ -382,8 +382,8 @@ mod tests {
 
     // ── Helpers ──
 
-    /// An unsigned report of `version` with the ECDSA P-384 algorithm and, from version 3, a family
-    /// 19h CPUID; every other byte zero.
+    /// An unsigned report of `version` with the ECDSA P-384 algorithm and a family 19h CPUID byte,
+    /// which version 2 does not read; every other byte zero.
     fn report_of(version: u32) -> Vec<u8> {
         let mut report = vec![0u8; REPORT_LEN];
         report[VERSION_OFFSET..VERSION_OFFSET + 4].copy_from_slice(&version.to_le_bytes());

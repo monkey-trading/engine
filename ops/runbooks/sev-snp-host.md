@@ -58,13 +58,17 @@ says, and change the step once the server has answered it.
   measured reported a firmware version below that service's minimum. Read the version that the
   host reports in [Check SEV-SNP on the host](#check-sev-snp-on-the-host), and compare it with
   AMD's latest SEV security bulletin for the processor.
-- **`engine verify-attestation` reads attestation reports of versions 2 to 6,** the versions that
-  SEV firmware issues up to revision 1.59 of AMD's firmware specification, and refuses any later
-  one. From version 3 a report names the processor's CPUID family, and the verifier refuses every
+- **`engine verify-attestation` reads attestation reports of versions 2 to 6, and refuses any
+  later one.** Revision 1.59 of AMD's firmware specification defines versions 2, 3, 5 and 6, and
+  the verifier reads the unpublished version 4, which SEV firmware 1.55.31 issues, as version 3.
+  From version 3 a report names the processor's CPUID family, and the verifier refuses every
   family but 19h, which covers Milan, Genoa, Bergamo and Siena. It also refuses a report signed
   with a VLEK or with the chip-secret VCEK, because only the VCEK that AMD's key distribution
   service issues can be checked. [Verify each guest's attestation](#verify-each-guests-attestation)
-  prints the version and the family.
+  prints the version and the family. A guest reads its own report before it opens its keys, so
+  firmware that issues a later version stops every guest at its next start. **Before a BIOS update
+  on a host that runs guests, check the SEV-SNP API version of the firmware it carries: above 1.59,
+  it may issue a report version that the release refuses.**
 - **A guest with real attestation reaches the chain only over HTTPS, with a certificate that a
   public authority issued.** The trading server refuses plain HTTP to any address other than its own
   loopback, and it trusts only the public roots compiled into it. The local chain therefore sits
@@ -461,11 +465,12 @@ report data's binding of the enclave address, the configuration and the TLS key.
    `0000030000000000`, and the digest equals the last line, which is `measurement.json`'s
    `launch_digest`. Record the reported TCB. Its bytes are, in order, the boot loader, the TEE, four
    reserved bytes, the SNP firmware and the microcode security versions. Record the CPUID bytes,
-   which are the processor's family, model and stepping from version `03000000` and zero before it.
-   The family byte is `19`.
+   which are the processor's family, model and stepping from version `03000000`, and zero before
+   it. From version `03000000` the family byte is `19`.
 
    **UNVERIFIED: the report version, the family and the digest.** The verifier refuses a version
-   above `06000000`, and a family byte other than `19`, and needs a change before step 3 can pass.
+   above `06000000`, and from version `03000000` a family byte other than `19`, and needs a change
+   before step 3 can pass.
    A digest that differs from `measurement.json` means that `sev-snp-measure` and this QEMU disagree
    about the launch. Record the values and stop.
 
@@ -674,8 +679,8 @@ Escalate to the owner, with the step and its output, when any of these holds:
 
 - the processor reports no Secure TSC, or the BIOS cannot enable SEV-SNP and OVHcloud will not;
 - the SEV firmware is below AMD's minimum, and OVHcloud has no BIOS update that raises it;
-- a report's version is above 6, its CPUID family is not 19h, or its digest differs from
-  `measurement.json`;
+- a report's version is above 6, a report from version 3 names a CPUID family other than 19h, or
+  a report's digest differs from `measurement.json`;
 - a guest stops with `clocksource_unprotected`.
 
 ## Sources

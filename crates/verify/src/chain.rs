@@ -131,7 +131,7 @@ impl QuoteChain {
     }
 
     /// Requires the VCEK's signed extensions to bind it to `report`: the struct version must be
-    /// the implemented 0 (Milan, Genoa, Siena), the hardware id to the quote's chip id, and each
+    /// the implemented 0 (Milan, Genoa, Bergamo, Siena), the hardware id to the quote's chip id, and each
     /// security patch level to the quote's reported TCB. A chain whose VCEK certifies another
     /// chip or TCB — one a mirror or a `--kds` override could serve from genuine vendor
     /// certificates — is refused here.
@@ -150,7 +150,7 @@ impl QuoteChain {
         let struct_version = integer(OID_STRUCT_VERSION, "struct version")?;
         ensure!(
             struct_version == 0,
-            "unsupported VCEK TCB struct version {struct_version}; only version 0 (Milan, Genoa, Siena) is implemented"
+            "unsupported VCEK TCB struct version {struct_version}; only version 0 (Milan, Genoa, Bergamo, Siena) is implemented"
         );
         let hwid = extension_hwid(extension(OID_HWID)?)?;
         ensure!(hwid == report.chip_id, "VCEK hardware id does not match the quote's chip id");
