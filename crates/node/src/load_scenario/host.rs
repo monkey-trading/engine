@@ -139,10 +139,10 @@ fn whole_disks(device: &Path, disks: &mut BTreeSet<String>) {
         .unwrap_or_default();
     if !slaves.is_empty() {
         slaves.iter().for_each(|slave| whole_disks(slave, disks));
-    } else if let Some(name) = device.file_name().map(|name| name.to_string_lossy().into_owned()) {
-        if !not_a_disk(&name) {
-            disks.insert(name);
-        }
+    } else if let Some(name) = device.file_name().map(|name| name.to_string_lossy().into_owned())
+        && !not_a_disk(&name)
+    {
+        disks.insert(name);
     }
 }
 

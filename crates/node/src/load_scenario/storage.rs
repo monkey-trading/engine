@@ -376,7 +376,8 @@ mod tests {
     #[test]
     fn a_cut_takes_what_the_disks_did_since_the_last_cut() {
         let shared = Shared::new(BTreeSet::new(), Instant::now());
-        let disks = |ops, bytes, busy| Some(Disks { ops, bytes, busy_ms: BTreeMap::from([("sda".to_owned(), busy)]) });
+        let disks =
+            |ops, bytes, busy| Some(Disks { ops, bytes, request_ms: BTreeMap::from([("sda".to_owned(), busy)]) });
         let host = |ops, bytes, busy| Waits { io_us: None, cpu_us: None, disks: disks(ops, bytes, busy) };
         let start = shared.blocks.lock().expect("the blocks").since;
         let first = shared.take(start + Duration::from_secs(24), host(1_000, 10_000, 500));
