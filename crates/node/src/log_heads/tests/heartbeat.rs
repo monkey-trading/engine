@@ -419,16 +419,21 @@ fn spawn_reading(chain: FakeChain, keys: Option<HeldKeys>) -> Drive {
 
 /// `spawn_reading`, reading every `retry` outside a turn.
 fn spawn_retrying(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration) -> Drive {
+    spawn_retrying_at(chain, keys, retry, TRUE_MS)
+}
+
+/// `spawn_retrying`, its clock and trusted time starting at `true_ms`.
+fn spawn_retrying_at(chain: FakeChain, keys: Option<HeldKeys>, retry: Duration, true_ms: Millis) -> Drive {
     let (tip, rx) = watch::channel(Head::default());
     let (released, released_rx) = watch::channel(Released::default());
     let (signing, signing_rx) = watch::channel(Signing::Nothing);
     let (hold, hold_rx) = watch::channel(Hold::Live);
     let (signed_tx, signed) = watch::channel(None);
-    let clock = Arc::new(TestClock::at(TRUE_MS));
+    let clock = Arc::new(TestClock::at(true_ms));
     let sample = Sample {
         at: crate::clock::Clock::instant(clock.as_ref()),
-        earliest_ms: TRUE_MS - 3_000,
-        latest_ms: TRUE_MS + 3_000,
+        earliest_ms: true_ms - 3_000,
+        latest_ms: true_ms + 3_000,
     };
     let trusted = TrustedClock::new(clock.clone(), watch::channel(Some(sample)).1, Duration::from_secs(10));
     let gate = Gate::default();

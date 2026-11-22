@@ -663,7 +663,9 @@ an index: load only the rule whose hint matches the current action.
   The optional `[log_heads]` (#541) names the LogHeads contract, a dedicated funded relayer distinct
   from the checkpoint relayer, the posting interval (an hour by default), and `read_interval`, how often
   the poster reads the posted head back (30 s by default, at most the posting interval, at least every
-  30 s with EVM custody and every sixth of the heartbeat interval in a turn); it requires
+  30 s with EVM custody and every sixth of the heartbeat interval in a turn, and every second from each
+  turn's boundary, by trusted time, while no turn names the operator, until 30 s past it or the first head
+  of a turn it found); it requires
   `[checkpoints]`, and with it the node refuses to start on a log the posted head does not hold;
   `operator.rotation_enabled` requires it, and the stall alarm (`log_head_stalled`) then fires after two
   posting intervals, not three. The optional `[liveness]` (#595) names a member's liveness caller, an
