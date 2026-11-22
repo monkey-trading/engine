@@ -40,6 +40,8 @@ sol! {
 
 /// The domain a v2 head's digest starts with.
 const DOMAIN: &[u8] = b"engine.log-head.v2";
+/// The shortest read period a heartbeat interval sets, against a zero interval.
+const MIN_READ_EVERY: Duration = Duration::from_millis(100);
 
 /// What a head is signed under: live, or held through one of the two stops a heartbeat continues
 /// through, as `LogHeads` numbers them.
@@ -94,7 +96,7 @@ pub(crate) struct SignedHead {
 /// What a read shows of the turn naming the operator, for a v2 head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TurnHeads {
-    /// The heartbeat interval: a v2 head goes out at least twice in it.
+    /// The heartbeat interval: a v2 head goes out twice in it (`cadence`).
     pub interval: Duration,
     /// The turn in effect, its latest assignment's position and generation, and the release the
     /// registry names for its member.
@@ -174,6 +176,19 @@ impl Assignment {
             generation: turn.generation,
         })
     }
+}
+
+/// The poster's read period and the pace of its heads while a turn names the operator, with the heartbeat
+/// `interval` and the configured read interval `retry`: the period is at most a sixth of the interval and
+/// at most `retry`, and the pace is half the interval as a whole number of periods, so the head due every
+/// half interval goes out at its tick whatever the two intervals.
+pub(crate) fn cadence(interval: Duration, retry: Duration) -> (Duration, Duration) {
+    let most = retry.min((interval / 6).max(MIN_READ_EVERY));
+    let half = interval / 2;
+    let ticks = u32::try_from(half.as_nanos().div_ceil(most.as_nanos())).unwrap_or(u32::MAX).max(1);
+    let period = half / ticks;
+    // Only a zero interval leaves no period to divide.
+    if period.is_zero() { (most, most) } else { (period, period * ticks) }
 }
 
 /// The v2 head to sign now, if any. A live head is at the seq the liveness rule lets it sign, newer

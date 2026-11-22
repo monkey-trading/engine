@@ -32,8 +32,12 @@ struct FakeState {
     /// block following the v2 heads posted.
     turn: Option<TurnHeads>,
     posts_v2: Vec<(u64, HeadV2)>,
+    /// When each v2 head was posted, by the runtime's clock.
+    posted_v2_at: Vec<tokio::time::Instant>,
     /// How long each turn read takes.
     turn_latency: std::time::Duration,
+    /// Refuse every v2 send, as an endpoint that cannot pay for gas would.
+    fail_v2: bool,
 }
 
 /// A chain whose posted head, epoch, and read failures the test drives. `post` enforces the
@@ -113,6 +117,11 @@ impl FakeChain {
         self.0.lock().unwrap().turn_latency = latency;
     }
 
+    /// Refuses every v2 send from now on.
+    pub(super) fn fail_v2_posts(&self) {
+        self.0.lock().unwrap().fail_v2 = true;
+    }
+
     /// A turn names the operator from now on, as `turn` reads it.
     pub(super) fn name_turn(&self, turn: TurnHeads) {
         self.0.lock().unwrap().turn = Some(turn);
@@ -126,6 +135,11 @@ impl FakeChain {
     /// The v2 heads posted, with their epochs.
     pub(super) fn posts_v2(&self) -> Vec<(u64, HeadV2)> {
         self.0.lock().unwrap().posts_v2.clone()
+    }
+
+    /// When each v2 head was posted, by the runtime's clock.
+    pub(super) fn posted_v2_at(&self) -> Vec<tokio::time::Instant> {
+        self.0.lock().unwrap().posted_v2_at.clone()
     }
 
     /// The reorg removes the epoch's head entirely: the quorum sees an empty epoch.
@@ -192,6 +206,7 @@ impl HeadsChain for FakeChain {
     async fn post_v2(&self, epoch: u64, head: &HeadV2, _signature: &str) -> anyhow::Result<PostOutcome> {
         let mut state = self.0.lock().unwrap();
         let turn = state.turn.ok_or_else(|| anyhow::anyhow!("UseV1"))?;
+        anyhow::ensure!(!state.fail_v2, "the endpoint refused the send");
         let held = head.hold != Hold::Live;
         // `LogHeads.postV2`'s rules: the parent is the held head, the seq newer (a held head may repeat
         // it), a live head newer in signing time, a held head's block newer than the bound one.
@@ -208,6 +223,7 @@ impl HeadsChain for FakeChain {
             anyhow::ensure!(head.signed_at > turn.signed_at, "SigningTimeNotNewer");
         }
         state.posts_v2.push((epoch, *head));
+        state.posted_v2_at.push(tokio::time::Instant::now());
         state.posted = Some(head.head);
         state.posted_epoch = epoch;
         let turn = state.turn.as_mut().expect("checked above");

@@ -104,7 +104,7 @@ async fn a_reseal_while_running_binds_the_new_generations_assignment() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn heads_go_out_at_least_twice_per_interval_each_newer_in_seq_and_signing_time() {
+async fn heads_go_out_twice_per_interval_each_newer_in_seq_and_signing_time() {
     let chain = FakeChain::new(None);
     chain.name_turn(turn(GENERATION));
     let drive = spawn(chain.clone(), Some((RELEASE, GENERATION)));
@@ -115,8 +115,10 @@ async fn heads_go_out_at_least_twice_per_interval_each_newer_in_seq_and_signing_
         tokio::time::sleep(Duration::from_secs(15)).await;
     }
     let posted = chain.posts_v2();
-    // Two minutes of a 60 s interval: at least four heads, each newer than the last.
+    // Two minutes of a 60 s interval: four heads or more, every 30 s, each newer than the last.
     assert!(posted.len() >= 4, "{posted:?}");
+    let gaps: Vec<_> = chain.posted_v2_at().windows(2).map(|pair| pair[1] - pair[0]).collect();
+    assert!(gaps.iter().all(|gap| *gap == Duration::from_secs(30)), "{gaps:?}");
     for pair in posted.windows(2) {
         assert!(pair[1].1.head.seq > pair[0].1.head.seq);
         assert!(pair[1].1.signed_at > pair[0].1.signed_at);
@@ -124,8 +126,8 @@ async fn heads_go_out_at_least_twice_per_interval_each_newer_in_seq_and_signing_
     drive.stop().await;
 }
 
-/// A read interval as long as the heartbeat interval still lets heads out at least twice per
-/// interval: the heartbeat paces the reads a post waits for.
+/// A read interval as long as the heartbeat interval still lets heads out twice per interval: the
+/// heartbeat paces the reads a post waits for.
 #[tokio::test(start_paused = true)]
 async fn heads_go_out_twice_per_interval_whatever_the_read_interval() {
     let chain = FakeChain::new(None);

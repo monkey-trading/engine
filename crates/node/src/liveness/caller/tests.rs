@@ -147,11 +147,12 @@ async fn rpc_answering(error: serde_json::Value) -> String {
 
 #[test]
 fn a_read_calls_for_a_relay_once_the_chains_head_is_stale_and_a_newer_one_was_signed() {
-    let mut view = view(ChainState { head: (7, 1_000, 1_800_000_000 - 39), ..Default::default() });
+    // Five sixths of the 60 s interval: past the operator's own heads, due every 30 s.
+    let mut view = view(ChainState { head: (7, 1_000, 1_800_000_000 - 49), ..Default::default() });
     view.marked_slot = view.time / 60;
     let newer = signed(1, 8);
-    assert!(calls(&view, Some(newer.clone()), 0).is_empty(), "posted 39 s ago: not yet stale");
-    view.head.posted_at = view.time - 40;
+    assert!(calls(&view, Some(newer.clone()), 0).is_empty(), "posted 49 s ago: not yet stale");
+    view.head.posted_at = view.time - 50;
     assert_eq!(calls(&view, Some(newer.clone()), 0), vec![Call::Relay(Box::new(newer))]);
     assert!(calls(&view, Some(signed(1, 7)), 0).is_empty(), "the head the chain holds already");
     assert!(calls(&view, Some(signed(2, 9)), 0).is_empty(), "another epoch's head counts for no one");
