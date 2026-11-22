@@ -30,8 +30,8 @@ mod tests;
 
 /// Where the quote's certificate chain comes from, and which processor's chain it is.
 pub struct Options<'a> {
-    /// The processor product name the key-distribution service's chain is keyed by, as the
-    /// vendor publishes it (for example the codename of the CPU generation).
+    /// The processor product name the key-distribution service's chain is keyed by: Milan, or
+    /// Genoa for a Genoa, Bergamo or Siena processor.
     pub processor: &'a str,
     /// The key-distribution service's base URL; the vendor's service unless overridden.
     pub kds_base: &'a str,

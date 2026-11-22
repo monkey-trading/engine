@@ -1004,6 +1004,10 @@ Known limits:
   verifier reads a report's mitigation vectors, which record the vulnerability fixes the host has
   had the firmware verify, but requires none, so a fix that needs that host step rather than a
   newer firmware version is not enforced.
+- AMD has not published the layout of version 4 of the attestation report, and the verifier reads
+  it as version 3, as public parsers do. A field that version 4 moved would make its reports fail to
+  verify, not verify falsely, because every field the verifier reads must match the VCEK's
+  certificate, the release manifest or the served bundle.
 - With the mock enclave, the stand-in for the sealing key is derived from public values, so anyone
   can compute it.
 - Two copies of the current release that the host runs from copies of one disk can both open the

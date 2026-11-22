@@ -1080,8 +1080,8 @@ an index: load only the rule whose hint matches the current action.
   nightly. A PR and a merge group build the package and the image once, and the image job also
   builds and boots the dev image; the second builds and the two compare jobs run on pushes to
   `main`, nightly, and on manual runs. The first job, `changes`, sorts the changed files from an
-  explicit path list into the Rust, contracts, image, agent-script, merge-approval and
-  classifier-test areas and one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
+  explicit path list into the Rust, contracts, image, agent-script, merge-approval,
+  classifier-test and SEV-SNP host script areas and one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
   against its base; a merge group's are its diff against `main`, since the queue merges every entry
   under a head group that passes, and a merge group always runs the Rust and contracts jobs.
   Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`) build
@@ -1099,8 +1099,8 @@ an index: load only the rule whose hint matches the current action.
   `agents/skills/agent-code-review/scripts/`), `research/` (but for the close-spread study's
   `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's
   `data/derived/market_mix.csv`, which `engine-core` tests read), `docs/`, the root `README.md`,
-  `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, and the `README.md` of `image/` and of each crate
-  change none. A push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or
+  `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, the `README.md` of `image/` and of each crate, and
+  `scripts/snp-local-chain.sh` and `scripts/snp-bench-guest.sh` change none. A push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or
   any path the list does not name runs every job, so whatever a PR or a group skipped runs once it
   lands. When a
   push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
@@ -1567,6 +1567,7 @@ Run from the repo root:
   (`ops/runbooks/sev-snp-host.md`); their fixture tests are `scripts/snp-host-check-test.sh` and
   `scripts/snp-launch-test.sh` (need only `python3`, `jq` and `sha256sum`), and the guest config
   `scripts/snp-local-chain.sh` writes loads in `cargo test -p engine-node --test snp_guest_config`
+  (needs `python3`)
 - Review-delta script tests: `agents/skills/agent-code-review/scripts/review-delta-test.sh` (builds
   a scratch git repository; needs only `git`, `sed`, and `diff`)
 - Merge approval gate tests: `scripts/check-merge-approved-test.sh` (stubs the GitHub API; needs

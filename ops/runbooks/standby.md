@@ -105,8 +105,9 @@ trading server or with the operator.
    ```
 
    `<operator API>` is the operator's API origin, as in `standby.operator`. `op-release.toml` is the
-   release manifest that the operator published, and `--processor` is the codename of the operator
-   host's CPU generation, as
+   release manifest that the operator published, and `--processor` is the product under which AMD's
+   key distribution service issues the operator host's certificates, `Milan`, or `Genoa` for a Genoa,
+   Bergamo or Siena host, as
    [The trading server's attested key and its pin](reference.md#the-trading-servers-attested-key-and-its-pin) describes.
    `verify-attestation` exits with status 0, and the last command prints the enclave address to put
    in `enclave`. **Keep `op.json` and the release manifest.** A replay across a change of signer
@@ -290,7 +291,9 @@ in [How a takeover goes](#how-a-takeover-goes) is running.**
     ```
 
     `new.json` is the new enclave's attestation, `release.toml` is your release's manifest, and
-    `<name>` is the processor's codename. The replay ends with `verified:`.
+    `<name>` is the product under which AMD's key distribution service issues the host's
+    certificates: `Milan`, or `Genoa` for a Genoa, Bergamo or Siena host. The replay ends with
+    `verified:`.
 
 11. Take over the admin key. From the promotion's effective time, the seven-day notice plus the
     finality margin, your admin key is the operator's. Until then, administrative instructions stay

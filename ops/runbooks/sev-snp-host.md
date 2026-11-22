@@ -454,7 +454,7 @@ report data's binding of the enclave address, the configuration and the TLS key.
      guest=${spec%:*} report=$SNP/${spec%:*}/report.bin
      curl -sk https://127.0.0.1:${spec#*:}/v1/attestation > $SNP/$guest/attestation.json
      jq -r .quote $SNP/$guest/attestation.json | cut -c3- | xxd -r -p > $report
-     echo "$guest version $(xxd -p -l 4 $report) policy $(xxd -p -s 0x08 -l 8 $report)"
+     echo "$guest version $(xxd -p -l 4 $report) policy $(xxd -p -s 0x08 -l 8 $report) key $(xxd -p -s 0x48 -l 1 $report)"
      echo "$guest reported TCB $(xxd -p -s 0x180 -l 8 $report) CPUID $(xxd -p -s 0x188 -l 3 $report)"
      echo "$guest digest $(xxd -p -s 0x90 -l 48 $report | tr -d '\n')"
    done
@@ -462,16 +462,16 @@ report data's binding of the enclave address, the configuration and the TLS key.
    ```
 
    For each guest, the version is one of `02000000` to `06000000`, the policy is
-   `0000030000000000`, and the digest equals the last line, which is `measurement.json`'s
-   `launch_digest`. Record the reported TCB. Its bytes are, in order, the boot loader, the TEE, four
+   `0000030000000000`, the key byte is `00`, which names the VCEK as the report's signing key, and
+   the digest equals the last line, which is `measurement.json`'s `launch_digest`. Record the reported TCB. Its bytes are, in order, the boot loader, the TEE, four
    reserved bytes, the SNP firmware and the microcode security versions. Record the CPUID bytes,
    which are the processor's family, model and stepping from version `03000000`, and zero before
    it. From version `03000000` the family byte is `19`.
 
-   **UNVERIFIED: the report version, the family and the digest.** The verifier refuses a version
-   above `06000000`, and from version `03000000` a family byte other than `19`, and needs a change
-   before step 3 can pass.
-   A digest that differs from `measurement.json` means that `sev-snp-measure` and this QEMU disagree
+   **UNVERIFIED: the report version, the family, the key and the digest.** The verifier refuses a
+   version above `06000000`, from version `03000000` a family byte other than `19`, and a key byte
+   that names a VLEK, the chip-secret VCEK or no key, and needs a change before step 3 can pass. A
+   digest that differs from `measurement.json` means that `sev-snp-measure` and this QEMU disagree
    about the launch. Record the values and stop.
 
 3. Run the verifier for each guest:
@@ -679,8 +679,9 @@ Escalate to the owner, with the step and its output, when any of these holds:
 
 - the processor reports no Secure TSC, or the BIOS cannot enable SEV-SNP and OVHcloud will not;
 - the SEV firmware is below AMD's minimum, and OVHcloud has no BIOS update that raises it;
-- a report's version is above 6, a report from version 3 names a CPUID family other than 19h, or
-  a report's digest differs from `measurement.json`;
+- a report's version is above 6, a report from version 3 names a CPUID family other than 19h, a
+  report names a signing key other than the VCEK, or a report's digest differs from
+  `measurement.json`;
 - a guest stops with `clocksource_unprotected`.
 
 ## Sources

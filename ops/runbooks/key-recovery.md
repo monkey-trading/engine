@@ -193,7 +193,8 @@ days remain, the owner decides whether to start the installation anyway or to le
      --attestation new.json --release release.toml --processor <name>
    ```
 
-   `<name>` is the codename of the host's CPU generation, such as `Genoa` or `Milan`. The replay
+   `<name>` is the product under which AMD's key distribution service issues the host's
+   certificates: `Milan`, or `Genoa` for a Genoa, Bergamo or Siena host. The replay
    prints a line that begins `verified:`. **Keep the old attestation file. It is the only proof of
    what the old key was.**
 
