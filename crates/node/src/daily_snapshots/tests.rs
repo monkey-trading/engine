@@ -2,6 +2,9 @@ use super::*;
 use crate::daily_snapshots::writer::Job;
 use crate::snapshot::sealing::Encoding;
 use crate::test_support::scratch_dir;
+use engine_core::auth::{ClientAuth, Operator};
+use engine_core::command::AdminCommand;
+use engine_core::types::AccountId;
 
 /// A snapshot's name is its checkpoint's offset, as recovery caches are named, and only such a name gives
 /// one.
@@ -105,6 +108,63 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
         let error = format!("{:#}", load(&path).err().expect("refused"));
         assert!(error.contains(said), "{said}: {error}");
     }
+}
+
+/// A snapshot of format 1, which carries no state digest or signature, loads as the start of a range; one of
+/// format 2 loses it by lacking either field.
+#[test]
+fn load_reads_the_format_before_signatures_and_refuses_the_signed_one_without_them() {
+    let dir = scratch_dir("daily-formats");
+    let offset = Offset { seq: 5, index: 1 };
+    let mut job = job(offset, 0);
+    job.engine = Encoding::Encoded(serde_json::to_string(&finality_engine(offset.seq)).unwrap());
+    let listing = publish_now(&dir, job).unwrap();
+    let path = dir.join(&listing.file);
+    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let write = |snapshot: &serde_json::Value| std::fs::write(&path, serde_json::to_vec(snapshot).unwrap()).unwrap();
+    let loaded = load(&path).expect("a signed snapshot of a state with custody finality loads");
+    assert_eq!((loaded.schema, loaded.offset), (2, offset));
+
+    let mut unsigned = written.clone();
+    unsigned["schema"] = 1.into();
+    for field in ["state", "signature"] {
+        unsigned.as_object_mut().unwrap().remove(field);
+    }
+    write(&unsigned);
+    let loaded = load(&path).expect("a snapshot of format 1 loads with no state digest or signature");
+    assert_eq!((loaded.schema, loaded.offset, loaded.engine.last_seq()), (1, offset, Some(offset.seq)));
+    assert_eq!(list(&dir).unwrap(), [(offset, path.clone())], "it starts a range at its offset");
+
+    for field in ["state", "signature"] {
+        let mut signed = written.clone();
+        signed.as_object_mut().unwrap().remove(field);
+        write(&signed);
+        let error = format!("{:#}", load(&path).err().expect("refused"));
+        assert!(error.contains("carries no state digest or signature"), "without {field}: {error}");
+    }
+}
+
+/// An engine at `V27` with custody finality that applied commands up to `seq`, the state a range can start from.
+fn finality_engine(seq: u64) -> Engine {
+    let mut engine = Engine::new();
+    let admin = |cmd| engine_core::command::Command::Admin(cmd);
+    let mut commands = vec![
+        admin(AdminCommand::SetClientAuth(ClientAuth::Unsigned)),
+        admin(AdminCommand::SetOperator(Operator {
+            address: AccountId([8; 20]),
+            chain_id: 31337,
+            vault: AccountId([9; 20]),
+        })),
+    ];
+    commands.extend(
+        [ProtocolVersion::V21, ProtocolVersion::V22, ProtocolVersion::V27]
+            .map(|version| admin(AdminCommand::ActivateProtocol { version })),
+    );
+    commands.resize(seq as usize + 1, engine_core::command::Command::Tick);
+    for (seq, cmd) in commands.into_iter().enumerate() {
+        engine.apply(&engine_core::command::Sequenced { seq: seq as u64, ts: 0, cmd }).unwrap();
+    }
+    engine
 }
 
 /// A writer busy with a snapshot is not ready, a day it cannot take is skipped, and its drop waits for its
