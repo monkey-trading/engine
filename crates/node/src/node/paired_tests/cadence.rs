@@ -15,6 +15,7 @@ use crate::node::paired_tests::harness::{Node, configuration};
 use crate::node::paired_tests::publication::{collect_alerts, write_alert_lines};
 use crate::sequencer::Request;
 use crate::snapshot;
+use crate::snapshot::sealing::CaptureStage;
 use crate::test_support::{deposit, log_entries, withdraw};
 
 const INTERVAL: Duration = Duration::from_secs(3_600);
@@ -127,6 +128,40 @@ async fn shutdown_caches_a_checkpoint_whose_capture_the_full_queue_refused() {
     let stopped = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
     assert_eq!(stopped.len(), before.len() + 1, "the shutdown capture: {stopped:?}");
     assert_eq!(seq_of(&stopped[0]), last, "the shutdown cache covers the refused checkpoint");
+}
+
+/// A capture of the last command's checkpoint fails after its slot is reserved, in the seal, the cache's
+/// fields or the engine's encoding, and shutdown still caches that checkpoint.
+#[tokio::test]
+async fn shutdown_caches_a_checkpoint_whose_capture_failed_after_its_slot_was_reserved() {
+    for stage in [CaptureStage::Seal, CaptureStage::Fields, CaptureStage::Encode] {
+        let mut cfg = configuration(&format!("paired-cadence-failed-{stage:?}"));
+        cfg.snapshots.as_mut().unwrap().interval = INTERVAL;
+        let (collector, router) = collect_alerts();
+        let clock = Arc::new(TestClock::at(SystemClock.now_ms()));
+        let node = Node::start_at(cfg, clock.clone()).await.unwrap();
+        deposits(&node, "first", 3).await;
+        let before = caches(&node);
+        clock.advance(INTERVAL);
+        node.sealing.fail_next(stage);
+        // Commands up to a checkpoint, whose due capture fails once.
+        let every = node.cfg.node.checkpoint_every;
+        let mut n = 0;
+        while n == 0 || (node.manifest.borrow().flushed.expect("commands are logged").seq + 1) % every != 0 {
+            node.submit(deposit(1, &format!("failed-{n}"))).await;
+            n += 1;
+        }
+        let last = node.manifest.borrow().flushed.expect("commands are logged").seq;
+        node.history_caught_up().await;
+        assert_eq!(caches(&node), before, "{stage:?}: the capture failed");
+        let (cfg, reader) = node.stop().await;
+        drop((reader, collector));
+        let failed = write_alert_lines(router).into_iter().filter(|line| line.severity.is_some()).count();
+        assert!(failed >= 1, "{stage:?}: the failed capture alerts: {failed}");
+        let stopped = snapshot::candidates_readonly(cfg.snapshots.as_ref().unwrap()).unwrap();
+        assert_eq!(stopped.len(), before.len() + 1, "{stage:?}: the shutdown capture: {stopped:?}");
+        assert_eq!(seq_of(&stopped[0]), last, "{stage:?}: the shutdown cache covers the failed checkpoint");
+    }
 }
 
 #[tokio::test]
