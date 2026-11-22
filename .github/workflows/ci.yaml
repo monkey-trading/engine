@@ -2241,8 +2241,13 @@ jobs:
           Failed jobs:
           ${failed:-none; ci-passed refused a job that was skipped.}
 
-          A job that fails here after its change's pull request and merge group skipped it is reading a
-          path its area in \`changes\` does not list."
+          Read each failed job's log first. The likely causes are:
+          - a timing guard or a race that a loaded runner trips, which a rerun passes;
+          - a job cancelled at its timeout, which keeps no log: the output it printed while it ran names the
+            stage that hung;
+          - a run cancelled by something else, such as a newer run of the same ref;
+          - a job that fails here after its change's pull request and merge group skipped it, which reads a
+            path its area in \`changes\` does not list."
           number=$(gh issue list --state open --label bug --limit 500 --json number,title \
             --jq "map(select(.title == \"$title\"))[0].number // empty")
           if [[ -n "$number" ]]; then

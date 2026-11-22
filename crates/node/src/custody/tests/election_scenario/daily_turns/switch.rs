@@ -161,6 +161,10 @@ pub(super) async fn switch(
     let (incumbent, replays) = (holder.member, shared.metrics[member].full_replays.get());
     // The load succeeds on the incumbent up to the switch.
     shared.loaded().await;
+    println!(
+        "STAGE: {} releases the turn and waits for {}'s node to take the keys",
+        members[incumbent].name, members[member].name
+    );
     let (released, taken) = tokio::join!(holder.release(), shared.taken.recv());
     let (index, start) = taken.expect("the member's wait hands over its start");
     assert_eq!(index, member, "another member took the turn");
