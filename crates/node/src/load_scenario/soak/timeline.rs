@@ -16,6 +16,18 @@ pub(super) const ALERT_SETTLE: Duration = Duration::from_secs(60);
 pub(super) const FEED_ALERTS: [&str; 5] =
     ["market_no_price", "venue_symbol_silent", "venue_feed_down", "venue_delayed", "venue_stale"];
 
+/// The alerts the start may raise: the book's house loss, the RWA stand-ins' contracts the markets do not
+/// take, and a feed still connecting.
+pub(super) fn start_alerts() -> Vec<&'static str> {
+    [&FEED_ALERTS[..], &["house_deficit", "house_loss_stress", "prices_rejected"]].concat()
+}
+
+/// The alerts a restart may raise: a feed reconnecting, the stand-ins' contracts again, and the house's
+/// loss, which a new process pages again while it stands.
+pub(super) fn restart_alerts() -> Vec<&'static str> {
+    [&FEED_ALERTS[..], &["house_deficit", "house_loss_stress", "prices_rejected"]].concat()
+}
+
 /// One thing the soak did to the node, over `from` to `to`, which is `None` while it goes on, and the
 /// alerts it explains.
 struct Event {
