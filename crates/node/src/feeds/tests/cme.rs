@@ -51,8 +51,15 @@ const LOGIN_DELAY: Duration = Duration::from_millis(1_500);
 const LOADED_GAP: Duration = Duration::from_millis(1_500);
 /// How late those tests' stand-in answers a replacement: past `LOADED_GAP` and `max_delay` both.
 const SLOW: Duration = Duration::from_millis(2_500);
+/// The life of the tokens in the tests that answer a replacement late: refreshed at three quarters of it, the
+/// old connection ends at its expiry, so the replacement has a quarter of it, six seconds, to be ready. The
+/// late answer, `SLOW`, then leaves 3.5 s for a loaded runner's handshake, token fetch and login.
+const LATE_LIFE_SECS: u64 = 24;
+/// The replacement's timeout in those tests: the quarter of `LATE_LIFE_SECS`, so the old token's expiry is
+/// the bound a replacement meets, not a shorter timeout.
+const LATE_TIMEOUT: Duration = Duration::from_secs(6);
 /// The most a rollover test waits for its first session to end, which the token's life sets (sixteen
-/// seconds, refreshed at twelve) and a loaded runner stretches: a ceiling that only a feed that
+/// to twenty-four seconds, refreshed at three quarters of it) and a loaded runner stretches: a ceiling that only a feed that
 /// never replaces its connection reaches.
 const HANG: Duration = Duration::from_secs(120);
 
@@ -60,11 +67,11 @@ const HANG: Duration = Duration::from_secs(120);
 async fn a_connection_is_replaced_on_a_fresh_token_with_no_gap_though_the_new_login_is_slow() {
     let (_guard, mut alerts) = capture_alerts();
     let tls = TlsFront::new();
-    // Sixteen-second tokens are refreshed at twelve, so a replacement ready a slow login later still
-    // takes over before the old token expires.
-    let stand_in = CmeStandIn::start(&tls, 16, prices(Venue::Cme)).await;
+    // Tokens are refreshed at three quarters of their life, so a replacement ready a slow login later still
+    // takes over before the old token expires (see `LATE_LIFE_SECS`).
+    let stand_in = CmeStandIn::start(&tls, LATE_LIFE_SECS, prices(Venue::Cme)).await;
     stand_in.state.lock().expect("stand-in").login_delay = Some(SLOW);
-    let timing = Timing { timeout: Duration::from_secs(4), ..cme_timing() };
+    let timing = Timing { timeout: LATE_TIMEOUT, ..cme_timing() };
     assert_no_gap_across_a_rollover(&stand_in, &tls, timing).await;
     let (sessions, issued, expired) =
         stand_in.seen(|seen| (seen.sessions.clone(), seen.issued.clone(), seen.expired_sessions));
@@ -147,14 +154,13 @@ async fn a_rollover_on_a_connection_that_quotes_nothing_switches_without_an_outa
 async fn a_replacement_waits_for_its_subscription_past_a_heartbeat_and_a_message_it_refuses() {
     let (_guard, mut alerts) = capture_alerts();
     let tls = TlsFront::new();
-    let stand_in = CmeStandIn::start(&tls, 16, prices(Venue::Cme)).await;
+    let stand_in = CmeStandIn::start(&tls, LATE_LIFE_SECS, prices(Venue::Cme)).await;
     // The replacement's subscription is answered late, after a heartbeat and a message of a type the
     // feed does not take: switching on either, or failing on the second, leaves a gap.
     stand_in.state.lock().expect("stand-in").subscribe_delay = Some(SLOW);
-    // The timeout leaves 5.5 s beyond the late answer for the replacement's handshake, token fetch and
-    // login on a loaded runner; a feed that fails on the answer or the refused message reconnects at
-    // once, whatever the timeout.
-    let timing = Timing { timeout: Duration::from_secs(8), ..cme_timing() };
+    // A feed that fails on the answer or the refused message reconnects at once, whatever the margin
+    // (see `LATE_LIFE_SECS`).
+    let timing = Timing { timeout: LATE_TIMEOUT, ..cme_timing() };
     assert_no_gap_across_a_rollover(&stand_in, &tls, timing).await;
     assert_eq!(stand_in.seen(|seen| seen.sessions.len()), 2, "the replacement failed and the feed reconnected");
     // The message it passed over is refused once the feed switches, as on any connection.
