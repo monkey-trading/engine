@@ -23,7 +23,7 @@ prebuilt="metrics_alerts alert_outbox browser_origin dashboard_data proxy_protoc
   snapshot_restart signed_api production_secrets log_heads"
 node="$prebuilt $anvil $feeds scenario_tests attestation_verifier recovery_scale acme engine_build"
 api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests node_load soak engine_build"
-every="rust contracts image agent_scripts merge_approval ci_changes $node wasm_verifier"
+every="rust contracts image agent_scripts merge_approval ci_changes snp_host $node wasm_verifier"
 
 failed=0
 export RANGE_FILE="$tmp/range"
@@ -128,6 +128,12 @@ case_ pull_request "ct_watch contracts $anvil production_secrets log_heads engin
 case_ pull_request "$node wasm_verifier" scripts/dev-unlisted.sh
 case_ pull_request "image acme" image/retry
 case_ pull_request "ci_changes" scripts/ci-changes-test.sh
+for snp in scripts/snp-host-check.sh scripts/snp-host-check-test.sh scripts/snp-launch.sh scripts/snp-launch-test.sh; do
+  case_ pull_request "snp_host" "$snp"
+done
+case_ pull_request "rust" scripts/snp-node-config.py
+case_ pull_request "" scripts/snp-local-chain.sh scripts/snp-bench-guest.sh
+case_ merge_group "rust contracts snp_host" scripts/snp-launch.sh
 case_ pull_request "$every" .github/workflows/ci.yaml
 case_ pull_request "$every" a-path-no-arm-names
 DIFF_FAILS=1 case_ pull_request "$every" README.md

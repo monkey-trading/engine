@@ -59,7 +59,8 @@ pub struct WatchedNode {
     pub url: String,
     /// The release manifest the attestation is verified against.
     pub release: PathBuf,
-    /// The vendor processor name for the certificate chain (for example Milan or Genoa).
+    /// The vendor's product name for the certificate chain: Milan, or Genoa for a Genoa, Bergamo or
+    /// Siena processor.
     pub processor: String,
     /// The vendor key-distribution service's base URL.
     #[serde(default = "default_kds")]

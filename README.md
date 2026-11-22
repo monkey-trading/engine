@@ -279,8 +279,9 @@ cargo run -p engine-node -- verify-attestation --attestation attestation.json \
   --release release.toml --processor Genoa
 ```
 
-`release.toml` is the manifest that each release will publish, and `--processor` names the
-generation of the host's AMD processor. The check passes only if AMD's certificate chain signed the
+`release.toml` is the manifest that each release will publish, and `--processor` names the product
+under which AMD's key distribution service issues the host's certificates: `Milan`, or `Genoa` for a
+Genoa, Bergamo or Siena host. The check passes only if AMD's certificate chain signed the
 report, the launch measurement matches the release's image, and the report binds the signing key and
 a configuration that the release lists. Anyone can [rebuild the image](image/README.md) to confirm
 its measurement. Against the local server, which simulates its enclave, the command prints

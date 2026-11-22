@@ -80,8 +80,9 @@ other than the attested enclave answers. Take the pin from an attestation that y
    ```
 
    `release.toml` is the manifest published with the release that the trading server runs, as
-   [Deploy and rollback](deploy-and-rollback.md) describes. `<processor>` is the codename of the
-   host's CPU generation, `Genoa` or `Milan`. The command exits with status 0 and prints a line that
+   [Deploy and rollback](deploy-and-rollback.md) describes. `<processor>` is the product under which
+   AMD's key distribution service issues the host's certificates: `Milan`, or `Genoa` for a Genoa,
+   Bergamo or Siena host. The command exits with status 0 and prints a line that
    begins `verified:`.
 
 2. Set the pin and the signer from the verified attestation:

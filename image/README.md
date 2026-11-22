@@ -73,6 +73,8 @@ and bytes 32 to 64 are zero. The bundle is 105 bytes long:
 
 `engine verify-attestation` accepts a report only when all of the following hold:
 
+- the report is of version 2 to 6, names the VCEK as its signing key and, from version 3, names a
+  processor of CPUID family 19h (Milan, Genoa, Bergamo or Siena);
 - the report's signature verifies against the chip's certificate (the VCEK), and that certificate's
   chain leads to an AMD root compiled into the binary;
 - the release's `guest_features` include SNPActive and SecureTSC;
@@ -114,7 +116,8 @@ The data disk holds the configuration as `config.toml`. Configuration keys call 
 server a node, as the first one below does. In that configuration:
 
 - `node.listen` is `0.0.0.0:8080` and `tee.provider` is `"configfs_tsm"`;
-- `tee.processor` names the host's processor generation, such as `"Genoa"`, and the server refuses
+- `tee.processor` names the product under which AMD's key distribution service issues the host's
+  certificates (`"Milan"`, or `"Genoa"` for a Genoa, Bergamo or Siena host), and the server refuses
   to start without it;
 - `node.log_dir`, `history.dir`, `alerts.outbox.dir`, `custody.evm.cursor_path` and
   `tee.sealing.dir` are under `/data`;
@@ -196,8 +199,8 @@ refuse a log directory outside `/data`. The check boots QEMU's default firmware,
    "node.toml" = "0x…"
    ```
 
-   `--processor` takes a processor generation that AMD's key distribution service knows, such as
-   `Milan`, `Genoa` or `Turin`.
+   `--processor` takes the product under which AMD's key distribution service issues the host's
+   certificates: `Milan`, or `Genoa` for a Genoa, Bergamo or Siena host. Turin is not supported.
 5. Attach the browser verifier from the same CI run. These are the files that
    `scripts/build-wasm-verifier.sh` wrote: `engine_verify_bg.wasm`, `engine_verify.js`, the
    TypeScript types `engine_verify.d.ts` and `engine_verify_bg.wasm.d.ts`, and `package.json`.

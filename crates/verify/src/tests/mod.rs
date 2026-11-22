@@ -4,6 +4,7 @@
 mod chain;
 mod releases;
 mod signature;
+mod versions;
 
 use crate::fixtures::*;
 use crate::{

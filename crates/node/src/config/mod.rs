@@ -195,8 +195,9 @@ pub struct TeeSection {
     /// Uses the public development signer only with simulated attestation.
     #[serde(default)]
     pub use_published_mock_key: bool,
-    /// The vendor's name for the CPU generation, which keys its certificate chain (for example
-    /// Milan or Genoa). Required with an SEV-SNP quote; the node relays that quote's collateral.
+    /// The vendor's product name, which keys its certificate chain: Milan, or Genoa for a Genoa,
+    /// Bergamo or Siena processor. Required with an SEV-SNP quote; the node relays that quote's
+    /// collateral.
     pub processor: Option<String>,
     /// The vendor's key-distribution service the node fetches collateral from.
     #[serde(default = "collateral::default_kds_base")]

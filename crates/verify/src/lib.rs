@@ -25,7 +25,7 @@ pub mod fixtures;
 mod release;
 pub use release::{MinimumTcb, ReleaseManifest};
 mod report;
-pub use report::{SnpReport, Tcb};
+pub use report::{Cpuid, MitigationVectors, SnpReport, Tcb};
 mod signature;
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,6 @@
 //! Test fixtures, for this crate's tests, the node's, and the dev scenarios: a stand-in vendor
-//! chain with the real shapes, a forged report on the firmware's wire layout, the release manifest,
-//! and the collateral a node would relay for them.
+//! chain with the real shapes, forged reports of versions 2 to 6 on the firmware's wire layout, the
+//! release manifest, and the collateral a node would relay for them.
 
 use p384::ecdsa::signature::Signer as _;
 use p384::pkcs8::DecodePrivateKey as _;
@@ -10,7 +10,7 @@ use rcgen::{
 };
 
 use crate::report::REPORT_LEN;
-use crate::{Attestation, AttestationBundle, RelayedCollateral, ReleaseManifest, Tcb};
+use crate::{Attestation, AttestationBundle, Cpuid, MitigationVectors, RelayedCollateral, ReleaseManifest, Tcb};
 
 /// A stand-in vendor chain with the real shape: a self-signed root, an intermediate, and the
 /// chip key that signs reports, plus the vendor's extension OIDs binding the VCEK to `chip_id`
@@ -37,6 +37,11 @@ pub const GUEST_FEATURES: u64 = 0x201;
 pub const REPORTED_TCB: Tcb = Tcb { boot_loader: 4, tee: 0, snp: 8, microcode: 205 };
 /// The platform's committed TCB, below the reported one as after a firmware update not yet committed.
 pub const COMMITTED_TCB: Tcb = Tcb { boot_loader: 3, tee: 0, snp: 7, microcode: 200 };
+/// The CPUID a report of version 3 or later carries: family 19h, model A0h, stepping 1.
+pub const CPUID: Cpuid = Cpuid { family: 0x19, model: 0xA0, stepping: 0x01 };
+/// The mitigation vectors a report of version 5 or later carries: bit 0 verified at launch, and bits
+/// 0 and 1 verified when the report was issued.
+pub const MITIGATION_VECTORS: MitigationVectors = MitigationVectors { launch: 0x1, current: 0x3 };
 
 /// A DER INTEGER extension value, the encoding the vendor signs: values with the high bit set
 /// take a leading zero so the INTEGER stays positive.
@@ -232,21 +237,48 @@ pub fn enclave() -> Enclave {
     }
 }
 
-/// A report the test VCEK signs over the fixture's report data and the given release fields,
-/// with the firmware's wire layout: signature scalars little-endian in each field's first 48
-/// bytes, and the TCB packed with boot_loader in byte 0, tee in byte 1, snp in byte 6, and
-/// microcode in byte 7.
+/// A version-2 report the test VCEK signs over the fixture's report data and the given release
+/// fields (see `forged_report_at`).
 pub fn forged_report(chain: &TestChain, measurement: [u8; 48], report_data: [u8; 64], chip_id: [u8; 64]) -> Vec<u8> {
+    forged_report_at(chain, 2, measurement, report_data, chip_id)
+}
+
+/// A report of `version` the test VCEK signs over the fixture's report data and the given release
+/// fields, with the firmware's wire layout: the TCB packed with boot_loader in byte 0, tee in byte
+/// 1, snp in byte 6, and microcode in byte 7, `CPUID` from version 3 and `MITIGATION_VECTORS` from
+/// version 5, signed as `sign_report` signs.
+pub fn forged_report_at(
+    chain: &TestChain,
+    version: u32,
+    measurement: [u8; 48],
+    report_data: [u8; 64],
+    chip_id: [u8; 64],
+) -> Vec<u8> {
     let mut report = vec![0u8; REPORT_LEN];
-    report[0x00..0x04].copy_from_slice(&2u32.to_le_bytes());
+    report[0x00..0x04].copy_from_slice(&version.to_le_bytes());
     report[0x08..0x10].copy_from_slice(&POLICY.to_le_bytes());
     report[0x34..0x38].copy_from_slice(&1u32.to_le_bytes());
     report[0x38..0x40].copy_from_slice(&REPORTED_TCB.to_packed().to_le_bytes());
     report[0x50..0x90].copy_from_slice(&report_data);
     report[0x90..0xC0].copy_from_slice(&measurement);
     report[0x180..0x188].copy_from_slice(&REPORTED_TCB.to_packed().to_le_bytes());
+    if version >= 3 {
+        report[0x188..0x18B].copy_from_slice(&[CPUID.family, CPUID.model, CPUID.stepping]);
+    }
     report[0x1A0..0x1E0].copy_from_slice(&chip_id);
     report[0x1E0..0x1E8].copy_from_slice(&COMMITTED_TCB.to_packed().to_le_bytes());
+    if version >= 5 {
+        report[0x1F8..0x200].copy_from_slice(&MITIGATION_VECTORS.launch.to_le_bytes());
+        report[0x200..0x208].copy_from_slice(&MITIGATION_VECTORS.current.to_le_bytes());
+    }
+    sign_report(chain, &mut report);
+    report
+}
+
+/// Signs `report`'s first `0x2A0` bytes with `chain`'s VCEK, writing each signature scalar
+/// little-endian into the first 48 bytes of its 72-byte field, so a test can change a field and
+/// sign again.
+pub fn sign_report(chain: &TestChain, report: &mut [u8]) {
     let key = p384::ecdsa::SigningKey::from_pkcs8_der(&chain.vcek_key.serialize_der()).unwrap();
     let signature: p384::ecdsa::Signature = key.sign(&report[..0x2A0]);
     let signature = signature.to_bytes();
@@ -256,7 +288,6 @@ pub fn forged_report(chain: &TestChain, measurement: [u8; 48], report_data: [u8;
     for (i, byte) in signature[48..].iter().rev().enumerate() {
         report[0x2E8 + i] = *byte;
     }
-    report
 }
 
 /// The attestation JSON a node with this quote would serve for `bundle`.
