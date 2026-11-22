@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::history::HistoryPlan;
+use crate::node::shutdown::finish_history;
 use crate::sequencer::ReplayedLog;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};

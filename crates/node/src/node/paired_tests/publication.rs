@@ -139,7 +139,7 @@ async fn a_capture_the_sequencer_cannot_hand_over_leaves_the_alert_open() {
     let caches = node.cfg.snapshots.as_ref().unwrap();
     assert!(!snapshot::candidates_readonly(caches).unwrap().is_empty(), "a capture was stored before the failure");
     assert!(!node.sealing.write_alert.take(), "the stored capture cleared the shared mark");
-    // A closed history queue refuses the sequencer's hand-over, as a full one does.
+    // A stopped history owner refuses the sequencer's hand-over.
     node.stop_history().await;
     for n in 0..3 {
         node.submit(deposit(1, &format!("unhanded-{n}"))).await;

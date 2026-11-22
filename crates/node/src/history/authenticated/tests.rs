@@ -130,18 +130,26 @@ fn ranked_fixture(name: &str) -> (Index, PathBuf) {
     (index, path)
 }
 
-/// Rewrites or deletes exact payloads in the Store's `value_rows` table.
+/// Rewrites or deletes exact payloads in the Store's `value_rows` table, where the index stores each
+/// whole, after a 0 byte (`stored_whole`).
 /// This independent host connection supplies fault injection only, never history authority.
 fn tamper_payload(path: &Path, original: &[u8], replacement: Option<&[u8]>) {
     let conn = rusqlite::Connection::open(path).expect("host connection to private fixture");
+    let original = stored_whole(original);
     let changed = match replacement {
-        Some(bytes) => {
-            conn.execute("UPDATE value_rows SET data = ?1 WHERE data = ?2", rusqlite::params![bytes, original])
-        }
+        Some(bytes) => conn.execute(
+            "UPDATE value_rows SET data = ?1 WHERE data = ?2",
+            rusqlite::params![stored_whole(bytes), original],
+        ),
         None => conn.execute("DELETE FROM value_rows WHERE data = ?1", [original]),
     }
     .expect("inject packed payload fault");
     assert!(changed > 0, "fault must alter actual packed payload bytes");
+}
+
+/// A value of at most one chunk as the index stores it, whole in its leaf.
+fn stored_whole(value: &[u8]) -> Vec<u8> {
+    [&[0u8][..], value].concat()
 }
 
 /// Opens a writer only after the fixture's explicit simulated preflight.

@@ -1,6 +1,7 @@
 //! How the node ends: supervising its tasks until one stops, a shutdown signal arrives, or a
 //! handover stops sequencing — which commits only once the sequencer has written the final
-//! checkpoint it hands over — then ending history and waiting for the successor to confirm.
+//! checkpoint it hands over — then answering a handover's successor, ending history, and waiting for the
+//! successor to confirm.
 
 use anyhow::{Context, anyhow, bail};
 use tokio::signal::ctrl_c;
@@ -179,6 +180,23 @@ pub(super) fn spawn_history(
     (task, stopper)
 }
 
+/// Once the sequencer has drained, answers a committed handover's successor with `final_head`, then
+/// ends history (`finish_history`, given the history task unless it has already ended). The successor
+/// takes only the final checkpoint the drain wrote, which history does not change, so its take never
+/// waits on the derived index. Returns whether a handover was answered.
+pub(super) async fn answer_then_finish_history(
+    handing_over: Option<DrainReply>,
+    final_head: impl FnOnce() -> anyhow::Result<crate::tee::keys::Head>,
+    history: Option<JoinSet<anyhow::Result<()>>>,
+    stopper: Option<crate::history::runtime::Stopper>,
+) -> bool {
+    let answered = handing_over.map(|reply| reply.send(final_head())).is_some();
+    if let Some(history) = history {
+        finish_history(history, stopper).await;
+    }
+    answered
+}
+
 /// Ends history once the sequencer has drained. Authenticated history takes the rest of the
 /// stream; the legacy index takes no captures and resumes from its own cursor, so it stops at once.
 pub(super) async fn finish_history(
@@ -191,9 +209,16 @@ pub(super) async fn finish_history(
     }
 }
 
-/// Lets history take the rest of the stream, including the shutdown checkpoint's capture. A
-/// history still behind after the shutdown grace stops at its next turn boundary, with a Warning,
-/// so no store is left mid-transaction; the next start indexes the rest from the log.
+/// Lets history take the rest of the stream, including the shutdown checkpoint's capture, for at most
+/// `SHUTDOWN_GRACE`. A history still behind then is stopped, with a Warning, and has `SHUTDOWN_GRACE`
+/// more to leave at its next turn boundary, which a stopped owner reaches within one store write; the
+/// next start indexes the rest from the log. One that has still not left is aborted and left, with a
+/// Critical alert. Leaving it, even mid-write, is safe, since the index is derived from the log: a store
+/// transaction cut short is rolled back from its journal when the store next opens, and no signed head
+/// names a version an update cut short committed; a cache or signed head becomes visible only by a
+/// rename once its file is synced, and a staged one left behind is reclaimed at the next start; and the
+/// next start resumes the index from its newest signed head, discards every version committed after it,
+/// and indexes the rest again from the log, checking every node and value as it goes.
 async fn drain_history(mut history: JoinSet<anyhow::Result<()>>, stopper: crate::history::runtime::Stopper) {
     let finished = match timeout(SHUTDOWN_GRACE, history.join_next()).await {
         Ok(finished) => finished,
@@ -372,6 +397,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Once the sequencer has drained, a handover's successor is answered while history is still
+    /// behind. History then has the shutdown grace to finish the stream, and once stopped the grace
+    /// again to leave, and no more: one that does neither is aborted, with a Warning and a Critical
+    /// alert. A stop with no handover reads no final head.
+    #[tokio::test(start_paused = true)]
+    async fn a_handover_is_answered_before_history_and_history_waits_two_graces_at_most() {
+        let (_guard, mut alerts) = crate::test_support::capture_alerts();
+        let (stopper, stopped) = crate::history::runtime::Stopper::detached();
+        let mut history = JoinSet::new();
+        let behind = history.spawn(std::future::pending::<anyhow::Result<()>>());
+        let (reply, answered) = oneshot::channel::<anyhow::Result<Head>>();
+        let head = Head { seq: 7, root: format!("0x{}", "07".repeat(32)) };
+        let ending = tokio::spawn({
+            let head = head.clone();
+            async move {
+                let began = tokio::time::Instant::now();
+                let handed = answer_then_finish_history(Some(reply), || Ok(head), Some(history), Some(stopper)).await;
+                (handed, began.elapsed())
+            }
+        });
+        let answer = answered.await.expect("the successor is answered").expect("with the final head");
+        assert_eq!(answer, head);
+        assert!(!ending.is_finished(), "the successor was answered only once history ended");
+        let (handed, waited) = ending.await.unwrap();
+        assert!(handed, "the handover was not reported answered");
+        let graces = SHUTDOWN_GRACE * 2;
+        assert!(
+            (graces..graces + std::time::Duration::from_secs(1)).contains(&waited),
+            "history was waited on for {waited:?}, not the two graces"
+        );
+        assert!(stopped.load(std::sync::atomic::Ordering::Acquire), "the history left behind was not told to stop");
+        tokio::task::yield_now().await;
+        assert!(behind.is_finished(), "the history task was not aborted");
+        let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok())
+            .map(|alert| (alert["alert"].clone(), alert["level"].clone()))
+            .collect();
+        let expected = [("history_drain_timed_out", "WARN"), ("task_stopped", "ERROR")];
+        assert_eq!(raised, expected.map(|(alert, level)| (alert.to_owned(), level.to_owned())));
+
+        let handed = answer_then_finish_history(None, || unreachable!("no handover reads no head"), None, None).await;
+        assert!(!handed, "a stop with no handover was reported as one");
     }
 
     /// The node stops when the sequencer is gone at the handover's stop.

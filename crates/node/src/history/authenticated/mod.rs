@@ -34,7 +34,8 @@ impl Index {
     }
 
     /// Resumes only a parent-certified COMPLETE head, proving the fixed state leaf. The index writes its new
-    /// nodes compact, beside the JSON ones an older release wrote, which still read.
+    /// nodes compact and its values of up to one chunk whole in their leaves, beside the JSON nodes and chunked
+    /// values an older release wrote, which still read.
     /// Error cases:
     /// - unavailable/inconsistent state, a pending root, or failed proof/lease
     pub fn resume(store: Store, certified_head: Head) -> Result<Self> {

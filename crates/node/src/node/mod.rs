@@ -21,7 +21,7 @@ use crate::api::{ApiState, Feed, MAX_BACKFILLS, ServedSnapshots, Signing, router
 use crate::clock::{Clock, SystemClock};
 use crate::config::{AuthMode, CustodyProvider, NodeConfig};
 mod shutdown;
-use shutdown::{TaskResult, finish_history, handed_over, sequencer_outcome, supervise};
+use shutdown::{TaskResult, answer_then_finish_history, handed_over, sequencer_outcome, supervise};
 mod handover;
 mod keys;
 mod liveness;
@@ -476,20 +476,19 @@ async fn serve_node(
     let drained =
         timeout(SHUTDOWN_GRACE, &mut supervised.sequencer.outcome).await.context("sequencer did not drain in time")?;
     sequencer_outcome(drained)?;
-    if !supervised.history_finished {
-        finish_history(supervised.history_task, history_stopper).await;
-    }
+    let history = (!supervised.history_finished).then_some(supervised.history_task);
+    let handing_over =
+        answer_then_finish_history(supervised.handing_over, || published.final_head(), history, history_stopper).await;
     let outcome = supervised.outcome;
     let gave = Handed::of(store.as_deref(), handover_clock.reached_ms(), released.map(|last| last.borrow().head));
-    match supervised.handing_over {
-        Some(reply) => {
-            let _ = reply.send(published.final_head());
+    match handing_over {
+        true => {
             let gave = handed_over(supervised.handover, gave).await?;
             liveness::forget(cfg, store.as_deref());
             Ok(Ended::HandedOver(gave))
         }
-        None if supervised.replaced => outcome.map(|()| Ended::Replaced(gave)),
-        None => outcome.map(|()| Ended::Stopped),
+        false if supervised.replaced => outcome.map(|()| Ended::Replaced(gave)),
+        false => outcome.map(|()| Ended::Stopped),
     }
 }
 

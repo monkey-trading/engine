@@ -100,6 +100,9 @@ pub(crate) struct Inner {
     staged: Vec<background::Job>,
     /// Set while a replay feeds the record, whose scans are light: only the last one is served.
     recovering: bool,
+    /// Encode jobs a test holds back, their replies unanswered, while set (`hold_encodes`).
+    #[cfg(test)]
+    held_encodes: Option<Vec<background::Job>>,
 }
 
 /// The dashboard statistics of one node. Clones share one record: the sequencer writes it as it
@@ -158,6 +161,8 @@ impl Inner {
             background: None,
             staged: Vec::new(),
             recovering: false,
+            #[cfg(test)]
+            held_encodes: None,
         }
     }
 }
@@ -217,9 +222,23 @@ impl Stats {
     /// worker it is dropped, and so is any reply it carries.
     pub(crate) fn stage_job(&self, job: background::Job) {
         let mut inner = self.lock();
+        #[cfg(test)]
+        if matches!(job, background::Job::Encode { .. })
+            && let Some(held) = &mut inner.held_encodes
+        {
+            held.push(job);
+            return;
+        }
         if inner.background.is_some() {
             inner.staged.push(job);
         }
+    }
+
+    /// Holds back every encode job staged from now on, its reply unanswered, as a worker that never
+    /// reaches it would.
+    #[cfg(test)]
+    pub(crate) fn hold_encodes(&self) {
+        self.lock().held_encodes = Some(Vec::new());
     }
 
     /// Takes what `follow` and the due scans staged: the jobs of a batch to deliver when it is durable.

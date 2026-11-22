@@ -40,6 +40,11 @@ pub(crate) struct Node {
     pub stream: broadcast::Sender<Arc<StreamMsg>>,
     pub snapshot_seq: Option<u64>,
     pub sealing: crate::snapshot::sealing::Endpoint,
+    /// The stats record, which the sequencer tracks when the node runs a stats worker, whose copy then
+    /// encodes each cache's engine.
+    pub stats: crate::stats::Stats,
+    /// Asks the history owner to stop at its next turn boundary.
+    pub stopper: crate::history::runtime::Stopper,
     clock: Arc<dyn Clock>,
     sequencer: JoinHandle<Result<()>>,
     history: JoinHandle<Result<()>>,
@@ -156,11 +161,13 @@ impl Node {
         preflight::authorize::<NoChain>(None, Some((&log, &seq_cfg, AccountId(key.address()))), false).await?;
         let (log, mut history) = plan.finish_with_log(log, key.clone())?;
         let sealing = history.sealing().expect("authenticated history has a seal endpoint");
+        let stopper = history.stopper().expect("authenticated history stops on request");
         seq_cfg.history_sealing = Some(sealing.clone());
         let mut seq = Sequencer::recover_from(log, seq_cfg, key, stream.clone(), withdrawals)?;
         // The node's stats worker, whose copy of the engine encodes each cache's engine.
+        let stats = crate::test_support::stats();
         if stats_worker {
-            seq.track_stats(crate::test_support::stats());
+            seq.track_stats(stats.clone());
         }
         seq.carry_toxicity_notional(cfg.genesis.params.toxicity.notional.unwrap())?;
         // The `V20` rules, before access screening: these fixtures credit receipts unscreened.
@@ -182,7 +189,21 @@ impl Node {
         let deriver = Deriver::new(seq.derived_rows(), Some((cfg.node.log_dir.clone(), manifest.clone())));
         let sequencer = tokio::spawn(seq.run(received));
         let history = tokio::spawn(history.run(feed, deriver));
-        Ok(Self { cfg, tx, reader, manifest, stream, snapshot_seq, sealing, clock, sequencer, history, custody })
+        Ok(Self {
+            cfg,
+            tx,
+            reader,
+            manifest,
+            stream,
+            snapshot_seq,
+            sealing,
+            stats,
+            stopper,
+            clock,
+            sequencer,
+            history,
+            custody,
+        })
     }
 
     /// Waits until the history owner has indexed every entry the sequencer has flushed, observed
@@ -219,7 +240,8 @@ impl Node {
         }
     }
 
-    /// Stops the history owner as a failed task would, returning once its input queue is closed.
+    /// Stops the history owner as a failed task would, returning once its input queue and capture slot are
+    /// closed.
     pub(crate) async fn stop_history(&self) {
         self.history.abort();
         timeout(HANG, async {
@@ -229,6 +251,19 @@ impl Node {
         })
         .await
         .expect("the history owner closes its queue");
+    }
+
+    /// Asks the history owner to stop, as a node's stop does once its grace has run out, then stops the
+    /// node. Returns how long the owner's task took to end; `HANG` fails the test.
+    pub(crate) async fn request_history_stop(self) -> Duration {
+        let Self { tx, sequencer, history, stopper, .. } = self;
+        let asked = Instant::now();
+        stopper.stop();
+        timeout(HANG, history).await.expect("the stopped history owner ends").unwrap().unwrap();
+        let took = asked.elapsed();
+        drop(tx);
+        timeout(HANG, sequencer).await.unwrap().unwrap().unwrap();
+        took
     }
 
     /// Hands the sequencer a fresh trusted time sample, as the node's sampler would; a run longer

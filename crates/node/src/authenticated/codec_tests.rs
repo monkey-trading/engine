@@ -4,8 +4,10 @@
 use anyhow::Result;
 use jmt::storage::{NibblePath, Node, NodeKey};
 
+use crate::authenticated::blobs::{Points, chunk_key};
+use crate::authenticated::reader::Checked;
 use crate::authenticated::tests::{fresh, put, raw};
-use crate::authenticated::{Root, codec};
+use crate::authenticated::{CHUNK_BYTES, Root, caller_key, codec};
 
 /// Upstream's tags for its node variants in its borsh form, which a compact node starts with.
 const COMPACT_TAGS: [u8; 3] = [0, 1, 2];
@@ -152,5 +154,49 @@ fn a_compactly_written_namespace_stores_compact_nodes_beside_its_json_ones() -> 
     assert!(starts(json, 0)?.iter().all(|byte| !COMPACT_TAGS.contains(byte)), "the other namespace stays JSON");
     assert_eq!((store.read(&second, b"a")?, store.read(&second, b"b")?), (Some(b"A".to_vec()), Some(b"B".to_vec())));
     assert_eq!((store.read(&first, b"a")?, store.read(&other, b"c")?), (Some(b"A".to_vec()), Some(b"C".to_vec())));
+    Ok(())
+}
+
+/// A compactly written namespace stores each value of at most one chunk whole in its own leaf and a larger
+/// one as a descriptor and chunks; every read takes either form, an earlier chunked value included, and a
+/// value that moves between the forms leaves no chunk behind.
+#[test]
+fn a_compactly_written_namespace_stores_values_of_one_chunk_whole() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let namespace = [36; 32];
+    let (small, edge, large) = (vec![7u8; 100], vec![8u8; CHUNK_BYTES], vec![9u8; CHUNK_BYTES + 1]);
+    let first = store.update(&Root::empty(namespace), vec![put(b"old", &small), put(b"shrinks", &large)])?;
+    store.write_compactly(namespace)?;
+    let changes =
+        [(&b"small"[..], &small), (b"edge", &edge), (b"large", &large), (b"shrinks", &small), (b"grows", &small)];
+    let mut changes: Vec<_> = changes.iter().map(|(key, value)| put(key, value)).collect();
+    changes.push(put(b"empty", b""));
+    let second = store.update(&first, changes)?;
+    let third = store.update(&second, vec![put(b"grows", &large)])?;
+    let read = [(&b"old"[..], &small), (b"small", &small), (b"edge", &edge), (b"large", &large), (b"shrinks", &small)];
+    for (key, value) in read.into_iter().chain([(&b"grows"[..], &large)]) {
+        assert_eq!(store.read(&third, key)?.as_ref(), Some(value), "{}", String::from_utf8_lossy(key));
+    }
+    assert_eq!(store.read(&third, b"empty")?, Some(Vec::new()));
+    let conn = raw(&dir)?;
+    let checked = Checked::default();
+    let leaf = |root: &Root, key: &[u8]| Points::new(&conn, root, &checked).get(caller_key(&namespace, key)?);
+    let chunk = |root: &Root, key: &[u8], index: u64| {
+        Points::new(&conn, root, &checked).get(chunk_key(&namespace, caller_key(&namespace, key)?, index)?)
+    };
+    let first_byte =
+        |root: &Root, key: &[u8]| Ok::<_, anyhow::Error>(leaf(root, key)?.and_then(|leaf| leaf.first().copied()));
+    assert_eq!(leaf(&third, b"small")?, Some([&[0u8][..], &small].concat()), "a small value is its leaf");
+    assert_eq!(leaf(&third, b"edge")?.map(|leaf| leaf.len()), Some(CHUNK_BYTES + 1), "one chunk is its leaf");
+    assert_eq!(leaf(&third, b"empty")?, Some(vec![0u8]), "an empty value is its leaf");
+    assert_eq!(first_byte(&third, b"old")?, Some(b'{'), "an earlier value keeps its descriptor");
+    assert_eq!(first_byte(&third, b"large")?, Some(b'{'), "a value past one chunk has a descriptor");
+    assert!(chunk(&third, b"large", 1)?.is_some(), "a value past one chunk has its chunks");
+    assert!(chunk(&first, b"shrinks", 1)?.is_some(), "the value had two chunks before it moved");
+    for index in 0..2 {
+        assert_eq!(chunk(&second, b"shrinks", index)?, None, "a value moved to its leaf left chunk {index}");
+    }
+    assert_eq!(first_byte(&second, b"grows")?, Some(0), "the value started in its leaf");
+    assert!(chunk(&third, b"grows", 1)?.is_some() && first_byte(&third, b"grows")? == Some(b'{'), "then grew past it");
     Ok(())
 }
