@@ -3,17 +3,19 @@
 //! and syncs it every `PERIOD`, as the log's sync thread syncs each batch, and keeps each sync's block:
 //! its time less what the thread spent on a CPU or waiting for one, as the kernel's scheduler counts it
 //! (`/proc/thread-self/schedstat`), with what the disks under that filesystem did over the same sync
-//! (`host::backing_disks`). The generator cuts each window's samples and the probe's blocks at one
-//! instant, so a block counts in the window its sync ended in, where the orders and frames it held
-//! land; one that ended within `MARGIN` before the cut counts in neither, since those may land on either
-//! side. On a healthy runner a sync holds the thread a few milliseconds; when the storage itself stalls,
-//! it holds it as long as every order and stream frame released only after the log's sync.
+//! (`host::backing_disks`). The generator cuts the probe's blocks once it has taken a window's samples,
+//! so every sample in a window came before its cut, and a block counts in the window its sync ended in,
+//! where the orders and frames it held land; one that ended within `MARGIN` before the cut counts in
+//! neither, since those may land on either side. On a healthy runner a sync holds the thread a few
+//! milliseconds; when the storage itself stalls, it holds it as long as every order and stream frame
+//! released only after the log's sync.
 //!
 //! A window is excused only by what the host shows over the probe's longest block, never by the node's
-//! figures: the probe blocked at least `STALLED`; a disk under its filesystem had I/O in flight for at
-//! least three quarters of the sync, its time on a CPU included; and those disks completed less than
-//! half the I/O and bytes a second they completed over the window, reads, discards and flushes
-//! included, so they stalled rather than worked through a load, the node's included. Only an
+//! figures: the probe blocked at least `STALLED`; the requests a disk under its filesystem completed
+//! over the sync took, summed, at least three quarters of the sync, its time on a CPU included, with no
+//! flush counted (`host::completed`); and those disks completed less than half the I/O and bytes a
+//! second they completed over the window, reads, discards and flushes included, so they stalled rather
+//! than worked through a load, the node's included. Only an
 //! order-to-fill or stream-lag tail over its bar by no more than the block is excused, and only when
 //! every breach of the window is one. A stall in the node's own code, or cores it keeps busy, leaves
 //! the probe unblocked, and a median, a price's stamp, which does not wait on the sync, and the busy
@@ -200,11 +202,11 @@ pub(super) fn excuse(breaches: &[Breach], storage: &Storage) -> Option<String> {
     let (block, during) = (&storage.block, storage.block.host.disk_io?);
     let window = storage.window.disk_io?;
     let (blocked_ms, blocked_us) = (block.blocked.as_secs_f64() * 1e3, block.blocked.as_micros());
-    // A disk under the probe's file had I/O in flight for three quarters of the sync, its time on a CPU
-    // and the readings included: the probe waited on that storage, not on memory or a lock, by a figure
-    // the kernel keeps per disk rather than averaged over the busy CPUs.
-    let in_flight = u128::from(during.busiest_ms) * 4_000 >= block.span.as_micros() * 3;
-    let on_storage = block.blocked >= STALLED && in_flight;
+    // The requests a disk under the probe's file completed took three quarters of the sync, its time on a
+    // CPU and the readings included: the probe waited on that storage, not on memory or a lock, by a
+    // figure the kernel keeps per disk rather than averaged over the busy CPUs.
+    let held_requests = u128::from(during.busiest_ms) * 4_000 >= block.span.as_micros() * 3;
+    let on_storage = block.blocked >= STALLED && held_requests;
     // Under half the window's rate: `during / blocked < over_window / window / 2`, in whole microseconds.
     let window_us = (storage.secs * 1e6) as u128;
     let slower =
@@ -218,8 +220,8 @@ pub(super) fn excuse(breaches: &[Breach], storage: &Storage) -> Option<String> {
     };
     (stalled && !breaches.is_empty() && breaches.iter().all(explained)).then(|| {
         format!(
-            "the probe blocked {blocked_ms:.0} ms on storage, its disk busy {} ms of the sync's {} ms, completing {} \
-             I/Os meanwhile, against {} in the window",
+            "the probe blocked {blocked_ms:.0} ms on storage, its disk's requests taking {} ms of the sync's {} ms, \
+             completing {} I/Os meanwhile, against {} in the window",
             during.busiest_ms,
             block.span.as_millis(),
             during.ops,
@@ -271,7 +273,7 @@ mod tests {
     #[test]
     fn a_window_the_storage_stalled_on_its_own_is_excused_whatever_the_averaged_storage_wait() {
         let why = excuse(&stalled_window(), &window(stall()));
-        assert!(why.is_some_and(|why| why.contains("blocked 240 ms") && why.contains("busy 240 ms")));
+        assert!(why.is_some_and(|why| why.contains("blocked 240 ms") && why.contains("taking 240 ms")));
         let unreported = Block { host: Waited { io_ms: None, ..stall().host }, ..stall() };
         assert!(excuse(&stalled_window(), &window(unreported)).is_some(), "the pressure files play no part");
     }
@@ -280,11 +282,17 @@ mod tests {
     /// the sync 180 ms.
     #[test]
     fn a_window_is_judged_unless_the_host_shows_the_storage_stalled_on_its_own_over_the_block() {
-        // Off a CPU 60 ms on a lock and 40 ms on one, the probe's disk busy only with the node's syncs.
-        let locked = Block { span: Duration::from_millis(100), ..block(60, 40, 2, 8_192) };
+        // Off a CPU 60 ms on a lock and 40 ms on one, the node's syncs' requests taking 50 ms: over three
+        // quarters of the block, under three quarters of the sync.
+        let locked = Block { span: Duration::from_millis(100), ..block(60, 50, 2, 8_192) };
+        let held_by_a_lock = [breach("order_to_fill_us", "p99", 85_000.0, 35_975.0)];
+        assert_eq!(excuse(&held_by_a_lock, &window(locked)), None, "a wait on a lock beside the node's syncs");
+        // Short requests every 8 ms through a 240 ms wait on a lock, under half the window's rate: 30 of
+        // 0.2 ms each.
+        let ticking = block(240, 6, 30, 122_880);
         let cases = [
-            ("the probe's disk busy under three quarters of the sync", block(240, 179, 3, 12_288)),
-            ("a wait on a lock beside the node's syncs", locked),
+            ("the probe's disk's requests under three quarters of the sync", block(240, 179, 3, 12_288)),
+            ("short requests through a wait on a lock", ticking),
             ("the disks completing half their window's I/O", block(240, 240, 36, 12_288)),
             ("the disks moving half their window's bytes", block(240, 240, 3, 360_000)),
             ("no disk I/O reported", Block { host: Waited { disk_io: None, ..stall().host }, ..stall() }),
@@ -344,7 +352,8 @@ mod tests {
     #[test]
     fn a_cut_counts_each_block_in_the_window_its_sync_ended_in() {
         let shared = Shared::new(BTreeSet::new(), Instant::now());
-        let at = |ms: u64| shared.blocks.lock().expect("the blocks").since + Duration::from_millis(ms);
+        let epoch = shared.blocks.lock().expect("the blocks").since;
+        let at = |ms: u64| epoch + Duration::from_millis(ms);
         let (early, late, next) = (block(240, 240, 3, 0), block(300, 300, 3, 0), block(60, 60, 1, 0));
         let (cut, later_cut) = (at(24_000), at(48_000));
         shared.record(block(30, 30, 1, 0), at(1_000));

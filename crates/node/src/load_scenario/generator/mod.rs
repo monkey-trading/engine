@@ -245,11 +245,11 @@ async fn wait_subscribed(subscribers: &[Recorder]) {
     }
 }
 
-/// A window's samples and what the storage probe saw over it, cut at one instant: a block whose sync
-/// ends after the cut counts in the next window.
+/// A window's samples and what the storage probe saw over it, cut once the samples are taken, so every
+/// sample came before the cut: a block whose sync ends after it counts in the next window.
 fn close_window(clients: &[Recorder], subscribers: &[Recorder], probe: Option<&Probe>) -> (Samples, Option<Storage>) {
-    let cut = Instant::now();
-    (take_all(clients, subscribers), probe.map(|probe| probe.take(cut)))
+    let samples = take_all(clients, subscribers);
+    (samples, probe.map(|probe| probe.take(Instant::now())))
 }
 
 impl Scheduler {
