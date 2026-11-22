@@ -48,4 +48,89 @@ grep -qx "$test: test" <<<"$listed" || {
 # that burst held the log's syncs, and every order waiting on one, for up to 250 ms. Writing it back
 # first leaves the legs to the node's own writes.
 sync
-CARGO_INCREMENTAL=0 "${cargo_test[@]}" --nocapture
+# Experiment for #1180, not for merging: the host's facts, then the scenario three times on this runner,
+# on the disk, on tmpfs and on the disk again, with a per-second trace of the host's storage beside it.
+exp="$(mktemp -d)"
+cat > "$exp/trace.pl" <<'TRACE'
+#!/usr/bin/perl
+# Experiment for #1180, not for merging: prints one EXPTRACE line a second with the host's dirty and
+# writeback memory, its io and cpu pressure totals, the pages dirtied and written, the cpu line of
+# /proc/stat, every block device's counters, and the processes that wrote most in that second.
+use strict;
+use warnings;
+use Time::HiRes qw(time sleep);
+
+$| = 1;
+my %prev;
+sub slurp {
+    my ($path) = @_;
+    open my $f, '<', $path or return '';
+    local $/;
+    my $text = <$f>;
+    close $f;
+    return $text // '';
+}
+while (1) {
+    my $t = time;
+    my $mem = slurp('/proc/meminfo');
+    my ($dirty) = $mem =~ /^Dirty:\s+(\d+)/m;
+    my ($wb) = $mem =~ /^Writeback:\s+(\d+)/m;
+    my @io = slurp('/proc/pressure/io') =~ /total=(\d+)/g;
+    my @cpu = slurp('/proc/pressure/cpu') =~ /total=(\d+)/g;
+    my $vm = slurp('/proc/vmstat');
+    my ($dirtied) = $vm =~ /^nr_dirtied (\d+)/m;
+    my ($written) = $vm =~ /^nr_written (\d+)/m;
+    my ($stat) = slurp('/proc/stat') =~ /^(cpu .*)$/m;
+    my @disks;
+    for my $line (split /\n/, slurp('/proc/diskstats')) {
+        my @x = split ' ', $line;
+        next if $x[2] =~ /^(loop|ram|zram)/;
+        push @disks, join ' ', @x[2, 3, 5, 7, 9, 10, 11, 12, 13], $x[18] // 0, $x[19] // 0;
+    }
+    my (%now, @top);
+    for my $dir (glob '/proc/[0-9]*') {
+        my ($pid) = $dir =~ /(\d+)$/;
+        my ($bytes) = slurp("$dir/io") =~ /^write_bytes: (\d+)/m;
+        next unless defined $bytes;
+        $now{$pid} = $bytes;
+        my $delta = $bytes - ($prev{$pid} // $bytes);
+        next unless $delta > 0;
+        my $comm = slurp("$dir/comm");
+        chomp $comm;
+        $comm =~ s/\s+/_/g;
+        push @top, [$delta, "$pid:$comm"];
+    }
+    %prev = %now;
+    my @writers = map { "$_->[1]:$_->[0]" } (sort { $b->[0] <=> $a->[0] } @top)[0 .. ($#top < 5 ? $#top : 5)];
+    printf "EXPTRACE %.3f dirty=%s wb=%s io=%s cpu=%s vm=%s,%s | %s | %s | %s\n", $t, $dirty // '-', $wb // '-',
+        join(',', @io), join(',', @cpu), $dirtied // '-', $written // '-', $stat // '-', join('; ', @disks),
+        join(' ', @writers);
+    my $left = 1 - (time - $t);
+    sleep $left if $left > 0;
+}
+TRACE
+{
+  uname -a; nproc; free -m; lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,ROTA,MODEL; findmnt -T /tmp; findmnt -T /dev/shm
+  findmnt -T /mnt || true; df -h / /tmp /mnt /dev/shm || true; swapon --show || true
+  for q in /sys/block/*/queue; do echo "$q $(cat $q/scheduler) rot=$(cat $q/rotational) nr=$(cat $q/nr_requests) wc=$(cat $q/write_cache 2>/dev/null)"; done
+  sysctl vm.dirty_ratio vm.dirty_background_ratio vm.dirty_expire_centisecs vm.dirty_writeback_centisecs vm.dirty_bytes vm.dirty_background_bytes
+  grep -m1 'model name' /proc/cpuinfo; cat /sys/class/dmi/id/product_name /sys/class/dmi/id/sys_vendor 2>/dev/null || true
+  systemctl list-units --type=service --state=running --no-pager --no-legend || true
+  systemctl list-timers --all --no-pager || true
+  ps -eo pid,ppid,user,ni,stat,pcpu,rss,comm --sort=-pcpu | head -40
+} 2>&1 | sed 's/^/EXPHOST /'
+sudo perl "$exp/trace.pl" &
+tracer=$!
+trap 'sudo kill $tracer 2>/dev/null || true' EXIT
+for at in a_disk:/tmp b_tmpfs:/dev/shm c_disk:/tmp; do
+  name="${at%%:*}"
+  dir="$(mktemp -d -p "${at#*:}")"
+  echo "EXPRUN $name start $(date +%s.%N) TMPDIR=$dir"
+  if TMPDIR="$dir" CARGO_INCREMENTAL=0 "${cargo_test[@]}" --nocapture; then
+    echo "EXPRUN $name passed $(date +%s.%N)"
+  else
+    echo "EXPRUN $name failed $(date +%s.%N)"
+  fi
+  rm -rf "$dir"
+done
+ps -eo pid,ppid,user,ni,stat,pcpu,rss,comm --sort=-pcpu | head -20 | sed 's/^/EXPHOST end /'
