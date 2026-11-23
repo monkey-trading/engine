@@ -17,7 +17,8 @@ pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
 /// The nodes one operation has checked against an authenticated parent, each with the hash it was
 /// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed once
 /// per operation until the operation has checked its limit of nodes and forgotten them, and a reader
-/// takes it only where its own checked parent names that hash.
+/// takes it only where its own checked parent names that hash. It also keeps the values the operation has
+/// proved under each root, so a key is proved once under a root.
 pub(super) struct Checked {
     nodes: RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>,
     limit: usize,
