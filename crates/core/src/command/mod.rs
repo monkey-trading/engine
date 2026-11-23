@@ -370,6 +370,8 @@ pub enum AdminCommand {
     ApproveAward(AwardApproval),
     /// From `V89`, only by a passed vote: moves the cap on what one close pays awards (`awards`).
     SetAwardCap(AwardCap),
+    /// From `V90`, one part of a carried genesis, which the node alone sequences, in genesis (`carry`).
+    CarryState(crate::carry::CarryPart),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and

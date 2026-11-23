@@ -14,8 +14,8 @@ impl AdminCommand {
     /// floors, reduce-only, the emission schedule, corporate actions, the staking config, and from `V35`
     /// parameter notices and operator rotations, from `V49` markup notices, from `V52` listing
     /// notices, from `V78` the status notice, and from `V81` a relisting of several markets. The
-    /// node alone sequences the others, from its config and build, but for an award and the award cap,
-    /// which only a passed vote applies.
+    /// node alone sequences the others, from its config and build, and from `V90` a carried genesis, but for an
+    /// award and the award cap, which only a passed vote applies.
     pub fn is_operator_command(&self) -> bool {
         match self {
             AdminCommand::SetParams(_)
@@ -45,7 +45,8 @@ impl AdminCommand {
             | AdminCommand::ActivateCustodyFinality { .. }
             | AdminCommand::ActivateProtocol { .. }
             | AdminCommand::ApproveAward(_)
-            | AdminCommand::SetAwardCap(_) => false,
+            | AdminCommand::SetAwardCap(_)
+            | AdminCommand::CarryState(_) => false,
         }
     }
 }

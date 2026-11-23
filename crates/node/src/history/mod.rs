@@ -463,6 +463,7 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
         | Event::RestrictionLapsed { .. }
         | Event::OperatorFaultProven { .. }
         | Event::OperatorFaultRefused { .. }
+        | Event::StateCarried(_)
         | Event::CatchUpDeferred { .. } => None,
     }
 }

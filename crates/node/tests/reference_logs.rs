@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::PathBuf;
 
+use engine_core::command::{AdminCommand, Command};
 use engine_core::{Engine, event::Event};
 use engine_node::log::{LogEntry, read_file};
 
@@ -21,10 +22,13 @@ fn every_node_reference_log_replays_with_its_events() {
     logs.sort();
     assert!(!logs.is_empty(), "no reference logs in {}", dir.display());
     for path in logs {
-        let (mut without_events, mut withdrawals) = (0, 0);
+        let (mut without_events, mut withdrawals, mut carried) = (0, 0, false);
         read_file(&path, |entry| {
             match entry {
                 LogEntry::Command(c) if c.events.is_none() => without_events += 1,
+                LogEntry::Command(c) => {
+                    carried |= matches!(c.sequenced.cmd, Command::Admin(AdminCommand::CarryState(_)))
+                }
                 LogEntry::Withdrawal(_) => withdrawals += 1,
                 _ => {}
             }
@@ -32,7 +36,9 @@ fn every_node_reference_log_replays_with_its_events() {
         })
         .unwrap();
         assert_eq!(without_events, 0, "{}: every command carries its events", path.display());
-        assert!(withdrawals > 0, "{}: no withdrawal", path.display());
+        // A log whose genesis carries another's state starts under `V90`, after the rules (before `V22`) under
+        // which a withdrawal entry follows its approval.
+        assert!(withdrawals > 0 || carried, "{}: no withdrawal", path.display());
         // These immutable protocol fixtures intentionally carry placeholder enclave signatures.
         // Audit their roots/events here; the CLI's signature verifier refuses placeholders.
         let mut engine = Engine::new();

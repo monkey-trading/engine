@@ -29,6 +29,7 @@ use crate::account::Account;
 use crate::auth::{ClientAuth, Operator};
 use crate::awards::{Award, AwardCap};
 use crate::benchmark::BenchmarkHistory;
+use crate::carry::{CarryProgress, CarrySource};
 use crate::close_spread::PendingCeiling;
 use crate::command::{Command, Sequenced};
 use crate::corporate::CorporateEntitlement;
@@ -196,6 +197,12 @@ pub struct Engine {
     /// From `V89`, the cap a vote set on what one close pays awards, absent while the launch cap is in force.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) award_cap: Option<AwardCap>,
+    /// From `V90`, the checkpoint a carried genesis took this log's MONKEY and awards from (`carry`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) carried_from: Option<CarrySource>,
+    /// From `V90`, a carried genesis between its first and last parts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) carry: Option<CarryProgress>,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.

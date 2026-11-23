@@ -250,6 +250,11 @@ impl Engine {
         self.entitlements.get(&account).copied().unwrap_or_default()
     }
 
+    /// Every account's cumulative entitlement in base units.
+    pub fn entitlements(&self) -> &BTreeMap<AccountId, TokenUnits> {
+        &self.entitlements
+    }
+
     /// `account`'s emission debt from `V32`: write-off charged against loss weight it earned, which
     /// later loss weight pays down before the account earns again.
     pub fn emission_debt(&self, account: AccountId) -> Fixed {

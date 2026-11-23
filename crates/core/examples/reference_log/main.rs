@@ -85,12 +85,14 @@ mod v86;
 mod v87;
 mod v88;
 mod v89;
+mod v90;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
 use common::reference::{ReferenceEntry, root_hex};
 use engine_core::Engine;
+use engine_core::command::Sequenced;
 use engine_core::types::MarketId;
 use helpers::{event_kind, write_entries};
 
@@ -98,21 +100,32 @@ pub(crate) const SOL: MarketId = 10;
 pub(crate) const GOLD: MarketId = 11;
 pub(crate) const OIL: MarketId = 12;
 
-/// Writes the session to the given path and prints the event counts.
-/// Fails if the path is missing, already exists, or cannot be written.
+/// Writes the session to the given path and prints the event counts; given a second path, writes there the log
+/// whose genesis carries the session's state (`v90::carried`).
+/// Fails if a path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
-    let path: PathBuf =
-        std::env::args_os().nth(1).ok_or_else(|| anyhow!("usage: reference_log <output.jsonl>"))?.into();
+    let mut args = std::env::args_os().skip(1).map(PathBuf::from);
+    let path = args.next().ok_or_else(|| anyhow!("usage: reference_log <output.jsonl> [<carried.jsonl>]"))?;
+    write(&path, session::session().log)?;
+    if let Some(carried) = args.next() {
+        write(&carried, v90::carried(&mut session::session()))?;
+    }
+    Ok(())
+}
+
+/// Applies `log` to a new engine and writes it with each command's root to `path`, printing the event counts.
+/// Fails if a command does not apply, or `path` already exists or cannot be written.
+fn write(path: &Path, log: Vec<Sequenced>) -> anyhow::Result<()> {
     let mut engine = Engine::new();
     let mut tally: BTreeMap<String, usize> = BTreeMap::new();
     let mut entries = Vec::new();
-    for sequenced in session::session() {
+    for sequenced in log {
         for event in engine.apply(&sequenced)? {
             *tally.entry(event_kind(&event)).or_default() += 1;
         }
         entries.push(ReferenceEntry { sequenced, root: root_hex(engine.state_root()) });
     }
-    write_entries(&path, &entries)?;
+    write_entries(path, &entries)?;
     println!("wrote {} commands to {}", entries.len(), path.display());
     tally.iter().for_each(|(kind, count)| println!("{count:>5} {kind}"));
     Ok(())
@@ -128,9 +141,18 @@ mod tests {
     fn the_session_runs_every_part_to_the_latest_version_without_writing_a_log() {
         // Each part asserts its own rules as it goes; the log the session builds then replays.
         let mut engine = Engine::new();
-        for sequenced in session::session() {
+        for sequenced in session::session().log {
             engine.apply(&sequenced).expect("the session's log replays");
         }
         assert_eq!(engine.protocol_version(), ProtocolVersion::LATEST);
+    }
+
+    #[test]
+    fn the_carried_log_replays_from_a_new_engine() {
+        let mut engine = Engine::new();
+        for sequenced in v90::carried(&mut session::session()) {
+            engine.apply(&sequenced).expect("the carried log replays");
+        }
+        assert!(engine.carried_from().is_some());
     }
 }

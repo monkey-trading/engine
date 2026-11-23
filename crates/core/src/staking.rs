@@ -114,6 +114,11 @@ pub struct Staking {
     /// From `V50`, the time in office the open epoch's close splits the operator's share by.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub office: Option<TimeInOffice>,
+    /// From `V90`, the MONKEY staked across every account, in base units: set from the staked balances when
+    /// `V90` activates or staking is initialised under it, and kept by every mirrored stake and unstake, so a
+    /// carried genesis can check the stakes it carries are all of them (`carry`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staked_total: Option<TokenUnits>,
 }
 
 /// The authenticated anchor of a completed finalized staking scan.
@@ -225,6 +230,11 @@ impl Engine {
         &self.staked
     }
 
+    /// The sum of every account's staked MONKEY, or `None` past `u128::MAX`.
+    pub(crate) fn staked_sum(&self) -> Option<TokenUnits> {
+        self.staked.values().try_fold(0u128, |total, staked| total.checked_add(staked.0)).map(TokenUnits)
+    }
+
     /// `account`'s cumulative USDC distribution in base units.
     pub fn distribution(&self, account: AccountId) -> UsdcUnits {
         self.distributions.get(&account).copied().unwrap_or_default()
@@ -290,6 +300,8 @@ impl Engine {
             return Err("staking is already initialised".into());
         }
         config.validate(self.now)?;
+        // Nothing is staked before staking is initialised: a mirrored stake is refused until then.
+        let staked_total = (self.protocol_version >= ProtocolVersion::V90).then_some(TokenUnits(0));
         self.staking = Some(Staking {
             config: *config,
             epoch: 0,
@@ -297,6 +309,7 @@ impl Engine {
             mirrored_through: None,
             completed_through: None,
             office: None,
+            staked_total,
         });
         if self.protocol_version >= ProtocolVersion::V50 {
             self.start_time_in_office();
@@ -315,9 +328,11 @@ impl Engine {
         events: &mut Vec<Event>,
     ) {
         let total = self.staked.get(&account).copied().unwrap_or_default().0.checked_add(amount.0);
+        let staked_total = self.staking.as_ref().and_then(|staking| staking.staked_total);
+        let overflows = staked_total.is_some_and(|staked| staked.0.checked_add(amount.0).is_none());
         let reason = if self.staking.is_none() {
             Some(crate::event::Reject::StakingNotInitialised)
-        } else if amount.0 == 0 || total.is_none() {
+        } else if amount.0 == 0 || total.is_none() || overflows {
             Some(crate::event::Reject::InvalidAmount)
         } else if self.staking_refs.contains(chain_ref) {
             Some(crate::event::Reject::DuplicateReference)
@@ -331,6 +346,9 @@ impl Engine {
         self.staking_refs.insert(chain_ref.to_owned());
         self.staked.insert(account, TokenUnits(total.expect("checked above")));
         let staking = self.staking.as_mut().expect("initialised above");
+        if let Some(staked) = &mut staking.staked_total {
+            staked.0 += amount.0;
+        }
         staking.mirrored_through = Some(staking.mirrored_through.map_or(block, |frontier| frontier.max(block)));
         events.push(Event::Staked { account, amount });
     }
@@ -369,6 +387,10 @@ impl Engine {
             self.staked.remove(&account);
         }
         let staking = self.staking.as_mut().expect("initialised above");
+        if let Some(staked) = &mut staking.staked_total {
+            // The total is the sum of the balances, one of which held `amount`.
+            staked.0 -= amount.0;
+        }
         staking.mirrored_through = Some(staking.mirrored_through.map_or(block, |frontier| frontier.max(block)));
         events.push(Event::Unstaked { account, amount });
     }
