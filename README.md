@@ -137,9 +137,10 @@ version, so that an old log still replays under the rules that applied when it w
 
 ## Getting it
 
-You need the latest stable Rust toolchain, on Linux or macOS. The local-chain example also needs
-Foundry 1.8.3, `curl`, `jq` and Python 3. The browser verifier needs rustup with Rust 1.99.1 and its
-`wasm32-unknown-unknown` target, wasm-bindgen-cli 0.2.129, and Node 18 or later.
+You need the latest stable Rust toolchain, on Linux or macOS, and Python 3.11 or later for the
+tests. The local-chain example also needs Foundry 1.8.3, `curl` and `jq`. The browser verifier
+needs rustup with Rust 1.99.1 and its `wasm32-unknown-unknown` target, wasm-bindgen-cli 0.2.129,
+and Node 18 or later.
 
 ```shell
 git clone https://github.com/monkey-trading/engine.git
@@ -281,7 +282,7 @@ cargo run -p engine-node -- verify-attestation --attestation attestation.json \
   --release release.toml --processor Genoa
 ```
 
-`release.toml` is the manifest that each release will publish, and `--processor` names the product
+`release.toml` is the manifest each [release](image/README.md#release) publishes, and `--processor` names the product
 under which AMD's key distribution service issues the host's certificates: `Milan`, or `Genoa` for a
 Genoa, Bergamo or Siena host. The check passes only if AMD's certificate chain signed the
 report, the launch measurement matches the release's image, the processor is a CPU model that the

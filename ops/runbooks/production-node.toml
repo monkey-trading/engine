@@ -1,14 +1,15 @@
-# Production node config, without [genesis].
+# Production node config, without [genesis]: the template each deployment's config starts from.
 #
-# Assemble the config a production node runs with, then hash it (sha256sum): the hash is part of the
-# release the vault's timelock names, so one changed byte, a comment included, is another release.
+# A deployment copies these sections into a file of its own under config/release/, such as
+# config/release/production.toml, and sets its values there. The release workflow appends
+# config/benchmark-publishers.toml and config/production-genesis.toml to each such file, ships the
+# result and pins its SHA-256 in release.toml. The hash is part of the release the vault's timelock
+# names, so one changed byte, a comment included, is another release.
 #
-#   cat ops/runbooks/production-node.toml config/benchmark-publishers.toml \
-#       config/production-genesis.toml > node.toml
-#
-# Every value that is a placeholder or a decision still open carries a trailing marker comment. Set
-# the value and delete the comment; the assembled file must contain no marker.
-# ops/runbooks/deploy-and-rollback.md has the procedure.
+# Every value that is a placeholder or a decision still open carries a trailing marker comment. A
+# deployment sets the value in its own file and deletes the comment there; the release refuses a tag
+# while any marker is left. This template keeps its markers, and takes a value decided for every
+# deployment as well. ops/runbooks/deploy-and-rollback.md has the procedure.
 #
 # Secrets never appear in this file, so it can be published whole. It names them: `{name}` in an RPC
 # provider's or the screening source's URL, `api_key_secret`, an Alpaca

@@ -1,6 +1,6 @@
-//! The config file's hash, which the attestation binds, and a production build's refusal of mock
+//! The config file's hash, which the attestation binds, a production build's refusal of mock
 //! providers, of fresh-account budgets, request bursts and quote markets above its values, and of an
-//! `http` origin.
+//! `http` origin, and its load of each config a release ships.
 
 use super::*;
 
@@ -154,4 +154,34 @@ fn a_production_build_refuses_an_http_origin_at_load() {
     std::fs::write(&path, dev).unwrap();
     let err = NodeConfig::load(&path).unwrap_err();
     assert!(format!("{err:#}").contains("allows only https origins"), "{err:#}");
+}
+
+// The production lane runs the tests named `production_build`, where `load` applies every refusal of a
+// production build to each configuration a release ships, assembled as `scripts/release-files.py` does.
+#[cfg(feature = "production")]
+#[test]
+fn a_production_build_loads_each_release_config() {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+    let dir = crate::test_support::scratch_dir("production-release-configs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut loaded = Vec::new();
+    for entry in std::fs::read_dir(format!("{root}/config/release")).unwrap() {
+        let sections = entry.unwrap().path();
+        if sections.extension().is_none_or(|extension| extension != "toml") {
+            continue;
+        }
+        let name = sections.file_name().unwrap().to_string_lossy().into_owned();
+        let appended = ["config/benchmark-publishers.toml", "config/production-genesis.toml"];
+        let mut text = std::fs::read_to_string(&sections).unwrap();
+        for part in appended {
+            text.push_str(&std::fs::read_to_string(format!("{root}/{part}")).unwrap());
+        }
+        let path = dir.join(&name);
+        std::fs::write(&path, text).unwrap();
+        NodeConfig::load(&path).unwrap_or_else(|err| panic!("{name}: {err:#}"));
+        loaded.push(name);
+    }
+    for environment in ["production.toml", "staging.toml"] {
+        assert!(loaded.iter().any(|name| name == environment), "{environment} in {loaded:?}");
+    }
 }

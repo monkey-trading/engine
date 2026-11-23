@@ -96,7 +96,10 @@ candidate account's key.
 
 The candidate's trading server must start on the log that the incumbent wrote. Everything that the
 log records must therefore match the running log, and everything else is the candidate's own. Start
-from [production-node.toml](production-node.toml).
+from [production-node.toml](production-node.toml), and add the result to the repository as a file of
+its own under [config/release/](../../config/release). Each release ships every file there, with its
+SHA-256 in the release's `release.toml`, so that a verifier and the console accept the candidate's
+trading server.
 
 | Must equal the running log | The candidate's own |
 | --- | --- |
@@ -118,10 +121,10 @@ approval.
 Use this procedure to register a candidacy and have its release approved, so that the candidate can
 be elected or adopted into a rotation set.
 
-1. Build the candidate's release, meaning its image and configuration, and publish it, as
-   [Prepare a release](deploy-and-rollback.md#prepare-a-release) describes. Keep the two values that
-   the build gives you: `$DIGEST`, the 48-byte launch measurement, and `$CONFIG_HASH`, the
-   configuration's SHA-256.
+1. Make a release that ships the candidate's configuration, as
+   [Prepare a release](deploy-and-rollback.md#prepare-a-release) describes. Keep two values from its
+   `release.toml`: `$DIGEST`, the 48-byte `launch_digest`, and `$CONFIG_HASH`, the candidate's
+   configuration's entry in `[config_hashes]`.
 
 2. Stake the self-bond from the candidate account.
 

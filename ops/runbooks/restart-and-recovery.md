@@ -372,7 +372,7 @@ Use this table when part of the data disk is lost or damaged.
 | The cursors | The deposit and staking scans start again from `custody.evm.start_block`, and credit nothing twice. | Start the trading server. The scan is slow to catch up, and `custody_deposits_lagging` fires meanwhile. |
 | The log | The books. | Find a copy that reaches the vault's `latestSeq`, as [A log shorter than the vault](#a-log-shorter-than-the-vault) describes. |
 | The sealed keys, or the chip | The signing key. | Follow [New keys](key-recovery.md#new-keys). |
-| `config.toml` | The release's configuration. | Take the published `node.toml` of the release that the vault names. Compute the release from the file's `sha256sum` and the release's launch digest, as steps 1 and 2 of [How the enclave key is kept](key-recovery.md#how-the-enclave-key-is-kept) describe. The result must equal the vault's `currentRelease()`, or the keys do not open. |
+| `config.toml` | The release's configuration. | Take the published configuration of the release that the vault names: its `production.toml`, or `staging.toml` in staging. Compute the release from the file's `sha256sum` and the release's launch digest, as steps 1 and 2 of [How the enclave key is kept](key-recovery.md#how-the-enclave-key-is-kept) describe. The result must equal the vault's `currentRelease()`, or the keys do not open. |
 
 ## After any restart
 

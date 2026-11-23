@@ -1,0 +1,21 @@
+name: Build the enclave image
+description: >-
+  Builds the production enclave image from the commit checked out at the workspace root, with
+  scripts/build-image.sh, into out/image, and uploads it as an artifact. CI and the release build
+  it the same way.
+inputs:
+  artifact:
+    description: The name of the artifact that holds the image's files.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Build the image
+      shell: bash
+      run: ./scripts/build-image.sh out/image
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact }}
+        path: out/image/
+        retention-days: 14
+        if-no-files-found: error

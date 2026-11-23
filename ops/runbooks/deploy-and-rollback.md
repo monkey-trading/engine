@@ -55,15 +55,48 @@ needs its own approval, and an approval for one step does not cover the next.
   turns have ended, an upgrade or a rollback to such a build therefore hands over as usual. Until
   then, upgrade and roll back only between releases that carry the log check and record the releases
   that handed the keys on, as [Daily turns](operator-candidate.md#daily-turns) describes.
-- **No staging environment exists.** Run each procedure against a testnet vault first. The steps
-  are the same.
+- **Staging is not yet running.** [Staging](#staging) runs each release for 24 hours before
+  production does, once its host is in place. Until then, run each procedure against a testnet vault
+  first. The steps are the same.
 
 ## Prepare a release
 
-Use this procedure before any deployment or upgrade. None of its steps touches a live system.
+Use this procedure before any deployment or upgrade. The release workflow builds a release's files
+from a tag of `main` and publishes them as a draft GitHub release, as
+[Release](../../image/README.md#release) in the image's README describes. None of the steps below
+touches a live system, but a tag and a published release need the owner's approval.
 
-1. On the `main` commit you intend to release, whose CI run passed, run the soak test against the
-   live venues:
+1. **Set the configurations.** Through a pull request, set every value in
+   `config/release/production.toml` and `config/release/staging.toml` that carries an `OWNER` or
+   `REPLACE` marker, and delete each marker comment as you set its value. The release ships every
+   file in `config/release/`, an operator candidate's included. For a first deployment, the
+   contracts' addresses are the ones that [Deploy the contracts](#deploy-the-contracts) plans. CI
+   loads each configuration as a production build does. It also holds staging to production's
+   values, apart from its chain, its contracts, accounts and providers, and its domain. It holds
+   production to [production-node.toml](production-node.toml) in the same way, apart from the host's
+   product names, the rotation contracts and `[snapshots]`. A value decided for every operator, such
+   as `confirmations`, therefore changes in `production-node.toml` too, where it keeps its marker
+   until every operator has set it. Confirm that no marker is left on `main`:
+
+   ```shell
+   grep -nE '# (OWNER|REPLACE)' config/release/*.toml
+   ```
+
+   The command prints nothing when every value is set. The release workflow refuses a tag while any
+   marker is left.
+
+   The release configurations leave `[snapshots]` out, because its `trusted_signers` names the
+   enclave address, which does not exist until a first release starts. Unpinned, every start would
+   replay the whole log and also rebuild the history index from it. In each later release, add the
+   section from [production-node.toml](production-node.toml) to each configuration, with
+   `trusted_signers` set to `$SIGNER`, the enclave address that configuration's own running release
+   attests and the upgrade carries over, so that the new release restarts from its caches. Staging's
+   address differs from production's. A key that changes, by a promotion or new keys, needs a
+   release that pins the new address.
+
+2. **Soak the commit.** Choose the `main` commit you intend to release. Its CI run must have passed,
+   and that run must be a push to `main`, the nightly run or a manual run, because only those run
+   every job. On that commit, run the soak test against the live venues:
 
    ```shell
    scripts/dev-venue-load.sh --soak
@@ -85,101 +118,89 @@ Use this procedure before any deployment or upgrade. None of its steps touches a
    `test result: ok`. **If it fails, stop. The commit is not fit to release.** Keep the report for the
    release notes, and delete `<dir>` once it is saved.
 
-2. Tag the commit `v<version>`, where `<version>` is the release's version number.
-
-3. Take `vmlinuz`, `initramfs.cpio.gz`, `OVMF.fd`, `measurement.json` and `SHA256SUMS` from the
-   `image-first` artifact of the commit's CI run. If the artifact has expired, produce it again:
+3. **Run the release as a dry run** on the commit, where `<sha>` is the commit:
 
    ```shell
-   gh workflow run ci.yaml --ref v<version>
+   gh workflow run release.yaml -f commit=<sha>
    ```
 
-4. On a second machine, rebuild the image from the tag, where `<dir>` is a new output directory:
+   The dry run builds the image and the browser verifier twice each, compares the builds, and writes
+   the configurations and `release.toml`. It publishes nothing. The run passes when it succeeds and
+   reports no warning. A warning names what would refuse the tag, such as a marker left in a
+   configuration. The run's summary shows the manifest and the release notes, and its `release`
+   artifact holds the files.
+
+4. **Tag the commit.** The owner must approve the tag and its version, `v<MAJOR>.<MINOR>.<PATCH>`,
+   starting at `v0.1.0`:
 
    ```shell
+   git tag v<version> <sha>
+   git push origin v<version>
+   ```
+
+   The release workflow refuses the tag unless it names a commit of `main` whose CI run passed, as
+   step 2 describes, and the configurations carry no marker. It then builds and checks the files as
+   the dry run did, gives each one a GitHub artifact attestation, and creates a draft release. If it
+   refused the tag only because the commit's CI run had not finished, re-run the workflow once that
+   run has passed. For any other refusal, fix the cause on `main` and tag the fixed commit with the
+   next version.
+
+5. **Publish the release.** Review the draft's files and notes, add the soak report to the notes,
+   and publish it.
+
+   The owner must approve publishing the release.
+
+6. **Rebuild the image on the host,** in a clone of the repository, where `<dir>` is a new output
+   directory and `<release>` holds the release's files:
+
+   ```shell
+   git fetch origin main --tags
+   gh release download v<version> --repo monkey-trading/engine --dir <release>
    scripts/build-image.sh --ref v<version> --no-cache <dir>
-   ```
-
-   Then compare the two builds, where `<ci>` is the directory holding the CI artifact:
-
-   ```shell
-   diff <dir>/SHA256SUMS <ci>/SHA256SUMS
+   diff <dir>/SHA256SUMS <release>/SHA256SUMS
    ```
 
    The builds match when `diff` prints nothing. **If they differ, stop. The image is not
-   reproducible from the tag.**
-
-5. Assemble the configuration from the template, the benchmark publishers and the production
-   genesis:
+   reproducible from the tag, and the host must not boot it.** Then, in the same clone, check each
+   file's attestation, and the files against their sums:
 
    ```shell
-   cat ops/runbooks/production-node.toml config/benchmark-publishers.toml \
-     config/production-genesis.toml > node.toml
+   for file in <release>/*; do
+     gh attestation verify "$file" --repo monkey-trading/engine --deny-self-hosted-runners \
+       --signer-workflow monkey-trading/engine/.github/workflows/release.yaml \
+       --source-ref refs/tags/v<version>
+   done
+   (cd <release> && sha256sum -c SHA256SUMS engine-verify.SHA256SUMS)
    ```
 
-6. Fill in every value in `node.toml` that carries an `OWNER` or `REPLACE` marker in
-   [production-node.toml](production-node.toml), and delete each marker comment as you set its
-   value. For a first deployment, the contracts' addresses are the ones that
-   [Deploy the contracts](#deploy-the-contracts) plans. Then confirm that no marker is left:
+   Every file verifies and every sum prints `OK`. A tag runs its own commit's release workflow, so
+   also check that the tag's commit is on `main`:
 
    ```shell
-   grep -nE 'OWNER|REPLACE' node.toml
+   git merge-base --is-ancestor v<version> origin/main && echo "on main"
    ```
 
-   The command prints nothing when every value is set.
+   The command prints `on main`. **If any check fails, stop.**
 
-   `[snapshots] trusted_signers` names the enclave address, which does not exist until a first
-   release starts. A first release therefore leaves the whole `[snapshots]` section out: unpinned,
-   every start would replay the whole log and also rebuild the history index from it. In each later
-   release, set it to `$SIGNER`, the enclave address the running release attests and the upgrade
-   carries over, so that the new release restarts from its caches. A key that changes, by a
-   promotion or new keys, needs a release that pins the new address.
-
-7. Confirm that the configuration loads. `engine admin` reads the configuration before it asks for
-   a key, so the following command fails with the configuration's error, or reaches the key check
-   when the configuration is valid:
+7. **Take the environment's configuration.** The procedures below call it `node.toml`: copy the
+   release's `production.toml` to it, or `staging.toml` in staging. Its SHA-256 is the
+   environment's entry in the release's `release.toml`, and is `$CONFIG_HASH`, the second argument
+   of `setCurrentRelease`:
 
    ```shell
-   env -u OPERATOR_KEY -u OPERATOR_KEY_FILE $ENGINE admin --config node.toml \
-     --pin $(printf '0%.0s' $(seq 64)) set-reduce-only false
-   ```
-
-   The configuration is valid when the last line is
-   `Error: no operator key: pass --key-file, or set OPERATOR_KEY_FILE or OPERATOR_KEY`. If the first
-   line is `Error: parsing <file>` or `Error: validating <file>`, the lines after `Caused by:` name
-   the key to fix. `$ENGINE` must be built with the production feature, so that its configuration
-   checks match the trading server's.
-
-8. Hash the configuration:
-
-   ```shell
+   cp <release>/production.toml node.toml
    sha256sum node.toml
    ```
 
-   The hash is `$CONFIG_HASH`, the second argument of `setCurrentRelease`. **Do not edit the file
-   again. A single changed byte makes another release.**
+   **Do not edit the file. A single changed byte makes another release.**
 
-9. Write `release.toml`, in the format that [Release](../../image/README.md#release) in the image's
-   README shows. It holds `format = 2`; the release name; `measurement.json`'s `launch_digest`,
-   `policy` and `guest_features`; each CPU model the release accepts, with that model's minimum
-   reported TCB; and `[config_hashes]` holding `"node.toml" = "0x<hash>"`. Copy the
-   `[[cpu_models]]` entries from `node.toml`'s `[[tee.cpu_models]]`, entry for entry, so that a
-   verifier and a peer enclave take the same models at the same floors. The launch release accepts
-   Siena alone, at the floor that [SEV-SNP host](sev-snp-host.md#verify-each-guests-attestation)
-   derives from AMD's bulletins for EPYC 8004. Confirm that `guest_features` is `0x201`, because a
-   verifier refuses a release without Secure TSC.
+8. Before the new release goes live, ship a console build that pins the new `release.toml` beside
+   the previous release's. The attestation binds the configuration, so a console that does not pin
+   the new manifest refuses the new trading server.
 
-10. Publish the GitHub release with the image files, `node.toml`, `release.toml` and the browser
-    verifier package. The configuration holds no credential, only the names of the secrets that the
-    operator delivers.
-
-11. Before the new release goes live, ship a console build that pins the new `release.toml` beside
-    the previous release's. The attestation binds the configuration, so a console that does not pin
-    the new manifest refuses the new trading server.
-
-12. If a previous release is running, copy its log off it now, as
-    [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it)
-    describes. The successor starts from that log.
+9. If a previous release is running, copy its log off it now, as
+   [Download the public log and verify it](reference.md#download-the-public-log-and-verify-it)
+   describes. The successor starts from that log.
 
 ## Deploy the contracts
 
@@ -205,9 +226,10 @@ for i in 0 1 2 3 4 5 6 7; do cast compute-address $DEPLOYER --nonce $((NONCE + i
 The minter deploys the MONKEY token itself, at `cast compute-address <minter address> --nonce 1`, and
 the registry deploys its staking contract itself, at `cast compute-address <registry address> --nonce 1`. The seed relay is on Ethereum, at the address
 that [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) computes. Write
-each address into `node.toml` before [Prepare a release](#prepare-a-release) hashes it. The template
-carries the schedule, the vote and the fault proof commented out: uncomment them, since without them
-the release mirrors no turn.
+each address into `config/release/production.toml`, as step 1 of
+[Prepare a release](#prepare-a-release) describes, before the release is tagged. The release
+configuration names the schedule, the vote and the fault proof, since without them the release
+mirrors no turn.
 
 - `custody.vault`, `custody.evm.minter` and `custody.evm.staking.registry.contract`;
 - `custody.evm.staking.contract`, the staking contract;
@@ -475,8 +497,8 @@ Before step 1, complete and check each of the following:
 4. **Verify the attestation** against `release.toml`, and take `$SIGNER` and `$PIN` from it, as
    [The trading server's attested key and its pin](reference.md#the-trading-servers-attested-key-and-its-pin)
    describes. `verify-attestation` exits 0 and prints
-   `verified: release <name>, enclave 0x…, config node.toml`. The configuration it names is the
-   `[config_hashes]` entry whose hash is `$CONFIG_HASH`.
+   `verified: release <name>, enclave 0x…, config production.toml`, or `config staging.toml` in
+   staging. The configuration it names is the `[config_hashes]` entry whose hash is `$CONFIG_HASH`.
 
 5. **Register the signer.** The timelock calls `setSigner($SIGNER)`, with these values:
 
@@ -615,7 +637,7 @@ file below.
 
 3. **Prepare `B`'s disk.** On the new host or disk, place `B`'s configuration as `config.toml`, a
    file named `predecessor` that holds `A`'s handover address as `host:port`, which is
-   `tee.sealing.handover.listen`, and the log you copied at step 12 of
+   `tee.sealing.handover.listen`, and the log you copied at step 9 of
    [Prepare a release](#prepare-a-release), in `/data/log`. Confirm that `A`'s handover port is
    reachable from `B`'s network, and that `B`'s `[tee.sealing.handover]` and `[tee.sealing.secrets]`
    are configured in the same way as `A`'s.
@@ -675,7 +697,7 @@ before a successor holds the keys loses the keys.**
 | `handover_unconfirmed` on `A` | Sequencing has stopped, and no successor holds the keys yet. `A` keeps serving successors. | Start `B` again. |
 | `handover_unconfirmed` on `B` | `B` has sealed the keys, but `A` did not acknowledge, so `A` may still be running. | Wait until `A` has powered off, and then start `B` again. |
 | `handover_failed` on `A` | `A` stopped without a successor, and its keys no longer open. | Follow [The running release stopped](key-recovery.md#the-running-release-stopped). |
-| `B` refuses to start, naming a log that does not reach the checkpoint | The log on `B`'s disk ends before `A`'s final checkpoint. | Copy the log again, as step 12 of [Prepare a release](#prepare-a-release) describes, and start `B` again. |
+| `B` refuses to start, naming a log that does not reach the checkpoint | The log on `B`'s disk ends before `A`'s final checkpoint. | Copy the log again, as step 9 of [Prepare a release](#prepare-a-release) describes, and start `B` again. |
 
 **How to tell it is resolved.** `B` serves `/v1/markets`, `release_superseded` has resolved, and
 `latestSeq()` rises, as step 4 of [Upgrade to a new release](#upgrade-to-a-new-release) describes.
@@ -811,7 +833,20 @@ $ENGINE ct-watch --config ct-watch.toml
 
 ## Staging
 
-Run [First deployment](#first-deployment), [Upgrade to a new release](#upgrade-to-a-new-release)
-and [Roll back](#roll-back) against a testnet vault and a second host. Use the same image, and a
-configuration that differs only in its chain, vault and providers. The procedures are proven when
-each completes without a step that this runbook does not describe.
+Staging is a second guest on the production host, on Arbitrum Sepolia with contracts of its own. Its
+configuration is each release's `staging.toml`, which differs from `production.toml` only in its
+chain, its contracts, accounts and providers, and its domain. Each release runs in staging for 24
+hours before it goes to production. Staging's keyed market-data connections need vendor accounts of
+their own, because Massive, TraderMade and Alpaca each allow one live connection per account.
+
+1. **Set staging up once.** Run [Deploy the contracts](#deploy-the-contracts),
+   [Deploy the rotation contracts](#deploy-the-rotation-contracts) and
+   [First deployment](#first-deployment) against Arbitrum Sepolia, with the release's `staging.toml`
+   as `node.toml`.
+2. **Run each release in staging first.** Follow
+   [Upgrade to a new release](#upgrade-to-a-new-release) on staging's guest and vault. Upgrade
+   production only once the release has run in staging for 24 hours.
+3. **Prove a rollback in staging** before you need one in production, with [Roll back](#roll-back).
+
+Every step that changes staging needs its own approval, as the same step in production does. **An
+approval for a step in staging does not cover that step in production.**

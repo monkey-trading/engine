@@ -29,9 +29,9 @@ jobs:
   # request's files are its diff against its base. A merge group's are its diff against `main`: the
   # queue merges every entry under a head group that passes, so the head's run covers each entry
   # ahead of it; a merge group also always runs the Rust and contracts checks. A push to `main`, the
-  # nightly run, a manual run, a failed diff, a workflow change, and any path not listed set every
-  # area true, so only the listed paths can skip a job. Each path lists the area of every job that
-  # reads it. Each scenario job has its own area, named after it.
+  # nightly run, a manual run, a failed diff, a change to any workflow but the release's two, and any
+  # path not listed set every area true, so only the listed paths can skip a job. Each path lists the
+  # area of every job that reads it. Each scenario job has its own area, named after it.
   changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -73,6 +73,7 @@ jobs:
       attestation_verifier: ${{ steps.classify.outputs.attestation_verifier }}
       acme: ${{ steps.classify.outputs.acme }}
       wasm_verifier: ${{ steps.classify.outputs.wasm_verifier }}
+      release: ${{ steps.classify.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -97,7 +98,7 @@ jobs:
           api="signed_api browser_origin proxy_protocol batch_orders dashboard_data acme scenario_tests node_load soak"
           node="$prebuilt $lib_tests acme"
           scenarios="$node wasm_verifier"
-          all="rust contracts image agent_scripts merge_approval ci_changes snp_host $scenarios"
+          all="rust contracts image agent_scripts merge_approval ci_changes snp_host release $scenarios"
           areas=$all
           case "$EVENT" in
             pull_request) range="$BASE...$HEAD" ;;
@@ -123,6 +124,13 @@ jobs:
                   areas+=" snp_host" ;;
                 # The SEV-SNP guest's config writer, which an engine-node test runs.
                 scripts/snp-node-config.py) areas+=" rust" ;;
+                # The release's workflows, its gate and their test, and the writer of its configurations and
+                # manifest, which an engine-node test also runs. The shared build actions, like any unlisted
+                # path, run every job.
+                .github/workflows/release.yaml | .github/workflows/release-build.yaml | scripts/release-gate.sh \
+                  | scripts/release-test.sh)
+                  areas+=" release" ;;
+                scripts/release-files.py) areas+=" rust release" ;;
                 # The engine-core agreement tests read the research studies' shared vectors.
                 research/close-spread-calibration/fixtures/* | research/benchmark-cap/fixtures/* \
                   | research/benchmark-cap/results/refused.csv)
@@ -267,7 +275,7 @@ jobs:
                 config/anvil.toml) areas+=" rust $lib_tests acme production_secrets log_heads" ;;
                 # Read by the node's tests; the launch book's benchmarks build on the production genesis.
                 config/production-genesis.toml) areas+=" rust scenario_tests node_load soak recovery_scale" ;;
-                config/benchmark-publishers.toml | config/ct-watch.toml) areas+=" rust" ;;
+                config/benchmark-publishers.toml | config/ct-watch.toml | config/release/*) areas+=" rust" ;;
                 # The launch values scenario deploys from it, and the launch book's emissions and staking
                 # start from it; the node's tests read the rest of ops/.
                 ops/runbooks/production-deployment.toml)
@@ -331,8 +339,8 @@ jobs:
                   areas+=" wasm_verifier" ;;
                 # A scenario file not listed above.
                 scripts/dev-*) areas+=" $scenarios" ;;
-                # The ACME scenario downloads its test CA under image/retry.
-                image/retry) areas+=" image acme" ;;
+                # The ACME scenario downloads its test CA, and the release checks actionlint, under image/retry.
+                image/retry) areas+=" image acme release" ;;
                 image/* | scripts/build-image.sh | scripts/check-image.sh | scripts/check-image-retry.sh)
                   areas+=" image" ;;
                 *) areas=$all ;;
@@ -1287,11 +1295,12 @@ jobs:
         run: ./scripts/dev-acme.sh
 
   # Builds the browser verifier's package twice on separate runners with no shared cache and the
-  # pinned toolchain, the second from another checkout path, with a space in it, so the build's path
-  # remapping is covered; the first run also checks that package against the CLI on every fixture and vector.
-  # `wasm-verifier-compare` fails if the two builds differ by a single byte. A pull request and a merge
-  # group build it once; the second build and the comparison run on a push to main, nightly, and on a
-  # manual run.
+  # pinned toolchain, through the action the release's builds also use. The second builds from another
+  # checkout path, with a space in it, so the build's path remapping is covered; its workspace root holds
+  # only the top-level files and the shared actions. The first run also checks that package against the CLI on every fixture and
+  # vector. `wasm-verifier-compare` fails if the two builds differ by a single byte. A pull request and a
+  # merge group build it once; the second build and the comparison run on a push to main, nightly, and
+  # on a manual run.
   wasm-verifier:
     name: wasm-verifier (${{ matrix.run }})
     needs: changes
@@ -1302,29 +1311,20 @@ jobs:
         run: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["first"]' || '["first","second"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '.' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '' }}
-      # scripts/build-wasm-verifier.sh pins this toolchain and the wasm-bindgen CLI version.
-      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+          sparse-checkout: ${{ matrix.run == 'second' && '.github/actions' || '' }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.run == 'second'
         with:
-          toolchain: 1.99.1
-          targets: wasm32-unknown-unknown
-      - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
-      - name: Build the package
-        run: ./scripts/build-wasm-verifier.sh out/wasm-verifier
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          persist-credentials: false
+          path: elsewhere/engine copy
+      - uses: ./.github/actions/build-wasm-verifier
         with:
-          name: wasm-verifier-${{ matrix.run }}
-          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy/' || '' }}out/wasm-verifier/
-          retention-days: 14
-          if-no-files-found: error
+          artifact: wasm-verifier-${{ matrix.run }}
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '.' }}
       - name: Run the browser verifier dev scenario on the package
         if: matrix.run == 'first'
         run: ./scripts/dev-wasm-verifier.sh out/wasm-verifier
@@ -1335,21 +1335,20 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          pattern: wasm-verifier-*
-      - name: Compare the two builds
-        run: |
-          (cd wasm-verifier-first && sha256sum -c SHA256SUMS)
-          (cd wasm-verifier-second && sha256sum -c SHA256SUMS)
-          diff wasm-verifier-first/SHA256SUMS wasm-verifier-second/SHA256SUMS
-          cat wasm-verifier-first/SHA256SUMS
+          persist-credentials: false
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/compare-builds
+        with:
+          prefix: wasm-verifier
 
-  # Builds the enclave image twice on separate runners with no shared cache, then boots it under
-  # QEMU: the production image must refuse mock providers, and the dev image must attest its config
-  # hash. `image-compare` fails if the two builds differ by a single byte. The first run also checks
-  # the build's download retries. A pull request and a merge group build it once, with the dev image;
-  # the second build and the comparison run on a push to main, nightly, and on a manual run.
+  # Builds the enclave image twice on separate runners with no shared cache, through the action the
+  # release's builds also use, then boots it under QEMU: the production image must refuse mock
+  # providers, and the dev image must attest its config hash. `image-compare` fails if the two builds
+  # differ by a single byte. The first run also checks the build's download retries. A pull request and
+  # a merge group build it once, with the dev image; the second build and the comparison run on a push
+  # to main, nightly, and on a manual run.
   image:
     name: image (${{ matrix.run }})
     needs: changes
@@ -1367,14 +1366,9 @@ jobs:
       - name: Check the build's download retries
         if: matrix.run == 'first'
         run: ./scripts/check-image-retry.sh
-      - name: Build the image
-        run: ./scripts/build-image.sh out/image
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: ./.github/actions/build-image
         with:
-          name: image-${{ matrix.run }}
-          path: out/image/
-          retention-days: 14
-          if-no-files-found: error
+          artifact: image-${{ matrix.run }}
       - name: Install QEMU
         run: |
           sudo apt-get update -q
@@ -1394,15 +1388,60 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          pattern: image-*
-      - name: Compare the two builds
+          persist-credentials: false
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/compare-builds
+        with:
+          prefix: image
+
+  # The release's build, called as a dry run, on a pull request or merge group that changes the release's
+  # workflows or files: it builds the image and the browser verifier twice each, compares them, and
+  # writes the release's files, publishing nothing. A push to main, the nightly run and a manual run
+  # skip it, since their image and verifier jobs already build and compare both twice.
+  release-dry-run:
+    needs: changes
+    if: needs.changes.outputs.release == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/release-build.yaml
+
+  # Lints every workflow with actionlint, and their scripts with the runner's shellcheck, and tests the
+  # release's gate and its step that creates the draft release with `gh` stubbed. The release's tag path
+  # runs only on a tag, so these are its checks before then.
+  release-checks:
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
         run: |
-          (cd image-first && sha256sum -c SHA256SUMS)
-          (cd image-second && sha256sum -c SHA256SUMS)
-          diff image-first/SHA256SUMS image-second/SHA256SUMS
-          cat image-first/SHA256SUMS image-first/measurement.json
+          set -euo pipefail
+          export dir="$RUNNER_TEMP/actionlint"
+          mkdir -p "$dir"
+          export ACTIONLINT_VERSION ACTIONLINT_SHA256
+          # Each attempt fetches the same pinned archive and checks it, so a retry cannot change what installs.
+          # shellcheck disable=SC2016 # The inner shell expands the variables.
+          ./image/retry bash -c '
+            set -euo pipefail
+            curl --fail --silent --show-error --location --output "$dir/actionlint.tar.gz" \
+              "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+            echo "${ACTIONLINT_SHA256}  $dir/actionlint.tar.gz" | sha256sum --check --status'
+          tar -xzf "$dir/actionlint.tar.gz" -C "$dir" actionlint
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Lint the workflows
+        run: actionlint
+      - name: Test the release's gate and draft release
+        run: ./scripts/release-test.sh
 
   review-delta:
     needs: changes
@@ -2230,12 +2269,46 @@ jobs:
           gh run cancel ${{ github.run_id }} \
             || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
 
+  cancel-release-dry-run:
+    needs: release-dry-run
+    if: failure() && needs.release-dry-run.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
+  cancel-release-checks:
+    needs: release-checks
+    if: failure() && needs.release-checks.result == 'failure'
+      && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: write
+    steps:
+      - name: Cancel the run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run cancel ${{ github.run_id }} \
+            || echo "::warning::Run not cancelled (read-only fork token, or an API error); other jobs continue."
+
   # The single check to require in branch rules. It runs even when a job it needs fails, is
   # cancelled, or is skipped, and passes only if every one of them succeeded or was skipped while
   # `changes` set its area false. Add every new job to `needs`, and a gated one to `$area` below.
   ci-passed:
     if: always()
-    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-share-feeds, dev-toxicity, dev-venue-load, dev-load, dev-soak, dev-recovery-scale, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, review-delta, merge-approval, ci-changes, snp-host]
+    needs: [changes, fmt, file-loc, clippy, test, test-production, reference-examples, reference-logs, reference-logs-frozen, cargo-deny, contracts, dev-vault-deposits, dev-daily-rotation, dev-short-turns, engine-build, dev-metrics-alerts, dev-alert-outbox, dev-ct-watch, dev-browser-origin, dev-dashboard-data, dev-proxy-protocol, dev-scenario-tests, dev-batch-orders, dev-snapshot-restart, dev-rwa-feeds, dev-cme-feeds, dev-share-feeds, dev-toxicity, dev-venue-load, dev-load, dev-soak, dev-recovery-scale, dev-loss-trigger, dev-attestation-verifier, dev-signed-api, dev-production-secrets, dev-log-heads, dev-acme, wasm-verifier, wasm-verifier-compare, image, image-compare, release-dry-run, release-checks, review-delta, merge-approval, ci-changes, snp-host]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -2259,13 +2332,15 @@ jobs:
                "dev-attestation-verifier": "attestation_verifier",
                "dev-signed-api": "signed_api", "dev-production-secrets": "production_secrets", "dev-log-heads": "log_heads",
                "dev-acme": "acme", "wasm-verifier": "wasm_verifier", "wasm-verifier-compare": "wasm_verifier", image: "image",
-               "image-compare": "image", "review-delta": "agent_scripts", "merge-approval": "merge_approval",
+               "image-compare": "image", "release-dry-run": "release", "release-checks": "release",
+               "review-delta": "agent_scripts", "merge-approval": "merge_approval",
                "ci-changes": "ci_changes", "snp-host": "snp_host"} as $area
             | ["wasm-verifier-compare", "image-compare"] as $compare
+            | ($ENV.EVENT == "pull_request" or $ENV.EVENT == "merge_group") as $change
             | all(to_entries[]; .value.result == "success"
                 or .value.result == "skipped" and $run[$area[.key] // ""] == "false"
-                or .value.result == "skipped" and ($ENV.EVENT == "pull_request" or $ENV.EVENT == "merge_group")
-                  and ([.key] | inside($compare)))'
+                or .value.result == "skipped" and $change and ([.key] | inside($compare))
+                or .value.result == "skipped" and ($change | not) and .key == "release-dry-run")'
 
   # A push to `main` or the nightly run that fails opens an issue labelled `bug`, or comments on the
   # open one, naming the failed jobs and linking the run. It runs no repository code, so it alone

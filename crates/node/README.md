@@ -93,10 +93,11 @@ default. Every section refuses keys it does not know.
 
 [`config/dev.toml`](../../config/dev.toml) runs everything against local simulations.
 [`config/anvil.toml`](../../config/anvil.toml) runs custody against the vault on a local Anvil
-chain. A production configuration is assembled from
-[`ops/runbooks/production-node.toml`](../../ops/runbooks/production-node.toml),
-[`config/production-genesis.toml`](../../config/production-genesis.toml) and
-[`config/benchmark-publishers.toml`](../../config/benchmark-publishers.toml).
+chain. A production configuration is a deployment's node sections, which start from
+[`ops/runbooks/production-node.toml`](../../ops/runbooks/production-node.toml), followed by
+[`config/benchmark-publishers.toml`](../../config/benchmark-publishers.toml) and
+[`config/production-genesis.toml`](../../config/production-genesis.toml). A release ships one for
+production and one for staging, from [`config/release/`](../../config/release).
 
 The `[genesis]` section is part of the protocol. A log records the genesis it started with, and the
 server refuses to resume a log whose genesis differs from the configuration's. If you change
@@ -122,7 +123,8 @@ cargo test -p engine-node --features production --lib production_build
 ```
 
 The first command runs the unit tests and the integration tests in `tests/`, which replay the
-crate's reference logs and check the production configuration templates. The second runs the tests
+crate's reference logs and check the production configuration templates. Two of those test files run
+Python scripts, and need Python 3.11 or later. The second runs the tests
 that hold only for a production build, which refuses the development configuration that the other
 tests load.
 

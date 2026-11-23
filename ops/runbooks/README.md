@@ -17,7 +17,7 @@ variables and the checks that the other runbooks use.
 | Install a release, upgrade to one, or return to the previous one | [Deploy and rollback](deploy-and-rollback.md) |
 | Deploy the contracts, and initialise emissions and staking | [Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
 | Deploy the contracts that daily operator turns need | [Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
-| Write the trading server's configuration | [production-node.toml](production-node.toml) |
+| Set the configurations a release ships | [config/release/](../../config/release), which start from [production-node.toml](production-node.toml) |
 | Stop new positions in one market or in all of them | [Make markets reduce-only](reduce-only.md) |
 | Bring a stopped or crashed trading server back | [Restart and recovery](restart-and-recovery.md) |
 | Act when `daily_snapshot_failed` or `daily_snapshot_unreadable` fires | [Daily snapshots](restart-and-recovery.md#daily-snapshots) |
@@ -58,9 +58,11 @@ following parts says so where it does:
 
 - **The image has not yet run on SEV-SNP hardware.** The attestation report, the launch measurement,
   key sealing and the delivery of secrets on a real host are not yet verified.
-- **No staging environment exists.** The deployment and rollback procedures have been checked
-  against the parts that run locally, but not end to end.
-- **The values marked `OWNER` in [production-node.toml](production-node.toml)** wait on the vendor
+- **Staging is not yet running.** Its configuration is in
+  [config/release/staging.toml](../../config/release/staging.toml), but no host runs it. The
+  deployment and rollback procedures have been checked against the parts that run locally, but not
+  end to end.
+- **The values marked `OWNER` in [config/release/](../../config/release)** wait on the vendor
   accounts and the screening source. The contracts' launch values are set in
   [production-deployment.toml](production-deployment.toml), and only the opening day is still to be
   confirmed.

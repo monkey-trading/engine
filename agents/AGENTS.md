@@ -727,7 +727,15 @@ an index: load only the rule whose hint matches the current action.
   raise a benefit above launch's), and from `V79` each market's minimum level distance at its close-spread ceiling
   (#633, D6, confirmed by the owner on 2026-11-18; `dev.toml` and `anvil.toml` the same), and from `V81` #914's offset
   grid with its bounds (the values confirmed on #913; `anvil.toml` names none); a deployment's node sections complete it
-  into a config. Every section
+  into a config. `release/production.toml` (Arbitrum One, the alpha's mock-USDC vault) and
+  `release/staging.toml` (Arbitrum Sepolia, contracts of its own) are those node sections for the configurations a
+  release ships, as is any other file there (an operator candidate's), each followed by `benchmark-publishers.toml`
+  and `production-genesis.toml` as `<name>.toml`:
+  only secrets' names, unknown values marked `OWNER`/`REPLACE` (a tag is refused while one is left), and, for a
+  first release, no `[snapshots]`. `engine-node`'s `tests/release_files.rs` holds staging to production but for the
+  values each deployment sets (`DEPLOYMENT`), and production to `ops/runbooks/production-node.toml` but for those,
+  the host's product names, the rotation contracts and `[snapshots]`: a change to the template changes them too, and
+  a decided value outside those goes into the template as well. Every section
   rejects unknown keys. `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -863,6 +871,12 @@ an index: load only the rule whose hint matches the current action.
   `check-merge-approved.sh`, the merge queue's approval gate, with `check-merge-approved-test.sh`
   running it against a stubbed GitHub API;
   `ci-changes-test.sh`, which runs `ci.yaml`'s `changes` classifier on a table of events and paths;
+  `release-files.py` (Python 3.11 or later, for `tomllib`), which writes a release's configurations, one per file in
+  `config/release/`, and `release.toml`
+  (format 2) from the image's `measurement.json` for `release-build.yaml`, refusing a dev or non-Secure-TSC
+  measurement, configurations whose `[[tee.cpu_models]]` differ, and with `--final` a marker left, which
+  `engine-node`'s `tests/release_files.rs` runs; `release-gate.sh`, the release's gate, and `release-test.sh`, which
+  tests it on a scratch repository and `release.yaml`'s draft-release step with `gh` stubbed;
   `dev-vault-deposits.sh`, the vault deposit and RPC quorum dev scenarios on Anvil, with
   `dev-rpc-proxy.py` providing three local fault-injection endpoints and `dev-alert-audit.py`
   judging its node log's alerts (a provider Warning, or a missed Roughtime round's `trusted_time_no_sample`, that clears within a bounded window passes); `dev-metrics-alerts.sh`,
@@ -1101,7 +1115,10 @@ an index: load only the rule whose hint matches the current action.
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
   the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots and member snapshot start), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
-  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the browser verifier
+  scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
+  dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
+  workflow with pinned actionlint 1.7.12 and the runner's shellcheck, with `scripts/release-test.sh`
+  (`release-checks`), both in the `release` area, the browser verifier
   (`wasm-verifier` builds its package twice on separate runners with the pinned toolchain, the
   second from another checkout path, and its first run also runs `dev-wasm-verifier.sh` on that
   package; `wasm-verifier-compare` fails if the builds differ), and the enclave image (`image`
@@ -1111,7 +1128,7 @@ an index: load only the rule whose hint matches the current action.
   builds and boots the dev image; the second builds and the two compare jobs run on pushes to
   `main`, nightly, and on manual runs. The first job, `changes`, sorts the changed files from an
   explicit path list into the Rust, contracts, image, agent-script, merge-approval,
-  classifier-test and SEV-SNP host script areas and one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
+  classifier-test, SEV-SNP host script and release areas and one area per scenario job, and each job runs only when its area changed. A PR's files are its diff
   against its base; a merge group's are its diff against `main`, since the queue merges every entry
   under a head group that passes, and a merge group always runs the Rust and contracts jobs.
   Test-only modules (`tests`, `*_tests`, `scenario`, `*_scenario`, `*bench`, `test_support`) build
@@ -1130,7 +1147,7 @@ an index: load only the rule whose hint matches the current action.
   `fixtures/`, the benchmark-cap study's `fixtures/` and `results/refused.csv`, and the cap study's
   `data/derived/market_mix.csv`, which `engine-core` tests read), `docs/`, the root `README.md`,
   `SECURITY.md`, `AGENTS.md`, and `CLAUDE.md`, the `README.md` of `image/` and of each crate, and
-  `scripts/snp-local-chain.sh` and `scripts/snp-bench-guest.sh` change none. A push to `main`, the nightly run, a manual run, a workflow change, a failed diff, or
+  `scripts/snp-local-chain.sh` and `scripts/snp-bench-guest.sh` change none. A push to `main`, the nightly run, a manual run, a change to any workflow but `release.yaml` and `release-build.yaml` (the `release` area), a failed diff, or
   any path the list does not name runs every job, so whatever a PR or a group skipped runs once it
   lands. When a
   push to `main` or the nightly run fails, `main-failure-issue` opens a `bug` issue titled "CI
@@ -1159,6 +1176,18 @@ an index: load only the rule whose hint matches the current action.
   queue's entries from the group's head down to `main` and passes only if the latest
   `merge-approved` status on the head of every PR in the group is `success` from the owner's
   account. It never runs on a pull request, where the owner's commit status is the check.
+  `release.yaml` runs on a `v*` tag and, as a dry run that publishes nothing, on `workflow_dispatch` with a
+  `commit`: it calls `release-build.yaml`, whose `gate` refuses a tag but for `vMAJOR.MINOR.PATCH` on a commit of
+  `main` with a passing push, nightly or manual `ci.yaml` run (`scripts/release-gate.sh`; a dry run warns instead),
+  builds the production image
+  and the browser verifier twice each through the composite actions `ci.yaml`'s own builds use
+  (`.github/actions/build-image`, `build-wasm-verifier`, `compare-builds`), and writes the `release` artifact with
+  `scripts/release-files.py` and the notes; then, on a tag only, its `publish` job, the only one holding
+  `contents: write`, `id-token: write` and `attestations: write`, attests every file with
+  `actions/attest-build-provenance` and creates the draft release the owner publishes, or on a rerun completes the
+  draft, refusing a published release. A tag runs its own commit's `release.yaml`, so the owner-only tag ruleset is
+  what limits who can attest a release. The image README's Release
+  section and `ops/runbooks/deploy-and-rollback.md` give the procedure.
 - **agents/** — this index, `rules/`, and `skills/` (incl. `skills/vendor/` pull-on-demand
   packs); root `AGENTS.md` / `CLAUDE.md` symlink to `agents/AGENTS.md`.
 - **Cargo.toml** — workspace manifest, shared dependencies, and the Cargo profiles (release keeps
@@ -1222,6 +1251,11 @@ Run from the repo root:
 - Property tests: `cargo test -p engine-core --test invariants`
 - Production genesis and its calendars: `cargo test -p engine-node --test production_genesis`
 - Production node template: `cargo test -p engine-node --test production_node_template`
+- Release configurations and manifest: `cargo test -p engine-node --test release_files` (needs Python 3.11 or
+  later), and their load under a production build:
+  `cargo test -p engine-node --features production --lib production_build`; the release's gate and draft-release
+  step: `scripts/release-test.sh` (needs `jq` and `yq`); a release's dry run of a commit (builds and checks,
+  publishes nothing), once `release.yaml` is on `main`: `gh workflow run release.yaml -f commit=<sha>`
 - Production deployment inputs: `cargo test -p engine-node --test production_deployment`
 - New protocol version's reference log:
   `cargo run -p engine-core --example reference_log -- crates/core/tests/reference/v<N>.jsonl`, then
