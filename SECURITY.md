@@ -292,7 +292,8 @@ them Critical.
    at two thirds of the weight, as every parameter vote does. It applies seven days after it is
    logged. The operator cannot register an award by its own command, and the fast path refuses one.
 5. The engine adds the award to its queue with the amount the scale states for the grade, and
-   refuses any other amount. The queue and each award are public in the log and in the API.
+   refuses any other amount. It awards each advisory once, and refuses a second award that names an
+   advisory already awarded. The queue and each award are public in the log and in the API.
 6. Each epoch close pays the queue first, oldest award first, before it splits the rest of the
    excess between the operator and the stakers. A close pays awards at most 5% of its
    distributable excess, and never more than 50,000 USDC. An award that a close cannot finish stays
@@ -308,8 +309,8 @@ checked by replaying the log, and each claim against a checkpoint root.
 
 The vote is only as independent as its weights. At launch the rotation set's stake is largely the
 project owner's, so the owner's votes decide which reports are awarded. What the engine enforces,
-whoever votes, is the scale's amount per grade, the cap on each close, the queue's order and that a
-paid award is final.
+whoever votes, is the scale's amount per grade, one award for each advisory, the cap on each close,
+the queue's order and that a paid award is final.
 
 If the vault's permanent exit starts, the part of an award already credited to your address ranks
 with the stakers' distributions in the exit, and you claim it as they do. The part still in the
