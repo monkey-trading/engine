@@ -166,6 +166,8 @@ fn a_release_config_with_every_value_set_passes_ci_and_a_tag() {
     // A later release: each configuration pins the enclave address its own running release attests.
     for (n, environment) in environments().iter().enumerate() {
         let path = repo.join(format!("config/release/{environment}.toml"));
+        // [snapshots] is for a release while rotation is off; a rotation-set member leaves it out.
+        assert!(fs::read_to_string(&path).unwrap().contains("rotation_enabled = false"), "{environment}");
         let signer = format!("0x{:040x}", 0xa1 + n);
         let section = format!(
             "\n[snapshots]\ndir = \"/data/snapshots\"\nretain = 2\ninterval = \"5m\"\nmax_bytes = 2147483648\ntrusted_signers = [\"{signer}\"]\n"
