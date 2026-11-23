@@ -1,5 +1,5 @@
 use super::*;
-use crate::load_scenario::storage::Block;
+use crate::load_scenario::storage::{Block, MARGIN};
 
 #[test]
 fn a_trader_gets_only_what_it_can_act_on_and_no_more_than_its_rate() {
@@ -119,4 +119,37 @@ fn a_window_closes_with_the_storage_probes_blocks_and_a_leg_starts_without_earli
     };
     scheduler.begin_leg();
     assert_eq!(read(scheduler.probe.as_deref()), Some(Block::default()), "a block from before the leg counts in none");
+}
+
+/// A block whose write ends while a window's samples are being taken counts in neither window, however
+/// long the samples take after it: the orders and frames it held may have landed on either side.
+#[test]
+fn a_block_that_ends_while_a_windows_samples_are_taken_counts_in_neither_window() {
+    let since = Instant::now().checked_sub(Duration::from_secs(1)).expect("a clock a second on");
+    let probe = Arc::new(Probe::idle(since));
+    let client = Recorder::new(Samples { order_to_fill_us: vec![9_000], ..Samples::default() }.into());
+    let subscriber = Recorder::new(Samples { stream_lag_ms: vec![12], ..Samples::default() }.into());
+    // Holding the subscriber's recorder, a write ends once the client's has been taken, and the samples
+    // are done over `MARGIN` later.
+    let (locked, holding) = std::sync::mpsc::channel();
+    let (taken, held, writing) = (client.clone(), subscriber.clone(), probe.clone());
+    let holder = std::thread::spawn(move || {
+        let _held = held.lock().expect("the subscriber's recorder");
+        locked.send(()).expect("the window waits");
+        let waiting = Instant::now();
+        while !taken.lock().expect("the client's recorder").order_to_fill_us.is_empty() {
+            assert!(waiting.elapsed() < Duration::from_secs(10), "the client's recorder was never taken");
+            std::thread::yield_now();
+        }
+        writing.record(Block { blocked: Duration::from_millis(240), ..Block::default() }, Instant::now());
+        std::thread::sleep(MARGIN + MARGIN / 2);
+    });
+    holding.recv().expect("the recorder held");
+    let (samples, storage) =
+        close_window(std::slice::from_ref(&client), std::slice::from_ref(&subscriber), Some(&probe));
+    holder.join().expect("the holder");
+    assert_eq!((samples.order_to_fill_us, samples.stream_lag_ms), (vec![9_000], vec![12]), "both recorders taken");
+    assert_eq!(storage.map(|storage| storage.block), Some(Block::default()), "not in the window it ended in");
+    let next = close_window(&[], &[], Some(&probe)).1.map(|storage| storage.block);
+    assert_eq!(next, Some(Block::default()), "nor in the next");
 }

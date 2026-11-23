@@ -2,9 +2,9 @@
 //! (`/proc/pressure`), and the I/O its disks completed (`/sys/block/*/stat`). The storage wait counts
 //! the node's own log syncs too, so a disk stall shows as a window's wait standing well above its
 //! neighbours'; the I/O counts everything the host read, wrote, discarded and flushed, the node's log
-//! and its journal included, and how long each disk's requests took.
+//! and its journal included, and the flushes apart.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::Path;
 
@@ -19,13 +19,13 @@ pub(super) struct Waits {
     pub(super) disks: Option<Disks>,
 }
 
-/// What the host's disks had completed at one moment: their I/O and the bytes it moved, summed, and each
-/// disk's requests' time in milliseconds, by name (`completed`).
-#[derive(Clone, Debug, Default, PartialEq)]
+/// What the host's disks had completed at one moment, summed: their I/O, the bytes it moved and their
+/// flushes (`completed`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Disks {
     pub(super) ops: u64,
     pub(super) bytes: u64,
-    pub(super) request_ms: BTreeMap<String, u64>,
+    pub(super) flushes: u64,
 }
 
 /// How long the host's tasks waited between two `Waits`, in milliseconds: on storage, the node's own
@@ -38,22 +38,23 @@ pub(super) struct Waited {
     pub(super) disk_io: Option<DiskIo>,
 }
 
-/// What the host's disks did between two `Waits`: the I/O they completed and the bytes it moved, and
-/// the busiest disk's requests' time, in milliseconds.
+/// What the host's disks did between two `Waits`: the I/O they completed, the bytes it moved and the
+/// flushes among it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct DiskIo {
     pub(super) ops: u64,
     pub(super) bytes: u64,
-    pub(super) busiest_ms: u64,
+    pub(super) flushes: u64,
 }
 
-/// `host_io_wait_ms=… host_cpu_wait_ms=… host_disk_io=…/…MiB/…ms`, `n/a` where the host reports none.
+/// `host_io_wait_ms=… host_cpu_wait_ms=… host_disk_io=…/…MiB/…flushes`, `n/a` where the host reports
+/// none.
 impl fmt::Display for Waited {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ms = |wait: Option<f64>| wait.map_or_else(|| "n/a".to_owned(), |ms| format!("{ms:.0}"));
         let io = self
             .disk_io
-            .map_or_else(|| "n/a".to_owned(), |io| format!("{}/{}MiB/{}ms", io.ops, io.bytes >> 20, io.busiest_ms));
+            .map_or_else(|| "n/a".to_owned(), |io| format!("{}/{}MiB/{}flushes", io.ops, io.bytes >> 20, io.flushes));
         write!(f, "host_io_wait_ms={} host_cpu_wait_ms={} host_disk_io={io}", ms(self.io_ms), ms(self.cpu_ms))
     }
 }
@@ -74,13 +75,10 @@ impl Waits {
         let ms = |now: Option<u64>, then: Option<u64>| {
             now.zip(then).map(|(now, then)| now.saturating_sub(then) as f64 / 1_000.0)
         };
-        let disk_io = self.disks.as_ref().zip(earlier.disks.as_ref()).map(|(now, then)| {
-            let busy = |(name, busy): (&String, &u64)| then.request_ms.get(name).map(|was| busy.saturating_sub(*was));
-            DiskIo {
-                ops: now.ops.saturating_sub(then.ops),
-                bytes: now.bytes.saturating_sub(then.bytes),
-                busiest_ms: now.request_ms.iter().filter_map(busy).max().unwrap_or(0),
-            }
+        let disk_io = self.disks.zip(earlier.disks).map(|(now, then)| DiskIo {
+            ops: now.ops.saturating_sub(then.ops),
+            bytes: now.bytes.saturating_sub(then.bytes),
+            flushes: now.flushes.saturating_sub(then.flushes),
         });
         Waited { io_ms: ms(self.io_us, earlier.io_us), cpu_ms: ms(self.cpu_us, earlier.cpu_us), disk_io }
     }
@@ -96,10 +94,9 @@ fn disks(only: Option<&BTreeSet<String>>) -> Option<Disks> {
         if !only.is_none_or(|only| only.contains(&name)) || not_a_disk(&name) {
             continue;
         }
-        let (ops, bytes, request_ms) =
+        let (ops, bytes, flushes) =
             std::fs::read_to_string(disk.path().join("stat")).ok().as_deref().and_then(completed)?;
-        (disks.ops, disks.bytes) = (disks.ops + ops, disks.bytes + bytes);
-        disks.request_ms.insert(name, request_ms);
+        (disks.ops, disks.bytes, disks.flushes) = (disks.ops + ops, disks.bytes + bytes, disks.flushes + flushes);
     }
     Some(disks)
 }
@@ -122,11 +119,16 @@ pub(super) fn backing_disks(path: &Path) -> Option<BTreeSet<String>> {
 /// number (`/sys/dev/block`); None where the host lists no such device.
 fn sysfs_device(path: &Path) -> Option<std::path::PathBuf> {
     use std::os::unix::fs::MetadataExt;
-    let device = std::fs::metadata(path).ok()?.dev();
-    // Linux's device number: the major number in bits 8 to 19 and 32 to 43, the minor in the rest.
+    let (major, minor) = major_minor(std::fs::metadata(path).ok()?.dev());
+    std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok()
+}
+
+/// The major and minor numbers of Linux's device number `device`: the major in its bits 8 to 19 and 44
+/// to 63, the minor in bits 0 to 7 and 20 to 43.
+fn major_minor(device: u64) -> (u64, u64) {
     let major = ((device >> 8) & 0xfff) | ((device >> 32) & 0xffff_f000);
     let minor = (device & 0xff) | ((device >> 12) & 0xffff_ff00);
-    std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).ok()
+    (major, minor)
 }
 
 /// Adds to `disks` the whole disks under `device`, a block device's directory in sysfs: a partition's
@@ -146,18 +148,17 @@ fn whole_disks(device: &Path, disks: &mut BTreeSet<String>) {
     }
 }
 
-/// The I/O completed, the bytes it moved and its requests' time in a block device's `stat`: its reads,
-/// writes, discards and flushes (fields 1, 5, 12 and 16), the sectors read, written and discarded (3, 7
-/// and 14) at 512 bytes each, and the milliseconds its completed requests took, summed (11), less its
-/// flushes' (17). The kernel sums each request's time from its own clock, where the time with I/O in
-/// flight (10) may count a whole tick for each short request; a flush may destage writes completed
-/// earlier, so it counts for none. A kernel that counts no discards or flushes lists none.
+/// The I/O completed, the bytes it moved and the flushes in a block device's `stat`: its reads, writes,
+/// discards and flushes (fields 1, 5, 12 and 16), the sectors read, written and discarded (3, 7 and 14)
+/// at 512 bytes each, and its flushes (16). None from a kernel that counts no flushes, since a reading
+/// that may hide one cannot show the disks flushed nothing.
 fn completed(stat: &str) -> Option<(u64, u64, u64)> {
     let fields: Vec<u64> = stat.split_whitespace().map(str::parse).collect::<Result<_, _>>().ok()?;
-    let field = |number: usize| fields.get(number - 1).copied().unwrap_or(0);
-    let ops = field(1) + field(5) + field(12) + field(16);
-    let bytes = (field(3) + field(7) + field(14)) * 512;
-    (fields.len() >= 11).then(|| (ops, bytes, field(11).saturating_sub(field(17))))
+    let field = |number: usize| fields[number - 1];
+    (fields.len() >= 17).then(|| {
+        let ops = field(1) + field(5) + field(12) + field(16);
+        (ops, (field(3) + field(7) + field(14)) * 512, field(16))
+    })
 }
 
 /// How long any task on the host has waited for `resource` (`io` or `cpu`), in microseconds.
@@ -185,14 +186,30 @@ mod tests {
     }
 
     #[test]
-    fn a_disks_io_is_every_read_write_discard_and_flush_in_its_stat_and_its_requests_time_less_flushes() {
+    fn a_disks_io_is_every_read_write_discard_and_flush_in_its_stat_with_its_flushes() {
         let stat = "10521 2087 812040 4127 228716 113921 16312906 188905 0 44753 193032 7 0 4096 3 512 9\n";
         let (ops, bytes) = (10_521 + 228_716 + 7 + 512, (812_040 + 16_312_906 + 4_096) * 512);
-        assert_eq!(completed(stat), Some((ops, bytes, 193_032 - 9)), "its requests' time less its flushes'");
-        let older = "10521 2087 812040 4127 228716 113921 16312906 188905 0 44753 193032";
-        let (ops, bytes) = (10_521 + 228_716, (812_040 + 16_312_906) * 512);
-        assert_eq!(completed(older), Some((ops, bytes, 193_032)), "no discards or flushes");
-        assert_eq!(completed("1 2 3 4 5 6 7"), None, "a stat too short to hold its requests' time");
+        assert_eq!(completed(stat), Some((ops, bytes, 512)), "its flushes apart");
+        let older = "10521 2087 812040 4127 228716 113921 16312906 188905 0 44753 193032 7 0 4096 3";
+        assert_eq!(completed(older), None, "a kernel that counts no flushes");
+        assert_eq!(completed("1 2 3 x 5 6 7 8 9 10 11 12 13 14 15 16 17"), None, "a field that is no count");
+    }
+
+    /// Linux's device numbers, as `makedev` lays them out: the large major and minor numbers split
+    /// around the small ones.
+    #[test]
+    fn a_device_number_splits_into_its_major_and_minor_numbers() {
+        let devices = [(0x801, (8, 1)), (0x1_0300, (259, 0)), (0x10_082c, (8, 300)), (0x1000_0000_0400, (0x1004, 0))];
+        for (device, numbers) in devices {
+            assert_eq!(major_minor(device), numbers, "{device:#x}");
+        }
+        #[cfg(target_os = "linux")]
+        {
+            for (major, minor) in [(8, 1), (259, 0), (8, 300), (0x1004, 0), (0xf_ffff, 0xffff_ffff)] {
+                let device = nix::libc::makedev(major, minor);
+                assert_eq!(major_minor(device), (u64::from(major), u64::from(minor)), "libc's {major}:{minor}");
+            }
+        }
     }
 
     /// A whole disk names itself, a partition its disk, and a device built on others the disks under it,
@@ -226,56 +243,72 @@ mod tests {
         assert_eq!(under(&dm), ["nvme1n1", "sda"], "the disks under a device built on them");
         assert_eq!(under(&md0p1), ["sda", "sdb"], "a partition of a built device, through its disks");
         assert!(under(&loop0).is_empty(), "a device on a file names no disk");
-        // A temporary directory on a block device, as on CI's Linux runners, names the disks under it, or
-        // no stall of them could be excused; one in memory names none, and the probe stays off there.
-        if sysfs_device(&sys).is_some() {
-            assert!(backing_disks(&sys).is_some_and(|disks| !disks.is_empty()), "the disks under {sys:?}");
+        filesystem_on_a_block_device_names_its_disks(&sys);
+    }
+
+    /// A directory on a block device, as CI's Linux runners' are, names the disks under it, or no stall of
+    /// them could be excused, unless the device is one in memory, on a file or built on those, whose stall
+    /// excuses nothing; one on no block device (major number 0), as in memory, is not checked.
+    #[cfg(target_os = "linux")]
+    fn filesystem_on_a_block_device_names_its_disks(dir: &Path) {
+        use std::os::unix::fs::MetadataExt;
+        let device = std::fs::metadata(dir).expect("the directory").dev();
+        let (major, minor) = (nix::libc::major(device), nix::libc::minor(device));
+        if major == 0 {
+            return;
         }
+        let listed = std::fs::canonicalize(format!("/sys/dev/block/{major}:{minor}")).expect("sysfs lists it");
+        assert_eq!(sysfs_device(dir), Some(listed.clone()), "the device under {dir:?}");
+        let disk = if listed.join("partition").exists() { listed.parent().expect("a disk") } else { listed.as_path() };
+        let name = disk.file_name().expect("a name").to_string_lossy();
+        match backing_disks(dir) {
+            Some(disks) => assert!(!disks.is_empty(), "the disks under {dir:?}"),
+            None => assert!(not_a_disk(&name), "no disk under {dir:?}, on {name}"),
+        }
+    }
+
+    /// Only Linux lists block devices.
+    #[cfg(not(target_os = "linux"))]
+    fn filesystem_on_a_block_device_names_its_disks(dir: &Path) {
+        assert_eq!(sysfs_device(dir), None, "no sysfs");
     }
 
     /// Only the disks named are read; every disk the host lists otherwise.
     #[test]
     fn a_reading_on_named_disks_reads_only_those() {
         let none = disks(Some(&BTreeSet::new()));
-        if std::path::Path::new("/sys/block").exists() {
-            assert_eq!(none, Some(Disks::default()), "no disk named, none read");
-            let every = disks(None).expect("the host's disks");
-            let one: BTreeSet<String> = every.request_ms.keys().take(1).cloned().collect();
-            let named = disks(Some(&one)).expect("the named disk");
-            assert!(named.request_ms.keys().eq(one.iter()), "{named:?}");
-        } else {
+        let Ok(listed) = std::fs::read_dir("/sys/block") else {
             assert_eq!(none, None, "a host that lists no disks reads none");
-        }
+            return;
+        };
+        assert_eq!(none, Some(Disks::default()), "no disk named, none read");
+        let names: BTreeSet<String> = listed
+            .filter_map(|disk| Some(disk.ok()?.file_name().to_string_lossy().into_owned()))
+            .filter(|name| !not_a_disk(name))
+            .collect();
+        // A disk's counts only grow, so a reading taken between two of every disk lies between them, and
+        // one disk's falls below the later.
+        let within =
+            |low: &Disks, high: &Disks| low.ops <= high.ops && low.bytes <= high.bytes && low.flushes <= high.flushes;
+        let before = disks(None).expect("the host's disks");
+        let named = disks(Some(&names)).expect("every disk, named");
+        let one = names.first().map(|one| disks(Some(&BTreeSet::from([one.clone()]))).expect("the named disk"));
+        let after = disks(None).expect("the host's disks again");
+        assert!(within(&before, &named) && within(&named, &after), "{before:?} {named:?} {after:?}");
+        assert!(one.is_none_or(|one| within(&one, &after)), "{one:?} {after:?}");
     }
 
     #[test]
     fn a_window_waited_what_each_total_grew_by_in_milliseconds_or_none_reported() {
-        let disks = |ops, bytes, busy: &[(&str, u64)]| Disks {
-            ops,
-            bytes,
-            request_ms: busy.iter().map(|(name, ms)| ((*name).to_owned(), *ms)).collect(),
-        };
-        // The busiest disk comes first by name, and one appears only in the later reading.
+        let disks = |ops, bytes, flushes| Some(Disks { ops, bytes, flushes });
         let (earlier, later) = (
-            Waits {
-                io_us: Some(1_000),
-                cpu_us: Some(20_000),
-                disks: Some(disks(100, 1 << 20, &[("nvme0n1", 900), ("sda", 5_000)])),
-            },
-            Waits {
-                io_us: Some(251_000),
-                cpu_us: Some(20_500),
-                disks: Some(disks(350, 6 << 20, &[("nvme0n1", 1_140), ("sda", 5_090), ("sdb", 9_000)])),
-            },
+            Waits { io_us: Some(1_000), cpu_us: Some(20_000), disks: disks(100, 1 << 20, 4) },
+            Waits { io_us: Some(251_000), cpu_us: Some(20_500), disks: disks(350, 6 << 20, 6) },
         );
         let waited = later.since(&earlier);
-        let disk_io = DiskIo { ops: 250, bytes: 5 << 20, busiest_ms: 240 };
-        assert_eq!(
-            waited,
-            Waited { io_ms: Some(250.0), cpu_ms: Some(0.5), disk_io: Some(disk_io) },
-            "the busiest disk"
-        );
-        let line = "host_io_wait_ms=250 host_cpu_wait_ms=0 host_disk_io=250/5MiB/240ms";
+        let disk_io = DiskIo { ops: 250, bytes: 5 << 20, flushes: 2 };
+        assert_eq!(waited, Waited { io_ms: Some(250.0), cpu_ms: Some(0.5), disk_io: Some(disk_io) });
+        let line = "host_io_wait_ms=250 host_cpu_wait_ms=0 host_disk_io=250/5MiB/2flushes";
         assert_eq!(waited.to_string(), line, "rounded");
         for (now, then) in [(later.clone(), Waits::default()), (Waits::default(), later)] {
             let waited = now.since(&then);
