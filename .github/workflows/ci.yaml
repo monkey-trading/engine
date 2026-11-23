@@ -1256,7 +1256,16 @@ jobs:
       - name: Run the on-chain log heads dev scenario
         env:
           ENGINE_PREBUILT: "1"
+          SCENARIO_LOG_DIR: ${{ github.workspace }}/scenario-logs
         run: ./scripts/dev-log-heads.sh
+      - name: Keep the scenario node's logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: log-heads-node-logs
+          path: scenario-logs/**/*.log
+          retention-days: 14
+          if-no-files-found: ignore
 
   dev-acme:
     needs: changes
