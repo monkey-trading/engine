@@ -1043,7 +1043,7 @@ jobs:
 
   # The soak at the load scenario's 10,000 accounts: nine minutes at ten times launch flow in three
   # intervals, each of #867's faults once a minute in turn, and a restart from the newest cache every
-  # 2.4 minutes, a drain and a crash in turn. It tests the harness; the full soak runs by hand.
+  # 3 minutes, a drain and a crash in turn. It tests the harness; the full soak runs by hand.
   dev-soak:
     needs: changes
     if: needs.changes.outputs.soak == 'true'
@@ -1068,10 +1068,9 @@ jobs:
           SOAK_HOURS: "0.15"
           SOAK_REPORT_MINUTES: "3"
           SOAK_FAULT_MINUTES: "1"
-          SOAK_RESTART_HOURS: "0.04"
+          SOAK_RESTART_HOURS: "0.05"
           SOAK_WINDOW_SECS: "20"
           SOAK_SHORT: "1"
-          SOAK_KNOWN_ALERTS: "snapshot_write_failed"
         run: ./scripts/dev-soak.sh
 
   # The recovery scenario at a tenth of the launch book and its traders, on twenty minutes of launch flow
