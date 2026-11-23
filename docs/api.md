@@ -1181,7 +1181,9 @@ An approval stays listed until the server observes the vault's payment, so an ap
 client has already submitted can still appear. The vault's `usedNonces` shows whether it has been
 paid. A nonce missing from the list shows that the approval was paid, but only when `loaded` is true
 and the client has followed every `next` from the first page. `loaded` is false while a restarting
-server is still loading approvals, and on a server with simulated custody.
+server is still loading approvals, and on a server with simulated custody. A restarting server loads
+first the approvals whose authorisation was still usable or never signed, and signs new approvals
+once those are loaded; one whose authorisation had expired is listed once its turn to load comes.
 
 ### Reissuing an expired authorisation
 
@@ -1198,8 +1200,10 @@ approval that was never signed. The signature is the account's EIP-712 signature
 domain, of `ReissueRequest(address account,uint64 payoutNonce,uint64 replacesExpiresAt)`. Because it
 names the authorisation that it replaces, one signature can be used only once.
 
-The server screens the request as it screens a withdrawal and queues the approval for a new 24-hour
-authorisation with the same nonce, in approval order. It answers
+The server first checks that it holds the approval unpaid, that the request names the latest
+authorisation, and that this authorisation can no longer be used, and refuses a request that fails
+any of these before screening it. It then screens the request as it screens a withdrawal and queues
+the approval for a new 24-hour authorisation with the same nonce, in approval order. It answers
 `{"status": "queued", "resend_after_restart": true}`, and the new authorisation arrives on the
 stream and in the payouts route. The queue lives in memory, so after a server restart the client
 sends the same signed body again.
@@ -1603,8 +1607,9 @@ account data is public. The client sends a text message:
 {"op": "quotes", "account": "0x…", "markets": [1, 2]}
 ```
 
-The list may name at most `api.quote_max_markets` distinct markets, four by default. Sending the
-message again replaces the subscription, and an empty `markets` ends it. The connection then
+The list may name at most `api.quote_max_markets` distinct markets, four by default, and no more than
+four in a production build. Sending the message again replaces the subscription, and an empty
+`markets` ends it. The connection then
 receives one quote message per market, in signed frames, and a new one for each market whose quote
 has changed. The server reads quotes only after the log has moved, and at most once every
 `api.quote_interval`, 100 milliseconds by default.

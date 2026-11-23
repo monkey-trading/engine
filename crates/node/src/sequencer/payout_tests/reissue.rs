@@ -233,7 +233,7 @@ fn a_recovered_approval_of_a_retired_epoch_loaded_after_the_scan_is_still_due() 
     gate.schedule.retire(payout.order);
     gate.unswept -= 1;
     gate.schedule.prepare(2, &gate.payouts);
-    gate.backlog.push_back(((TRADER, 1), 0, Some(issued)));
+    gate.backlog = [((TRADER, 1), 0, Some(issued))].into_iter().collect();
     recovered.seq.load_backlog().unwrap();
     let gate = recovered.seq.gate.as_ref().unwrap();
     assert!(gate.schedule.is_pending(gate.payouts[&(TRADER, 1)].order), "a retired epoch is due on load");

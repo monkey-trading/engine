@@ -1,12 +1,16 @@
 //! Polling the node's `/v1/attestation` and verifying it with the native verifier. Only the
 //! attestation is trusted, never the connection: the quote's report data binds the TLS key hash it
-//! names, so a connection that serves a bad attestation, or none, can only withhold keys.
+//! names, so a connection that serves a bad attestation, or none, can only withhold keys. A key is
+//! taken only from an attestation of an enclave the config pins, so another enclave of the same
+//! release, which anyone with the hardware can run, cannot vouch for a certificate.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use engine_core::types::AccountId;
 use reqwest::{Client, Url};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::ring::default_provider;
@@ -43,6 +47,7 @@ pub(super) struct AttestationSource {
     processor: String,
     kds: String,
     root_pem: Option<String>,
+    enclaves: BTreeSet<AccountId>,
     allow_mock: bool,
 }
 
@@ -116,7 +121,16 @@ impl AttestationSource {
             .context("building the node HTTP client")?;
         let release = load_release(&node.release)?;
         let root_pem = node.root.as_deref().map(read_pem).transpose()?;
-        Ok(Self { http, url, release, processor: node.processor.clone(), kds: node.kds.clone(), root_pem, allow_mock })
+        Ok(Self {
+            http,
+            url,
+            release,
+            processor: node.processor.clone(),
+            kds: node.kds.clone(),
+            root_pem,
+            enclaves: node.enclaves.iter().copied().collect(),
+            allow_mock,
+        })
     }
 
     /// Fetches the node's attestation and verifies it against the release.
@@ -149,20 +163,29 @@ impl AttestationSource {
     }
 
     /// The TLS key hash `attestation` proves: from a verified hardware quote, or with `allow_mock`
-    /// from a mock one whose report data binds the served bundle.
+    /// from a mock one whose report data binds the served bundle, of an enclave `node.enclaves` names.
     /// Error cases:
     /// - the quote does not verify against the release, or is a mock one the watcher does not allow
+    /// - it names an enclave `node.enclaves` does not
     async fn verify(&self, attestation: &Attestation) -> anyhow::Result<[u8; 32]> {
-        if attestation.provider == "mock" && self.allow_mock {
-            return Ok(engine_verify::verify_mock_attestation(attestation)?.tls_public_key_sha256);
-        }
-        let options = Options {
-            processor: &self.processor,
-            kds_base: &self.kds,
-            root_pem: self.root_pem.as_deref(),
-            collateral: None,
+        let (enclave, key) = if attestation.provider == "mock" && self.allow_mock {
+            let bundle = engine_verify::verify_mock_attestation(attestation)?;
+            (AccountId(bundle.enclave_address), bundle.tls_public_key_sha256)
+        } else {
+            let options = Options {
+                processor: &self.processor,
+                kds_base: &self.kds,
+                root_pem: self.root_pem.as_deref(),
+                collateral: None,
+            };
+            let verified = verify_attestation(attestation, &self.release, &options).await?;
+            (verified.enclave_address, verified.tls_public_key_sha256)
         };
-        Ok(verify_attestation(attestation, &self.release, &options).await?.tls_public_key_sha256)
+        ensure!(
+            self.enclaves.contains(&enclave),
+            "the attestation is of enclave {enclave}, which node.enclaves does not name"
+        );
+        Ok(key)
     }
 }
 

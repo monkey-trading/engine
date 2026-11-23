@@ -36,8 +36,20 @@ foreign one.
    `node.release` at the new `release.toml`, and restart the watcher, as step 6 of
    [Upgrade to a new release](deploy-and-rollback.md#upgrade-to-a-new-release) describes.
 
-   **Changes the live system.** Restarting the watcher with a new manifest needs the owner's
-   approval.
+   The other cause is an attestation of an enclave that the watcher's `node.enclaves` does not
+   name: its log says `the attestation is of enclave 0x…, which node.enclaves does not name`. If
+   that address is the vault's signer, after a promotion or a timelock `setSigner`, add it to
+   `node.enclaves` and restart the watcher:
+
+   ```shell
+   cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC
+   ```
+
+   An address that the vault does not name is another enclave answering the trading server's
+   address, so treat any certificate for its key as foreign.
+
+   **Changes the live system.** Restarting the watcher with a new manifest or a new enclave needs
+   the owner's approval.
 
    If `unattested_certificate` then resolves by itself, this was its cause.
 

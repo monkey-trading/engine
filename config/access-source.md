@@ -108,16 +108,16 @@ queries the source that way, and keeps nothing, until it first sees the log at `
 
 ## Reused decisions
 
-From `V85` the node keeps the latest verified decision for each account and client address and
-attaches it to each of that pair's declarations, orders, closes, take-profit and stop-loss requests,
-withdrawals and payout reissues, so those requests make no call to the source while the decision is
-fresh. A decision is kept only when it is signed by the recorded source under the recorded domain,
-names the account with no payer and no request, and is stamped no more than one second ahead of the
-node's clock. It is attached only while a tenth of the freshness bound is left (27 seconds of a
-30-second bound), so the engine's check at the sequenced time finds it fresh. A decision that refuses
-the account is kept and attached in the same way until it runs out, so a refused account does not
-make the node call the source on each request. A newer decision replaces an older one, never the
-reverse.
+From `V85` the node keeps the latest verified decision for each account and client, an IPv6 client
+counted by its /64 as the API's limits count it, and attaches it to each of that pair's
+declarations, orders, closes, take-profit and stop-loss requests, withdrawals and payout reissues,
+so those requests make no call to the source while the decision is fresh. A decision is kept only
+when it is signed by the recorded source under the recorded domain, names the account with no payer
+and no request, and is stamped no more than one second ahead of the node's clock. It is attached
+only while a tenth of the freshness bound is left (27 seconds of a 30-second bound), so the engine's
+check at the sequenced time finds it fresh. A decision that refuses the account is kept and attached
+in the same way until it runs out, so a refused account does not make the node call the source on
+each request. A newer decision replaces an older one, never the reverse.
 
 A pair that sent a request within the last bound is refreshed in the background early enough for two
 attempts before its decision stops being attached, each `access.timeout` and a turn of the refresh

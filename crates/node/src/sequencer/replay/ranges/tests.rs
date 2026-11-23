@@ -78,6 +78,49 @@ fn each_range_starts_from_the_checkpoint_and_state_the_one_before_ends_in() {
     }
 }
 
+/// A failed range from a snapshot is the snapshot's fault when the snapshot starts from another checkpoint or
+/// state than the range before ends in, whatever its replay then met, and otherwise the range's own, the
+/// snapshot named either way.
+#[test]
+fn a_failed_range_from_a_snapshot_the_range_before_does_not_end_at_blames_the_snapshot() {
+    let at = |state| Boundary {
+        checkpoint: Checkpoint {
+            parent: None,
+            seq: 4,
+            root: format!("0x{}", hex::encode([7; 32])),
+            signature: "0x01".into(),
+            signer: "0x02".into(),
+            domain: None,
+            deferred_withdrawals: false,
+        },
+        state: [state; 32],
+    };
+    let first = || {
+        let mut replayed = Replay::default().finish();
+        replayed.checkpoints = 1;
+        Ok(RangeReplayed { replayed, refs: None, anchored: false, start: None, end: Some(at(1)) })
+    };
+    let failed = |state| {
+        let from = FromSnapshot { start: at(state), file: PathBuf::from("snapshot.json") };
+        Err(anyhow::anyhow!("events logged at seq 9 differ from the events replay gives").context(from))
+    };
+    let trust = Trust::Pinned { domain: None, signer: None };
+    let error = |state| format!("{:#}", stitch::stitch(vec![first(), failed(state)], 2, &trust).err().unwrap());
+    let blamed = error(2);
+    assert!(
+        blamed.starts_with(
+            "range 2 of 2 starts from another checkpoint or state than range 1 ends in: daily snapshot snapshot.json \
+             does not match the log"
+        ),
+        "{blamed}"
+    );
+    let own = error(1);
+    assert!(
+        own.starts_with("replaying range 2 of 2: from daily snapshot snapshot.json: events logged at seq 9 differ"),
+        "{own}"
+    );
+}
+
 /// A custody finality activation a range from a snapshot holds must list the legacy credits of the first
 /// range's ledger, which holds every credit from before custody finality, as a whole replay requires.
 #[test]

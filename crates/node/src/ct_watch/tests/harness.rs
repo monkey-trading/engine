@@ -13,6 +13,8 @@ use crate::test_support::scratch_dir;
 pub(super) const T0: u64 = 1_700_000_000_000;
 pub(super) const GRACE_MS: u64 = 600_000;
 pub(super) const DOMAIN: &str = "api.example.com";
+/// The enclave the watcher's config names.
+pub(super) const PINNED: [u8; 20] = [1; 20];
 
 /// The node's `/v1/attestation`: a status and a body, replaceable.
 pub(super) struct StubNode {
@@ -39,10 +41,15 @@ impl StubNode {
         Self { url, answer, task }
     }
 
-    /// Serves a mock attestation of `tls_key_sha256`.
+    /// Serves a mock attestation of `tls_key_sha256` by the pinned enclave.
     pub(super) fn attest(&self, tls_key_sha256: [u8; 32]) {
+        self.attest_by(PINNED, tls_key_sha256);
+    }
+
+    /// Serves a mock attestation of `tls_key_sha256` by `enclave`.
+    pub(super) fn attest_by(&self, enclave: [u8; 20], tls_key_sha256: [u8; 32]) {
         let bundle = AttestationBundle {
-            enclave_address: [1; 20],
+            enclave_address: enclave,
             config_sha256: [2; 32],
             tls_public_key_sha256: tls_key_sha256,
         };
@@ -98,6 +105,7 @@ log_interval = "1m"
 url = "{node}"
 release = "{dir}/release.toml"
 processor = "Milan"
+enclaves = ["0x0101010101010101010101010101010101010101"]
 [[logs]]
 name = "log"
 url = "{log}"

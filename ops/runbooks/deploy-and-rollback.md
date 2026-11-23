@@ -766,7 +766,9 @@ restarted trading server sequences no ordinary instruction until a snapshot arri
 ### The Certificate Transparency watcher
 
 Run the watcher on a host independent of the trading server's, and start it before the first
-certificate is issued. Its configuration template is `config/ct-watch.toml`.
+certificate is issued. Its configuration template is `config/ct-watch.toml`. Its `node.enclaves`
+names the vault's `checkpointSigner()` and, with rotation on, each member's registered standby key;
+it learns no key from any other enclave.
 
 ```shell
 $ENGINE ct-watch --config ct-watch.toml

@@ -219,10 +219,13 @@ in [How a takeover goes](#how-a-takeover-goes) is running.**
    If `standby_takeover_failed` fires instead, the copy does not replay against those signers, or
    the copy is missing the vault's last accepted checkpoint. A missing checkpoint was posted after the
    stream last reached you, and is not yet in the mirrors' completed segments. When the segments
-   that the refresh took from the archive do not replay, the message says that they were dropped.
-   The copy is then the stream's copy again, marked as it was before the refresh. Remove the mirror
-   that served those segments from `mirrors`. Fetch the operator's archive and the mirrors again,
-   because they may lag, and then restart the standby. The cut can be resumed and repeated safely.
+   that the refresh took from the archive do not replay, they are dropped, and the takeover goes on
+   from the stream's copy, which succeeds when that copy holds the vault's last accepted checkpoint;
+   the standby's log then warns that the takeover's replay refused the segments the archive refresh
+   added. If the takeover still fails, its message says that the stream's copy does not replay
+   either, and counts the segments the refresh added. Remove the mirror that served those segments
+   from `mirrors`. Fetch the operator's archive and the mirrors again, because they may lag, and
+   then restart the standby. The cut can be resumed and repeated safely.
    A crash in the middle of the cut leaves a `takeover.json` file. A crash during the refresh or
    its replay leaves a `refresh.before` file. The next start finishes or drops either before
    anything else.
@@ -512,6 +515,11 @@ operator's admin key, and the people who can sign the timelock calls.
 
    The first command prints `false`. `<i>` runs from 0 to one less than the count that the second
    command prints, and no `candidateList` entry names the failed candidate.
+
+8. Turn rotation on again only once the installed key is in effect: `curl -sf $API/v1/operator | jq
+   .operator` names the installed key, and `jq .pending_rotation` on the same answer prints `null`.
+   The engine drops an installation that is still pending when rotation turns on, and the replaced
+   key then keeps signing administrative instructions until an election moves it.
 
 **How to tell it is resolved.** The fallback's trading server sequences under the installed key, and
 the release check in

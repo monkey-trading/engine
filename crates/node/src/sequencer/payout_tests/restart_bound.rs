@@ -136,6 +136,52 @@ fn a_newer_approval_waits_for_an_older_one_that_needs_a_signature_in_an_unloaded
     }
 }
 
+#[test]
+fn a_restarts_new_approval_waits_for_no_older_one_whose_authorization_expired() {
+    let mut node = Node::new("payout-restart-dormant");
+    node.seq.sequence(deposit(10_000, "dormant-deposit")).unwrap().unwrap();
+    let older = 2 * BACKLOG_WINDOW as u64 + 40;
+    for _ in 0..older {
+        node.seq.sequence(withdraw(1)).unwrap().unwrap();
+        while node._queued.try_recv().is_ok() {}
+    }
+    // Each is signed, and its authorization runs out unclaimed before the log's last command.
+    let mut evidence = node.evidence(&node.last_checkpoint());
+    evidence.approvals = (1..=older).map(|nonce| status(&node, nonce, false)).collect();
+    assert_eq!(release_all(&mut node, &evidence).len(), older as usize);
+    node.clock.advance(Duration::from_secs(crate::withdrawals::LIFETIME_SECONDS + 1));
+    node.seq.trust(sample_around(node.clock.as_ref())).unwrap();
+    node.seq.sequence(deposit(1, "dormant-after-expiry")).unwrap().unwrap();
+    node.seq.flush().unwrap();
+    let mut recovered = node.restart(&node.last_checkpoint());
+    let gate = recovered.seq.gate.as_ref().unwrap();
+    let live = gate.backlog.oldest_live().map(|(key, _, latest)| {
+        (key.1, latest.as_ref().and_then(|withdrawal| withdrawal.authorization.as_ref()).map(|auth| auth.expires_at))
+    });
+    let now = recovered.seq.engine.now() / 1_000;
+    assert_eq!(live, None, "no recovered approval holds a later release at {now}");
+    assert_eq!((gate.payouts.len(), gate.backlog.len()), (BACKLOG_WINDOW, older as usize - BACKLOG_WINDOW));
+
+    // A new approval is signed as soon as custody reports it, with the older ones still unloaded.
+    recovered.seq.sequence(withdraw(1)).unwrap().unwrap();
+    while node._queued.try_recv().is_ok() {}
+    let live = older + 1;
+    evidence.checkpoint_seq = Some(node.last_checkpoint().seq);
+    evidence.checkpoint_root = Some(node.last_checkpoint().root);
+    evidence.approvals = vec![status(&recovered, live, false)];
+    let mut signed = Vec::new();
+    // Enough rounds for the epoch scan to pass the loaded window.
+    for _ in 0..8 {
+        recovered.seq.release_payouts(&evidence).unwrap();
+        recovered.seq.flush().unwrap();
+        while let Ok(withdrawal) = recovered.signed.try_recv() {
+            signed.push(withdrawal.nonce);
+        }
+    }
+    assert_eq!(signed, [live]);
+    assert!(!recovered.seq.gate.as_ref().unwrap().backlog.is_empty(), "the older ones are still unloaded");
+}
+
 /// Custody's report on `nonce`, one of the trader's approvals.
 fn status(node: &Node, nonce: u64, claimed: bool) -> ApprovalStatus {
     let approved_seq = node.seq.engine.withdrawal_approval(TRADER, nonce).unwrap().approved_seq;

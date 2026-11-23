@@ -237,6 +237,24 @@ async fn an_attestation_that_does_not_verify_alerts_and_names_no_key() {
 }
 
 #[tokio::test]
+async fn an_attestation_of_an_enclave_the_config_does_not_name_names_no_key_and_its_certificate_alerts() {
+    let (_guard, mut router) = capture_until_dropped();
+    // Another enclave of the same release, which anyone with the hardware can run, answers the poll.
+    let foreign = cert(&[DOMAIN], "Issuer");
+    let mut h = harness("ct-flow-other-enclave", vec![x509_leaf(T0, &foreign.der)], Some(0), true).await;
+    h.node.attest_by([9; 20], foreign.key_sha256);
+    h.pass(T0).await;
+    assert_eq!(alerts(&mut router), [fired("attestation_unverified", None)]);
+    assert!(h.watcher.store.tracker.state.attested.is_empty());
+    h.pass(T0 + GRACE_MS).await;
+    assert!(alerts(&mut router).contains(&fired("unattested_certificate", Some(foreign.key_sha256))));
+    // The pinned enclave's attestation is taken.
+    h.node.attest(foreign.key_sha256);
+    h.attestation_at(T0 + GRACE_MS + 60_000).await;
+    assert!(h.watcher.store.tracker.state.attested.contains_key(&hex::encode(foreign.key_sha256)));
+}
+
+#[tokio::test]
 async fn a_node_that_does_not_answer_names_no_key_and_raises_no_alert() {
     let (_guard, mut router) = capture_until_dropped();
     let mut h = harness("ct-flow-down", vec![], Some(0), true).await;

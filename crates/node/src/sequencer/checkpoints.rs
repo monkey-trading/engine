@@ -38,9 +38,9 @@ pub(super) struct Gate {
     pub unproved: std::collections::BTreeSet<(AccountId, u64)>,
     pub unregistered: std::collections::BTreeSet<(AccountId, u64)>,
     pub schedule: crate::sequencer::payout_schedule::Schedule,
-    /// Recovered approvals not yet loaded, oldest first, with their event indices and the latest
-    /// authorization the log holds for each.
-    pub backlog: std::collections::VecDeque<BacklogEntry>,
+    /// Recovered approvals not yet loaded, live then dormant, each oldest first, with their event indices
+    /// and the latest authorization the log holds for each (`payouts::backlog`).
+    pub backlog: crate::sequencer::payouts::Backlog,
     /// Loaded recovered approvals that custody has not yet been asked about.
     pub unswept: usize,
     /// The newest checkpoint known final: the anchor recovery started from, then each the poster

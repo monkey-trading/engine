@@ -33,10 +33,11 @@ async fn a_failed_takeover_leaves_the_copy_marked_as_it_was() {
     }
 }
 
-/// A refresh the takeover's replay never committed is dropped, and the copy marked checked again if it
-/// was: when the replay refuses what the refresh added, and at the next start after a crash before the
-/// replay ended. A restart then follows what the stream gave rather than refusing it. A segment the copy
-/// held unlisted before the refresh, as the stream's open one, is kept.
+/// A refresh the takeover's replay never committed is dropped: when the replay refuses what the refresh
+/// added, after which the copy the stream gave replays and is marked checked, and at the next start after a
+/// crash before the replay ended, which marks the copy checked again if it was. A restart then follows what
+/// the stream gave rather than refusing it. A segment the copy held unlisted before the refresh, as the
+/// stream's open one, is kept.
 #[tokio::test]
 async fn a_refresh_the_takeover_never_committed_is_dropped() {
     let operator = scratch_dir("backfill-refresh-operator");
@@ -58,16 +59,13 @@ async fn a_refresh_the_takeover_never_committed_is_dropped() {
         poison_segment(&dir, &last.file);
         match crashed {
             true => start(&followed(&served, &served), &dir, signers()).await.unwrap(),
-            false => {
-                let refused = replay_refreshed(&dir, (DOMAIN, Default::default()), signers())
-                    .expect_err("the refreshed copy replayed");
-                assert!(format!("{refused:#}").contains("which are dropped"), "{case}: {refused:#}");
-            }
+            false => replay_refreshed(&dir, (DOMAIN, Default::default()), signers())
+                .unwrap_or_else(|e| panic!("{case}: the copy the stream gave does not replay: {e:#}")),
         }
         assert_eq!(std::fs::read_to_string(dir.join(MANIFEST)).unwrap(), before, "{case}: the copy's listings");
         assert!(!dir.join(&last.file).exists(), "{case}: the refreshed segment is still there");
         assert!(!dir.join(REFRESH).exists(), "{case}: the refresh record outlived it");
-        assert_eq!(!needed(&dir), checked, "{case}: the copy's mark");
+        assert_eq!(!needed(&dir), checked || !crashed, "{case}: the copy's mark");
     }
     let (dir, before, last, bytes) = short_of_last(&operator, "backfill-refresh-open");
     std::fs::write(dir.join(&last.file), &bytes).unwrap();
@@ -103,7 +101,8 @@ async fn a_refresh_whose_drop_fails_keeps_the_refusal_and_its_record() {
 
 /// A takeover whose archive refresh links a segment a mirror altered so the copy's own chain admits it, a
 /// checkpoint signed by a key the vault never recorded, drops it once its replay refuses it, and the copy
-/// stays marked: the refresh is taken from the archive, before it, and undone end to end.
+/// stays marked: the refresh is taken from the archive, before it, and undone end to end. Here the copy
+/// the stream gave lacks the anchor, so the takeover then fails on that.
 #[tokio::test]
 async fn a_takeover_drops_a_refreshed_segment_its_replay_refuses() {
     let operator = scratch_dir("backfill-takeover-refresh-operator");
@@ -128,11 +127,55 @@ async fn a_takeover_drops_a_refreshed_segment_its_replay_refuses() {
         copied,
     )
     .await
-    .expect_err("the takeover took a refreshed segment no replay admits");
-    assert!(format!("{refused:#}").contains("which are dropped"), "{refused:#}");
+    .expect_err("the takeover took a refreshed segment no replay admits, or a copy without its anchor");
+    assert!(format!("{refused:#}").contains("no checkpoint at"), "{refused:#}");
     assert_eq!(std::fs::read_to_string(dir.join(MANIFEST)).unwrap(), before, "the copy's listings");
     assert!(!dir.join(&altered.file).exists(), "the refreshed segment is still there");
     assert!(!needed(&dir), "the stream's copy is no longer marked");
+}
+
+/// A copy that holds the vault's anchor takes over as the stream gave it when a mirror listed before the
+/// archive serves the copy's next segment with its checkpoints signed by another key, at every attempt,
+/// as it does when no origin answers.
+#[tokio::test]
+async fn a_takeover_refused_a_refreshed_segment_goes_on_from_the_copy_the_stream_gave() {
+    let operator = scratch_dir("backfill-takeover-fallback-operator");
+    ticks(&operator, 9).await;
+    let mirror = archive_of(&operator, "backfill-takeover-fallback-mirror");
+    let altered = Manifest::load(&mirror).unwrap().segments.last().cloned().unwrap();
+    resign_checkpoints(&mirror, &altered.file, &EnclaveKey::generate());
+    let honest = archive_of(&operator, "backfill-takeover-fallback-honest");
+    let silent = vec!["http://127.0.0.1:9".to_owned()];
+    let poisoned = vec![serve(&mirror).await, serve(&honest).await];
+    for (case, origins) in [("no origin answers", &silent), ("a mirror is first", &poisoned)] {
+        let (dir, _, _, _) =
+            short_of_last(&operator, &format!("backfill-takeover-fallback-{}", case.replace(' ', "-")));
+        std::fs::write(dir.join(CHECKED), "").unwrap();
+        let anchor = log_entries(&dir)
+            .into_iter()
+            .rev()
+            .find_map(|entry| match entry {
+                LogEntry::Checkpoint(checkpoint) => Some(checkpoint),
+                _ => None,
+            })
+            .expect("the copy holds a checkpoint");
+        let signer = AccountId(EnclaveKey::test_key().address());
+        let takeover = crate::checkpoints::Takeover { seq: anchor.seq, root: anchor.root.clone(), signer };
+        let (writer, copied) =
+            crate::standby::open_copy(&dir, 4, crate::standby::chain::Chain::new(DOMAIN, signer)).unwrap();
+        drop(writer);
+        crate::standby::finalize(
+            &archive_client(false).unwrap(),
+            (DOMAIN, signers(), Default::default()),
+            origins,
+            &dir,
+            &takeover,
+            copied,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{case}: the copy the stream gave takes over: {e:#}"));
+        assert!(!dir.join(&altered.file).exists(), "{case}: a refused segment was kept");
+    }
 }
 
 // ── Helpers ──

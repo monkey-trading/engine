@@ -1,5 +1,5 @@
-//! The API's screening decisions: at most one per account and client address, reused for each of
-//! the pair's requests while it is fresh, so a request from a pair with a fresh decision waits on no
+//! The API's screening decisions: at most one per account and client, reused for each of the pair's
+//! requests while it is fresh, so a request from a pair with a fresh decision waits on no
 //! source call. A pair that sent a request within the last freshness bound is refreshed before its
 //! decision runs out (`due`): late enough to spare the source calls, no sooner than half the
 //! decision's attachable life after it arrived, and early enough for two attempts, each the source's
@@ -13,6 +13,10 @@
 //! it fresh. A refused decision is kept and reused like a clear one. A newer decision replaces an
 //! older one, never the reverse. The pairs are bounded: past `CAPACITY` a new pair is screened per
 //! request, as it is with no decision kept, while the pairs kept are reused and refreshed.
+//!
+//! A client is counted as the API's limits count it, an IPv6 client by its /64, so the addresses of one
+//! /64 share one decision and take one of the pairs; a refresh asks about the address that last
+//! fetched it.
 //!
 //! Each request reads the decisions on its own task, so they sit behind a lock held only to read or
 //! write an entry, never across an await, as the screening slots do.
@@ -29,11 +33,13 @@ use engine_core::types::{AccountId, Millis};
 use tracing::debug;
 
 use crate::config::AccessSection;
+use crate::limits::client_key;
 
 /// The most pairs kept: far more than send requests within a bound at launch flow.
 const CAPACITY: usize = 50_000;
 
-/// An account and the client address its decision was screened for.
+/// An account and a client address: the address a decision is screened for, or, as the decisions are
+/// kept, its client's key (`client_key`).
 pub(crate) type Pair = (AccountId, IpAddr);
 
 /// The decisions kept, with the source and bound they are checked against.
@@ -71,6 +77,8 @@ struct Held {
 /// One pair's decision.
 struct Entry {
     screening: Screening,
+    /// The client address the decision was last fetched for, which a refresh asks about.
+    peer: IpAddr,
     /// The last time it may be attached: its bound less the margin a request may wait for its stamp.
     usable_until: Millis,
     /// When the node received it.
@@ -103,7 +111,7 @@ impl Decisions {
     /// The pair's decision, if one may be attached at `now`, counting the request as the pair's latest.
     pub(crate) fn hit(&self, account: AccountId, peer: IpAddr, now: Millis) -> Option<Screening> {
         let mut held = self.lock();
-        let pair = (account, peer);
+        let pair = (account, client_key(peer));
         let entry = held.entries.get_mut(&pair).filter(|entry| now <= entry.usable_until)?;
         entry.last_request = entry.last_request.max(now);
         let screening = entry.screening.clone();
@@ -139,7 +147,7 @@ impl Decisions {
             debug!(%account, verified, "screening decision not kept");
             return false;
         }
-        let pair = (account, peer);
+        let pair = (account, client_key(peer));
         let mut held = self.lock();
         held.purge(now);
         let lapsed = held.lapsed.remove(&pair).unwrap_or(Millis::MIN);
@@ -160,7 +168,7 @@ impl Decisions {
         held.remove(pair);
         held.expiring.insert((usable_until, pair));
         let screening = screening.clone();
-        let entry = Entry { screening, usable_until, fetched_at: now, last_request, due_at: None, refreshing };
+        let entry = Entry { screening, peer, usable_until, fetched_at: now, last_request, due_at: None, refreshing };
         let due = self.refresh_at(&entry);
         held.entries.insert(pair, entry);
         if !refreshing {
@@ -170,8 +178,8 @@ impl Decisions {
     }
 
     /// Up to `limit` pairs that sent a request within the bound and whose decision is due a refresh at
-    /// `now`, each marked as refreshing until `refreshed`. A pair found idle waits unscheduled until
-    /// its next request, and its decision runs out.
+    /// `now`, each with the address its decision was last fetched for, and marked as refreshing until
+    /// `refreshed`. A pair found idle waits unscheduled until its next request, and its decision runs out.
     pub(crate) fn due(&self, now: Millis, limit: usize) -> Vec<Pair> {
         let mut held = self.lock();
         held.purge(now);
@@ -183,7 +191,7 @@ impl Decisions {
             entry.due_at = None;
             if now.saturating_sub(entry.last_request) <= self.max_age {
                 entry.refreshing = true;
-                due.push(pair);
+                due.push((pair.0, entry.peer));
             }
         }
         due
@@ -191,7 +199,8 @@ impl Decisions {
 
     /// Ends the pair's refresh at `now`: one that kept a newer decision waits for its next refresh, and
     /// one that did not tries again on the next turn, while its decision lasts.
-    pub(crate) fn refreshed(&self, pair: Pair, now: Millis) {
+    pub(crate) fn refreshed(&self, (account, peer): Pair, now: Millis) {
+        let pair = (account, client_key(peer));
         let mut held = self.lock();
         held.lapsed.remove(&pair);
         let Some(entry) = held.entries.get_mut(&pair) else { return };

@@ -12,7 +12,7 @@ use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 
 use crate::sequencer::replay::Replayed;
-use crate::sequencer::replay::ranges::{RangeReplayed, Refs, Trust};
+use crate::sequencer::replay::ranges::{FromSnapshot, RangeReplayed, Refs, Trust};
 
 /// What an audit of a log verified, as `engine replay` reports it.
 pub struct Audited {
@@ -53,7 +53,8 @@ impl From<Replayed> for Audited {
 /// another checkpoint or state than the one before it ends in, whose entry named a checkpoint or a deferred
 /// approval no earlier range holds, or whose custody finality activation lists other legacy credits than the
 /// first range's ledger, which holds every credit from before custody finality, at that range, before any
-/// later range's fault.
+/// later range's fault. A failed range from a snapshot that starts from another checkpoint or state than the
+/// one before it ends in fails on its snapshot, whatever fault its replay then met.
 /// Error cases:
 /// - a range failed, or starts from another checkpoint or state than the range before it ends in
 /// - a range's entry named what no earlier range holds, or listed other legacy credits
@@ -69,8 +70,23 @@ pub(super) fn stitch(
     let (mut activations, mut checkpoint_signers) = (Vec::new(), BTreeSet::new());
     let (mut last, mut ended, mut ledger) = (None, None, Vec::new());
     for (at, result) in results.into_iter().enumerate() {
-        let RangeReplayed { replayed, refs, anchored: held, start, end } =
-            result.with_context(|| format!("replaying range {} of {ranges}", at + 1))?;
+        let RangeReplayed { replayed, refs, anchored: held, start, end } = match result {
+            Ok(replayed) => replayed,
+            Err(failed) => {
+                let differs =
+                    failed.downcast_ref::<FromSnapshot>().filter(|from| at > 0 && ended.as_ref() != Some(&from.start));
+                let context = match differs {
+                    Some(from) => format!(
+                        "range {} of {ranges} starts from another checkpoint or state than range {at} ends in: daily \
+                         snapshot {} does not match the log",
+                        at + 1,
+                        from.file.display()
+                    ),
+                    None => format!("replaying range {} of {ranges}", at + 1),
+                };
+                return Err(failed.context(context));
+            }
+        };
         // So the ranges are one history: each starts from the checkpoint and the state the one before ends in.
         ensure!(
             at == 0 || (start.is_some() && start == ended),

@@ -38,6 +38,7 @@ log_interval = "1m"
 url = "https://api.example.com"
 release = "release.toml"
 processor = "Milan"
+enclaves = ["0x0101010101010101010101010101010101010101"]
 [[logs]]
 name = "log"
 url = "https://ct.example.com/log"
@@ -84,6 +85,7 @@ fn values_that_could_fail_silently_or_unsafely_are_refused() {
         ("name = \"example-log\"", "name = \"Example Log\"", "log name"),
         ("max_pages = 1000", "max_pages = 0", "empty outbox"),
         ("episode_quiet = \"1h\"", "episode_quiet = \"1m\"", "a quiet interval no longer than a poll"),
+        ("enclaves = [\"0x", "enclaves = [] # \"0x", "no enclave"),
     ] {
         assert!(edited(from, to).validate(false).is_err(), "{why}");
     }

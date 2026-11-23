@@ -43,16 +43,28 @@ pub(crate) fn reissue_hash(
     keccak256([&[0x19, 0x01][..], domain.hash_struct().as_slice(), value.as_slice()].concat())
 }
 
-/// Whether the sequencer holds the account's unpaid approval `nonce`, read from the checkpoint gate's
-/// memory as the payouts route reads it.
+/// Why the sequencer would not queue the account's request to replace the authorization expiring at
+/// `replaces` of its approval `nonce`, read from the checkpoint gate's memory as the payouts route reads
+/// it: no unpaid approval is loaded under the nonce, the request replaces another authorization than the
+/// latest, or the latest is of the latest signer epoch and unexpired by the API's clock. `None` when it
+/// would queue it.
 /// Error cases:
 /// - the sequencer has stopped
-async fn approval_loaded(s: &ApiState, account: AccountId, nonce: u64) -> Result<bool, ApiError> {
+async fn refusal(s: &ApiState, account: AccountId, nonce: u64, replaces: u64) -> Result<Option<Reissue>, ApiError> {
     let (reply, rx) = oneshot::channel();
     let request = Request::AccountPayouts { account, after: nonce.checked_sub(1), limit: 1, reply };
     s.tx.send(request).await.map_err(|_| ApiError::Unavailable)?;
     let held = rx.await.map_err(|_| ApiError::Unavailable)?;
-    Ok(held.payouts.first().is_some_and(|payout| payout.nonce == nonce))
+    let Some(payout) = held.payouts.into_iter().next().filter(|payout| payout.nonce == nonce) else {
+        return Ok(Some(Reissue::Unknown));
+    };
+    let latest = payout.withdrawal.as_ref().and_then(|withdrawal| withdrawal.authorization.as_ref());
+    let current = latest.map_or(0, |authorization| authorization.expires_at);
+    if replaces != current {
+        return Ok(Some(Reissue::Stale { current }));
+    }
+    let now = u64::try_from(s.clock.now_ms() / 1_000).unwrap_or_default();
+    Ok(payout.usable_until.filter(|&expires_at| now < expires_at).map(|expires_at| Reissue::StillValid { expires_at }))
 }
 
 /// Queues the approval for signing again once the account proves control of it and, once access is
@@ -62,8 +74,9 @@ async fn approval_loaded(s: &ApiState, account: AccountId, nonce: u64) -> Result
 /// Error cases:
 /// - the address or nonce is invalid, the signature is not the account's, or the account is over
 ///   its rate
-/// - once access is enforced, no unpaid approval is loaded under the nonce, which is refused before
-///   any screening
+/// - once access is enforced, no unpaid approval is loaded under the nonce, the request replaces
+///   another authorization than the latest, or the latest is still usable, each refused before any
+///   screening
 /// - screening refuses the account or its peer, or the screening capacity is full
 /// - no unpaid approval is loaded under the nonce, or the request replaces an authorization other
 ///   than the latest, or the latest is still usable
@@ -85,11 +98,12 @@ pub(super) async fn reissue(
     }
     s.limits.check_account(account)?;
     let screening = if s.access_enforced() {
-        // Screening is paid for, and any key can sign a request, so only an account with an unpaid
-        // approval under the nonce is screened.
-        if !approval_loaded(&s, account, nonce).await? {
-            debug!(nonce, "reissue refused before screening: no unpaid approval is loaded");
-            return Err(ApiError::NotFound);
+        // Screening is paid for, and any key can sign a request, so only a request the sequencer would
+        // queue is screened: one for an unpaid approval under the nonce whose latest authorization it
+        // replaces and can no longer be used.
+        if let Some(outcome) = refusal(&s, account, nonce, body.replaces_expires_at).await? {
+            debug!(nonce, ?outcome, "reissue refused before screening");
+            return answer(outcome);
         }
         Some(ReissueScreening {
             request_hash: hash,
@@ -103,6 +117,13 @@ pub(super) async fn reissue(
     s.tx.send(request).await.map_err(|_| ApiError::Unavailable)?;
     let outcome = rx.await.map_err(|_| ApiError::Unavailable)?;
     debug!(nonce, ?outcome, "reissue request answered");
+    answer(outcome)
+}
+
+/// The response to a reissue request the sequencer, or the check before screening, answered `outcome`.
+/// Error cases:
+/// - every outcome but `Queued`
+fn answer(outcome: Reissue) -> ApiResult<Value> {
     match outcome {
         Reissue::Queued => Ok(Json(json!({ "status": "queued", "resend_after_restart": true }))),
         Reissue::Unknown => Err(ApiError::NotFound),
@@ -120,6 +141,8 @@ pub(super) async fn reissue(
 #[cfg(test)]
 mod tests {
     use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::body::Body as HttpBody;
     use axum::extract::connect_info::MockConnectInfo;
@@ -200,6 +223,87 @@ mod tests {
         }
         let (status, seen) = post(path, json!({ "replaces_expires_at": 90 }), Reissue::Queued).await;
         assert_eq!((status, seen), (StatusCode::UNPROCESSABLE_ENTITY, None), "an unsigned body is refused");
+    }
+
+    /// Once access is enforced, a request the sequencer would refuse, for an approval whose latest
+    /// authorization is still usable or is not the one it replaces, is answered before it is screened:
+    /// the sequencer is asked only for the account's payouts, never for the reissue.
+    #[tokio::test]
+    async fn a_reissue_of_a_usable_or_other_authorization_is_refused_before_it_is_screened() {
+        let signer = key(ACCOUNT);
+        let account = eip712::address(signer.verifying_key());
+        let later = u64::try_from(api_state(true).0.clock.now_ms() / 1_000).unwrap() + 3_600;
+        // The latest authorization's expiry, the one the request replaces, and whether the sequencer
+        // reads the latest as usable: usable; another than the latest; usable at the last command but
+        // expired by the API's clock; and of a retired epoch.
+        for (expires_at, replaces, usable_until, status) in [
+            (later, later, Some(later), StatusCode::BAD_REQUEST),
+            (later, later - 1, Some(later), StatusCode::BAD_REQUEST),
+            (1, 1, Some(1), StatusCode::OK),
+            (later, later, None, StatusCode::OK),
+        ] {
+            let (mut state, mut requests) = api_state(true);
+            state.protocol = engine_core::protocol::ProtocolVersion::LATEST;
+            assert!(state.access_enforced());
+            let body = signed(&state, &signer, account, 7, replaces);
+            let app = crate::api::router(state).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
+            let reissues = Arc::new(AtomicUsize::new(0));
+            let seen = reissues.clone();
+            let sequencer = tokio::spawn(async move {
+                while let Some(request) = requests.recv().await {
+                    match request {
+                        Request::AccountPayouts { reply, .. } => {
+                            _ = reply.send(page(account, expires_at, usable_until))
+                        }
+                        Request::ReissueWithdrawal { reply, .. } => {
+                            seen.fetch_add(1, Ordering::SeqCst);
+                            _ = reply.send(Reissue::Queued);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            let request = HttpRequest::post(format!("/v1/accounts/{account}/withdrawals/7/reissue"))
+                .header("content-type", "application/json")
+                .body(HttpBody::from(body.to_string()))
+                .unwrap();
+            assert_eq!(app.oneshot(request).await.unwrap().status(), status, "replaces {replaces}");
+            sequencer.abort();
+            let asked = reissues.load(Ordering::SeqCst);
+            assert_eq!(asked, usize::from(status == StatusCode::OK), "replaces {replaces}, usable {usable_until:?}");
+        }
+    }
+
+    /// One unpaid approval, nonce 7, whose latest authorization expires at `expires_at`, and is of the
+    /// latest signer epoch when `usable_until` says so.
+    fn page(account: AccountId, expires_at: u64, usable_until: Option<u64>) -> crate::sequencer::AccountPayouts {
+        let authorization = crate::withdrawals::Authorization {
+            signer: AccountId([2; 20]),
+            signer_epoch: 1,
+            issued_at: 10,
+            expires_at,
+            checkpoint_seq: 3,
+            checkpoint_root: eip712::B256::ZERO,
+            siblings: Vec::new(),
+        };
+        let withdrawal = crate::sequencer::SignedWithdrawal {
+            account,
+            amount: engine_core::Fixed::from_int(40),
+            nonce: 7,
+            chain_id: 31_337,
+            vault: AccountId([3; 20]),
+            signature: String::new(),
+            approved_seq: Some(3),
+            authorization: Some(authorization),
+        };
+        let payout = crate::sequencer::PayoutView {
+            nonce: 7,
+            amount: withdrawal.amount,
+            withdrawal: Some(withdrawal),
+            check: None,
+            usable_until,
+        };
+        crate::sequencer::AccountPayouts { seq: Some(3), loaded: true, payouts: vec![payout], next: None }
     }
 
     #[tokio::test]

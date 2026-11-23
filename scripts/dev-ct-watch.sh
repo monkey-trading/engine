@@ -183,6 +183,7 @@ log_stale_after = "10s"
 url = "https://127.0.0.1:$api_port"
 release = "$work/release.toml"
 processor = "Milan"
+enclaves = ["$(jq -r .enclave_address "$work/attestation.json")"]
 [[logs]]
 name = "dev-log"
 url = "http://127.0.0.1:$log_port"

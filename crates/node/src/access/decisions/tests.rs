@@ -117,6 +117,28 @@ fn the_pairs_kept_are_bounded_and_an_expired_one_makes_room() {
 }
 
 #[test]
+fn the_addresses_of_one_ipv6_64_share_one_decision_and_one_pair_as_the_limits_count_them() {
+    let decisions = decisions(2);
+    let (a, b) = (account(1), account(2));
+    let in_64 = |host: u16| IpAddr::from([0x2001, 0xdb8, 0, 7, 0, 0, 0, host]);
+    assert!(decisions.store(a, in_64(1), &decision(a, T0), &domain(), T0, true));
+    assert!(decisions.hit(a, in_64(2), T0).is_some(), "another address of the /64");
+    assert!(decisions.hit(a, IpAddr::from([0x2001, 0xdb8, 0, 8, 0, 0, 0, 1]), T0).is_none(), "another /64");
+    // Addresses of one /64 replace the account's decision in place, and leave room for another pair.
+    for host in 2..40 {
+        let at = T0 + Millis::from(host);
+        assert!(decisions.store(a, in_64(host), &decision(a, at), &domain(), at, true), "{host}");
+    }
+    assert_eq!(decisions.len(), 1);
+    assert!(decisions.store(b, in_64(1), &decision(b, T0), &domain(), T0, true));
+    // A refresh asks about the address that last fetched the decision, and ends the /64's refresh.
+    let due = T0 + 39 + REFRESH;
+    assert_eq!(decisions.due(due, 8), vec![(b, in_64(1)), (a, in_64(39))]);
+    decisions.refreshed((a, in_64(39)), due);
+    assert!(decisions.due(due + TURN, 8).contains(&(a, in_64(39))), "the /64's refresh ended");
+}
+
+#[test]
 fn an_active_pair_is_refreshed_before_its_decision_stops_and_an_idle_one_waits_for_its_next_request() {
     let decisions = decisions(8);
     let (a, b) = ((account(1), peer(1)), (account(2), peer(2)));

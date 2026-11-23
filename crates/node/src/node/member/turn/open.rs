@@ -4,12 +4,27 @@
 use std::collections::BTreeSet;
 
 use crate::checkpoints::Observation;
+use crate::daily_snapshots::AcceptedRoots;
 
 use super::*;
 
 /// How many turns back the start of the in-office member's run of turns is read: one that held more is treated as
 /// holding every turn, so no snapshot is taken, since the member's own log check would not count.
 const RUN_TURNS: usize = 32;
+
+/// The roots the vault accepted, read at the finalized observation `at`.
+struct VaultRoots<'a, C> {
+    vault: &'a C,
+    at: &'a Observation,
+}
+
+impl<C: CheckpointChain> AcceptedRoots for VaultRoots<'_, C> {
+    /// The root the vault accepted at `seq`; none where it accepted none there, or the read fails.
+    async fn root_at(&self, seq: u64) -> Option<engine_core::eip712::B256> {
+        let accepted = self.vault.accepted_checkpoints(self.at, &[seq]).await.ok()?;
+        accepted.into_iter().find(|checkpoint| checkpoint.seq == seq)?.root.parse().ok()
+    }
+}
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Opens the copy, bootstrapping an empty one from `operator`'s archive when given, and builds its
@@ -60,7 +75,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             crate::standby::archive::bootstrap_archive(&archive, &operator.origins(), dir).await?;
             let finalized = at.state.checkpoint.as_ref().map(|(seq, _)| *seq);
             let bounds = (finalized, before);
-            snapshot = self.snapshot_start((archive, operator.origins()), bounds, domain, &signers).await;
+            let roots = VaultRoots { vault: &self.vault, at: &at };
+            snapshot = self.snapshot_start((archive, operator.origins()), bounds, (domain, &signers), &roots).await;
         }
         let (stats, mut history) = (Stats::new(self.cfg)?, HistoryPlan::for_member(&self.cfg.history)?);
         // The posted head is pinned as the replay passes it, so a rebuilt replica still holds it.
@@ -104,15 +120,16 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// under `[daily_snapshots]`: the newest, of those the directory holds and those the origins list, fetched
     /// with `archive`, whose checkpoint the copy holds and the vault has finalized, at `finalized`, from before
     /// the turns of the member in office began, at `before` (`in_office_since`), signed over its state by the
-    /// recorded signer of that checkpoint, one of `signers` (`daily_snapshots::snapshot_start`). None when the
-    /// section is absent, the vault has finalized no checkpoint or the copy holds none, or no snapshot passes; a
-    /// failure is paged as Warning `snapshot_start_refused`, and the replica replays the whole copy.
+    /// recorded signer of that checkpoint, one of `signers`, and of the root the vault accepted at its seq where
+    /// `roots` names one (`daily_snapshots::snapshot_start_against`). None when the section is absent, the vault
+    /// has finalized no checkpoint or the copy holds none, or no snapshot passes; a failure is paged as Warning
+    /// `snapshot_start_refused`, and the replica replays the whole copy.
     async fn snapshot_start(
         &self,
         (archive, origins): (reqwest::Client, Vec<String>),
         (finalized, before): (Option<u64>, Option<Millis>),
-        domain: CheckpointDomain,
-        signers: &BTreeSet<AccountId>,
+        (domain, signers): (CheckpointDomain, &BTreeSet<AccountId>),
+        roots: &impl AcceptedRoots,
     ) -> Option<crate::daily_snapshots::Signed> {
         let snapshots = self.cfg.daily_snapshots.as_ref()?.dir.as_path();
         let dir = self.cfg.node.log_dir.as_path();
@@ -126,7 +143,15 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             })
             .ok()??;
         let bounds = (finalized?.min(copied.seq), before);
-        crate::daily_snapshots::snapshot_start(&archive, &origins, (snapshots, dir), domain, signers, bounds).await
+        crate::daily_snapshots::snapshot_start_against(
+            &archive,
+            &origins,
+            (snapshots, dir),
+            (domain, signers),
+            bounds,
+            roots,
+        )
+        .await
     }
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the

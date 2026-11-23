@@ -39,6 +39,20 @@ fn every_provider_is_checked_and_unknown_keys_and_legacy_single_rpc_are_refused(
 }
 
 #[test]
+fn a_production_build_refuses_a_custody_scan_wider_than_its_value() {
+    let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();
+    let range = |blocks: u64| {
+        let mut cfg: NodeConfig = toml::from_str(&text).unwrap();
+        cfg.custody.evm.as_mut().unwrap().max_block_range = blocks;
+        cfg
+    };
+    range(10_000).refuse_wide_custody_scans(true).unwrap();
+    range(10_001).refuse_wide_custody_scans(false).unwrap();
+    let err = range(10_001).refuse_wide_custody_scans(true).unwrap_err().to_string();
+    assert!(err.contains("custody.evm.max_block_range at most 10000, and the config sets 10001"), "{err}");
+}
+
+#[test]
 fn production_requires_latest_credit_and_ethereum_finality_for_release() {
     use crate::config::{FinalityTag, TeeProvider};
     let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();

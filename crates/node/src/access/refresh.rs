@@ -1,5 +1,5 @@
 //! The supervised loop that refreshes the API's screening decisions before they run out, for each
-//! account and client address that sent a request within the freshness bound, so an active trader's
+//! account and client that sent a request within the freshness bound, so an active trader's
 //! requests never wait on the source. Each refresh takes a screening slot outside the reserve, but
 //! never the last of them, within its account's and client's shares; one that finds none, or whose
 //! source call fails, tries again on the next turn while the decision lasts.

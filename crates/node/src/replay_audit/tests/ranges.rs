@@ -79,6 +79,7 @@ fn a_snapshot_whose_state_fails_its_checkpoints_root_is_named() {
     std::fs::write(&file, serde_json::to_vec(&snapshot).unwrap()).unwrap();
     let error = format!("{:#}", replay_ranges(&ranged.dir, &ranged.snapshots, trust(), jobs()).err().expect("refused"));
     assert!(error.contains(&format!("daily snapshot {}'s state does not match the root", file.display())), "{error}");
+    assert!(error.contains(&format!("daily snapshot {} does not match the log", file.display())), "{error}");
     assert!(error.contains(&format!("state root mismatch at seq {}", offset.seq)), "{error}");
 }
 

@@ -13,7 +13,9 @@ mod fetch;
 mod signature;
 pub(crate) use signature::{Signed, Signing, open_signed};
 mod start;
-pub(crate) use start::{entry_at, snapshot_start};
+#[cfg(test)]
+pub(crate) use start::snapshot_start;
+pub(crate) use start::{AcceptedRoots, entry_at, snapshot_start_against};
 mod writer;
 #[cfg(test)]
 pub(crate) use writer::publish_now;

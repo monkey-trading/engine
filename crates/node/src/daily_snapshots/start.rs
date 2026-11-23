@@ -6,12 +6,14 @@
 //! signature and root make it usable. One the vault has not yet finalized is not a candidate, so the checkpoint the
 //! vault finalizes next, which the member's start anchors at, is one the replica retains; nor is one from the turns
 //! of the member in office, whose commands the member's own log check at its first take must have replayed
-//! (`log_check::own_check`).
+//! (`log_check::own_check`). Where the vault accepted a checkpoint at a candidate's seq, the candidate's root must
+//! be the one it accepted, so an orphan fork's snapshot is refused before it is fetched or decoded.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use anyhow::ensure;
+use anyhow::{Context, ensure};
+use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
 use tracing::{info, warn};
 
@@ -23,6 +25,25 @@ use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 /// How many of the newest offsets are tried, each from every source that lists it, before the replica
 /// replays the whole copy.
 const ATTEMPTS: usize = 3;
+
+/// The roots of the checkpoints the vault accepted, as a start reads them.
+pub(crate) trait AcceptedRoots {
+    /// The root of the checkpoint the vault accepted at `seq`; none where it accepted none there, or the read
+    /// fails, which leaves the candidate to the checks after it.
+    async fn root_at(&self, seq: u64) -> Option<B256>;
+}
+
+/// No vault read: each candidate rests on the checks after it.
+#[cfg(test)]
+pub(crate) struct NoRoots;
+
+#[cfg(test)]
+impl AcceptedRoots for NoRoots {
+    /// None.
+    async fn root_at(&self, _seq: u64) -> Option<B256> {
+        None
+    }
+}
 
 /// Where a candidate snapshot is: in the member's own directory, or listed by an origin.
 enum Source {
@@ -36,13 +57,27 @@ enum Source {
 /// office began, that the copy holds at the snapshot's offset, and signed over its state by its checkpoint's
 /// signer, one of `signers`, in `domain`. Each candidate refused, and no origin answering, is paged as Warning
 /// `snapshot_start_refused`; none passing gives none.
+#[cfg(test)]
 pub(crate) async fn snapshot_start(
     client: &reqwest::Client,
     origins: &[String],
     (dir, copy): (&Path, &Path),
     domain: CheckpointDomain,
     signers: &BTreeSet<AccountId>,
+    bounds: (u64, Option<Millis>),
+) -> Option<Signed> {
+    snapshot_start_against(client, origins, (dir, copy), (domain, signers), bounds, &NoRoots).await
+}
+
+/// `snapshot_start`, refusing a candidate whose root is not the one the vault accepted at its seq, where `roots`
+/// names one, before fetching or decoding it.
+pub(crate) async fn snapshot_start_against(
+    client: &reqwest::Client,
+    origins: &[String],
+    (dir, copy): (&Path, &Path),
+    (domain, signers): (CheckpointDomain, &BTreeSet<AccountId>),
     (bound, before): (u64, Option<Millis>),
+    roots: &impl AcceptedRoots,
 ) -> Option<Signed> {
     let held = match read_manifest(dir) {
         Ok(held) => held,
@@ -65,7 +100,7 @@ pub(crate) async fn snapshot_start(
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Offered(origin), listing));
     }
     for (source, listing) in candidates.into_values().rev().take(ATTEMPTS).flatten() {
-        match candidate(client, (dir, copy), &source, &listing, (domain, signers, before)).await {
+        match candidate(client, (dir, copy), &source, &listing, (domain, signers, before), roots).await {
             Ok(signed) => {
                 if matches!(source, Source::Offered(_)) {
                     let offset = (listing.seq, listing.index);
@@ -103,6 +138,7 @@ pub(crate) async fn snapshot_start(
 /// `dir` first, and its file removed when it is refused.
 /// Error cases:
 /// - the copy at `copy` holds no checkpoint at its offset with the listed root
+/// - `roots` names another root at its seq
 /// - the fetch fails (`download`), or the snapshot is refused (`open_signed`)
 /// - its checkpoint is not the one the copy holds, or its state is stamped at or after `before`
 async fn candidate(
@@ -111,6 +147,7 @@ async fn candidate(
     source: &Source,
     listing: &Listed,
     (domain, signers, before): (CheckpointDomain, &BTreeSet<AccountId>, Option<Millis>),
+    roots: &impl AcceptedRoots,
 ) -> anyhow::Result<Signed> {
     let offset = Offset { seq: listing.seq, index: listing.index };
     let Some(LogEntry::Checkpoint(held)) = entry_at(copy, offset)?.filter(|held| match held {
@@ -119,6 +156,14 @@ async fn candidate(
     }) else {
         anyhow::bail!("the copy holds no checkpoint at {offset} with the listed root");
     };
+    if let Some(accepted) = roots.root_at(listing.seq).await {
+        let listed: B256 = listing.root.parse().context("the listed root")?;
+        ensure!(
+            listed == accepted,
+            "the vault accepted root {accepted} at seq {}, not the listed {listed}",
+            listing.seq
+        );
+    }
     let path = match source {
         Source::Held => dir.join(&listing.file),
         Source::Offered(origin) => download(client, origin, dir, listing).await?,
