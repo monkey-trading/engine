@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 use super::{Paced, STEP};
 use crate::test_support::scratch_dir;
 
+/// A derived store's write of the benchmark's bytes to a path, or none.
+type Derived<'a> = Option<&'a (dyn Fn(&Path) + Sync)>;
+
 fn pattern(len: usize) -> Vec<u8> {
     (0..len).map(|i| (i.wrapping_mul(31) >> 3) as u8).collect()
 }
@@ -26,7 +29,6 @@ fn a_large_write_goes_in_steps_and_the_file_holds_every_byte() {
     assert_eq!(paced.since_sync, 10);
     paced.write_all(&bytes[STEP + 10..]).unwrap();
     assert_eq!(paced.since_sync, (bytes.len() - STEP) % STEP);
-    drop(paced);
     file.sync_all().unwrap();
 
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
@@ -69,8 +71,7 @@ fn log_sync_tail_beside_a_large_derived_write() {
         Paced::new(&mut file).write_all(&bytes).unwrap();
         file.sync_all().unwrap();
     };
-    let cases: [(&str, Option<&(dyn Fn(&Path) + Sync)>); 3] =
-        [("none", None), ("unpaced", Some(&unpaced)), ("paced", Some(&paced))];
+    let cases: [(&str, Derived); 3] = [("none", None), ("unpaced", Some(&unpaced)), ("paced", Some(&paced))];
     for (name, write) in cases {
         let done = AtomicBool::new(false);
         let mut taken = std::thread::scope(|scope| {
