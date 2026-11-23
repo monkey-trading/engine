@@ -975,6 +975,12 @@ an index: load only the rule whose hint matches the current action.
   own award, a fast-path award and one at another amount are refused, closes above the floor pay the High
   award 5% of each excess first while the Low waits, a close below the floor pays nothing, the next finishes
   both, each researcher claims through the vault, `/v1/awards` lists the queue, and the log replays;
+  `dev-vault-move.sh`, the move to a new vault on the same stack, from `V90`: the alpha's trader claims part of its
+  MONKEY from the minter, a voted award is paid in part, rotation turns off, `engine carry` builds the carry from the
+  alpha's last accepted checkpoint and refuses one from while rotation was on, the guardian retires the alpha's
+  signer and one timelock batch moves custody and minting to a launch vault, the launch node's genesis carries every
+  entitlement, stake and award, unpaid, the trader claims the rest, a new stake mirrors once, a close pays the carried
+  award, the launch log replays and checks against the alpha's, and a raised entitlement is refused;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -1128,7 +1134,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, each job installing the contract dependencies and fetching the pinned solc (by compiling `src/ArbSys.sol`) through `image/retry` (five attempts, a persistent failure still failing the job), the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes, bug bounty awards and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
+  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes, bug bounty awards, move to a new vault and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -1533,6 +1539,9 @@ Run from the repo root:
   the daily rotation job)
 - Bug bounty awards dev scenario: `./scripts/dev-bounty-awards.sh` (the parameter votes scenario's stack with
   the checkpoint worker posting to the vault; CI runs it in the daily rotation job)
+- Move to a new vault dev scenario: `./scripts/dev-vault-move.sh` (the same stack, the alpha's and the launch
+  node's checkpoint workers posting to their vaults; it prints the carry's size and the mirror's catch-up; CI runs
+  it in the daily rotation job)
 - Operator's share dev scenario: `./scripts/dev-operator-share.sh` (the same requirements; a real
   election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
   stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the

@@ -17,6 +17,7 @@ mod parameter_votes;
 mod schedule;
 mod staking_reads;
 mod time_in_office;
+mod vault_move;
 
 use std::sync::Arc;
 

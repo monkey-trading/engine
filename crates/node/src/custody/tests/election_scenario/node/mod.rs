@@ -21,7 +21,6 @@ use governor::clock::DefaultClock;
 use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
-use super::T0_SECS;
 use super::chain::Chain;
 use crate::api::{ApiState, Feed, MAX_BACKFILLS, Signing, router};
 use crate::checkpoints::staking_scenario::access::Source;
@@ -179,7 +178,7 @@ impl Node {
             Some((dir, clock, source)) => (dir, clock, Some(source)),
             None => (
                 scratch_dir(if post_checkpoints { "operator-share-anvil" } else { "election-anvil" }),
-                Arc::new(TestClock::at(T0_SECS as Millis * 1000)),
+                Arc::new(TestClock::at(setup::start_ms(chain))),
                 None,
             ),
         };
@@ -191,7 +190,7 @@ impl Node {
             operator.address = seat.operator;
         }
         let custody_cfg = custody_section(chain, &dir, cfg.custody);
-        let genesis = setup::scenario_genesis(cfg.genesis);
+        let genesis = setup::scenario_genesis(chain, cfg.genesis);
         let (stream, _) = broadcast::channel(1024);
         let (stamps, tracking) = stamps::track(&stream);
         let (withdrawals, signed) = mpsc::unbounded_channel();
@@ -283,7 +282,7 @@ impl Node {
         let custody = Custody::connect(&custody_cfg, seq.last_seq()).unwrap().with_access(access.clone());
         seq.activate_protocol().unwrap();
         if seq.needs_genesis() {
-            seq.genesis(&genesis).unwrap();
+            seq.carried_genesis(&genesis, &setup::carried(chain, &dir).await).unwrap();
         }
         seq.trust(sample_around(clock.as_ref())).unwrap();
         history.catch_up_to(seq.last_seq());
@@ -490,6 +489,6 @@ impl Node {
 
 mod http;
 mod setup;
-pub(super) use setup::custody_section;
+pub(super) use setup::{carry_config, custody_section, emission_budget};
 mod stamps;
 pub(super) use stamps::Stamps;

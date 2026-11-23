@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::fs;
 
 use alloy::primitives::{Address, B256};
-use engine_core::carry::{CarrySource, StateCarried};
+use engine_core::carry::{CarryPart, CarrySource, StateCarried};
 use engine_core::emissions::TokenUnits;
 use engine_core::types::AccountId;
 
@@ -13,6 +13,10 @@ const VAULT: Address = Address::repeat_byte(0x11);
 const SOURCE: Address = Address::repeat_byte(0x22);
 const OPERATOR: Address = Address::repeat_byte(0x33);
 const ROOT: B256 = B256::repeat_byte(0x44);
+const TOKEN: Address = Address::repeat_byte(0x55);
+
+/// A condition a test unmeets, named by the text its sentence holds.
+type Unmet = (&'static str, fn(&mut MoveState));
 
 fn expected() -> Expected {
     Expected { chain_id: 42_161, vault: VAULT, source: SOURCE, operator: OPERATOR }
@@ -27,26 +31,29 @@ fn done() -> MoveState {
         registry_vault: VAULT,
         rotation_switch: false,
         admin_key: OPERATOR,
-        minter_vault: Some(VAULT),
+        minter_vault: VAULT,
+        minter_token: TOKEN,
+        staking_token: TOKEN,
     }
 }
 
 /// A carry file from `source`.
 fn file(source: CarrySource) -> CarryFile {
     let totals = StateCarried { source, accounts: 0, entitled: TokenUnits(0), staked: TokenUnits(0), awards: 0 };
-    CarryFile { source, totals, parts: Vec::new() }
+    let begin = CarryPart::Begin { source, globals: "{}".into(), siblings: Vec::new() };
+    CarryFile { source, totals, parts: vec![begin, CarryPart::End] }
 }
 
 #[test]
 fn every_unmet_condition_of_a_done_move_is_named() {
     assert!(unmet(&done(), &expected()).is_empty());
-    let cases: [(&str, fn(&mut MoveState)); 6] = [
+    let cases: [Unmet; 6] = [
         ("signer", |state| state.source_signer = Address::repeat_byte(1)),
         ("no checkpoint", |state| state.source_checkpoint = None),
         ("registry follows", |state| state.registry_vault = SOURCE),
         ("rotation switch", |state| state.rotation_switch = true),
         ("operator in effect", |state| state.admin_key = Address::repeat_byte(2)),
-        ("minter follows", |state| state.minter_vault = Some(SOURCE)),
+        ("minter follows", |state| state.minter_vault = SOURCE),
     ];
     for (named, change) in cases {
         let mut state = done();
@@ -55,6 +62,13 @@ fn every_unmet_condition_of_a_done_move_is_named() {
         assert_eq!(unmet.len(), 1, "{named}: {unmet:?}");
         assert!(unmet[0].contains(named), "{named}: {unmet:?}");
     }
+}
+
+#[test]
+fn a_minter_of_another_token_than_the_staking_contracts_is_refused() {
+    assert!(check_tokens(&done()).is_ok());
+    let other = MoveState { minter_token: Address::repeat_byte(0x66), ..done() };
+    assert!(format!("{:#}", check_tokens(&other).unwrap_err()).contains("names another minter"));
 }
 
 #[test]

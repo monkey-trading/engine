@@ -3,15 +3,20 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use alloy::sol;
 use engine_core::Fixed;
+use engine_core::carry::CarryPart;
+use engine_core::emissions::TokenUnits;
 use engine_core::staking::StakingConfig;
 use engine_core::types::{AccountId, Millis};
 use tokio::sync::{mpsc, watch};
 
-use super::super::chain::Chain;
+use super::super::chain::{Chain, monkeyCall};
 use super::super::{COOLDOWN_SECS, DISTRIBUTION_EPOCH_SECS, T0_SECS};
 use crate::checkpoints::{CheckpointRpc, Poster};
-use crate::config::{CheckpointSection, CustodySection, FinalityTag, Genesis, RpcProviderSection, TeeProvider};
+use crate::config::{
+    CarrySection, CheckpointSection, CustodySection, FinalityTag, Genesis, NodeConfig, RpcProviderSection, TeeProvider,
+};
 use crate::log::CheckpointDomain;
 use crate::log_check::Due;
 use crate::log_check::ask::Asker;
@@ -19,6 +24,10 @@ use crate::sequencer::Request;
 use crate::tee::EnclaveKey;
 use crate::tee::sealing::KeyStore;
 use crate::trusted_time::TrustedClock;
+
+sol! {
+    function cap() external view returns (uint256);
+}
 
 /// The checkpoint worker posting to the chain's vault at the latest block from `relayer`.
 pub(super) fn poster(
@@ -133,15 +142,50 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
 }
 
 /// `genesis` for the scenarios: no house capital, the flat 10% profit fee (the holding-time fee has a
-/// scenario of its own), and staking from the scenarios' start.
-pub(super) fn scenario_genesis(mut genesis: Genesis) -> Genesis {
+/// scenario of its own), and staking from a fresh node's start (`start_ms`).
+pub(super) fn scenario_genesis(chain: &Chain, mut genesis: Genesis) -> Genesis {
     genesis.house_capital = Fixed::ZERO;
     genesis.params.profit_fee_curve.clear();
     genesis.staking = Some(StakingConfig {
         liquidity_floor: Fixed::from_int(1_000_000),
         epoch_ms: DISTRIBUTION_EPOCH_SECS as Millis * 1000,
-        start_ms: T0_SECS as Millis * 1000,
+        start_ms: start_ms(chain),
         cooldown_ms: COOLDOWN_SECS as Millis * 1000,
     });
     genesis
+}
+
+/// Where a fresh node's clock starts: the scenarios' start, or the start a carried genesis names.
+pub(super) fn start_ms(chain: &Chain) -> Millis {
+    chain.carry.as_ref().map_or(T0_SECS as Millis * 1000, |(_, _, at)| *at)
+}
+
+/// The config a node whose fresh log carries the state `chain.carry` names starts under, its log and custody
+/// cursors in `dir`: EVM custody over the chain, and the scenario genesis with `[genesis.carry]`.
+pub(in crate::custody::tests::election_scenario) fn carry_config(chain: &Chain, dir: &std::path::Path) -> NodeConfig {
+    let (source, file, _) = chain.carry.clone().expect("the chain names a carry");
+    let mut cfg = crate::test_support::dev_config();
+    cfg.custody.provider = crate::config::CustodyProvider::Evm;
+    cfg.custody.vault = format!("{:#x}", chain.vault);
+    cfg.custody = custody_section(chain, dir, cfg.custody);
+    cfg.genesis = scenario_genesis(chain, cfg.genesis);
+    cfg.genesis.carry = Some(CarrySection { vault: AccountId(source.into()), file });
+    cfg
+}
+
+/// The parts a fresh node's genesis carries: none unless `chain.carry` names a source, and then those a start
+/// takes once the chain shows the move done (`carry::boot::carried_parts`), at the minter's emission budget.
+pub(super) async fn carried(chain: &Chain, dir: &std::path::Path) -> Vec<CarryPart> {
+    if chain.carry.is_none() {
+        return Vec::new();
+    }
+    let budget = emission_budget(chain).await;
+    crate::carry::boot::carried_parts(&carry_config(chain, dir), Some(budget)).await.expect("the carry applies")
+}
+
+/// The emission period budget the minter's MONKEY cap was derived from.
+pub(in crate::custody::tests::election_scenario) async fn emission_budget(chain: &Chain) -> TokenUnits {
+    let monkey = chain.view(chain.minter, monkeyCall {}).await;
+    let cap = chain.view(monkey, capCall {}).await;
+    crate::checkpoints::emission_budget::budget_from_cap(cap).expect("the minter's cap gives a budget")
 }

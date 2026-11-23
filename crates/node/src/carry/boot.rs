@@ -1,9 +1,10 @@
 //! A start's checks of a carried genesis. Before a fresh log's genesis carries state, the node holds under Warning
 //! `carry_waiting` until the chain shows the move done: the source vault's signer retired, with a checkpoint
 //! accepted; the registry following this node's vault with rotation's switch off and the config's operator key in
-//! effect; and MONKEY's minter following this node's vault; and the carry file in place. The file must then name
-//! the source vault's last accepted checkpoint, and the genesis it carries must apply in full on a scratch engine
-//! at the vault's emission budget, or the start stops with Critical `carry_refused` before anything is written.
+//! effect; and MONKEY's minter following this node's vault; and the carry file in place. The minter must then mint
+//! the token the staking contract holds, the file must name the source vault's last accepted checkpoint, and the
+//! genesis it carries must apply in full on a scratch engine at the minter's emission budget, or the start stops
+//! with Critical `carry_refused` before anything is written.
 //! Every start also refuses a log whose carried source is not the config's.
 
 use std::future::Future;
@@ -61,10 +62,24 @@ pub(crate) fn unmet(state: &MoveState, expected: &Expected) -> Vec<String> {
             state.admin_key, expected.operator
         ));
     }
-    if let Some(minter) = state.minter_vault.filter(|minter| *minter != expected.vault) {
-        unmet.push(format!("MONKEY's minter follows vault {minter}, not {}", expected.vault));
+    if state.minter_vault != expected.vault {
+        unmet.push(format!("MONKEY's minter follows vault {}, not {}", state.minter_vault, expected.vault));
     }
     unmet
+}
+
+/// Checks that the configured minter mints the token the staking contract holds, which no move changes.
+/// Error cases:
+/// - the tokens differ
+pub(crate) fn check_tokens(state: &MoveState) -> anyhow::Result<()> {
+    if state.minter_token != state.staking_token {
+        bail!(
+            "custody.evm.minter mints {}, but the staking contract holds {}: the config names another minter",
+            state.minter_token,
+            state.staking_token
+        );
+    }
+    Ok(())
 }
 
 /// Checks that `file` carries from the source vault's last accepted checkpoint `at`, on the custody chain.
@@ -133,18 +148,24 @@ pub(crate) async fn carried_parts(
     let Some(carry) = &cfg.genesis.carry else { return Ok(Vec::new()) };
     let refused = |e: &anyhow::Error| error!(alert = "carry_refused", "refusing to carry state into genesis: {e:#}");
     let evm = cfg.custody.evm.as_ref().context("[genesis.carry] needs [custody.evm]")?;
-    let registry = evm.staking.as_ref().context("[genesis.carry] needs [custody.evm.staking]")?.registry.contract;
+    let staking = evm.staking.as_ref().context("[genesis.carry] needs [custody.evm.staking]")?;
     let expected = Expected {
         chain_id: cfg.custody.chain_id,
         vault: cfg.custody.vault.parse().context("custody.vault")?,
         source: Address::from(carry.vault.0),
         operator: Address::from(cfg.operator()?.address.0),
     };
-    let contracts = MoveContracts { source: expected.source, registry, minter: None };
+    let contracts = MoveContracts {
+        source: expected.source,
+        registry: staking.registry.contract,
+        minter: evm.minter,
+        staking: staking.contract,
+    };
     let quorum = ContractQuorum::connect(&cfg.custody, "carry")?;
     let read_chain = || chain::read(quorum.quorum(), contracts, (expected.chain_id, evm.usdc));
     let (state, file) = hold(read_chain, &expected, &carry.file).await.inspect_err(refused)?;
     let at = state.source_checkpoint.ok_or_else(|| anyhow!("held until the source vault holds a checkpoint"))?;
+    check_tokens(&state).inspect_err(refused)?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
     let engine = check_genesis_commands(&cfg.client_auth()?, cfg.operator()?, cmds).inspect_err(refused)?;

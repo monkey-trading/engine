@@ -1,6 +1,6 @@
 //! What the chain says of a move to this node's vault, read at one finalized block through the custody quorum:
 //! the source vault's signer and last accepted checkpoint, the registry's vault, rotation switch and operator in
-//! effect, and the vault MONKEY's minter follows.
+//! effect, the vault MONKEY's minter follows, and the tokens the minter mints and the staking contract holds.
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
@@ -17,6 +17,7 @@ sol! {
     function latestSeq() external view returns (uint64);
     function checkpointRoots(uint64 seq) external view returns (bytes32);
     function vault() external view returns (address);
+    function monkey() external view returns (address);
     function rotationSwitch() external view returns (bool);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
 }
@@ -27,7 +28,8 @@ pub(crate) struct MoveContracts {
     /// The source log's vault.
     pub source: Address,
     pub registry: Address,
-    pub minter: Option<Address>,
+    pub minter: Address,
+    pub staking: Address,
 }
 
 /// What the chain says of the move at one finalized block.
@@ -44,7 +46,10 @@ pub(crate) struct MoveState {
     /// The admin key of the registry's operator in effect.
     pub admin_key: Address,
     /// The vault MONKEY's minter mints against.
-    pub minter_vault: Option<Address>,
+    pub minter_vault: Address,
+    /// The token the minter mints, and the one the staking contract holds.
+    pub minter_token: Address,
+    pub staking_token: Address,
 }
 
 /// The move's state at the quorum's finalized block, from providers that serve `chain_id` and a vault holding
@@ -66,7 +71,7 @@ pub(crate) async fn read<R: VaultReader + Sync>(
     );
     let at = quorum.withdrawal_finality().await?.tagged.context("custody providers name no finalized block")?;
     let call = |operation, to, data: Vec<u8>| quorum.call_as(operation, at, to, data.into());
-    let MoveContracts { source, registry, minter } = contracts;
+    let MoveContracts { source, registry, minter, staking } = contracts;
     let source_signer = checkpointSignerCall::abi_decode_returns(
         &call("carry_source_signer", source, checkpointSignerCall {}.abi_encode()).await?,
     )
@@ -98,13 +103,15 @@ pub(crate) async fn read<R: VaultReader + Sync>(
         &call("carry_registry_operator", registry, operatorInEffectCall {}.abi_encode()).await?,
     )
     .context("the registry's operatorInEffect")?;
-    let minter_vault = match minter {
-        Some(minter) => Some(
-            vaultCall::abi_decode_returns(&call("carry_minter_vault", minter, vaultCall {}.abi_encode()).await?)
-                .context("the minter's vault")?,
-        ),
-        None => None,
-    };
+    let minter_vault =
+        vaultCall::abi_decode_returns(&call("carry_minter_vault", minter, vaultCall {}.abi_encode()).await?)
+            .context("the minter's vault")?;
+    let minter_token =
+        monkeyCall::abi_decode_returns(&call("carry_minter_token", minter, monkeyCall {}.abi_encode()).await?)
+            .context("the minter's token")?;
+    let staking_token =
+        monkeyCall::abi_decode_returns(&call("carry_staking_token", staking, monkeyCall {}.abi_encode()).await?)
+            .context("the staking contract's token")?;
     Ok(MoveState {
         block: at.number,
         source_signer,
@@ -113,5 +120,7 @@ pub(crate) async fn read<R: VaultReader + Sync>(
         rotation_switch,
         admin_key: operator.adminKey,
         minter_vault,
+        minter_token,
+        staking_token,
     })
 }

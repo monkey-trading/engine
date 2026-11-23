@@ -1,4 +1,3 @@
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use engine_core::carry::CarryPart;
@@ -62,8 +61,9 @@ fn a_carry_file_builds_from_a_source_logs_last_checkpoint_and_reads_back() {
 
 #[test]
 fn a_source_whose_carry_would_lose_state_or_has_no_checkpoint_there_is_refused() {
+    // The session's last checkpoint has rotation on, and its mirror short of the blocks it mirrored.
     let error = build(Path::new(SESSION), None).unwrap_err();
-    assert!(format!("{error:#}").contains("rotation is on"), "{error:#}");
+    assert!(format!("{error:#}").contains("cannot be carried: the source's staking mirror"), "{error:#}");
     let not_a_checkpoint = build(Path::new(CARRIED), Some(1)).unwrap_err();
     assert!(format!("{not_a_checkpoint:#}").contains("holds no checkpoint at seq 1"), "{not_a_checkpoint:#}");
 }

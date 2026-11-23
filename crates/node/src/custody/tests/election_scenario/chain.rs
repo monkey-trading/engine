@@ -101,6 +101,8 @@ pub(super) struct Chain {
     /// The tag the custody watcher's staking mirror and the vault's readers take as final: the head,
     /// or on a chain started with `start_with_trailing_finality`, Anvil's finalized block.
     pub(super) release_tag: FinalityTag,
+    /// The source vault, carry file and start time of a node whose fresh log carries another's state.
+    pub(super) carry: Option<(Address, std::path::PathBuf, engine_core::types::Millis)>,
     salts: u64,
 }
 
@@ -182,6 +184,7 @@ impl Chain {
             vote: None,
             fault_proof: None,
             release_tag,
+            carry: None,
             salts: 0,
         };
         chain.monkey = chain.view(minter, monkeyCall {}).await;

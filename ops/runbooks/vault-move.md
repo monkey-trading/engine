@@ -176,6 +176,10 @@ vault = "0x..."            # $ALPHA_VAULT
 file = "/data/carry.json"  # the carry file that step 9 writes
 ```
 
+Set `[genesis.staking]`'s `start_ms` after the latest time the launch log's genesis can run, step 11's
+D plus a margin: the engine refuses a staking start before the genesis's own stamp, and the genesis then
+fails in full.
+
 The configuration does not pin the carry file by hash. The launch log's own checks fix the carried
 values from the alpha's root, and the trading server reads that root from the alpha vault, so the
 timelock can approve the release before the alpha freezes. Ship the console release that pins the
