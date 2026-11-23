@@ -6,10 +6,9 @@ import {console} from "forge-std/console.sol";
 import {IERC20} from "@openzeppelin-contracts/token/ERC20/IERC20.sol";
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 
+import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {MonkeyToken} from "../src/MonkeyToken.sol";
 import {Staking} from "../src/Staking.sol";
-import {Vault} from "../src/Vault.sol";
-import {MockUSDC} from "./mocks/MockUSDC.sol";
 
 /// MONKEY staking: the contract custodies tokens, enforces the unstake cooldown, and emits the
 /// events the engine mirrors.
@@ -19,8 +18,7 @@ contract StakingTest is Test {
     /// @dev One engine distribution epoch, in seconds.
     uint256 private constant EPOCH = 30 minutes;
 
-    MockUSDC internal usdc;
-    Vault internal vault;
+    MonkeyMinter internal minter;
     MonkeyToken internal monkey;
     Staking internal staking;
     address internal staker = makeAddr("staker");
@@ -29,21 +27,19 @@ contract StakingTest is Test {
     address internal candidateC = makeAddr("candidate c");
 
     function setUp() public {
-        usdc = new MockUSDC();
         address[] memory proposers = new address[](1);
         proposers[0] = vm.addr(KEY);
         address[] memory executors = new address[](1);
         TimelockController governance = new TimelockController(2 days, proposers, executors, address(0));
-        vault = new Vault(usdc, vm.addr(KEY), governance, proposers[0], 1e18, 365 days, 30 days, 365 days);
-
-        monkey = vault.monkey();
+        minter = new MonkeyMinter(governance, 1e18);
+        monkey = minter.monkey();
         staking = new Staking(monkey, COOLDOWN, EPOCH);
     }
 
     function _mintMonkey(address to, uint256 amount) internal {
-        // The vault is MONKEY's only minter; claims are the mint path. Mint directly through it in
+        // `MonkeyMinter` alone mints MONKEY, and claims are its mint path. Mint directly through it in
         // place of a proven claim: the cap is far above anything this test needs.
-        vm.prank(address(vault));
+        vm.prank(address(minter));
         monkey.mint(to, amount);
     }
 

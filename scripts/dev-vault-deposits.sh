@@ -171,26 +171,28 @@ for _ in $(seq 1 50); do
 done
 [[ -n "$anvil_up" ]] || fail "anvil did not come up"
 
-step "Deploy the mock USDC and the vault"
+step "Deploy the mock USDC, the vault and the MONKEY minter"
 cd "$root/contracts"
 # `--constructor-args` takes every argument after it, so the contract and its arguments go last.
 create() { forge create --rpc-url "$rpc" --private-key "$deployer_key" --broadcast --json "$@" | jq -r '.deployedTo'; }
 usdc="$(create test/mocks/MockUSDC.sol:MockUSDC)"
-# A separate local deployer preserves the token/Vault addresses at account 0's nonces 0/1.
+# A separate local deployer preserves the token, vault and minter addresses at account 0's nonces 0 to 2.
 governance="$(forge create --rpc-url "$rpc" --private-key "$house_key" --broadcast --json \
   dependencies/@openzeppelin-contracts-5.7.0/governance/TimelockController.sol:TimelockController \
   --constructor-args 1 "[$trader]" '[0x0000000000000000000000000000000000000000]' \
   0x0000000000000000000000000000000000000000 | jq -r '.deployedTo')"
-# The guardian is the timelock's proposer, as the deployment's multisig is. The MONKEY period
-# budget, 1 MONKEY, is a development value, not an approved production parameter.
-# The exit period, claim window and deposit staleness are thirty days each, past anything this waits for.
-vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" "$trader" 1000000000000000000 \
+# The guardian is the timelock's proposer, as the deployment's multisig is. The exit period, claim
+# window and deposit staleness are thirty days each, past anything this waits for.
+vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" "$trader" \
   2592000 2592000 2592000)"
+# The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
+minter="$(create src/MonkeyMinter.sol:MonkeyMinter --constructor-args "$governance" 1000000000000000000)"
 
 export DEV_DEPOSIT_TOPIC="$(cast keccak 'Deposited(uint256,address,address,uint256)')"
 cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
 grep -qi "usdc = \"$usdc\"" config/anvil.toml || fail "USDC deployed at $usdc, not the address config/anvil.toml names"
+grep -qi "minter = \"$minter\"" config/anvil.toml || fail "minter deployed at $minter, not the address config/anvil.toml names"
 for funder_key in "$trader_key" "$house_key"; do
   funder="$(cast wallet address --private-key "$funder_key")"
   send "$usdc" "mint(address,uint256)" "$funder" $((10000000 * usdc_units)) --private-key "$deployer_key"

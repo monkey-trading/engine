@@ -211,11 +211,11 @@ contract OperatorScheduleTest is ScheduleTest {
         registry.setParameters(hourly);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.EpochTooShort.selector, 1 hours, 1 days));
         vm.prank(address(governance));
-        registry.setSchedule(own);
+        registry.setCustody(address(vault), own);
         vm.prank(address(governance));
         registry.setParameters(_parameters());
         vm.prank(address(governance));
-        registry.setSchedule(own);
+        registry.setCustody(address(vault), own);
     }
 
     function test_AnEmptySetIsNotAdoptedWithoutMembersInEffect() public {
@@ -981,33 +981,6 @@ contract OperatorScheduleTest is ScheduleTest {
         vm.warp(block.timestamp + LIVENESS);
         vm.expectRevert(OperatorRegistry.ScheduleNamesTurns.selector);
         registry.promote();
-    }
-
-    function test_TheTimelockNamesAScheduleOnceWhileRotationIsOff() public {
-        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.ScheduleAlreadySet.selector, address(schedule)));
-        vm.prank(address(governance));
-        registry.setSchedule(schedule);
-
-        OperatorSchedule other = schedule;
-        _deployRegistry();
-        OperatorSchedule own = _newSchedule();
-        vm.expectRevert(OperatorRegistry.UnauthorizedGovernance.selector);
-        registry.setSchedule(own);
-        vm.expectRevert(OperatorRegistry.InvalidSchedule.selector);
-        vm.prank(address(governance));
-        registry.setSchedule(other);
-        vm.prank(address(governance));
-        registry.setRotation(true);
-        vm.expectRevert(OperatorRegistry.RotationActive.selector);
-        vm.prank(address(governance));
-        registry.setSchedule(own);
-        vm.prank(address(governance));
-        registry.setRotation(false);
-        vm.expectEmit(address(registry));
-        emit OperatorRegistry.ScheduleSet(address(own));
-        vm.prank(address(governance));
-        registry.setSchedule(own);
-        assertEq(address(registry.schedule()), address(own));
     }
 
     function test_OnlyTheScheduleReservesAGeneration() public {

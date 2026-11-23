@@ -1,6 +1,6 @@
 //! Chain access the checkpoint worker reads and posts through.
 
-use alloy::primitives::U256;
+use alloy::primitives::{Address, U256};
 use anyhow::{Context, ensure};
 use engine_core::emissions::TokenUnits;
 use engine_core::types::{AccountId, Millis};
@@ -189,11 +189,11 @@ pub(crate) trait CheckpointChain: Send + Sync {
     /// - submission fails, times out, or reverts
     async fn post(&self, checkpoint: &Checkpoint) -> anyhow::Result<()>;
 
-    /// The emission period budget the vault's MONKEY cap was derived from.
+    /// The emission period budget `minter`'s MONKEY cap was derived from.
     /// Error cases:
-    /// - the chain cannot be read, the vault has no MONKEY token, or its cap gives no period budget;
-    ///   a chain that reads no cap at all
-    async fn emission_budget(&self) -> anyhow::Result<TokenUnits> {
+    /// - the chain cannot be read, `minter` has no MONKEY token, or its cap gives no period budget; a
+    ///   chain that reads no cap at all
+    async fn emission_budget(&self, _minter: Address) -> anyhow::Result<TokenUnits> {
         anyhow::bail!("this checkpoint chain reads no MONKEY cap")
     }
 

@@ -115,6 +115,7 @@ fn evm(stall_critical_after: &str, finality_stalled_after: &str) -> EvmCustodySe
         r#"
         providers = [{{ name = "a", rpc_url = "http://127.0.0.1:1" }}]
         usdc = "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+        minter = "0x3030303030303030303030303030303030303030"
         finality_tag = "latest"
         withdrawal_finality_tag = "finalized"
         confirmations = 0

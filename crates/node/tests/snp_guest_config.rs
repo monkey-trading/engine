@@ -17,6 +17,7 @@ const ANVIL: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/anvil.tom
 const HOST: &str = "chain.snp.test";
 const VAULT: &str = "0x00000000000000000000000000000000000000a1";
 const USDC: &str = "0x00000000000000000000000000000000000000a2";
+const MINTER: &str = "0x00000000000000000000000000000000000000a3";
 /// Anvil's account 3, which the script names the first guest's checkpoint relayer.
 const RELAYER: &str = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
 
@@ -33,7 +34,20 @@ fn the_guest_config_the_local_chain_script_writes_loads_with_real_attestation() 
         .arg(SCRIPT)
         .arg(ANVIL)
         .arg(&path)
-        .args([HOST, VAULT, USDC, RELAYER, &public_key, "Genoa", "Genoa-A2", "18545", "18546", "18547", "18548"])
+        .args([
+            HOST,
+            VAULT,
+            USDC,
+            MINTER,
+            RELAYER,
+            &public_key,
+            "Genoa",
+            "Genoa-A2",
+            "18545",
+            "18546",
+            "18547",
+            "18548",
+        ])
         .output()
         .expect("python3 runs");
     assert!(written.status.success(), "the script failed: {}", String::from_utf8_lossy(&written.stderr));
@@ -57,6 +71,7 @@ fn the_guest_config_the_local_chain_script_writes_loads_with_real_attestation() 
     assert_eq!(cfg.custody.vault, VAULT);
     let evm = cfg.custody.evm.as_ref().expect("EVM custody");
     assert!(evm.usdc.to_string().eq_ignore_ascii_case(USDC));
+    assert!(evm.minter.to_string().eq_ignore_ascii_case(MINTER));
     assert_eq!(evm.finality_tag, FinalityTag::Latest);
     let providers: Vec<String> =
         evm.providers.iter().map(|provider| provider.rpc_url.expose().unwrap().into()).collect();

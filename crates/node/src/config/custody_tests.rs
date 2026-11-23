@@ -146,3 +146,26 @@ fn a_fault_proof_section_needs_a_schedule_a_contract_of_its_own_and_a_bounded_pe
         refused(section(&named, fault_proof, 10_000, decay), "penalty.decay must be whole milliseconds");
     }
 }
+
+#[test]
+fn the_minter_is_a_contract_of_its_own_and_required() {
+    let text = std::fs::read_to_string(Path::new("../../config/anvil.toml")).unwrap();
+    let minter = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0";
+    assert!(text.contains(&format!("minter = \"{minter}\"")), "anvil.toml names the scenarios' minter");
+    let cfg: NodeConfig = toml::from_str(&text).unwrap();
+    cfg.validate_custody().unwrap();
+    let unnamed = text.replace(&format!("minter = \"{minter}\"\n"), "");
+    assert!(toml::from_str::<NodeConfig>(&unnamed).unwrap_err().to_string().contains("minter"));
+
+    // The staking contract answers `monkey()` as the minter does, so only this check tells them apart.
+    let staking = "0x00000000000000000000000000000000000000a5";
+    let with_staking = format!(
+        "{text}\n[custody.evm.staking]\ncontract = '{staking}'\ncursor_path = 'staking.json'\n[custody.evm.staking.registry]\ncontract = '0x00000000000000000000000000000000000000a6'\n"
+    );
+    let usdc = cfg.custody.evm.as_ref().unwrap().usdc.to_string();
+    for other in [usdc.as_str(), cfg.custody.vault.as_str(), staking] {
+        let cfg: NodeConfig = toml::from_str(&with_staking.replace(minter, other)).unwrap();
+        let err = cfg.validate_custody().unwrap_err().to_string();
+        assert!(err.contains("custody.evm.minter must be the MonkeyMinter"), "{other}: {err}");
+    }
+}

@@ -14,12 +14,13 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 
 | Contract | Where it runs | Purpose |
 | --- | --- | --- |
-| `Vault` | Arbitrum | Holds the USDC collateral. It takes deposits of 10 to 1,000,000,000 USDC, records the enclave's signed checkpoints, pays withdrawals and MONKEY and USDC claims proven against them, and runs the exit if checkpoints stop. |
+| `Vault` | Arbitrum | Holds the USDC collateral. It takes deposits of 10 to 1,000,000,000 USDC, records the enclave's signed checkpoints, pays withdrawals and USDC distribution claims proven against them, gives `MonkeyMinter` the roots MONKEY claims prove against, and runs the exit if checkpoints stop. |
 | `ExitVerifier` | Arbitrum | The vault's proof checker for the exit. It values accounts at the last root and matches deposit receipts. Anyone can preview what an account's equity and credits register with `previewClaim`, which registers nothing, so a wallet can check its proof before the exit and during it. |
 | `StateTree` | A library of `ExitVerifier`, which checks the vault's proofs | Checks a proof against the engine's state root, a sparse Merkle tree hashed with keccak-256 |
-| `MonkeyToken` | Arbitrum | The capped MONKEY ERC-20 token, which only the vault mints |
+| `MonkeyMinter` | Arbitrum | MONKEY's only minter, for good. It deploys the token and mints each account's proven emission entitlement less what it has minted it, counting one total per account across every vault it has followed. The timelock names the vault whose roots mint, and moves it to another only once the guardian has retired the current one's signer. |
+| `MonkeyToken` | Arbitrum | The capped MONKEY ERC-20 token, which only `MonkeyMinter` mints |
 | `Staking` | Arbitrum | Holds staked MONKEY, lets stakers delegate votes to operator candidates, enforces the unstaking cooldown and locks candidates' self-bonds |
-| `OperatorRegistry` | Arbitrum | Registers operator candidates, chooses the rotation set at each close, and names the operator by election, by promotion or by daily turns. It deploys `Staking`. |
+| `OperatorRegistry` | Arbitrum | Registers operator candidates, chooses the rotation set at each close, and names the operator by election, by promotion or by daily turns. It deploys `Staking`. The timelock names the vault and the schedule it follows together, and moves them to another pair only while rotation is off and no drawn turn runs. |
 | `RegistryLens` | Arbitrum | A read-only, paged view of the registry, which the server reads for `/v1/operators` |
 | `OperatorSchedule` | Arbitrum | Records the rotation sets, draws daily turns from them by stake, and runs the liveness rule, skips, promotions and standby keys |
 | `SeedSchedule` | The base of `SeedRelay`, `SeedReceiver` and `OperatorSchedule` | The shared timetable of turn boundaries, draw deadlines and seed epochs |

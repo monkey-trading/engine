@@ -323,7 +323,7 @@ proportion to the USDC it holds. `engine exit-proof` builds an account's claim f
 
 ## MONKEY and staking
 
-MONKEY is a token minted by the vault. Every ten minutes, a fixed amount of MONKEY is distributed
+MONKEY is a token minted against the vault's checkpoints. Every ten minutes, a fixed amount of MONKEY is distributed
 among the traders who realised a loss in that period, in proportion to the size of their losses. The
 amount is 100,000 MONKEY at launch, and it halves every 182.5 days.
 

@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 
 import {ExitVerifier} from "../src/ExitVerifier.sol";
+import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {Vault} from "../src/Vault.sol";
 import {ExitTest} from "./helpers/ExitTest.sol";
 
@@ -14,18 +15,19 @@ contract ExitTestCases is ExitTest {
     address internal bob = makeAddr("bob");
     address internal funder = makeAddr("funder");
     address internal carol = makeAddr("carol");
+    MonkeyMinter internal minter;
 
     function testRefusesAnExitScheduleThatCouldTripBeforeGovernanceOrNeverRefuseDeposits() public {
         uint64 delay = uint64(GOVERNANCE_DELAY);
         vm.expectRevert(Vault.InvalidExitSchedule.selector);
-        new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, delay, WINDOW, STALE);
+        new Vault(usdc, vm.addr(KEY), governance, multisig, delay, WINDOW, STALE);
         vm.expectRevert(Vault.InvalidExitSchedule.selector);
-        new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, PERIOD, 0, STALE);
+        new Vault(usdc, vm.addr(KEY), governance, multisig, PERIOD, 0, STALE);
         vm.expectRevert(Vault.InvalidExitSchedule.selector);
-        new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, PERIOD, WINDOW, 0);
+        new Vault(usdc, vm.addr(KEY), governance, multisig, PERIOD, WINDOW, 0);
         vm.expectRevert(Vault.InvalidExitSchedule.selector);
-        new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, PERIOD, WINDOW, PERIOD + 1);
-        new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, delay + 1, WINDOW, delay + 1);
+        new Vault(usdc, vm.addr(KEY), governance, multisig, PERIOD, WINDOW, PERIOD + 1);
+        new Vault(usdc, vm.addr(KEY), governance, multisig, delay + 1, WINDOW, delay + 1);
     }
 
     function testTheExitStartsOnlyOnceNoCheckpointHasBeenPostedForTheExitPeriod() public {
@@ -543,6 +545,7 @@ contract ExitTestCases is ExitTest {
     }
 
     function testEmissionsStayClaimableAfterTheExitAtAnyRootOfTheSigner() public {
+        _followWithMinter();
         bytes32 key = keccak256(abi.encodePacked(uint8(8), bob));
         _addTerms(0, 0, 0);
         _leaf(key, keccak256(abi.encode(uint256(3e18))));
@@ -556,11 +559,11 @@ contract ExitTestCases is ExitTest {
         _post();
         _startExit(terms);
 
-        assertEq(vault.claimEmissions(bob, 3e18, older, olderSiblings), 3e18);
-        assertEq(vault.claimEmissions(bob, 5e18, seq, _siblings(key)), 2e18);
-        vm.expectRevert(abi.encodeWithSelector(Vault.NothingToClaim.selector, 3e18, 5e18));
-        vault.claimEmissions(bob, 3e18, older, olderSiblings);
-        assertEq(vault.monkey().balanceOf(bob), 5e18);
+        assertEq(minter.claimEmissions(bob, 3e18, older, olderSiblings), 3e18);
+        assertEq(minter.claimEmissions(bob, 5e18, seq, _siblings(key)), 2e18);
+        vm.expectRevert(abi.encodeWithSelector(MonkeyMinter.NothingToClaim.selector, 3e18, 5e18));
+        minter.claimEmissions(bob, 3e18, older, olderSiblings);
+        assertEq(minter.monkey().balanceOf(bob), 5e18);
     }
 
     function testAChangeOfSignerBeforeTheExitEndsEmissionClaimsOnItsRootButNotTheExit() public {
@@ -591,8 +594,10 @@ contract ExitTestCases is ExitTest {
         _assertEmissionRefusedAndDistributionRegisters(Vault.NoSigner.selector);
     }
 
-    /// @dev Posts a root holding bob's entitlement of 3 MONKEY and distribution of 30 USDC.
+    /// @dev Posts a root holding bob's entitlement of 3 MONKEY and distribution of 30 USDC, for a
+    /// minter that follows the vault.
     function _rootWithEmissionAndDistribution() private returns (ExitVerifier.ExitTerms memory terms) {
+        _followWithMinter();
         usdc.mint(address(vault), 100e6);
         terms = _addTerms(0, 0, 0);
         _leaf(keccak256(abi.encodePacked(uint8(8), bob)), keccak256(abi.encode(uint256(3e18))));
@@ -605,9 +610,16 @@ contract ExitTestCases is ExitTest {
     function _assertEmissionRefusedAndDistributionRegisters(bytes4 refusal) private {
         bytes32[] memory emission = _siblings(keccak256(abi.encodePacked(uint8(8), bob)));
         vm.expectRevert(refusal);
-        vault.claimEmissions(bob, 3e18, seq, emission);
+        minter.claimEmissions(bob, 3e18, seq, emission);
         vault.registerExitDistribution(bob, 30e6, _siblings(keccak256(abi.encodePacked(uint8(13), bob))));
         assertEq(vault.exitDistributionClaims(bob), 30e6);
+    }
+
+    /// @dev Deploys a minter and has the timelock name this vault for it, before any checkpoint, so the
+    /// timelock's delay moves no exit timing.
+    function _followWithMinter() private {
+        minter = new MonkeyMinter(governance, 1e18);
+        _govern(address(minter), abi.encodeCall(MonkeyMinter.setVault, (vault)));
     }
 
     function testADistributionPaidBeforeTheExitIsDeductedFromItsClaim() public {

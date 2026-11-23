@@ -899,12 +899,21 @@ address that the operator in effect registered. The vault also moves its signer,
 to a member's vouched standby key when the schedule promotes that member, as
 [liveness and promotion](#liveness-and-promotion) describes.
 
+The timelock also names the vault that `MonkeyMinter` mints against, and the vault and the schedule
+that the registry follows. It moves the minter to another vault only once the guardian has retired
+the current vault's signer, so that vault's roots claim nothing more. It moves the registry to another
+vault and schedule, which must be built for the registry over log heads that follow that vault, only
+while rotation is off and no drawn turn runs. The vault promotes a signer, and hands out a turn's
+generation, only for the schedule the registry names, so a schedule the registry has left cannot act
+on the vault it follows. Log heads follow one vault for good, so those of a vault whose signer is
+retired take no head.
+
 The vault's guardian is fixed at deployment, and the deployment sets it to the same multisig, which
 acts as guardian without the delay. The guardian may pause withdrawals and USDC distribution claims
 for seven days, and it cannot extend that pause. It may also retire the signer. After a retirement,
-the vault refuses withdrawals, checkpoints and promotions until the timelock installs a signer. It
-refuses MONKEY and USDC claims until that signer posts a checkpoint, which an exit that starts first
-rules out.
+the vault refuses withdrawals, checkpoints and promotions until the timelock installs a signer. Its
+roots prove no MONKEY or USDC claim until that signer posts a checkpoint, which an exit that starts
+first rules out.
 
 Known limits:
 
@@ -913,12 +922,21 @@ Known limits:
   registered, which the chain does not check against an attestation.
 - The trading server learns of a pause or a retirement from finalized evidence. For up to one
   finality delay after either, it can still sign authorizations, which the vault refuses.
+- The minter trusts the timelock's choice of vault. Once the guardian has retired the current
+  vault's signer, the timelock can point the minter at a contract that answers forged roots, and mint
+  up to the cap. While rotation is off, its `setSigner` already lets it install a key that signs
+  such a root on the vault itself, and turning rotation off takes the timelock's delay.
+- The registry trusts the timelock's choice of vault and schedule. While rotation is off and no drawn
+  turn runs, the timelock can pair the vault with a schedule that promotes any key, which `setSigner`
+  under the same condition already allows.
 
 ## MONKEY staking and distributions
 
-The vault pays each account its MONKEY emissions, and each staker its USDC distributions, against
-entitlements proven against the root of any recorded checkpoint of the signer epoch in force, less
-what the account has already claimed. The staking contract holds staked MONKEY, enforces the unstake
+`MonkeyMinter` mints each account its MONKEY emissions, and the vault pays each staker its USDC
+distributions, against entitlements proven against the root of any recorded checkpoint of the
+signer epoch in force, less what the account has already claimed. The minter proves against the
+roots of the vault it follows, and counts what it has minted each account across every vault it has
+followed, so an entitlement a later vault's log carries mints only what was not minted before. The staking contract holds staked MONKEY, enforces the unstake
 cooldown, and emits the events that the engine mirrors from finalised blocks. The staking mirror's
 references to those events, and the anchors that record how far it has scanned, are part of the
 state root. The mirror's frontier is the latest finalised block it has mirrored. A distribution

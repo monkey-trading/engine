@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {OperatorRegistry} from "../src/OperatorRegistry.sol";
+import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {RegistryLens} from "../src/RegistryLens.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
@@ -186,8 +187,11 @@ contract RegistryLensTest is RegistryTest {
         _candidate(bob, 20_000e18, 2);
         _delegate(alice, alice);
         _delegate(bob, bob);
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setCustody, (address(vault), OperatorSchedule(address(0))))
+        );
         _setRotation(true);
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
         vm.warp(block.timestamp + LIVENESS + 1);
         registry.promote();
         RegistryLens.Overview memory overview = lens.overview();
@@ -202,8 +206,11 @@ contract RegistryLensTest is RegistryTest {
         _candidate(bob, 20_000e18, 2);
         _delegate(alice, alice);
         _delegate(bob, bob);
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setCustody, (address(vault), OperatorSchedule(address(0))))
+        );
         _setRotation(true);
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
         vm.warp(block.timestamp + LIVENESS + 1);
         registry.promote();
         uint64 effectiveAt = registry.pendingElection().effectiveAt;

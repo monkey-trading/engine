@@ -27,7 +27,7 @@ use crate::custody::StakingTermsRefused;
 ///   command, nonce, and expiry
 /// - with a real enclave, a rotation to a published test key, or a request signed by a published
 ///   test key other than the configured one, as an election may name
-/// - an emission schedule whose period budget is not the one the configured vault's MONKEY cap was
+/// - an emission schedule whose period budget is not the one the configured minter's MONKEY cap was
 ///   derived from
 /// - a nonce other than the operator's next
 /// - an expiry already past
@@ -86,8 +86,8 @@ async fn sequence_admin(s: &ApiState, req: AdminRequest, seen: &mut Option<u64>)
         debug!("admin request refused: rotation to a published test key");
         return Err(ApiError::BadRequest("the operator may not rotate to a published test key".into()));
     }
-    if let (AdminCommand::InitEmissions(schedule), Some(vault)) = (&req.command, s.emission_budget)
-        && let Err(reason) = check_budget(vault, schedule.period_budget)
+    if let (AdminCommand::InitEmissions(schedule), Some(minter)) = (&req.command, s.emission_budget)
+        && let Err(reason) = check_budget(minter, schedule.period_budget)
     {
         debug!("admin request refused: {reason}");
         return Err(ApiError::BadRequest(reason));

@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {OperatorRegistry} from "../src/OperatorRegistry.sol";
+import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {Vault} from "../src/Vault.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
@@ -13,7 +14,10 @@ contract StandbyPromotionTest is RegistryTest {
 
     function setUp() public {
         _deployRegistry();
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setCustody, (address(vault), OperatorSchedule(address(0))))
+        );
         _govern(address(vault), abi.encodeCall(Vault.setRegistry, (address(registry))));
     }
 
@@ -191,15 +195,17 @@ contract StandbyPromotionTest is RegistryTest {
         registry.register(registration, authorization);
     }
 
-    function test_SetVaultIsGovernanceOnceAndNamesCode() public {
+    function test_SetCustodyIsGovernanceAndNamesCode() public {
+        OperatorSchedule none = OperatorSchedule(address(0));
         vm.expectRevert(OperatorRegistry.UnauthorizedGovernance.selector);
-        registry.setVault(address(vault));
+        registry.setCustody(address(vault), none);
         vm.prank(address(governance));
         vm.expectRevert(OperatorRegistry.ZeroAddress.selector);
-        registry.setVault(address(0));
+        registry.setCustody(address(0), none);
         vm.prank(address(governance));
-        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultAlreadySet.selector, address(vault)));
-        registry.setVault(address(vault));
+        vm.expectRevert(OperatorRegistry.ZeroAddress.selector);
+        registry.setCustody(makeAddr("no code"), none);
+        assertEq(address(registry.vault()), address(vault));
     }
 
     function test_SetRegistryIsGovernanceOnce() public {

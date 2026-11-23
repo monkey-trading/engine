@@ -296,15 +296,14 @@ impl CheckpointRpc {
 }
 
 impl CheckpointChain for CheckpointRpc {
-    /// The emission period budget the vault's MONKEY cap was derived from. Both are immutable, so
-    /// the latest block serves.
+    /// The emission period budget `minter`'s MONKEY cap was derived from. Both are immutable, so the
+    /// latest block serves.
     /// Error cases:
-    /// - transport, timeout, EVM, or decoding errors, as from a vault with no MONKEY token
+    /// - transport, timeout, EVM, or decoding errors, as from an address that is no `MonkeyMinter`
     /// - a cap that no period budget the engine accepts gives (see `budget_from_cap`)
-    async fn emission_budget(&self) -> anyhow::Result<TokenUnits> {
+    async fn emission_budget(&self, minter: Address) -> anyhow::Result<TokenUnits> {
         let at = BlockId::Number(BlockNumberOrTag::Latest);
-        let vault = Address::from(self.domain.vault.0);
-        let monkey = monkeyCall::abi_decode_returns(&self.call(vault, monkeyCall {}.abi_encode(), at).await?)?;
+        let monkey = monkeyCall::abi_decode_returns(&self.call(minter, monkeyCall {}.abi_encode(), at).await?)?;
         let cap = capCall::abi_decode_returns(&self.call(monkey, capCall {}.abi_encode(), at).await?)?;
         budget_from_cap(cap)
     }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.36;
 
+import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {Vault} from "../src/Vault.sol";
 import {WithdrawalTest} from "./helpers/WithdrawalTest.sol";
 
@@ -13,10 +14,12 @@ contract GuardianTest is WithdrawalTest {
     function test_ConstructorRecordsTheGuardianAndRefusesAZeroOne() public {
         assertEq(vault.guardian(), multisig);
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(usdc, vm.addr(KEY), governance, address(0), 1e18, 7 days, 3 days, 1 days);
+        new Vault(usdc, vm.addr(KEY), governance, address(0), 7 days, 3 days, 1 days);
     }
 
     function test_PauseRefusesClaimsAtOnceAndLeavesDepositsCheckpointsAndEmissions() public {
+        MonkeyMinter minter = new MonkeyMinter(governance, 1e18);
+        _govern(address(minter), abi.encodeCall(MonkeyMinter.setVault, (vault)));
         Vault.Withdrawal memory withdrawal = _approval(0, 10e6);
         _postApproval(withdrawal);
         bytes memory signature = _sign(vault, withdrawal, KEY);
@@ -44,8 +47,8 @@ contract GuardianTest is WithdrawalTest {
         assertEq(vault.distributionsPaid(), 0);
 
         _post(vault, 12, _leaf(ENTITLEMENT_LEAF, claimant, 3e18), KEY);
-        assertEq(vault.claimEmissions(claimant, 3e18, 12, new bytes32[](0)), 3e18);
-        assertEq(vault.monkey().balanceOf(claimant), 3e18);
+        assertEq(minter.claimEmissions(claimant, 3e18, 12, new bytes32[](0)), 3e18);
+        assertEq(minter.monkey().balanceOf(claimant), 3e18);
 
         usdc.mint(trader, 10e6);
         vm.startPrank(trader);

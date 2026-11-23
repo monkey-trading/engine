@@ -1233,8 +1233,8 @@ sends the same signed body again.
 ### Claim proofs
 
 `GET /v1/accounts/{address}/emissions` returns the proof of an account's cumulative MONKEY
-entitlement, which the vault's `claimEmissions` takes. `GET /v1/accounts/{address}/distributions`
-returns the proof of an account's cumulative USDC distributions, which `claimDistribution` takes.
+entitlement, which `MonkeyMinter`'s `claimEmissions` takes. `GET /v1/accounts/{address}/distributions`
+returns the proof of an account's cumulative USDC distributions, which the vault's `claimDistribution` takes.
 Both answers have the same form.
 
 | Field | Meaning |

@@ -117,23 +117,25 @@ for _ in $(seq 1 50); do
 done
 [[ -n "$anvil_up" ]] || fail "anvil did not come up"
 
-step "Deploy the mock USDC, the vault (checkpoint signer: the mock enclave key), and LogHeads"
+step "Deploy the mock USDC, the vault (checkpoint signer: the mock enclave key), the MONKEY minter, and LogHeads"
 cd "$root/contracts"
 # `--constructor-args` takes every argument after it, so the contract and its arguments go last.
 create() { forge create --rpc-url "$rpc" --private-key "$deployer_key" --broadcast --json "$@" | jq -r '.deployedTo'; }
 usdc="$(create test/mocks/MockUSDC.sol:MockUSDC)"
-# A separate local deployer preserves the token/Vault addresses at account 0's nonces 0/1, exactly
-# as scripts/dev-vault-deposits.sh deploys them, so config/anvil.toml's addresses still hold.
+# A separate local deployer preserves the token, vault and minter addresses at account 0's nonces 0 to
+# 2, exactly as scripts/dev-vault-deposits.sh deploys them, so config/anvil.toml's addresses still hold.
 governance="$(forge create --rpc-url "$rpc" --private-key "$house_key" --broadcast --json \
   dependencies/@openzeppelin-contracts-5.7.0/governance/TimelockController.sol:TimelockController \
   --constructor-args 1 "[0x70997970C51812dc3A010C7d01b50e0d17dc79C8]" '[0x0000000000000000000000000000000000000000]' \
   0x0000000000000000000000000000000000000000 | jq -r '.deployedTo')"
-# The guardian is the timelock's proposer. The MONKEY period budget, 1 MONKEY, is a development
-# value, not an approved production parameter. The exit timings are thirty days each, past
-# anything this waits for. Unlike dev-vault-deposits.sh, the checkpoint signer is the published
-# mock enclave identity, the key the node's mock TEE signs log heads with.
+# The guardian is the timelock's proposer. The exit timings are thirty days each, past anything
+# this waits for. Unlike dev-vault-deposits.sh, the checkpoint signer is the published mock enclave
+# identity, the key the node's mock TEE signs log heads with.
 vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$mock_enclave" "$governance" \
-  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 1000000000000000000 2592000 2592000 2592000)"
+  0x70997970C51812dc3A010C7d01b50e0d17dc79C8 2592000 2592000 2592000)"
+# The node reads the emission period budget from the minter's cap. The MONKEY period budget, 1 MONKEY,
+# is a development value, not an approved production parameter.
+minter="$(create src/MonkeyMinter.sol:MonkeyMinter --constructor-args "$governance" 1000000000000000000)"
 logheads="$(create src/LogHeads.sol:LogHeads --constructor-args "$vault")"
 cd "$root"
 # The node reads the vault at the finalized tag, which trails Anvil's head by two blocks with one
@@ -141,6 +143,7 @@ cd "$root"
 mine 16
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
 grep -qi "usdc = \"$usdc\"" config/anvil.toml || fail "USDC deployed at $usdc, not the address config/anvil.toml names"
+grep -qi "minter = \"$minter\"" config/anvil.toml || fail "minter deployed at $minter, not the address config/anvil.toml names"
 signer="$(cast call "$vault" "checkpointSigner()(address)" --rpc-url "$rpc" | tr '[:upper:]' '[:lower:]')"
 [[ "$signer" == "$(tr '[:upper:]' '[:lower:]' <<< "$mock_enclave")" ]] \
   || fail "the vault's checkpoint signer is $signer, not the mock enclave key"

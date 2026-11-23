@@ -66,7 +66,7 @@ The procedures on this page use these variables, as well as those that
 ```shell
 export STAKING=$(cast call $REGISTRY 'staking()(address)' --rpc-url $RPC)
 export SCHEDULE=$(cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC)
-export MONKEY=$(cast call $VAULT 'monkey()(address)' --rpc-url $RPC)
+export MONKEY=$(cast call $MINTER 'monkey()(address)' --rpc-url $RPC)
 export CANDIDATE=<candidate address>
 export VOTE=<vote contract>
 ```

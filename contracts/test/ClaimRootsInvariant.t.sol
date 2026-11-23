@@ -3,14 +3,16 @@ pragma solidity 0.8.36;
 
 import {TimelockController} from "@openzeppelin-contracts/governance/TimelockController.sol";
 
+import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {MonkeyToken} from "../src/MonkeyToken.sol";
 import {Vault} from "../src/Vault.sol";
 import {GovernanceTest} from "./helpers/GovernanceTest.sol";
 import {TreeBuilder} from "./helpers/TreeBuilder.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
-/// @dev Posts checkpoints whose cumulative amounts only grow, claims at any recorded one, and changes
-/// the signer. A claim the vault should refuse is made too, and must change nothing.
+/// @dev Posts checkpoints whose cumulative amounts only grow, claims at any recorded one, emissions
+/// through a minter that follows the vault, and changes the signer. A claim the vault should refuse is
+/// made too, and must change nothing.
 contract ClaimRootsHandler is GovernanceTest {
     uint256 private constant FIRST_KEY = 0x1234;
     uint8 private constant ENTITLEMENT_LEAF = 8;
@@ -18,6 +20,7 @@ contract ClaimRootsHandler is GovernanceTest {
 
     MockUSDC private usdc;
     Vault private vault;
+    MonkeyMinter private minter;
     MonkeyToken private monkey;
     address[3] private actors = [makeAddr("alice"), makeAddr("bob"), makeAddr("carol")];
     /// @dev The newest cumulative amount of each actor, by claim kind.
@@ -32,10 +35,11 @@ contract ClaimRootsHandler is GovernanceTest {
 
     uint256 public funded;
 
-    constructor(MockUSDC token, Vault target, TimelockController timelock) {
+    constructor(MockUSDC token, Vault target, MonkeyMinter minter_, TimelockController timelock) {
         usdc = token;
         vault = target;
-        monkey = target.monkey();
+        minter = minter_;
+        monkey = minter_.monkey();
         governance = timelock;
     }
 
@@ -83,7 +87,7 @@ contract ClaimRootsHandler is GovernanceTest {
         uint64 seq = seqs[seqSeed % seqs.length];
         address account = actors[index];
         uint256 entitled = usdcClaim ? distributionsAt[seq][index] : emissionsAt[seq][index];
-        uint256 claimed = usdcClaim ? vault.distributionsClaimed(account) : vault.emissionsClaimed(account);
+        uint256 claimed = usdcClaim ? vault.distributionsClaimed(account) : minter.emissionsClaimed(account);
         if (entitled == 0) return;
         (bytes32[] memory keys, bytes32[] memory values) = _leaves(seq);
         bytes32[] memory siblings = TreeBuilder.proof(keys, values, 2 * index + (usdcClaim ? 1 : 0));
@@ -102,7 +106,7 @@ contract ClaimRootsHandler is GovernanceTest {
         }
         uint256 amount = usdcClaim
             ? vault.claimDistribution(account, entitled, seq, siblings)
-            : vault.claimEmissions(account, entitled, seq, siblings);
+            : minter.claimEmissions(account, entitled, seq, siblings);
         if (refused) {
             assertEq(vault.distributionsPaid(), paidBefore, "a refused claim pays nothing");
             assertEq(monkey.totalSupply(), supplyBefore, "a refused claim mints nothing");
@@ -157,6 +161,7 @@ contract ClaimRootsHandler is GovernanceTest {
 contract ClaimRootsInvariantTest is GovernanceTest {
     MockUSDC private usdc;
     Vault private vault;
+    MonkeyMinter private minter;
     MonkeyToken private monkey;
     ClaimRootsHandler private handler;
 
@@ -164,9 +169,11 @@ contract ClaimRootsInvariantTest is GovernanceTest {
         vm.warp(1_800_000_000);
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(0x1234), governance, multisig, 1e27, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
-        monkey = vault.monkey();
-        handler = new ClaimRootsHandler(usdc, vault, governance);
+        vault = new Vault(usdc, vm.addr(0x1234), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        minter = new MonkeyMinter(governance, 1e27);
+        _govern(address(minter), abi.encodeCall(MonkeyMinter.setVault, (vault)));
+        monkey = minter.monkey();
+        handler = new ClaimRootsHandler(usdc, vault, minter, governance);
         targetContract(address(handler));
         bytes4[] memory selectors = new bytes4[](4);
         selectors[0] = ClaimRootsHandler.post.selector;
@@ -180,7 +187,7 @@ contract ClaimRootsInvariantTest is GovernanceTest {
     function invariant_NoClaimPassesTheNewestAmount() public view {
         for (uint256 i; i < handler.actorCount(); ++i) {
             address account = handler.actor(i);
-            assertLe(vault.emissionsClaimed(account), handler.newestEmission(i));
+            assertLe(minter.emissionsClaimed(account), handler.newestEmission(i));
             assertLe(vault.distributionsClaimed(account), handler.newestDistribution(i));
         }
     }
@@ -193,9 +200,9 @@ contract ClaimRootsInvariantTest is GovernanceTest {
         for (uint256 i; i < handler.actorCount(); ++i) {
             address account = handler.actor(i);
             assertEq(usdc.balanceOf(account), vault.distributionsClaimed(account));
-            assertEq(monkey.balanceOf(account), vault.emissionsClaimed(account));
+            assertEq(monkey.balanceOf(account), minter.emissionsClaimed(account));
             paid += vault.distributionsClaimed(account);
-            minted += vault.emissionsClaimed(account);
+            minted += minter.emissionsClaimed(account);
         }
         assertEq(vault.distributionsPaid(), paid);
         assertEq(monkey.totalSupply(), minted);

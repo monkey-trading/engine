@@ -50,9 +50,8 @@ sol! {
         uint64 blockNumber; bytes32 blockHash;
     }
     function turnOf(uint64 turn) external view returns (Turn);
-    function setVault(address vault_) external;
+    function setCustody(address vault_, address schedule_) external;
     function setRegistry(address registry_) external;
-    function setSchedule(address schedule_) external;
     function draw(uint64 turn) external returns (address);
     function memberAt(uint32 setId, bytes32 seed, uint64 turn, uint16 position) external view returns (address);
     function relayAlias() external view returns (address);
@@ -134,9 +133,8 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
     let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
         (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
     ];
     calls.extend((0..3).map(|i| (chain.registry, chain.approval(members[i], digests[i]))));
     calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));

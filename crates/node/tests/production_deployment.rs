@@ -19,6 +19,7 @@ struct Inputs {
     start: String,
     timelock: Timelock,
     vault: Vault,
+    minter: Minter,
     staking: Staking,
     init_staking: InitStaking,
     schedule: Schedule,
@@ -34,10 +35,15 @@ struct Timelock {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Vault {
-    period_budget: TokenUnits,
     exit_period: u64,
     claim_window: u64,
     stale_after: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Minter {
+    period_budget: TokenUnits,
 }
 
 #[derive(Deserialize)]
@@ -112,10 +118,10 @@ fn inputs() -> Inputs {
 
 #[test]
 fn every_value_is_the_owners_decision_on_436() {
-    let Inputs { timelock, vault, staking, init_staking, .. } = inputs();
+    let Inputs { timelock, vault, minter, staking, init_staking, .. } = inputs();
     // The initial emission period budget: 100,000 MONKEY a ten-minute period, in 18-decimal base units.
-    assert_eq!(vault.period_budget, TokenUnits(100_000 * 10u128.pow(18)));
-    assert_eq!(vault.period_budget, TokenUnits(10u128.pow(23)));
+    assert_eq!(minter.period_budget, TokenUnits(100_000 * 10u128.pow(18)));
+    assert_eq!(minter.period_budget, TokenUnits(10u128.pow(23)));
     assert_eq!(vault.claim_window, 30 * DAY);
     assert_eq!(vault.stale_after, DAY);
     // The timelock delay and the exit period stand as #360 set them.
@@ -132,16 +138,16 @@ fn the_staking_cooldown_covers_at_least_one_epoch() {
 
 #[test]
 fn the_contracts_accept_the_values() {
-    let Inputs { timelock, vault, staking, .. } = inputs();
+    let Inputs { timelock, vault, minter, staking, .. } = inputs();
     // `Vault`'s constructor: a nonzero timelock delay, an exit period past it, a nonzero claim window
     // and staleness, and staleness within the exit period.
     assert!(timelock.min_delay > 0 && vault.exit_period > timelock.min_delay);
     assert!(vault.claim_window > 0 && vault.stale_after > 0 && vault.stale_after <= vault.exit_period);
     // The budget the engine accepts, whose token cap `2 x PERIODS_PER_HALVING x budget` fits a u128 and
-    // gives the budget back, as the node's check reads it from the vault.
-    assert!((1..=MAX_PERIOD_BUDGET).contains(&vault.period_budget.0));
-    let cap = vault.period_budget.0 * 2 * u128::from(PERIODS_PER_HALVING);
-    assert_eq!(cap / (2 * u128::from(PERIODS_PER_HALVING)), vault.period_budget.0);
+    // gives the budget back, as the node's check reads it from the minter.
+    assert!((1..=MAX_PERIOD_BUDGET).contains(&minter.period_budget.0));
+    let cap = minter.period_budget.0 * 2 * u128::from(PERIODS_PER_HALVING);
+    assert_eq!(cap / (2 * u128::from(PERIODS_PER_HALVING)), minter.period_budget.0);
     assert_eq!(cap, 5_256_000_000 * 10u128.pow(18), "the decided maximum supply");
     // `Staking`'s two values fit the engine's: whole milliseconds the engine takes as epoch and cooldown.
     assert!(staking.epoch.checked_mul(1000).is_some() && staking.cooldown.checked_mul(1000).is_some());
@@ -158,10 +164,10 @@ fn both_initialisations_start_at_midnight_utc_on_the_opening_day_the_owner_names
 
 #[test]
 fn the_runbooks_commands_carry_the_inputs() {
-    let Inputs { start, vault, staking, init_staking, .. } = inputs();
+    let Inputs { start, minter, staking, init_staking, .. } = inputs();
     let runbook = fs::read_to_string(RUNBOOK).unwrap();
     let admin = "$ENGINE admin --config node.toml --node $API --pin $PIN";
-    let emissions = format!("{admin} init-emissions --start $START --period-budget {}", vault.period_budget);
+    let emissions = format!("{admin} init-emissions --start $START --period-budget {}", minter.period_budget);
     let staking_command = format!(
         "{admin} init-staking --start $START --liquidity-floor {} --epoch-ms {} --cooldown-ms {} --secrets-file secrets.toml",
         init_staking.liquidity_floor,
@@ -171,6 +177,11 @@ fn the_runbooks_commands_carry_the_inputs() {
     for command in [&emissions, &staking_command] {
         assert!(runbook.lines().any(|line| line.trim() == command), "the runbook lacks `{command}`");
     }
+    let minter_args = format!("--constructor-args $TIMELOCK {}", minter.period_budget);
+    assert!(
+        runbook.lines().any(|line| line.contains("MonkeyMinter") && line.trim().ends_with(minter_args.as_str())),
+        "the runbook's minter deployment lacks `{minter_args}`"
+    );
     assert!(runbook.contains(&format!("START={start} ")), "the runbook's $START is the inputs' start");
 }
 

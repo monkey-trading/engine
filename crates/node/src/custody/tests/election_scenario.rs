@@ -3,7 +3,7 @@
 //! undelegated stake; the real operator registry elects by those tallies, the custody watcher
 //! mirrors the registry's finalised events through the staking pipeline into the real sequencer,
 //! and the elected key signs admin commands from the election's effective time. MONKEY is minted
-//! by the vault, its only minter, impersonated in place of proven emission claims.
+//! by `MonkeyMinter`, its only minter, impersonated in place of proven emission claims.
 
 mod bounty_awards;
 mod chain;

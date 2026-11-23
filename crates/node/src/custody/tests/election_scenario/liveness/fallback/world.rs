@@ -13,7 +13,7 @@ use super::super::super::chain::{Chain, Parameters, delegateCall, setParametersC
 use super::super::super::{CONFIG_HASH, address, monkey};
 use super::super::{
     DAY_SECS, Member, SET_CLOSE_SECS, Shifted, Turn, drawCall, etch_arb_sys, latchesCall, receiveSeedCall,
-    relayAliasCall, seedEpochCall, setRegistryCall, setScheduleCall, setVaultCall, signerEpochCall, turnOfCall,
+    relayAliasCall, seedEpochCall, setCustodyCall, setRegistryCall, signerEpochCall, turnOfCall,
 };
 use super::{
     DIGESTS, KEYS, MAXIMUMS, MINIMUMS, RULE, STAKES, STEP, SWITCH_BUDGET_SECS, TAKE, TakeWindowArg, assignmentOfCall,
@@ -107,9 +107,8 @@ impl World {
         let daily = Parameters { epochLength: DAY_SECS, ..super::super::super::dev_parameters().0 };
         let mut calls = vec![
             (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-            (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+            (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
             (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-            (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
         ];
         calls.extend(members.iter().map(|member| (chain.registry, chain.approval(member.candidate, member.digest))));
         calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));

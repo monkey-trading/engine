@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {Vm} from "forge-std/Test.sol";
 
 import {OperatorRegistry} from "../src/OperatorRegistry.sol";
+import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {Vault} from "../src/Vault.sol";
 import {RegistryTest} from "./helpers/RegistryTest.sol";
 
@@ -16,7 +17,10 @@ contract ReleaseChangeTest is RegistryTest {
 
     function setUp() public {
         _deployRegistry();
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setCustody, (address(vault), OperatorSchedule(address(0))))
+        );
         _govern(address(vault), abi.encodeCall(Vault.setRegistry, (address(registry))));
     }
 

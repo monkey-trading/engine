@@ -38,6 +38,9 @@ pub struct EvmCustodySection {
     pub providers: Vec<RpcProviderSection>,
     /// The USDC contract the vault must hold; the watcher checks it on every poll.
     pub usdc: Address,
+    /// The `MonkeyMinter` that mints MONKEY against the vault's checkpoints. With `[checkpoints]`, the
+    /// node reads the emission period budget from its token's cap.
+    pub minter: Address,
     /// Trading credit follows this tag, less `confirmations`; production requires `latest`.
     /// Earlier protocols use this tag as the sole final-deposit rule.
     pub finality_tag: FinalityTag,
@@ -256,6 +259,8 @@ impl NodeConfig {
     /// - `custody.evm.providers[].rpc_url` is not a URL, or is plain HTTP to another machine, where the host
     ///   could rewrite every answer
     /// - a range, interval, or timeout in `[custody.evm]` is zero
+    /// - `custody.evm.minter` is the token, the vault, or the staking contract, which answers `monkey()`
+    ///   as the minter does
     /// - `custody.evm.staking.registry.lens` is the token, the vault, the staking contract, or the registry
     /// - `custody.evm.staking.registry.schedule` is any of those, or the lens
     /// - `custody.evm.staking.registry.vote` without a schedule, its contract any of those or the
@@ -282,8 +287,13 @@ impl NodeConfig {
         if evm.finality_stalled_after.is_zero() {
             bail!("custody.evm.finality_stalled_after must be non-zero");
         }
+        let vault: Address = self.custody.vault.parse().context("custody.vault")?;
+        if [Some(evm.usdc), Some(vault), evm.staking.as_ref().map(|staking| staking.contract)]
+            .contains(&Some(evm.minter))
+        {
+            bail!("custody.evm.minter must be the MonkeyMinter, not the token, vault, or staking contract");
+        }
         if let Some(staking) = &evm.staking {
-            let vault: Address = self.custody.vault.parse().context("custody.vault")?;
             if staking.contract == evm.usdc || staking.contract == vault {
                 bail!("custody.evm.staking.contract must be the staking contract, not the token or the vault");
             }

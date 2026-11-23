@@ -111,6 +111,7 @@ providers = [
   {{ name = "c", rpc_url = "{rpc}/c{key_c}" }},
 ]
 usdc = "{USDC:#x}"
+minter = "0x3030303030303030303030303030303030303030"
 finality_tag = "safe"
 withdrawal_finality_tag = "finalized"
 confirmations = 2

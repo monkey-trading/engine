@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use alloy::primitives::{B256, Bytes, U256};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
 use alloy::sol_types::SolCall;
@@ -53,20 +53,20 @@ impl Scenario {
     /// Has the relayer claim `proof`; returns the MONKEY minted.
     pub(super) async fn claim_proof(&self, proof: &EntitlementProof) -> U256 {
         let before = self.balance(proof.account).await;
-        send(&self.provider, self.relayer, self.vault, claim_call(proof)).await;
+        send(&self.provider, self.relayer, self.minter, claim_call(proof)).await;
         assert_eq!(self.balance(AccountId(self.relayer.0.0)).await, U256::ZERO, "the relayer receives nothing");
         self.balance(proof.account).await - before
     }
 
-    /// The selector the vault reverts with when the relayer claims `account`'s current proof.
+    /// The selector the minter reverts with when the relayer claims `account`'s current proof.
     pub(super) async fn refused_claim(&self, account: AccountId) -> [u8; 4] {
         let proof = self.posted_proof(account).await;
         self.refused_proof(&proof).await
     }
 
-    /// The selector the vault reverts with when the relayer claims `proof`.
+    /// The selector the minter reverts with, its own or the vault's, when the relayer claims `proof`.
     pub(super) async fn refused_proof(&self, proof: &EntitlementProof) -> [u8; 4] {
-        let call = TransactionRequest::default().from(self.relayer).to(self.vault).input(claim_call(proof).into());
+        let call = TransactionRequest::default().from(self.relayer).to(self.minter).input(claim_call(proof).into());
         let error = self.provider.request::<_, Bytes>("eth_call", (call, "latest")).await.unwrap_err();
         let data = error.as_error_resp().and_then(|payload| payload.as_revert_data()).expect("a revert");
         data[..4].try_into().unwrap()
@@ -117,9 +117,13 @@ impl Scenario {
 
     /// The timelock installs the node's own key in a new signer epoch.
     pub(super) async fn install_signer(&self) {
-        let payload = setSignerCall { signer: self.key.address().into() }.abi_encode();
+        self.govern(self.vault, setSignerCall { signer: self.key.address().into() }.abi_encode()).await;
+    }
+
+    /// The timelock calls `target` with `payload`, scheduled and executed past its one-second delay.
+    pub(super) async fn govern(&self, target: Address, payload: Vec<u8>) {
         let schedule = scheduleCall {
-            target: self.vault,
+            target,
             value: U256::ZERO,
             data: payload.clone().into(),
             predecessor: B256::ZERO,
@@ -129,7 +133,7 @@ impl Scenario {
         send(&self.provider, self.funder, self.governance, schedule.abi_encode()).await;
         let _: serde_json::Value = self.provider.request("evm_increaseTime", json!([2])).await.unwrap();
         let execute = executeCall {
-            target: self.vault,
+            target,
             value: U256::ZERO,
             payload: payload.into(),
             predecessor: B256::ZERO,
@@ -139,7 +143,7 @@ impl Scenario {
     }
 }
 
-/// The vault call that claims `proof`.
+/// The minter call that claims `proof`.
 fn claim_call(proof: &EntitlementProof) -> Vec<u8> {
     let siblings: Vec<B256> = proof.siblings.clone();
     claimEmissionsCall {

@@ -10,9 +10,8 @@ contract CheckpointsTest is GovernanceTest {
 
     function setUp() public {
         governance = _deployGovernance();
-        vault = new Vault(
-            IERC20(address(1)), vm.addr(KEY), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER
-        );
+        vault =
+            new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
     }
 
     function testFuzzOnlyIncreasingSignedCheckpoints(uint64 seq, bytes32 root) public {
@@ -66,9 +65,8 @@ contract CheckpointsTest is GovernanceTest {
 
     function testRefusesAnotherVaultOrChain() public {
         bytes memory signature = sign(vault, 2, bytes32(uint256(7)), false, 0, 0, KEY);
-        Vault other = new Vault(
-            IERC20(address(1)), vm.addr(KEY), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER
-        );
+        Vault other =
+            new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
 
         vm.expectRevert(Vault.InvalidCheckpointSigner.selector);
         other.postCheckpoint(2, bytes32(uint256(7)), false, 0, 0, signature);
@@ -79,10 +77,10 @@ contract CheckpointsTest is GovernanceTest {
 
     function testRefusesZeroSignerAndUnsupportedChain() public {
         vm.expectRevert(Vault.ZeroAddress.selector);
-        new Vault(IERC20(address(1)), address(0), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        new Vault(IERC20(address(1)), address(0), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
         vm.chainId(uint256(type(uint64).max) + 1);
         vm.expectRevert(Vault.UnsupportedChain.selector);
-        new Vault(IERC20(address(1)), address(2), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        new Vault(IERC20(address(1)), address(2), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
     }
 
     function testRejectsMissingSignature() public {

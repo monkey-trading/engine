@@ -91,7 +91,7 @@ contract ScheduleHandler is Test {
     function stake(uint256 actorSeed, uint256 amount) external observed {
         address account = actors[actorSeed % actors.length];
         amount = bound(amount, 1, 50_000e18);
-        vm.prank(address(vault));
+        vm.prank(monkey.minter());
         monkey.mint(account, amount);
         vm.startPrank(account);
         monkey.approve(address(staking), amount);

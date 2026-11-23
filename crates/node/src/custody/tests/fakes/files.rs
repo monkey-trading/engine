@@ -14,6 +14,7 @@ pub(in crate::custody::tests) fn evm_toml(dir: &Path, max_block_range: u64) -> S
           {{ name = "c", rpc_url = "http://127.0.0.1:3" }},
         ]
         usdc = "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+        minter = "0x3030303030303030303030303030303030303030"
         finality_tag = "safe"
         withdrawal_finality_tag = "finalized"
         confirmations = 0

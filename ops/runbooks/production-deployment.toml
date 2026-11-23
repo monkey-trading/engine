@@ -1,6 +1,6 @@
 # The launch deployment's one-time inputs: the constructor values of the contracts and the values of
-# the operator's two initialisations. The vault's and staking contract's values cannot change once
-# deployed, nor the initialisations once recorded (the timelock's delay can move through the timelock),
+# the operator's two initialisations. The vault's, the minter's and the staking contract's values
+# cannot change once deployed, nor the initialisations once recorded (the timelock's delay can move through the timelock),
 # and the node refuses a different budget, epoch or cooldown than the contracts hold. Decided by the owner on
 # 2026-11-14 (#436), and for #1175 the operator schedule's heartbeat rule on 2026-11-21 and its other
 # values and the parameter vote's on 2026-11-22.
@@ -23,13 +23,16 @@ start = "2027-01-01T00:00:00Z" # OWNER: 00:00:00 UTC on the day restricted mainn
 min_delay = 259200 # 3 days
 
 [vault]
+exit_period = 1209600 # 14 days without a checkpoint before anyone may start the exit
+claim_window = 2592000 # 30 days for exit claims to register
+stale_after = 86400 # 1 day without a checkpoint before deposits are refused
+
+# The `MonkeyMinter` constructor, which deploys the MONKEY token.
+[minter]
 # The initial emission period budget in MONKEY base units (18 decimals), a ten-minute period: 100,000
 # MONKEY. It caps the token at 2 x 26,280 x budget, 5,256,000,000 MONKEY, and `init-emissions` must
 # carry the same value.
 period_budget = "100000000000000000000000"
-exit_period = 1209600 # 14 days without a checkpoint before anyone may start the exit
-claim_window = 2592000 # 30 days for exit claims to register
-stale_after = 86400 # 1 day without a checkpoint before deposits are refused
 
 # The `OperatorRegistry` constructor's `cooldownSeconds_` and `epochSeconds_`, which deploy `Staking`,
 # in seconds. `init-staking` carries the same two values in milliseconds.

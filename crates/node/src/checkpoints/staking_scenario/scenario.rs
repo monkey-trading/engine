@@ -8,9 +8,10 @@ use std::process::{Command as Process, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy::primitives::{Address, Bytes, U64, U256};
+use alloy::primitives::{Address, B256, Bytes, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
+use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use axum::extract::ConnectInfo;
 use axum::{Extension, Router};
@@ -27,7 +28,7 @@ use tokio::time::sleep;
 
 use super::{CHECKPOINT_EVERY, COOLDOWN_MS, COOLDOWN_SECS, DEV_PERIOD_BUDGET, EPOCH_MS, FLOOR, NOW, monkeyCall};
 use crate::api::{ApiState, MAX_BACKFILLS, router};
-use crate::checkpoints::scenario::{Anvil, deploy};
+use crate::checkpoints::scenario::{Anvil, deploy, send};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Poster, View};
 use crate::clock::test_clock::TestClock;
 use crate::config::{CheckpointSection, FinalityTag, Genesis, RateLimit};
@@ -37,6 +38,12 @@ use crate::log::{CheckpointDomain, CheckpointParent, Manifest};
 use crate::sequencer::{Sequencer, SequencerConfig, genesis_commands};
 use crate::tee::{AttestationBundle, EnclaveKey, MockAttestor, attest_bundle};
 use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_config};
+
+sol! {
+    function setVault(address next) external;
+    function schedule(address target, uint256 value, bytes data, bytes32 predecessor, bytes32 salt, uint256 delay) external;
+    function execute(address target, uint256 value, bytes payload, bytes32 predecessor, bytes32 salt) external payable;
+}
 
 /// The chain, the deployed vault, token, and staking contract, and the node, which the scenario
 /// can stop and restart.
@@ -48,6 +55,7 @@ pub(super) struct Scenario {
     pub(super) relayer: Address,
     pub(super) usdc: Address,
     pub(super) vault: Address,
+    pub(super) minter: Address,
     pub(super) monkey: Address,
     pub(super) staking: Address,
     pub(super) stakers: [AccountId; 2],
@@ -111,21 +119,31 @@ impl Scenario {
         let governance =
             deploy(&provider, accounts[0], "TimelockController.sol/TimelockController.json", &governance_args).await;
         let (exit_period, claim_window, stale_after) = crate::test_support::DEV_EXIT_SCHEDULE;
-        let args = (
-            usdc,
-            Address::from(key.address()),
-            governance,
-            accounts[0],
-            U256::from(DEV_PERIOD_BUDGET),
-            exit_period,
-            claim_window,
-            stale_after,
-        )
-            .abi_encode();
+        let args =
+            (usdc, Address::from(key.address()), governance, accounts[0], exit_period, claim_window, stale_after)
+                .abi_encode();
 
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
+        let budget = (governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let minter = deploy(&provider, accounts[0], "MonkeyMinter.sol/MonkeyMinter.json", &budget).await;
+        // The timelock names the vault for the minter, past its two-day delay, before anything is staked.
+        let set_vault = setVaultCall { next: vault }.abi_encode();
+        let (delay, salt) = (U256::from(172_800), B256::ZERO);
+        let schedule = scheduleCall {
+            target: minter,
+            value: U256::ZERO,
+            data: set_vault.clone().into(),
+            predecessor: salt,
+            salt,
+            delay,
+        };
+        send(&provider, accounts[0], governance, schedule.abi_encode()).await;
+        let _: serde_json::Value = provider.request("evm_increaseTime", serde_json::json!([delay])).await.unwrap();
+        let execute =
+            executeCall { target: minter, value: U256::ZERO, payload: set_vault.into(), predecessor: salt, salt };
+        send(&provider, accounts[0], governance, execute.abi_encode()).await;
         let monkey = {
-            let request = TransactionRequest::default().to(vault).input(monkeyCall {}.abi_encode().into());
+            let request = TransactionRequest::default().to(minter).input(monkeyCall {}.abi_encode().into());
             let out: Bytes = provider.request("eth_call", (request, "latest")).await.unwrap();
             monkeyCall::abi_decode_returns(&out).unwrap()
         };
@@ -162,6 +180,7 @@ impl Scenario {
             relayer: accounts[1],
             usdc,
             vault,
+            minter,
             monkey,
             staking,
             stakers: [AccountId(accounts[2].into()), AccountId(accounts[3].into())],

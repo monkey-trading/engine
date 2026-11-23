@@ -148,7 +148,7 @@ fn the_futures_markets_price_from_massive_alone_by_the_decision_of_2026_11_20() 
 
 #[test]
 fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
-    const PLACEHOLDERS: [&str; 15] = [
+    const PLACEHOLDERS: [&str; 17] = [
         "example.com",
         "0x1111111111111111",
         "0x2222222222222222",
@@ -161,6 +161,8 @@ fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
         "0x9999999999999999",
         "0xaaaaaaaaaaaaaaaa",
         "0xbbbbbbbbbbbbbbbb",
+        "0xcccccccccccccccc",
+        "0xdddddddddddddddd",
         "start_block = 1 ",
         "processor = ",
         "product_name = ",

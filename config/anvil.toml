@@ -88,6 +88,8 @@ providers = [
   { name = "local-c", rpc_url = "http://127.0.0.1:8547" },
 ]
 usdc = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+# The `MonkeyMinter` the scenarios deploy right after the vault, from the same account.
+minter = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
 # Anvil started with `--slots-in-an-epoch 1` marks the block below the head safe, so a deposit is
 # eligible for credit three blocks after it is mined. Production uses latest for credit.
 finality_tag = "safe"

@@ -87,7 +87,7 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 ///   client auth or operator, or whose genesis did not apply in full, is not the config's, or is one
 ///   no current config can give), connecting custody, or binding a listener fails
 /// - the engine would reject a genesis command
-/// - with checkpoints configured, the vault's MONKEY cap cannot be read, or it was derived from
+/// - with checkpoints configured, the minter's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
 /// - with a staking contract configured, it cannot be read, or the log or genesis records another
 ///   epoch or cooldown than it holds (see `preflight::staking_preflight`)

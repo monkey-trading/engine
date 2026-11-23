@@ -80,13 +80,9 @@ async fn dev_scenario_posts_replays_refuses_truncation_and_pauses_shortfall() {
         &(U256::from(1), vec![relayer], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
     )
     .await;
-    // The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
-    // The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
     let (exit_period, claim_window, stale_after) = crate::test_support::DEV_EXIT_SCHEDULE;
-    let budget = U256::from(10).pow(U256::from(18));
     let args =
-        (token, Address::from(key.address()), governance, relayer, budget, exit_period, claim_window, stale_after)
-            .abi_encode();
+        (token, Address::from(key.address()), governance, relayer, exit_period, claim_window, stale_after).abi_encode();
     let vault = deploy(&provider, relayer, "Vault.sol/Vault.json", &args).await;
     let domain = CheckpointDomain { chain_id: 31337, vault: AccountId(vault.into()) };
     let section: CheckpointSection = toml::from_str(&format!(

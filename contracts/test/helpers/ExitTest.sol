@@ -30,7 +30,7 @@ abstract contract ExitTest is GovernanceTest {
         vm.warp(1_800_000_000);
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, 1e18, PERIOD, WINDOW, STALE);
+        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, PERIOD, WINDOW, STALE);
     }
 
     /// @dev Deposits `amount` base units from `payer` for `account`.

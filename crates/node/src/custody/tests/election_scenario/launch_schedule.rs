@@ -41,9 +41,8 @@ const TTL_MS: Millis = DAY_SECS as Millis * 1000;
 const PENALTY: Penalty = Penalty { initial_bps: 10_000, decay_ms: 730 * DAY_SECS as Millis * 1000 };
 
 sol! {
-    function setVault(address vault_) external;
+    function setCustody(address vault_, address schedule_) external;
     function setRegistry(address registry_) external;
-    function setSchedule(address schedule_) external;
     function schedule() external view returns (address);
     function logHeads() external view returns (address);
     function seedReceiver() external view returns (address);
@@ -87,7 +86,7 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
     let vote_inputs = section("parameter_vote");
     let (normal, fast) = (int(&vote_inputs, "normal_window"), int(&vote_inputs, "fast_window"));
 
-    // 1. The vault, its MONKEY and the registry deploy, then the rotation contracts from the inputs.
+    // 1. The vault, the MONKEY minter and the registry deploy, then the rotation contracts from the inputs.
     let operator = SigningKey::from_slice(&[0x42; 32]).unwrap();
     let enclave = Arc::new(EnclaveKey::generate());
     let mut chain = Chain::start(Address::from(enclave.address()), address(&operator)).await;
@@ -106,15 +105,14 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
     (chain.schedule, chain.vote, chain.fault_proof) =
         (Some(schedule), Some((vote, TTL_MS)), Some((fault_proof, PENALTY)));
 
-    // 2. The timelock names the vault and the registry to each other, lengthens the election epoch to a
-    //    day, as a schedule needs, and names the schedule in the registry.
+    // 2. The timelock lengthens the election epoch to a day, as a schedule needs, names the vault and the
+    //    schedule in the registry, and the registry in the vault.
     let daily = Parameters { epochLength: DAY_SECS, ..dev_parameters().0 };
     chain
         .govern_each(vec![
             (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-            (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+            (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
             (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-            (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
         ])
         .await;
     assert_eq!(chain.view(chain.registry, scheduleCall {}).await, schedule, "the registry names the schedule");

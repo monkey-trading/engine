@@ -1,5 +1,6 @@
-//! The launch deployment's dev scenario on a local Anvil: the vault, its MONKEY token and the staking
-//! contract deploy from `ops/runbooks/production-deployment.toml`, at the owner's decided values, and
+//! The launch deployment's dev scenario on a local Anvil: the vault, the MONKEY minter with its token,
+//! and the staking contract deploy from `ops/runbooks/production-deployment.toml`, at the owner's
+//! decided values, and
 //! the node's `InitEmissions` and `InitStaking` checks, reading the deployed contracts, accept them
 //! and refuse a value that is not the contracts'. Run by `scripts/dev-launch-values.sh`.
 
@@ -46,7 +47,7 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
         inputs["start"].as_str().unwrap().parse::<chrono::DateTime<chrono::Utc>>().unwrap().timestamp_millis();
     let (min_delay, epoch, cooldown) =
         (int("timelock", "min_delay"), int("staking", "epoch"), int("staking", "cooldown"));
-    let budget: u128 = text("vault", "period_budget").parse().unwrap();
+    let budget: u128 = text("minter", "period_budget").parse().unwrap();
     let floor: Fixed = text("init_staking", "liquidity_floor").parse().unwrap();
 
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
@@ -87,13 +88,14 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
         Address::from(signer.address()),
         governance,
         accounts[0],
-        U256::from(budget),
         int("vault", "exit_period"),
         int("vault", "claim_window"),
         int("vault", "stale_after"),
     )
         .abi_encode();
     let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &vault_args).await;
+    let minter_args = (governance, U256::from(budget)).abi_encode();
+    let minter = deploy(&provider, accounts[0], "MonkeyMinter.sol/MonkeyMinter.json", &minter_args).await;
     let call = |to: Address, input: Vec<u8>| {
         let provider = provider.clone();
         async move {
@@ -101,7 +103,7 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
             provider.request::<_, Bytes>("eth_call", (request, "latest")).await.unwrap()
         }
     };
-    let monkey = monkeyCall::abi_decode_returns(&call(vault, monkeyCall {}.abi_encode()).await).unwrap();
+    let monkey = monkeyCall::abi_decode_returns(&call(minter, monkeyCall {}.abi_encode()).await).unwrap();
     let staking_args = (monkey, U256::from(cooldown), U256::from(epoch)).abi_encode();
     let staking = deploy(&provider, accounts[0], "Staking.sol/Staking.json", &staking_args).await;
 
@@ -114,7 +116,7 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
     assert_eq!(read(call(staking, epochCall {}.abi_encode()).await), U256::from(86_400));
     assert_eq!(read(call(staking, cooldownCall {}.abi_encode()).await), U256::from(28 * 86_400));
 
-    // The node reads the vault's budget and, through the custody quorum, the staking contract's terms.
+    // The node reads the minter's budget and, through the custody quorum, the staking contract's terms.
     let dir = scratch_dir("launch-values-chain");
     std::fs::create_dir_all(&dir).unwrap();
     let section: CheckpointSection = toml::from_str(&format!(
@@ -133,8 +135,8 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
         engine_core::types::AccountId(signer.address()),
     )
     .unwrap();
-    let vault_budget = chain.emission_budget().await.unwrap();
-    assert_eq!(vault_budget, TokenUnits(budget), "the vault's cap gives the decided budget back");
+    let minter_budget = chain.emission_budget(minter).await.unwrap();
+    assert_eq!(minter_budget, TokenUnits(budget), "the minter's cap gives the decided budget back");
     let custody: CustodySection = toml::from_str(&format!(
         r#"provider = "evm"
 chain_id = 31337
@@ -143,6 +145,7 @@ vault = "{vault:#x}"
 [evm]
 providers = [{{ name = "a", rpc_url = "{url}" }}, {{ name = "b", rpc_url = "{url}" }}, {{ name = "c", rpc_url = "{url}" }}]
 usdc = "{usdc:#x}"
+minter = "{minter:#x}"
 finality_tag = "latest"
 withdrawal_finality_tag = "finalized"
 confirmations = 0
@@ -165,7 +168,7 @@ contract = "0x00000000000000000000000000000000000000ee"
     ))
     .unwrap();
     let mut node = Node::start_on("launch-values", true).await;
-    node.state.emission_budget = Some(vault_budget);
+    node.state.emission_budget = Some(minter_budget);
     node.state.staking_terms = Some(StakingTerms::connect(&custody).unwrap().expect("a staking contract"));
     let emissions =
         |budget| AdminCommand::InitEmissions(EmissionSchedule { start_ms, period_budget: TokenUnits(budget) });
@@ -181,7 +184,7 @@ contract = "0x00000000000000000000000000000000000000ee"
     // A budget, an epoch or a cooldown that is not the contracts' is refused and not logged.
     let (status, body) = send(&node, 0, emissions(budget / 10)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body.to_string().contains("differs from the vault's"), "{body}");
+    assert!(body.to_string().contains("differs from the minter's"), "{body}");
     for (command, wrong) in [
         (staking_config(epoch / 2, cooldown), "epoch 43200000 ms differs from the staking contract's 86400 s"),
         (staking_config(epoch, cooldown / 4), "cooldown 604800000 ms differs from the staking contract's 2419200 s"),
