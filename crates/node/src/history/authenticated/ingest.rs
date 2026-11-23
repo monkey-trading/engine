@@ -28,9 +28,7 @@ impl Index {
     /// - as `ingest_taken`
     #[cfg(test)]
     pub fn ingest_batch(&mut self, commands: &[crate::log::CommandEntry]) -> Result<()> {
-        let taken: Vec<Taken> =
-            commands.iter().map(|command| Taken { command: command.clone(), derived: None }).collect();
-        self.ingest_taken(&taken)
+        self.ingest_batch_observed(commands, |_, _, _| Ok(()))
     }
 
     /// Ingests consecutive commands as one published update, so a batch costs one synced commit, its
