@@ -59,7 +59,8 @@ for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crate
   case_ pull_request "rust $feeds scenario_tests metrics_alerts production_secrets engine_build" "$feed"
 done
 for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/turn.rs crates/node/src/seed_relay/mod.rs \
-  crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs; do
+  crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs \
+  crates/node/src/api/awards.rs; do
   case_ pull_request "rust $anvil log_heads scenario_tests recovery_scale engine_build" "$rotation"
 done
 for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
