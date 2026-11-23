@@ -264,7 +264,7 @@ an index: load only the rule whose hint matches the current action.
   under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
   daily snapshots under `[daily_snapshots]` (`daily_snapshots/`: the engine's state at the first checkpoint the node
   writes on each UTC day by sequenced time, encoded by the stats worker's copy once its checkpoint is durable and
-  published by a writer thread, each file then its manifest line synced, every day's kept, a day the writer is still
+  published by a writer thread, each file synced every 4 MiB as it is written (`paced.rs`, as a recovery cache and a rollover's financing rows are), so no large flush builds up behind the log's syncs, then its manifest line synced, every day's kept, a day the writer is still
   busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; each signed by the enclave key over
   the deployment, its checkpoint's offset and root and the SHA-256 of the engine's encoding (`daily_snapshots/signature.rs`,
   schema 2 in the file, the manifest line unchanged, schema 1 still read); served at

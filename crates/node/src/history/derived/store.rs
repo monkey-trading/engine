@@ -22,6 +22,7 @@ use tracing::warn;
 
 use crate::history::derived::{Derived, aggregates};
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset, SegmentedLog, Stop};
+use crate::paced::Paced;
 
 /// The directory under the history's own.
 const DIR: &str = "financing";
@@ -139,7 +140,8 @@ impl RowsStore {
             .truncate(true)
             .open(&partial)
             .with_context(|| format!("creating {}", partial.display()))?;
-        file.write_all(&bytes)
+        let written = if sync { Paced::new(&mut file).write_all(&bytes) } else { file.write_all(&bytes) };
+        written
             .and_then(|()| if sync { file.sync_all() } else { Ok(()) })
             .with_context(|| format!("writing {}", partial.display()))?;
         fs::rename(&partial, &path).with_context(|| format!("replacing {}", path.display()))?;
