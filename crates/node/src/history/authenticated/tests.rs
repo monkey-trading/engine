@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::authenticated::Store;
 use crate::history::authenticated::blobs::read_event;
 use crate::history::authenticated::model::{ListId, Metadata, Position, Row, event_kind};
+use crate::history::authenticated::staging::STAGED_KEYS;
 use crate::history::authenticated::state::CommandId;
 use crate::history::authenticated::{Head, Index};
 use crate::history::{HistoryEvent, Page, PageQuery, account_of};
@@ -32,6 +33,9 @@ mod staged;
 const A: AccountId = AccountId([0xa; 20]);
 const B: AccountId = AccountId([0xb; 20]);
 const NAMESPACE: [u8; 32] = [0x37; 32];
+/// Events of one account that fill a stage and spill into the next: each writes four keys, and a stage
+/// takes `STAGED_KEYS`.
+const PAST_A_STAGE: usize = STAGED_KEYS / 2;
 
 /// Reopens the real packed Store without inventing a root from disk.
 fn open_store(path: &Path) -> Store {

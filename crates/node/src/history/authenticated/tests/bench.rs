@@ -1,15 +1,17 @@
 //! The index's ingest rate on a recorded log's commands, run by hand: `HISTORY_BENCH_LOG` names a log
 //! directory whose first command is seq 0, and `HISTORY_BENCH_COMMANDS` how many of its commands to
-//! take (20,000), each update of `HISTORY_BENCH_BATCH` commands (128, the history owner's), collecting
-//! retired versions every 1,024 commands as the owner does. It prints the elapsed time every 10,000
-//! commands and, at the end, the head's root, which two builds given one log must agree on. It derives no
-//! rows: a rollover's financing rows, which the owner indexes beside its events, are left out, so a log
+//! take (20,000), each update of `HISTORY_BENCH_BATCH` commands (the history owner's `INDEX_BATCH`),
+//! collecting retired versions every 1,024 commands as the owner does. It prints the elapsed time every
+//! 10,000 commands and, at the end, the head's root, which two builds with the same stage and batch sizes
+//! given one log must agree on: those sizes set the store's versions and retirement receipts. It derives
+//! no rows: a rollover's financing rows, which the owner indexes beside its events, are left out, so a log
 //! spanning a rollover reads faster here than the owner indexes it.
 
 use std::time::Instant;
 
 use super::*;
 use crate::history::derived::Taken;
+use crate::history::runtime::INDEX_BATCH;
 use crate::log::{LogEntry, SegmentedLog, Stop};
 
 #[test]
@@ -17,7 +19,7 @@ use crate::log::{LogEntry, SegmentedLog, Stop};
 fn ingest_rate_on_a_recorded_log() {
     let log = std::env::var("HISTORY_BENCH_LOG").expect("HISTORY_BENCH_LOG names a log directory");
     let count = |name: &str, default: usize| std::env::var(name).map_or(default, |n| n.parse().expect("a count"));
-    let (limit, batch) = (count("HISTORY_BENCH_COMMANDS", 20_000), count("HISTORY_BENCH_BATCH", 128));
+    let (limit, batch) = (count("HISTORY_BENCH_COMMANDS", 20_000), count("HISTORY_BENCH_BATCH", INDEX_BATCH));
     let mut commands = Vec::new();
     let read = SegmentedLog::open(Path::new(&log), |entry| {
         if let LogEntry::Command(command) = entry {

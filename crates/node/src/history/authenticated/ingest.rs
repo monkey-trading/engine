@@ -114,9 +114,23 @@ impl Index {
     pub(super) fn ingest_observed(
         &mut self,
         command: crate::log::CommandEntry,
+        observe: impl FnMut(&Index, &Root, StageInfo) -> Result<()>,
+    ) -> Result<()> {
+        self.ingest_batch_observed(std::slice::from_ref(&command), observe)
+    }
+
+    /// As `ingest_observed`, for one update of `commands`.
+    /// Error cases:
+    /// - actual ingest or observer failure
+    #[cfg(test)]
+    pub(super) fn ingest_batch_observed(
+        &mut self,
+        commands: &[crate::log::CommandEntry],
         mut observe: impl FnMut(&Index, &Root, StageInfo) -> Result<()>,
     ) -> Result<()> {
-        self.ingest_with(&[Taken { command, derived: None }], &mut observe)
+        let taken: Vec<Taken> =
+            commands.iter().map(|command| Taken { command: command.clone(), derived: None }).collect();
+        self.ingest_with(&taken, &mut observe)
     }
 }
 

@@ -3,6 +3,7 @@
 use super::*;
 
 use crate::history::KINDS;
+use crate::history::runtime::INDEX_BATCH;
 use crate::test_support::every_event;
 
 /// The same commands, split into batches at every boundary, expiring across batches and within
@@ -53,6 +54,37 @@ fn a_batch_without_account_events_is_one_durable_commit() {
     index.ingest_batch(&batch).expect("batch");
     assert_eq!(index.head().root.version, Some(before + 1));
     assert_eq!(index.head().last_command.map(|c| c.seq), Some(500));
+}
+
+/// The history owner's update of `INDEX_BATCH` commands at ten times launch flow, three account events in
+/// every five commands, each for an account of its own, expiring as many events as it appends, is one
+/// stage: it commits no private stage before its complete one.
+#[test]
+fn an_owners_update_at_ten_times_launch_flow_is_one_stage() {
+    let (mut index, _) = fixture("batch-one-stage", 1_000);
+    let flow = |first: u64, ts: Millis| -> Vec<CommandEntry> {
+        (first..first + INDEX_BATCH as u64)
+            .map(|seq| {
+                let mut account = [0xc; 20];
+                account[..8].copy_from_slice(&seq.to_be_bytes());
+                command(seq, ts, (seq % 5 < 3).then(|| vec![deposit(AccountId(account), 1)]))
+            })
+            .collect()
+    };
+    index.ingest_batch(&flow(0, 0)).expect("the first update");
+    let first = index.head().queue_hi;
+    let second = flow(INDEX_BATCH as u64, 2_000);
+    let appended = second.iter().filter(|entry| entry.events.is_some()).count() as u64;
+    let mut stages = 0;
+    index
+        .ingest_batch_observed(&second, |_, _, _| {
+            stages += 1;
+            Ok(())
+        })
+        .expect("the second update");
+    let head = index.head();
+    assert_eq!((head.queue_lo, head.queue_hi), (first, first + appended), "every first event expired");
+    assert_eq!(stages, 0, "{stages} private stages");
 }
 
 /// A gap or reversed time anywhere in a batch refuses the whole batch and leaves the head unchanged.

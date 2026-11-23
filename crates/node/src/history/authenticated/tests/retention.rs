@@ -150,14 +150,12 @@ fn gaps_reversed_time_and_wrong_first_command_leave_the_head_unchanged() {
 #[test]
 fn exact_large_expiry_requires_store_support_for_the_whole_batch() {
     let (mut index, _) = fixture("uncapped-expiry", 1_000);
-    for seq in 0..100 {
-        index
-            .ingest(command(seq, i64::try_from(seq).expect("fixture time"), Some(vec![deposit(A, 1)])))
-            .expect("seed one event per command");
-    }
-    assert_eq!(index.page(query(A)).expect("all retained events").events.len(), 100);
+    let seeded = 2 * PAST_A_STAGE as u64;
+    let seed: Vec<_> = (0..seeded).map(|seq| command(seq, 0, Some(vec![deposit(A, 1)]))).collect();
+    index.ingest_batch(&seed).expect("seed one event per command");
+    assert_eq!((index.head().queue_lo, index.head().queue_hi), (0, seeded), "all events retained");
     let before = index.head();
-    let expiry = command(100, 10_000, None);
+    let expiry = command(seeded, 10_000, None);
     let mut private_commits = 0;
     index
         .ingest_observed(expiry.clone(), |visible, _, _| {
@@ -171,7 +169,7 @@ fn exact_large_expiry_requires_store_support_for_the_whole_batch() {
         index.head().command_prefix,
         extend_command_prefix(before.command_prefix, command_digest(&expiry).expect("digest"))
     );
-    assert_eq!((index.head().queue_lo, index.head().queue_hi), (100, 100));
+    assert_eq!((index.head().queue_lo, index.head().queue_hi), (seeded, seeded));
     assert_eq!(index.page(query(A)).expect("empty after full expiry"), Page { events: vec![], next: None });
 }
 
