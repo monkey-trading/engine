@@ -946,6 +946,21 @@ operator's share of an epoch is split among operators by their sequenced time in
 epoch's end, however late the close runs, and the next epoch counts time in office from that end.
 An operator that holds back the mirror therefore gains no share by doing so.
 
+Bug bounty awards are paid from the same distributions. Only a passed vote of the rotation set
+approves an award. The engine refuses the command that approves one, or that moves the awards' cap,
+when the operator signs it or the trading server sends it, in every state, and the fast path refuses
+both. An award's amount must be the scale's amount for its severity: 250,000 USDC for Critical,
+50,000 for High, 10,000 for Medium and 1,000 for Low. Each close that distributes pays the queue of
+awards first, oldest first, up to the lesser of 5% of its distributable excess and 50,000 USDC. A
+vote may move that cap to between 5% and 20% and between 50,000 and 250,000 USDC. An award that a
+close does not finish stays at the front of the queue. An advisory is awarded once. The engine keeps
+each awarded advisory identifier in its state, and refuses a second award that names one, in any
+letter case, when its vote applies. The operator's fifth and the stakers' shares come from what the
+awards leave, so the stakers and the operator keep at least 80% of every close. Each payment is
+added to the recipient's cumulative distribution, which the vault pays as it pays a staker's. In the
+vault's exit, the part of an award already credited ranks with the stakers' distributions, and the
+part still in the queue when the exit starts is lost.
+
 Known limits:
 
 - The staking contract keeps each staker's delegations as amounts, with no limit on how many
@@ -964,6 +979,15 @@ Known limits:
   share through that delay.
 - In a log from before staking mirror references entered the state root, recovery that can write to
   the log needs authenticated origin seals on the older staking instructions.
+- The engine cannot check that an award's advisory is real and published, that its severity is
+  right, or that two advisories do not describe one finding. The voters judge those, and the vote is
+  only as independent as the stake behind it.
+- A proposal passes only while rotation is on and a rotation set with members is in effect. A vote
+  that passed then still applies seven days after it is logged, even if rotation has turned off in
+  the meantime, so an award can be approved, or the cap move, while rotation is off. The queue is
+  paid whether or not rotation is on.
+- An award is paid only by closes that distribute. While the house's net asset value is at or below
+  the liquidity floor, or nobody is staked, the queue waits.
 - The quorum alone stands behind a window's range read for a block from which it returns no event. If
   a strict majority of providers have log backends that lag behind their own header at the window's
   end, and all return the same range without some block's every event, the mirror passes that block.

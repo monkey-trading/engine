@@ -332,6 +332,13 @@ share is paid in USDC at the end of each day, to the extent that the house's cas
 Unstaking takes 28 days. Both MONKEY and USDC distributions are claimed from the vault with a proof
 against a checkpoint.
 
+Each day's distribution first pays the bug bounty awards that a vote has approved, oldest first. At
+launch, awards take at most 5% of the day's distribution, and at most 50,000 USDC. An award that a
+day does not finish is paid on the following days before any later award. The stakers and the
+operator share what the awards leave. A day that distributes nothing pays no award. The
+[security model](security-model.md#monkey-staking-and-distributions) sets out the awards and how they
+are approved.
+
 ## Changes to the rules
 
 The operator lists markets, publishes benchmark interest rates, schedules dividends and share
@@ -358,11 +365,13 @@ Once a market is listed, the operator can close it, shorten its trading hours or
 forward only with seven days' public notice.
 
 When operator rotation is enabled, MONKEY stakers elect the operators, and one of them is drawn each
-day to run the engine. The operator in office then receives a fifth of each staking distribution.
-While rotation is enabled, the settings above can change only through a vote that carries more than
-two thirds of the elected operators' stake. A vote can also impose a restriction that tightens a
-setting at once. A restriction lapses after a lifetime that the log records, which is at most seven
-days, and passing the same proposal again renews it.
+day to run the engine. The operator in office then receives a fifth of each staking distribution,
+after bug bounty awards. While rotation is enabled, the settings above can change only through a
+vote that carries more than two thirds of the elected operators' stake. Only such a vote can approve
+a bug bounty award, once for each advisory, or move the cap on what awards take to between 5% and
+20% of a day's distribution and between 50,000 and 250,000 USDC. A vote can also impose a
+restriction that tightens a setting at once. A restriction lapses after a lifetime that the log
+records, which is at most seven days, and passing the same proposal again renews it.
 
 Each change to the rules takes effect as a new protocol version, which the log records. An old log
 therefore replays under the rules that applied when it was written. The

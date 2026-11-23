@@ -165,6 +165,7 @@ maximum `limit`.
 | GET | `/v1/monkey` | MONKEY emission, staking and distribution totals |
 | GET | `/v1/monkey/activity` | The newest loss allocations, stakes and unstakes |
 | GET | `/v1/monkey/distributions` | Closed distribution epochs |
+| GET | `/v1/awards` | Bug bounty awards, the queue they are paid from and the cap on each payment |
 | GET | `/v1/house` | The house's cash, net asset value, exposure and client positions |
 | GET | `/v1/house/positions` | One market's client positions by close-out price and by profit |
 | GET | `/v1/house/state` | The trading settings in force, pending notices and the latest checkpoint |
@@ -846,8 +847,8 @@ event's own fields.
 `bad_debt`, `write_off_repaid`, `financing`, `corporate_dividend`, `corporate_cash_in_lieu`, `withdrawal_queued`,
 `withdrawal_queue_updated`, `withdrawal_approved`, `withdrawal_rejected`, `session_key_registered`,
 `session_key_revoked`, `session_key_rejected`, `emission_allocated`, `staked`, `unstaked`,
-`staking_rejected`, `distribution_allocated`, `operator_share_allocated` and
-`operator_share_withheld`.
+`staking_rejected`, `distribution_allocated`, `operator_share_allocated`,
+`operator_share_withheld`, `award_approved` and `award_paid`.
 
 Each daily rollover logs a single `financing_applied` event that covers every position it charges,
 and a rollover that charges nothing logs none. That event names the time the rollover charged for,
@@ -1227,6 +1228,7 @@ sends the same signed body again.
 | GET | `/v1/monkey` | MONKEY emission, staking and distribution totals |
 | GET | `/v1/monkey/activity` | The newest loss allocations, stakes and unstakes |
 | GET | `/v1/monkey/distributions` | Closed distribution epochs |
+| GET | `/v1/awards` | Bug bounty awards, the queue they are paid from and the cap on each payment |
 
 ### Claim proofs
 
@@ -1303,12 +1305,38 @@ true and `retained_from_ms` names the time of the oldest entry held.
 `GET /v1/monkey/distributions` returns the closed distribution epochs, newest first. It takes
 `limit`, from 1 to 200, with a default of 50, and `before`, an epoch number. Each epoch gives
 `epoch`, the `close_seq` and `close_ms` of the command that closed it, `ended_ms`, the house's
-`nav`, the `floor`, `excess_usdc_units`, `allocated_usdc_units`, `stakers_usdc_units` and the number
-of `stakers` paid, `operator_shares`, each operator paid a share with its `amount`, and `skipped`,
+`nav`, the `floor`, `excess_usdc_units`, `allocated_usdc_units`, `awarded_usdc_units`, the part of
+the allocation paid to bug bounty awards, `stakers_usdc_units` and the number of `stakers` paid,
+`operator_shares`, each operator paid a share with its `amount`, and `skipped`,
 the range of earlier epochs that the close distributed nothing for. An epoch closes only once the
 chain's finalised staking records have passed its end, so `close_ms` can come well after `ended_ms`.
 `retained_from_epoch` names the oldest epoch held, and `truncated` is true once older epochs have
 been dropped.
+
+### Bug bounty awards
+
+A bug bounty award is approved only by a passed vote of the rotation set, at the amount the scale
+fixes for the finding's severity. An advisory is awarded once, and a second award naming an awarded
+advisory is refused when its vote applies. Each epoch close that distributes pays the queue of awards
+first, oldest award first, up to the cap, before the operator's share and the stakers' shares. Each
+payment is added to the recipient's cumulative USDC distribution, which
+`GET /v1/accounts/{address}/distributions` proves and the vault's `claimDistribution` pays.
+
+`GET /v1/awards` returns the awards as the server's durable state holds them:
+
+| Field | Meaning |
+| --- | --- |
+| `cap` | The most one close pays awards: `excess_bps` of its distributable excess, and at most `max` USDC base units. At launch these are 500 and `"50000000000"`. |
+| `queue` | The awards not yet paid in full, oldest first. Each close pays from the front. |
+| `paid` | The awards paid in full, oldest first. |
+| `paid_total` | What the closes have paid awards in all, in USDC base units. |
+
+Each award gives its `id`, in the order the votes applied them, the `proposal` that approved it, the
+`recipient`, the `severity` (`critical`, `high`, `medium` or `low`), the `advisory` it was approved
+for, its `amount`, what the closes have `paid` of it and what is still `owed`, all in USDC base
+units, and `approved_at`, the sequenced time in milliseconds at which the vote applied it. The
+`award_approved` and `award_paid` events in the recipient's history record each approval and each
+payment, with the epoch that paid it.
 
 ## The house and the operator
 

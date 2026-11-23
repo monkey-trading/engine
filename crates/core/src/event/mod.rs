@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
 use crate::access::{AccessReject, EligibilityClass};
+use crate::awards::{AwardApproved, AwardPaid};
 use crate::corporate::CorporateAction;
 use crate::deposits::{DepositReceipt, DepositReject, DepositStatus};
 use crate::eip712::B256;
@@ -18,8 +19,7 @@ mod reject;
 pub use fill::{CancelReason, Fill};
 pub use reject::Reject;
 
-/// Engine outputs. Clients and the custody layer act on events; they never
-/// read state directly.
+/// Engine outputs. Clients and the custody layer act on events; they never read state directly.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -52,8 +52,7 @@ pub enum Event {
         market: MarketId,
         at: Millis,
     },
-    /// Signed USD realised by closing, at the post-split mark, the fraction a split rounded off a
-    /// position.
+    /// Signed USD realised by closing, at the post-split mark, the fraction a split rounded off a position.
     CorporateCashInLieu {
         id: String,
         market: MarketId,
@@ -192,8 +191,7 @@ pub enum Event {
         equity: Fixed,
         margin: Fixed,
     },
-    /// Loss beyond the account's balance, absorbed by the house
-    /// (negative balance protection).
+    /// Loss beyond the account's balance, absorbed by the house (negative balance protection).
     BadDebt {
         account: AccountId,
         amount: Fixed,
@@ -282,23 +280,22 @@ pub enum Event {
         weight: Fixed,
         amount: TokenUnits,
     },
-    /// From `V19`, a finalised emission period: its budget, what accounts were allocated, and the
-    /// remainder, cancelled for good.
+    /// From `V19`, a finalised emission period: its budget, what accounts were allocated, and the remainder,
+    /// cancelled for good.
     EmissionPeriodClosed {
         period: u64,
         budget: TokenUnits,
         allocated: TokenUnits,
         cancelled: TokenUnits,
     },
-    /// From `V19`, the periods from `first` to `last` that no command fell in, whose budgets are
-    /// cancelled for good.
+    /// From `V19`, the periods from `first` to `last` that no command fell in, whose budgets are cancelled for good.
     EmissionPeriodsCancelled {
         first: u64,
         last: u64,
         cancelled: TokenUnits,
     },
-    /// From `V25`, a staking contract's `Staked` event mirrored: `amount` of MONKEY base units
-    /// added to `account`'s stake.
+    /// From `V25`, a staking contract's `Staked` event mirrored: `amount` of MONKEY base units added to `account`'s
+    /// stake.
     Staked {
         account: AccountId,
         amount: TokenUnits,
@@ -341,21 +338,27 @@ pub enum Event {
         epoch: u64,
         amount: UsdcUnits,
     },
-    /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the
-    /// floor in whole USDC base units, and what was allocated of it: to stakers, and from `V47` to
-    /// the operator. House cash fell by the allocated total; the dust is the house's.
+    /// From `V89`, an award a passed vote approved, queued at the back (`awards`).
+    AwardApproved(AwardApproved),
+    /// From `V89`, what an epoch close paid an award, credited to its recipient's distribution, before the
+    /// operator's share and the stakers'.
+    AwardPaid(AwardPaid),
+    /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the floor in whole
+    /// USDC base units, and what was allocated of it: from `V89` to awards first (`awarded`, left out at zero), to
+    /// stakers, and from `V47` to the operator. House cash fell by the allocated total; the dust is the house's.
     DistributionEpochClosed {
         epoch: u64,
         nav: Fixed,
         floor: Fixed,
         excess: UsdcUnits,
         allocated: UsdcUnits,
+        #[serde(default, skip_serializing_if = "UsdcUnits::is_zero")]
+        awarded: UsdcUnits,
     },
-    /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed, and
-    /// from `V75` every unclosed epoch before the latest one both the sequenced time and the staking
-    /// mirror have passed, which includes ones the mirror passed only a day after their end; they allocate
-    /// nothing themselves, and the close after them distributes the whole excess then, to whoever is
-    /// staked at that moment.
+    /// From `V25`, the distribution epochs from `first` to `last` whose end no command witnessed, and from `V75`
+    /// every unclosed epoch before the latest one both the sequenced time and the staking mirror have passed, which
+    /// includes ones the mirror passed only a day after their end; they allocate nothing themselves, and the close
+    /// after them distributes the whole excess then, to whoever is staked at that moment.
     DistributionEpochsSkipped {
         first: u64,
         last: u64,
@@ -451,8 +454,7 @@ pub enum Event {
         proposal: u64,
         applies_at: Millis,
     },
-    /// From `V56`, a passed fast-path proposal mirrored and in force as a restriction until
-    /// `expires_at`.
+    /// From `V56`, a passed fast-path proposal mirrored and in force as a restriction until `expires_at`.
     RestrictionApplied {
         proposal: u64,
         expires_at: Millis,
@@ -479,18 +481,16 @@ pub enum Event {
         account: AccountId,
         session_key: AccountId,
     },
-    /// From `V41`, a registration or revocation the engine refused: before `V41`, naming a key that
-    /// cannot be a session key, a signature, nonce, or expiry failure, or a new key past the
-    /// account's cap.
+    /// From `V41`, a registration or revocation the engine refused: before `V41`, naming a key that cannot be a session
+    /// key, a signature, nonce, or expiry failure, or a new key past the account's cap.
     SessionKeyRejected {
         account: AccountId,
         session_key: AccountId,
         reason: Reject,
     },
-    /// From `V33`, a command stamped more than `MAX_CATCH_UP_BOUNDARIES` rollover or
-    /// corporate-action boundaries past the engine's schedule caught up on that many and did
-    /// nothing else, but for the outcome of a benchmark batch it had already applied. `due` is the
-    /// first boundary still waiting, which the next command passes.
+    /// From `V33`, a command stamped more than `MAX_CATCH_UP_BOUNDARIES` rollover or corporate-action boundaries past
+    /// the engine's schedule caught up on that many and did nothing else, but for the outcome of a benchmark batch it
+    /// had already applied. `due` is the first boundary still waiting, which the next command passes.
     CatchUpDeferred {
         due: Millis,
     },

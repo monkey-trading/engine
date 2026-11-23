@@ -42,8 +42,10 @@ pub(crate) struct EpochClose {
     pub floor: Fixed,
     /// Whole USDC base units above the floor.
     pub excess_usdc_units: UsdcUnits,
-    /// What the close allocated: to stakers and to the operator-share recipients.
+    /// What the close allocated: to awards, to stakers and to the operator-share recipients.
     pub allocated_usdc_units: UsdcUnits,
+    /// What went to bug bounty awards, ahead of the rest.
+    pub awarded_usdc_units: UsdcUnits,
     /// What went to stakers, and how many stakers it reached.
     pub stakers_usdc_units: UsdcUnits,
     pub stakers: u64,

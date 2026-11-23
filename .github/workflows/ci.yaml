@@ -292,7 +292,7 @@ jobs:
                   | scripts/dev-quotes.sh | scripts/dev-quotes-cases.sh | scripts/dev-quotes-client.py)
                   areas+=" vault_deposits" ;;
                 scripts/dev-daily-rotation.sh | scripts/dev-parameter-votes.sh | scripts/dev-liveness.sh \
-                  | scripts/dev-operator-faults.sh)
+                  | scripts/dev-operator-faults.sh | scripts/dev-bounty-awards.sh)
                   areas+=" daily_rotation" ;;
                 scripts/dev-short-turns.sh) areas+=" short_turns" ;;
                 scripts/dev-rpc-proxy.py) areas+=" $anvil production_secrets log_heads" ;;
@@ -628,6 +628,8 @@ jobs:
           SCENARIO_LOG_DIR: ${{ github.workspace }}/scenario-logs
       - name: Run the parameter votes dev scenario
         run: ./scripts/dev-parameter-votes.sh
+      - name: Run the bug bounty awards dev scenario
+        run: ./scripts/dev-bounty-awards.sh
       - name: Run the minute-scale liveness dev scenario
         run: ./scripts/dev-liveness.sh
         env:

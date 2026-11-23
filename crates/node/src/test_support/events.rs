@@ -3,6 +3,7 @@
 use alloy::primitives::B256;
 use engine_core::Fixed;
 use engine_core::access::{AccessReject, EligibilityClass};
+use engine_core::awards::{AwardApproved, AwardPaid, Severity};
 use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
@@ -237,7 +238,23 @@ pub fn every_event() -> Vec<Event> {
             floor: amount,
             excess: engine_core::UsdcUnits(4_001),
             allocated: engine_core::UsdcUnits(4_000),
+            awarded: engine_core::UsdcUnits(200),
         },
+        Event::AwardApproved(AwardApproved {
+            award: 0,
+            proposal: 7,
+            account,
+            severity: Severity::High,
+            advisory: "GHSA-4v2c-9xq8-jm3w".into(),
+            amount: Severity::High.amount(),
+        }),
+        Event::AwardPaid(AwardPaid {
+            award: 0,
+            account,
+            epoch: 3,
+            amount: engine_core::UsdcUnits(200),
+            owed: engine_core::UsdcUnits(49_999_999_800),
+        }),
         Event::DistributionEpochsSkipped { first: 4, last: 9 },
         Event::RotationSwitched { enabled: true, election_cancelled: false },
         Event::OperatorElected { epoch: 3, candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
@@ -350,6 +367,8 @@ pub fn every_event() -> Vec<Event> {
             | Event::OperatorFaultRefused { .. }
             | Event::DistributionEpochClosed { .. }
             | Event::DistributionEpochsSkipped { .. }
+            | Event::AwardApproved(_)
+            | Event::AwardPaid(_)
             | Event::RotationSwitched { .. }
             | Event::OperatorElected { .. }
             | Event::OperatorInstalled { .. }

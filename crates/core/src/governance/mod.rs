@@ -7,7 +7,8 @@
 //! staking mirror, credited once under its chain reference, with the admin command its bytes decode
 //! to canonically (`decode_command`).
 //!
-//! - A normal proposal names a governed command (`is_governed`), or from `V76` a corporate action. It
+//! - A normal proposal names a governed command (`is_governed`), from `V76` a corporate action, or from
+//!   `V89` an award or the award cap (`awards`), which only a vote applies. It
 //!   is recorded when it is mirrored and applies no sooner than seven days later, when the node
 //!   sequences `ApplyProposal` naming it: the vote's seven days are the notice, so `AnnounceParams`,
 //!   `AnnounceMarkup` and `AnnounceListing` give way to it, and every other check the command meets
@@ -59,6 +60,7 @@ use alloy_primitives::keccak256;
 use serde::{Deserialize, Serialize};
 
 use crate::Fixed;
+use crate::awards::check_award_vote;
 use crate::command::AdminCommand;
 use crate::eip712::B256;
 use crate::engine::Engine;
@@ -282,12 +284,15 @@ pub fn is_governed(command: &AdminCommand) -> bool {
 
 impl Engine {
     /// Whether a normal vote may carry `command` under the rules in force: a governed command
-    /// (`is_governed`), from `V76` a corporate action, and from `V81` a relisting of several markets.
+    /// (`is_governed`), from `V76` a corporate action, from `V81` a relisting of several markets, and from
+    /// `V89` an award or the award cap, which nothing else applies (`awards`).
     pub(crate) fn votes_carry(&self, command: &AdminCommand) -> bool {
         is_governed(command)
             || (self.protocol_version >= ProtocolVersion::V76
                 && matches!(command, AdminCommand::ScheduleCorporateAction(_)))
             || (self.protocol_version >= ProtocolVersion::V81 && matches!(command, AdminCommand::RelistMarkets { .. }))
+            || (self.protocol_version >= ProtocolVersion::V89
+                && matches!(command, AdminCommand::ApproveAward(_) | AdminCommand::SetAwardCap(_)))
     }
 
     /// The mirrored votes.
@@ -373,6 +378,7 @@ impl Engine {
     /// Records a normal change to apply seven days from now.
     /// Error cases:
     /// - a command no normal vote may carry, or `MAX_PENDING_CHANGES` already waiting
+    /// - an award or award cap `check_award_vote` refuses
     fn schedule_change(
         &mut self,
         proposal: u64,
@@ -382,6 +388,7 @@ impl Engine {
         if !self.votes_carry(command) {
             return Err("a normal vote changes only the governed parameters, listings, toxicity weighting, close-spread ceilings, the access policy or the protocol version".into());
         }
+        check_award_vote(command)?;
         if self.governance.pending.len() >= MAX_PENDING_CHANGES {
             return Err(format!("{MAX_PENDING_CHANGES} changes already wait out their notice"));
         }
@@ -400,7 +407,8 @@ impl Engine {
     /// - its notice has not run
     /// - a `SetParams`, `UpsertMarket` or `RelistMarkets` whose baseline has moved since it was mirrored,
     ///   which it would otherwise undo, or a ceiling adoption while another waits, which it would replace
-    /// - any error case of the command (`Engine::admin`), with the notices the vote's own replaces
+    /// - any error case of the command (`Engine::admin`), with the notices the vote's own replaces, or of
+    ///   `Engine::approve_award` and `Engine::set_award_cap`
     pub(crate) fn apply_proposal(&mut self, voted: &VotedChange, events: &mut Vec<Event>) -> Result<(), String> {
         if self.protocol_version < ProtocolVersion::V56 {
             return Err(format!("parameter votes need protocol {:?}", ProtocolVersion::V56));
@@ -426,7 +434,11 @@ impl Engine {
         if matches!(voted.command, AdminCommand::AdoptCloseSpreadCeiling { .. }) && self.pending_ceiling.is_some() {
             return Err("another close-spread ceiling adoption waits; propose it again once that applies".into());
         }
-        self.admin(&voted.command, true, events)
+        match &voted.command {
+            AdminCommand::ApproveAward(approval) => self.approve_award(voted.proposal, approval, events),
+            AdminCommand::SetAwardCap(cap) => self.set_award_cap(cap),
+            command => self.admin(command, true, events),
+        }
     }
 
     /// `keccak256` of what `command` replaces, for a `SetParams`, `UpsertMarket` or `RelistMarkets`: the

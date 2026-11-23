@@ -7,9 +7,10 @@
 //! including a close's own command, whose time before it is the outgoing operator's. The open epoch
 //! counts from the command that closed the epoch before it, or from `V50`'s activation or staking's
 //! initialisation under it, to the command that closes it, skipped epochs included, as that close
-//! pays the excess they built up. The close splits `floor(excess / 5)` by that time: each account
-//! earns `floor(share · served / counted)`, where `counted` is all the time the open epoch counted,
-//! so the time rotation was off, which no one served, and the rounding go to stakers. The count
+//! pays the excess they built up. The close splits `floor(excess / 5)`, from `V89` of what the awards
+//! leave, by that time: each account earns `floor(share · served / counted)`, where `counted` is all
+//! the time the open epoch counted, so the time rotation was off, which no one served, and the
+//! rounding go to stakers. The count
 //! restarts at every close, one that distributes nothing included. A close the activating command
 //! runs before `V50` applies pays under the rules it leaves, and an activation from before `V47`
 //! first seats the candidate of an election already in effect, which those rules never recorded.

@@ -5,6 +5,7 @@
 //! and the elected key signs admin commands from the election's effective time. MONKEY is minted
 //! by the vault, its only minter, impersonated in place of proven emission claims.
 
+mod bounty_awards;
 mod chain;
 mod daily_turns;
 mod faults;

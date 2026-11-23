@@ -19,8 +19,9 @@ const CLOSE_HORIZON_MS: Millis = 24 * 60 * 60 * 1000;
 
 impl Engine {
     /// Closes every epoch the sequenced time has ended, before anything else the command does: the
-    /// latest one distributes `NAV − floor` pro-rata to the staked snapshot, less from `V47` the
-    /// operator's share while rotation is on, and from `V50` the share its time in office earned;
+    /// latest one distributes `NAV − floor` pro-rata to the staked snapshot, less from `V89` the awards it
+    /// pays first (`awards`), from `V47` the operator's share of the rest while rotation is on, and from
+    /// `V50` the share its time in office earned;
     /// the ones before it, whose end no command witnessed, distribute nothing, like emission periods.
     /// From `V75` the latest epoch closes that the staking mirror's completed frontier has passed too,
     /// within `CLOSE_HORIZON_MS` of its end (`mirrored_close`). From `V83` every epoch whose end both
@@ -69,10 +70,15 @@ impl Engine {
         let nav = self.house_nav();
         let excess = self.excess_with(config.liquidity_floor, reserves);
         let usdc_excess = if excess.is_positive() { (excess.raw() / USDC_SCALE) as u128 } else { 0 };
-        let mut allocated = 0u128;
+        let (mut allocated, mut awarded) = (0u128, 0u128);
         if usdc_excess > 0 && !self.staked.is_empty() {
-            // At most the share, a fifth of the excess.
-            allocated = self.credit_operator_shares(usdc_excess / OPERATOR_SHARE_DIVISOR, closed, events);
+            // At most the cap, which is at most a fifth of the excess.
+            if self.protocol_version >= ProtocolVersion::V89 {
+                awarded = self.pay_awards(usdc_excess, closed, events);
+            }
+            // At most the share, a fifth of what the awards leave.
+            let share = (usdc_excess - awarded) / OPERATOR_SHARE_DIVISOR;
+            allocated = awarded + self.credit_operator_shares(share, closed, events);
             let to_stakers = usdc_excess - allocated;
             let stakes: Vec<(AccountId, u128)> =
                 self.staked.iter().map(|(account, staked)| (*account, staked.0)).collect();
@@ -101,6 +107,7 @@ impl Engine {
             floor: config.liquidity_floor,
             excess: UsdcUnits(usdc_excess),
             allocated: UsdcUnits(allocated),
+            awarded: UsdcUnits(awarded),
         });
         let staking = self.staking.as_mut().expect("read above");
         staking.epoch = closed + 1;
@@ -161,7 +168,7 @@ impl Engine {
     }
 
     /// Adds `amount` to `account`'s cumulative distribution.
-    pub(super) fn credit_distribution(&mut self, account: AccountId, amount: u128) {
+    pub(crate) fn credit_distribution(&mut self, account: AccountId, amount: u128) {
         let distribution = self.distributions.entry(account).or_default();
         distribution.0 = distribution.0.checked_add(amount).expect("a claimable distribution fits a u128");
     }

@@ -1283,8 +1283,8 @@ with the commands that it dropped, and rebuilds its copy from the promoted membe
 ## Parameter votes
 
 Use this section when the rotation set must change a governed parameter, a listing, a close-spread
-adoption, the access policy or a protocol activation, or when `proposal_refused` or
-`proposal_rejected` fires.
+adoption, the access policy or a protocol activation, or approve a bug bounty award, or when
+`proposal_refused` or `proposal_rejected` fires.
 
 With `[custody.evm.staking.registry.vote]` naming the `ParameterVote` contract over the schedule,
 the members of the rotation set in effect vote on parameter changes while rotation is on. Votes
@@ -1412,6 +1412,50 @@ A fast-path change applies at once, as a restriction listed under `governance.re
 Nothing lifts a restriction early, and new parameters that drop a stress level a restriction holds a
 floor at are refused. **A margin raise has no range beyond each band's validation, and closes out at
 once the positions it leaves short of margin.**
+
+### Bug bounty awards
+
+Use this when a finding graded under `SECURITY.md` has its fix shipped and its advisory published,
+and its award must be proposed, or when the awards' cap must move.
+
+Only a normal vote approves an award or moves the cap. The engine refuses either command when the
+operator signs it, and the fast path refuses both. `engine admin` has no command for either, so
+write the JSON by hand, exactly as below.
+
+1. Write the award as one line of JSON, with the fields in this order and no spaces:
+
+   ```json
+   {"action":"approve_award","recipient":"0x7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e","severity":"high","advisory":"GHSA-4v2c-9xq8-jm3w","amount":"50000000000"}
+   ```
+
+   - `recipient` is the researcher's address, in lower case.
+   - `severity` is `critical`, `high`, `medium` or `low`.
+   - `advisory` is the published advisory's identifier, of 1 to 64 letters, digits and hyphens.
+     **An advisory is awarded once.** A second award naming an awarded advisory, in any letter case,
+     passes the vote and is refused when it would apply, with `proposal_rejected`.
+   - `amount` is the scale's amount for the severity in USDC base units, as a decimal string:
+     `"250000000000"` for Critical, `"50000000000"` for High, `"10000000000"` for Medium and
+     `"1000000000"` for Low. **The engine refuses any other amount when it mirrors the proposal.**
+
+   To move the cap, write instead:
+
+   ```json
+   {"action":"set_award_cap","excess_bps":1000,"max":"100000000000"}
+   ```
+
+   `excess_bps` is from 500 to 2000, and `max` is from `"50000000000"` to `"250000000000"` USDC base
+   units.
+
+2. Propose it with `<fast>` set to `false`, and have the members vote, as
+   [Propose and vote](#propose-and-vote) describes.
+
+**How to tell it is resolved.** The proposal appears in `GET /v1/house/state` under
+`governance.pending`. Seven days after the engine logs it, `GET /v1/awards` lists the award at the
+back of `queue`, or shows the new `cap`. Each epoch close that distributes then pays the queue from
+its front, and `GET /v1/awards` shows what each award has been `paid` and is still `owed`.
+
+**When to escalate.** `proposal_refused` names what the engine refused in the award or the cap. Tell
+the owner, correct the JSON and propose it again.
 
 ## Operator faults
 

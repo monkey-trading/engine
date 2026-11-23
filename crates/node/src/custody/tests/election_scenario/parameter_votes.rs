@@ -63,8 +63,8 @@ const TTL_MS: Millis = DAY_SECS as Millis * 1000;
 /// The close that adopts the set, at the end of the registry's first one-day epoch, and when the set
 /// takes effect.
 const SET_CLOSE_SECS: u64 = T0_SECS + DAY_SECS + 3 * 3_600;
-const SET_EFFECTIVE_SECS: u64 = SET_CLOSE_SECS + 7 * DAY_SECS + FINALITY_MARGIN_SECS;
-const NOTICE_MS: Millis = 7 * DAY_SECS as Millis * 1000;
+pub(super) const SET_EFFECTIVE_SECS: u64 = SET_CLOSE_SECS + 7 * DAY_SECS + FINALITY_MARGIN_SECS;
+pub(super) const NOTICE_MS: Millis = 7 * DAY_SECS as Millis * 1000;
 const DAY_SECS: u64 = 86_400;
 const BTC: MarketId = 1;
 const ETH: MarketId = 2;
@@ -75,69 +75,9 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     let _tracing = tracing::subscriber::set_default(
         tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
     );
-    // The dev operator key `config/dev.toml` names, the operator in effect throughout.
-    let operator = SigningKey::from_slice(&[0x42; 32]).unwrap();
-    let keys = [0x55, 0x56, 0x57].map(|byte| SigningKey::from_slice(&[byte; 32]).unwrap());
-    let enclave = Arc::new(EnclaveKey::generate());
-    let mut chain = Chain::start(Address::from(enclave.address()), address(&operator)).await;
-    let members = [chain.accounts[2], chain.accounts[3], chain.accounts[4]];
+    let (mut chain, mut node, members, operator) = adopted_set(false).await;
     let [a, b, c] = members;
-    let receiver = deploy(
-        &chain.provider,
-        chain.accounts[0],
-        "SeedReceiver.sol/SeedReceiver.json",
-        &(chain.accounts[9], BEACON_GENESIS, DAY_SECS).abi_encode_params(),
-    )
-    .await;
-    let (schedule, _) = chain.deploy_schedule(receiver).await;
-    chain.schedule = Some(schedule);
-    let vote_args = (schedule, NORMAL_WINDOW_SECS, FAST_WINDOW_SECS).abi_encode_params();
-    let vote = deploy(&chain.provider, chain.accounts[0], "ParameterVote.sol/ParameterVote.json", &vote_args).await;
-    chain.vote = Some((vote, TTL_MS));
-    chain.deploy_lens().await;
-    let vouching = enclave.clone();
-    let mut node = Node::start(&chain, enclave).await;
-    let recorded = node.query(|e| e.governance().config).await.expect("the node records the vote contract");
-    assert_eq!((recorded.vote.0, recorded.restriction_ttl_ms), (vote.0.0, TTL_MS));
-    println!("PASS: the node recorded the vote contract and a one-day restriction lifetime at activation");
-
-    // 1. A, B and C stake and register; the timelock lengthens the election epoch to a day, names the
-    //    vault, the registry and the schedule to each other, approves the releases, and turns rotation
-    //    on; each member delegates its whole stake to itself, and a close adopts them as the set.
-    for ((member, key), (stake, digest)) in
-        members.iter().zip(&keys).zip(STAKES.into_iter().zip([DIGEST_A, DIGEST_B, DIGEST_C]))
-    {
-        chain.stake(*member, monkey(stake)).await;
-        chain.register(*member, key, monkey(BOND), digest).await;
-    }
-    let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
-    let mut calls = vec![
-        (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
-        (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
-    ];
-    for (member, digest) in members.iter().zip([DIGEST_A, DIGEST_B, DIGEST_C]) {
-        calls.push((chain.registry, chain.approval(*member, digest)));
-    }
-    calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));
-    chain.govern_each(calls).await;
-    for (member, stake) in members.iter().zip(STAKES) {
-        chain
-            .send(*member, chain.staking, delegateCall { candidate: *member, amount: monkey(stake) }.abi_encode())
-            .await;
-    }
-    // A close adopts only members with a promotable standby key: the vault's signer vouches for each.
-    let releases = [DIGEST_A, DIGEST_B, DIGEST_C].map(|digest| {
-        alloy::primitives::B256::from(
-            crate::tee::sealing::Release { launch_digest: digest, config_sha256: CONFIG_HASH }.id(),
-        )
-    });
-    let standbys: Vec<_> = members.into_iter().zip(releases).collect();
-    chain.register_standbys(&standbys, &vouching).await;
-    node.advance_to((SET_CLOSE_SECS as Millis + 60) * 1000).await;
-    chain.close_epoch_at(SET_CLOSE_SECS).await;
-    node.wait("the rotation set to mirror", |e| e.daily_turns().sets.contains_key(&1)).await;
+    let vote = chain.vote.expect("the setup deploys the vote contract").0;
     // Rotation is on, but until the set takes effect no member can propose: the operator keeps its
     // bounded commands.
     assert!(node.query(|e| e.operator_election().rotation_enabled).await, "the switch is mirrored");
@@ -146,7 +86,7 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     println!("PASS: with rotation on and the set not yet in effect, the operator's house cap change applied");
     node.advance_to((SET_EFFECTIVE_SECS as Millis + 60) * 1000).await;
     chain.mine_at(SET_EFFECTIVE_SECS + 30).await;
-    assert_eq!(chain.view(schedule, currentSetIdCall {}).await, 1);
+    assert_eq!(chain.view(chain.schedule.expect("deployed"), currentSetIdCall {}).await, 1);
     let late = house_cap(&node, ETH, -100).await;
     assert_eq!(node.admin(&operator, late).await, (StatusCode::OK, vote_only()));
     println!("PASS: a close adopted A, B and C at 40:30:30; once the set is in effect the house cap change is refused");
@@ -222,6 +162,82 @@ async fn dev_scenario_members_vote_parameter_changes_by_stake() {
     println!("PASS: the log replays to its roots");
 }
 
+/// The stack both vote scenarios run on, up to the rotation set's adoption: A, B and C stake 40, 30 and
+/// 30 thousand MONKEY, register and delegate to themselves, the timelock names the vault, the registry
+/// and the schedule to each other and turns rotation on, the real `ParameterVote` is deployed over the
+/// schedule, and a close adopts the three as set 1, in effect from `SET_EFFECTIVE_SECS`. The node posts
+/// checkpoints and screens through a signed source when `posting`. Returns the chain, the node, the
+/// members and the dev operator key, the operator in effect throughout.
+pub(super) async fn adopted_set(posting: bool) -> (Chain, Node, [Address; 3], SigningKey) {
+    // The dev operator key `config/dev.toml` names.
+    let operator = SigningKey::from_slice(&[0x42; 32]).unwrap();
+    let keys = [0x55, 0x56, 0x57].map(|byte| SigningKey::from_slice(&[byte; 32]).unwrap());
+    let enclave = Arc::new(EnclaveKey::generate());
+    let mut chain = Chain::start(Address::from(enclave.address()), address(&operator)).await;
+    let members = [chain.accounts[2], chain.accounts[3], chain.accounts[4]];
+    let receiver = deploy(
+        &chain.provider,
+        chain.accounts[0],
+        "SeedReceiver.sol/SeedReceiver.json",
+        &(chain.accounts[9], BEACON_GENESIS, DAY_SECS).abi_encode_params(),
+    )
+    .await;
+    let (schedule, _) = chain.deploy_schedule(receiver).await;
+    chain.schedule = Some(schedule);
+    let vote_args = (schedule, NORMAL_WINDOW_SECS, FAST_WINDOW_SECS).abi_encode_params();
+    let vote = deploy(&chain.provider, chain.accounts[0], "ParameterVote.sol/ParameterVote.json", &vote_args).await;
+    chain.vote = Some((vote, TTL_MS));
+    chain.deploy_lens().await;
+    let vouching = enclave.clone();
+    let mut node = if posting {
+        Node::start_posting_checkpoints(&chain, enclave).await
+    } else {
+        Node::start(&chain, enclave).await
+    };
+    let recorded = node.query(|e| e.governance().config).await.expect("the node records the vote contract");
+    assert_eq!((recorded.vote.0, recorded.restriction_ttl_ms), (vote.0.0, TTL_MS));
+    println!("PASS: the node recorded the vote contract and a one-day restriction lifetime at activation");
+
+    // 1. A, B and C stake and register; the timelock lengthens the election epoch to a day, names the
+    //    vault, the registry and the schedule to each other, approves the releases, and turns rotation
+    //    on; each member delegates its whole stake to itself, and a close adopts them as the set.
+    for ((member, key), (stake, digest)) in
+        members.iter().zip(&keys).zip(STAKES.into_iter().zip([DIGEST_A, DIGEST_B, DIGEST_C]))
+    {
+        chain.stake(*member, monkey(stake)).await;
+        chain.register(*member, key, monkey(BOND), digest).await;
+    }
+    let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
+    let mut calls = vec![
+        (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
+        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
+        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
+    ];
+    for (member, digest) in members.iter().zip([DIGEST_A, DIGEST_B, DIGEST_C]) {
+        calls.push((chain.registry, chain.approval(*member, digest)));
+    }
+    calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));
+    chain.govern_each(calls).await;
+    for (member, stake) in members.iter().zip(STAKES) {
+        chain
+            .send(*member, chain.staking, delegateCall { candidate: *member, amount: monkey(stake) }.abi_encode())
+            .await;
+    }
+    // A close adopts only members with a promotable standby key: the vault's signer vouches for each.
+    let releases = [DIGEST_A, DIGEST_B, DIGEST_C].map(|digest| {
+        alloy::primitives::B256::from(
+            crate::tee::sealing::Release { launch_digest: digest, config_sha256: CONFIG_HASH }.id(),
+        )
+    });
+    let standbys: Vec<_> = members.into_iter().zip(releases).collect();
+    chain.register_standbys(&standbys, &vouching).await;
+    node.advance_to((SET_CLOSE_SECS as Millis + 60) * 1000).await;
+    chain.close_epoch_at(SET_CLOSE_SECS).await;
+    node.wait("the rotation set to mirror", |e| e.daily_turns().sets.contains_key(&1)).await;
+    (chain, node, members, operator)
+}
+
 /// `market`'s baseline spec with its first margin band at `bps`.
 async fn margin(node: &Node, market: MarketId, bps: i64) -> AdminCommand {
     let spec = node.query(move |e| e.baseline_spec(market)).await.expect("listed");
@@ -248,7 +264,12 @@ async fn band(node: &Node, market: MarketId) -> i64 {
 }
 
 /// `proposer` proposes `command`'s canonical JSON on `fast`: its id and the proposal's receipt.
-async fn submit(chain: &Chain, proposer: Address, command: &AdminCommand, fast: bool) -> (u64, TransactionReceipt) {
+pub(super) async fn submit(
+    chain: &Chain,
+    proposer: Address,
+    command: &AdminCommand,
+    fast: bool,
+) -> (u64, TransactionReceipt) {
     let vote = chain.vote.expect("the scenario deploys the vote contract").0;
     let bytes = Bytes::from(serde_json::to_vec(command).unwrap());
     let receipt = chain.send(proposer, vote, proposeCall { command: bytes, fast }.abi_encode()).await;
@@ -257,7 +278,7 @@ async fn submit(chain: &Chain, proposer: Address, command: &AdminCommand, fast: 
 
 /// `proposer` proposes `command` on `fast` and each of `voters` votes for it, passing it, and the
 /// node mirrors it: its id and the time it was logged.
-async fn propose(
+pub(super) async fn propose(
     chain: &mut Chain,
     node: &Node,
     proposer: Address,
@@ -281,7 +302,7 @@ async fn propose(
 }
 
 /// `GET /v1/house/state`.
-async fn house_state(node: &Node) -> Value {
+pub(super) async fn house_state(node: &Node) -> Value {
     let (status, body) = node.get("/v1/house/state").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     body

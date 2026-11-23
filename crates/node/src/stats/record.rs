@@ -123,7 +123,7 @@ impl Inner {
                 Event::OperatorShareAllocated { account, amount, .. } => {
                     close.operator_shares.push(OperatorShare { account: *account, amount: *amount });
                 }
-                Event::DistributionEpochClosed { epoch, nav, floor, excess, allocated } => {
+                Event::DistributionEpochClosed { epoch, nav, floor, excess, allocated, awarded } => {
                     let closed_ms = engine.staking().map_or(ts, |s| s.config.epoch_end(*epoch));
                     let close = std::mem::take(&mut close);
                     self.distributions.push(EpochClose {
@@ -135,6 +135,7 @@ impl Inner {
                         floor: *floor,
                         excess_usdc_units: *excess,
                         allocated_usdc_units: *allocated,
+                        awarded_usdc_units: *awarded,
                         stakers_usdc_units: UsdcUnits(close.stakers_usdc_units),
                         stakers: close.stakers,
                         operator_shares: close.operator_shares,

@@ -32,7 +32,8 @@
 //!   reverse is reserved (`excess`).
 //!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
 //!   its own in the state tree, which the vault checks a claim against.
-//! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)` credits the
+//! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)`, from `V89` of what
+//!   the awards leave, credits the
 //!   operator in effect when the close runs, after any handover due then, and stakers share the
 //!   rest as above, so the fraction that rounding leaves goes to them and their dust to the house.
 //!   The allocated total never passes the excess. The share is the same whatever the excess holds:
@@ -43,6 +44,9 @@
 //!   open epoch (`office`), from `V70` a proven fault's haircut withholds part of a member's
 //!   (`operator_faults`), which stays with the stakers, and from `V83` the time counts only to the
 //!   epoch's end, however late its close runs.
+//! - **Awards**, from `V89`. A close that distributes pays the queue of bug bounty awards first, up to the
+//!   cap in force, into each recipient's cumulative distribution, and the operator's share and the
+//!   stakers' come from what is left (`awards`). The allocated total counts the awards.
 //! - **Reconciliation.** Allocations reduce house cash before any USDC leaves the vault; the
 //!   vault's cumulative `distributionsPaid` explains the difference at the next checkpoint.
 
@@ -122,6 +126,13 @@ pub struct StakingCheckpoint {
     /// registry event stamped before it has been mirrored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time: Option<Millis>,
+}
+
+impl UsdcUnits {
+    /// Whether the amount is zero, which an event leaves out of its encoding.
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
 }
 
 impl fmt::Display for UsdcUnits {

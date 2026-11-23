@@ -120,6 +120,7 @@ fn distributions_preserve_cumulative_credits_and_the_deposit_count() {
                     floor: Fixed::ONE,
                     excess: UsdcUnits(8),
                     allocated: UsdcUnits(8),
+                    awarded: UsdcUnits(0),
                 },
             ],
         )

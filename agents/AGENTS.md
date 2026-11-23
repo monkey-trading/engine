@@ -121,6 +121,12 @@ an index: load only the rule whose hint matches the current action.
   shared by gross realised loss magnitudes from V43, net before it, halvings, and cumulative entitlements) and MONKEY staking with
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), from `V75` a client's unfinalised deposit counted as its own cash, reserving only what its reversal would leave unpaid, and an epoch closed only once the mirror's finalised frontier has passed its end, within a day of it, `tests/staking/unfinalised_deposits.rs` and `tests/staking/mirror_frontier.rs`, from `V83` each such epoch closed in turn however late, none skipped, and the operator's share split by time in office to the epoch's end, the next counted from it, `tests/staking/held_closes.rs`, cumulative distributions proven on chain; `Engine::distributable_excess` in `staking/excess.rs` reads what a close would distribute),
+  from `V89` bug bounty awards (`awards.rs`: an award approved only by a passed normal vote's `ApproveAward`, at the
+  scale's amount for its severity and once per advisory id, a second refused when its vote applies, and the cap moved only by a vote's `SetAwardCap` within 5–20% and 50,000–250,000
+  USDC, both refused for the operator's and the node's own commands in every state and on the fast path; each close
+  that distributes pays the queue first, oldest first, up to the lesser of the cap's share of its excess and its
+  limit, into each recipient's distribution leaf, before the operator's share and the stakers'; each award a leaf of
+  its own in `merkle/awards.rs`, `tests/bounty_awards.rs`),
   from `V78` the operator's status notice (`notice.rs`: one 1 to 280 character plain-text message, no markup or link, set and cleared by the operator's signed `SetNotice` and `ClearNotice` whether or not votes govern, held in state with the time it was set, `tests/notice.rs`),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
@@ -387,7 +393,7 @@ an index: load only the rule whose hint matches the current action.
   score's constants), the pending parameter and listing notices, from V56 the recorded vote contract with the
   passed changes waiting and the restrictions in force, from `V62` the house's loss over the trailing day, and the
   latest checkpoint (`api/house_state.rs`,
-  `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/notice` read of the operator's status notice (from `V78`, read from the engine's state, `api/notice.rs`), also the signed stream's `notice` frames at its start and on each change (`notice=1`, `api/stream/notice.rs`), and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
+  `sequencer/house.rs`), the market read's `pricing` (`api/pricing.rs`: fresh sources against `min_sources` and each source's state, from the quotes the engine holds at its last stamp) and the signed `/v1/notice` read of the operator's status notice (from `V78`, read from the engine's state, `api/notice.rs`), the `/v1/awards` read of the bug bounty awards, their queue and the cap (from `V89`, `api/awards.rs`), also the signed stream's `notice` frames at its start and on each change (`notice=1`, `api/stream/notice.rs`), and the signed `/v1/status` read, also the signed stream's `status` frames, of what holds the sequencer (one relaxed store per change), trusted time, each venue connection's symbols (published by the connection's task, `feeds/status.rs`) and the open markets with no price (`api/operating.rs`, `status.rs`), the account read (`api/account.rs`) with the toxicity score, tier and add-on from `V54` and the
   volume tier, counted and pending volume, each tier's progress and each market's best-price bound from `V59`, the
   initial and maintenance requirements, withdrawable cash and each market's maximum leverage (`margin_standing`), from `V79` each position's levels and each market's `min_level_distance_bps` in the market read, and
   from `V81`, under the parameters' offset grid, the portfolio requirement with each offset group's part, the
@@ -920,6 +926,12 @@ an index: load only the rule whose hint matches the current action.
   by its host from an older copy of its log during B's turn, signs heads of two histories at one seq,
   anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn
   is paid whole, and a pair across a promotion's signer change proves nothing;
+  `dev-bounty-awards.sh`, the bug bounty awards scenario on the parameter votes scenario's Anvil stack, from
+  `V89`: a High and a Low award pass on `ParameterVote` and apply seven warped days on, a second vote for the High
+  award passes and is refused when it applies, while the operator's
+  own award, a fast-path award and one at another amount are refused, closes above the floor pay the High
+  award 5% of each excess first while the Low waits, a close below the floor pays nothing, the next finishes
+  both, each researcher claims through the vault, `/v1/awards` lists the queue, and the log replays;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped
@@ -1071,7 +1083,7 @@ an index: load only the rule whose hint matches the current action.
   invariant tests on x86_64 and aarch64 Linux, the unchanged-reference-log check, `cargo-deny`,
   the contracts' `forge fmt --check` / build /
   test, each job installing the contract dependencies and fetching the pinned solc (by compiling `src/ArbSys.sol`) through `image/retry` (five attempts, a persistent failure still failing the job), the vault deposit and RPC quorum dev scenario with the checkpoint, MONKEY emissions and
-  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
+  deposit finality scenarios, the MONKEY staking, launch values, operator election, operator's share, staking reads, seed relay, standby and handover dev scenarios, the daily rotation, parameter votes, bug bounty awards and operator faults dev scenarios (`dev-daily-rotation`), the short-turns build's clippy, turn tests and dev scenario (`dev-short-turns`), the enclave key
   lifecycle dev scenario, the signed withdrawal and FIFO dev
   scenario, the exit dev scenario, the API and direct-vault access enforcement dev scenario, the
   metrics and alert routing
@@ -1454,6 +1466,8 @@ Run from the repo root:
 - Parameter votes dev scenario: `./scripts/dev-parameter-votes.sh` (the same requirements as the operator
   election scenario; one Anvil chain with warped time and the vote contract over the schedule; CI runs it in
   the daily rotation job)
+- Bug bounty awards dev scenario: `./scripts/dev-bounty-awards.sh` (the parameter votes scenario's stack with
+  the checkpoint worker posting to the vault; CI runs it in the daily rotation job)
 - Operator's share dev scenario: `./scripts/dev-operator-share.sh` (the same requirements; a real
   election mirrored into the sequencer, a close above the floor crediting the candidate a fifth and
   stakers the rest, both claims through the vault, an epoch below the floor paying neither, and the
