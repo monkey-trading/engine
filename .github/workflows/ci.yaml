@@ -1369,6 +1369,17 @@ jobs:
       - uses: ./.github/actions/build-image
         with:
           artifact: image-${{ matrix.run }}
+      # The release's file-writing step on the measurement this build wrote, so a change to the image
+      # that the release would refuse (a dev variant, no Secure TSC, a renamed field) fails here and
+      # not at a tag. Markers are only warned about, as in a dry run.
+      - name: Write the release files from the image's measurement
+        if: matrix.run == 'first'
+        run: |
+          set -euo pipefail
+          python3 -I scripts/release-files.py ci out/image/measurement.json out/release-files
+          while read -r _ file; do
+            [[ ! -e "out/release-files/$file" ]] || { echo "::error::the release's files and the image both write $file"; exit 1; }
+          done < out/image/SHA256SUMS
       - name: Install QEMU
         run: |
           sudo apt-get update -q
