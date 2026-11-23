@@ -9,7 +9,8 @@ import {MockUSDC} from "./mocks/MockUSDC.sol";
 import {ScheduleTest} from "./helpers/ScheduleTest.sol";
 
 /// The registry's vault and schedule, named together by the timelock and moved to another pair only
-/// while rotation is off and no drawn turn runs; the pair it leaves cannot act on the one it follows.
+/// while rotation is off and no drawn turn of either schedule runs; the pair it leaves cannot act on the
+/// one it follows.
 contract CustodyTest is ScheduleTest {
     uint256 private constant NEXT_KEY = 0xbeef;
 
@@ -183,6 +184,26 @@ contract CustodyTest is ScheduleTest {
         assertEq(vault.checkpointSigner(), makeAddr("enclave"), "the vault it follows keeps its signer");
     }
 
+    /// A registry that follows a vault alone, and elects, leaves it only once its signer is retired too:
+    /// the liveness clock would read the next vault's checkpoints from then on.
+    function test_AnElectingRegistryLeavesAVaultOnlyOnceItsSignerIsRetired() public {
+        _deployRegistry();
+        OperatorSchedule none = OperatorSchedule(address(0));
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), none);
+        Vault next = _newVault(NEXT_KEY);
+        address signer = vault.checkpointSigner();
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultSignerLive.selector, signer));
+        vm.prank(address(governance));
+        registry.setCustody(address(next), none);
+
+        _retire(vault);
+        vm.prank(address(governance));
+        registry.setCustody(address(next), none);
+        assertEq(address(registry.vault()), address(next));
+        assertEq(address(registry.schedule()), address(0));
+    }
+
     /// A schedule that drew none of the vault's turns has it name the release it held before them again,
     /// so the schedule changes under the vault it follows only once that vault's signer is retired too.
     function test_TheScheduleChangesUnderAVaultOnlyOnceItsSignerIsRetired() public {
@@ -223,6 +244,44 @@ contract CustodyTest is ScheduleTest {
         _retire(next);
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(old), oldSchedule)));
         assertEq(address(registry.vault()), address(old));
+        assertEq(address(registry.schedule()), address(oldSchedule));
+    }
+
+    /// A schedule the registry has left still draws while rotation is on, and a draw whose member the
+    /// registry already names, on the release the new vault synced, takes no new generation there. The
+    /// registry moves back to that schedule only once the turn it drew has run.
+    function test_TheCustodyMovesBackOnlyOnceTheNamedSchedulesTurnsHaveRun() public {
+        Vault old = vault;
+        OperatorSchedule oldSchedule = schedule;
+        _rotateOne(alice);
+        _setRotation(false);
+        _retire(old);
+        (Vault next, OperatorSchedule nextSchedule) = _nextPair();
+        _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(next), nextSchedule)));
+        _govern(address(next), abi.encodeCall(Vault.setRegistry, (address(registry))));
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.installOperator, (alice, _key(alice), _digest(1), CONFIG))
+        );
+        _setRotation(true);
+        next.syncRelease();
+        uint64 turn = _nextTurn() + 1;
+        _relay(turn, keccak256("seed"));
+        assertEq(_draw(turn), alice, "the old schedule drew a turn after the registry left it");
+        vm.prank(address(governance));
+        registry.setRotation(false);
+        _retire(next);
+
+        uint64 until = oldSchedule.turnsRunUntil();
+        assertGt(until, block.timestamp);
+        assertEq(nextSchedule.turnsRunUntil(), 0, "the followed schedule drew no turn");
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.TurnsPending.selector, until));
+        vm.prank(address(governance));
+        registry.setCustody(address(old), oldSchedule);
+
+        vm.warp(until);
+        vm.prank(address(governance));
+        registry.setCustody(address(old), oldSchedule);
         assertEq(address(registry.schedule()), address(oldSchedule));
     }
 

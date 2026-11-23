@@ -904,8 +904,9 @@ same timelock, and the vault and the schedule that the registry follows. It move
 another vault only once the guardian has retired the current vault's signer, so that vault's roots
 claim nothing more. It changes the registry's vault and schedule, which must be built for the
 registry over log heads that follow that vault, only while rotation is off and no drawn turn runs,
-and, but to name a first schedule for the vault the registry follows, only once the guardian has
-retired that vault's signer. A vault reads its registry's schedule, so after either change it reads
+of the schedule it follows or of the one it names, which may have drawn while the registry followed
+another, and, but to name a first schedule for the vault the registry follows, only once the guardian
+has retired that vault's signer. A vault reads its registry's schedule, so after either change it reads
 one that drew none of its turns, and names the release it held before its own turns again. The vault promotes a signer, and hands out a turn's
 generation, only for the schedule the registry names, so a schedule the registry has left cannot act
 on the vault it follows. Log heads follow one vault for good, so those of a vault whose signer is
