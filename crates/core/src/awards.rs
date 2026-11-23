@@ -5,7 +5,8 @@
 //!   the finding's severity, the advisory and the amount. The amount must be the scale's for the severity
 //!   (`Severity::amount`). The operator's signed commands and the node's unsigned ones carrying it are
 //!   refused in every state, and the fast path refuses it, as every command it does not take. An approved
-//!   award joins the back of the queue under the next award id.
+//!   award joins the back of the queue under the next award id. An advisory is awarded once: a passed
+//!   vote naming an advisory id an award already names, in any letter case, applies nothing.
 //! - **Payment.** A close that distributes pays the queue first, oldest award first, up to the cap in force:
 //!   the lesser of `excess_bps` of its distributable excess and `max`, in whole USDC base units. Each payment
 //!   is credited to the recipient's cumulative distribution, which the vault's `claimDistribution` pays and
@@ -15,8 +16,8 @@
 //! - **The cap** is `LAUNCH_CAP` until a passed vote's `AdminCommand::SetAwardCap` moves it, within
 //!   `CAP_BPS` and `CAP_MAX`. Nothing else moves it.
 //!
-//! Every approved award stays in state with what the closes have paid of it, each in a leaf of its own
-//! (`merkle::award_key`); the cap a vote set is in the remaining-state leaf.
+//! Every approved award stays in state with its advisory id and what the closes have paid of it, each in a
+//! leaf of its own (`merkle::award_key`); the cap a vote set is in the remaining-state leaf.
 
 use std::ops::RangeInclusive;
 
@@ -200,6 +201,7 @@ impl Engine {
     /// Error cases:
     /// - before `V89`
     /// - an award `check_award_vote` refuses
+    /// - an advisory id an approved award already names, compared without regard to ASCII case
     pub(crate) fn approve_award(
         &mut self,
         proposal: u64,
@@ -209,6 +211,9 @@ impl Engine {
         self.check_awards_version()?;
         check_award_vote(&AdminCommand::ApproveAward(approval.clone()))?;
         let AwardApproval { recipient, severity, ref advisory, amount } = *approval;
+        if let Some((id, _)) = self.awards.iter().find(|(_, award)| award.advisory.eq_ignore_ascii_case(advisory)) {
+            return Err(format!("advisory {advisory} already has award {id}"));
+        }
         // Awards are never removed, so the count is the next id.
         let award = self.awards.len() as u64;
         let queued = Award {

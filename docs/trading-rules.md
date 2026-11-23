@@ -368,10 +368,10 @@ When operator rotation is enabled, MONKEY stakers elect the operators, and one o
 day to run the engine. The operator in office then receives a fifth of each staking distribution,
 after bug bounty awards. While rotation is enabled, the settings above can change only through a
 vote that carries more than two thirds of the elected operators' stake. Only such a vote can approve
-a bug bounty award, or move the cap on what awards take to between 5% and 20% of a day's
-distribution and between 50,000 and 250,000 USDC. A vote can also impose a restriction that tightens
-a setting at once. A restriction lapses after a lifetime that the log records, which is at most
-seven days, and passing the same proposal again renews it.
+a bug bounty award, once for each advisory, or move the cap on what awards take to between 5% and
+20% of a day's distribution and between 50,000 and 250,000 USDC. A vote can also impose a
+restriction that tightens a setting at once. A restriction lapses after a lifetime that the log
+records, which is at most seven days, and passing the same proposal again renews it.
 
 Each change to the rules takes effect as a new protocol version, which the log records. An old log
 therefore replays under the rules that applied when it was written. The

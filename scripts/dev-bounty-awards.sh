@@ -4,7 +4,8 @@
 # delegate 40, 30 and 30 thousand MONKEY, a close adopts them as the rotation set, and the node posts
 # checkpoints to the vault. It checks:
 # that a High award A proposes and a Low award B proposes pass on the ParameterVote contract and apply
-# seven warped days after they are logged, the High award first in the queue;
+# seven warped days after they are logged, the High award first in the queue, and that a second vote for
+# the High award, which C proposes and the set passes, is refused when it applies, its advisory awarded;
 # that the operator's own award is refused, and a fast-path award and an award at another amount than its
 # severity's pass on chain and are refused by the engine;
 # that closes above the liquidity floor pay the front award 5% of each excess first, before the operator's

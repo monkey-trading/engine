@@ -14,7 +14,9 @@ use engine_core::{Engine, Fixed};
 
 use crate::common::close_spread::trade;
 use crate::common::{BTC, Client, Harness};
-use crate::{RESEARCHER, SECOND, STAKER_A, STAKER_B, TRADER_SEED, USDC, award, governed, vote_in};
+use crate::{
+    RESEARCHER, SECOND, STAKER_A, STAKER_B, TRADER_SEED, USDC, apply, award, governed, pass, rejected, vote_in,
+};
 
 /// What a close's events paid each award, the operator's parts, the stakers, and what it recorded as
 /// awarded and allocated: the first close among `events` that measured an excess, or the last.
@@ -237,4 +239,35 @@ fn the_root_after_each_award_change_is_the_root_rebuilt_from_the_encoding() {
     rebuilt_matches(&mut h);
     vote_in(&mut h, 2, &AdminCommand::SetAwardCap(AwardCap { excess_bps: 2_000, max: UsdcUnits(250_000 * USDC) }));
     rebuilt_matches(&mut h);
+}
+
+#[test]
+fn an_advisory_is_awarded_once_and_another_advisory_still_pays() {
+    let mut h = governed(ProtocolVersion::V89, 400_000);
+    let low = award(RESEARCHER, Severity::Low, "GHSA-4v2c-9xq8-jm3w");
+    vote_in(&mut h, 1, &low);
+    // A second vote naming the awarded advisory, for the same award, another recipient and severity, or in
+    // other letter cases, passes, and applies nothing once its notice has run.
+    let again = [
+        low.clone(),
+        award(SECOND, Severity::Critical, "GHSA-4v2c-9xq8-jm3w"),
+        award(RESEARCHER, Severity::Low, "ghsa-4V2C-9XQ8-JM3W"),
+    ];
+    for (proposal, command) in (2..).zip(again) {
+        let events = pass(&mut h, proposal, false, &command);
+        assert!(matches!(events.last(), Some(Event::ProposalScheduled { .. })), "{events:?}");
+        h.advance(engine_core::operator_bounds::NOTICE_MS);
+        let events = apply(&mut h, proposal, &command);
+        rejected(&events, "already has award 0");
+        assert!(!events.iter().any(|e| matches!(e, Event::AwardApproved(_))), "{events:?}");
+    }
+    assert_eq!(h.engine.awards().len(), 1);
+    assert!(h.engine.governance().pending.is_empty(), "each refused vote is spent");
+
+    // Another advisory is awarded, and the close pays both, oldest first.
+    vote_in(&mut h, 5, &award(SECOND, Severity::Medium, "GHSA-7rq2-c6jx-pm9f"));
+    let close = paying(&close_due(&mut h));
+    let paid: Vec<_> = close.awards.iter().map(|paid| (paid.award, paid.account, paid.amount.0, paid.owed.0)).collect();
+    assert_eq!(paid, [(0, RESEARCHER, 1_000 * USDC, 0), (1, SECOND, 10_000 * USDC, 0)]);
+    assert_eq!(h.engine.distribution(SECOND), UsdcUnits(10_000 * USDC));
 }

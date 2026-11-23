@@ -1,9 +1,10 @@
 //! The bug bounty awards dev scenario, from `V89`, which `scripts/dev-bounty-awards.sh` runs on the
 //! parameter votes scenario's stack (`parameter_votes::adopted_set`), with the checkpoint worker posting to
 //! the vault: A, B and C, the rotation set at 40:30:30, are the stakers. A proposes a High award to a
-//! researcher and B a Low award to another, and the set passes both; the operator's own award, a
-//! fast-path award and an award for another amount are refused. Seven days after they are logged the
-//! awards apply, oldest first in the queue. House earnings of 600,000 and 300,000 USDC above the floor
+//! researcher and B a Low award to another, and the set passes both, and a second vote for the High award
+//! too; the operator's own award, a fast-path award and an award for another amount are refused. Seven
+//! days after they are logged the awards apply, oldest first in the queue, and the second award for the
+//! High award's advisory is refused. House earnings of 600,000 and 300,000 USDC above the floor
 //! then close two epochs, each paying the front award 5% of its excess before the operator's share and
 //! the stakers; a client's win puts the house below the floor, and that close pays nothing; the next
 //! close finishes the first award and pays the second. Each researcher claims through the vault, every
@@ -34,7 +35,7 @@ async fn dev_scenario_voted_awards_are_paid_from_closes_first_and_claimed_from_t
     let _tracing = tracing::subscriber::set_default(
         tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
     );
-    let (mut chain, mut node, [a, b, _], operator) = adopted_set(true).await;
+    let (mut chain, mut node, [a, b, c], operator) = adopted_set(true).await;
     let (researcher, second, trader) = (chain.accounts[6], chain.accounts[7], chain.accounts[5]);
     let trader_key = SigningKey::from_slice(&hex::decode(TRADER_KEY).unwrap()).unwrap();
     // The house holds the floor exactly, final, and a client a million, both through the vault.
@@ -57,10 +58,13 @@ async fn dev_scenario_voted_awards_are_paid_from_closes_first_and_claimed_from_t
     let (_, logged) = propose(&mut chain, &node, a, &high, false, &[b]).await;
     let low = award(second, Severity::Low, "GHSA-7rq2-c6jx-pm9f");
     propose(&mut chain, &node, b, &low, false, &[a]).await;
+    // C proposes the High award again, as a second member unaware of A's would, and the set passes it.
+    let (again, _) = propose(&mut chain, &node, c, &high, false, &[a]).await;
     let pending = house_state(&node).await["governance"]["pending"].clone();
-    assert_eq!(pending.as_array().map(Vec::len), Some(2), "{pending}");
+    assert_eq!(pending.as_array().map(Vec::len), Some(3), "{pending}");
     assert_eq!(pending[0]["applies_at"], json!(logged + NOTICE_MS), "{pending}");
-    println!("PASS: A's High award and B's Low award passed with 70% and wait seven days");
+    assert_eq!(pending[2]["proposal"], json!(again), "{pending}");
+    println!("PASS: A's High award, B's Low award and C's second High award passed with 70% and wait seven days");
 
     // 5. The operator's own award is refused at the route; a fast-path award and an award for the
     //    Critical amount at High pass on chain and the engine refuses both.
@@ -74,7 +78,7 @@ async fn dev_scenario_voted_awards_are_paid_from_closes_first_and_claimed_from_t
     let governance = node.query(|e| e.governance().clone()).await;
     assert!(governance.restrictions.is_empty(), "the fast path holds nothing: {governance:?}");
     let waiting: Vec<u64> = governance.pending.iter().map(|change| change.proposal).collect();
-    assert!(!waiting.contains(&fast) && !waiting.contains(&wrong) && waiting.len() == 2, "{waiting:?}");
+    assert!(!waiting.contains(&fast) && !waiting.contains(&wrong) && waiting.len() == 3, "{waiting:?}");
     println!("PASS: the operator's own award, a fast-path award and an award at another amount were refused");
 
     // 2. Seven days after they are logged both apply, the High award at the front of the queue.
@@ -83,12 +87,19 @@ async fn dev_scenario_voted_awards_are_paid_from_closes_first_and_claimed_from_t
     assert!(node.query(|e| e.awards().is_empty()).await, "nothing applies before its time");
     node.advance_to(logged + NOTICE_MS + 60_000).await;
     node.submit(Command::Tick).await;
-    node.wait("both awards to apply", |e| e.awards().len() == 2).await;
+    node.wait("every passed change to apply or be refused", |e| e.governance().pending.is_empty()).await;
+    assert_eq!(
+        node.query(|e| e.awards().len()).await,
+        2,
+        "the second vote for the High award's advisory applied nothing"
+    );
     let view = awards(&node).await;
     assert_eq!(ids(&view["queue"]), [0, 1]);
     assert_eq!((&view["queue"][0]["recipient"], &view["queue"][0]["owed"]), (&json!(hex(researcher)), &units(50_000)));
     assert_eq!((&view["queue"][1]["severity"], &view["queue"][1]["owed"]), (&json!("low"), &units(1_000)));
-    println!("PASS: seven days after the vote both awards applied, the High award first in the queue");
+    println!(
+        "PASS: seven days after the votes both awards applied, the High award first, and the second award for its advisory was refused"
+    );
 
     // 3. The house earns 600,000 USDC above the floor: the close pays the High award 5%, 30,000, first.
     let catch_up = next_epoch(&mut node, &chain).await;

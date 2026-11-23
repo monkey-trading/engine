@@ -1431,6 +1431,8 @@ write the JSON by hand, exactly as below.
    - `recipient` is the researcher's address, in lower case.
    - `severity` is `critical`, `high`, `medium` or `low`.
    - `advisory` is the published advisory's identifier, of 1 to 64 letters, digits and hyphens.
+     **An advisory is awarded once.** A second award naming an awarded advisory, in any letter case,
+     passes the vote and is refused when it would apply, with `proposal_rejected`.
    - `amount` is the scale's amount for the severity in USDC base units, as a decimal string:
      `"250000000000"` for Critical, `"50000000000"` for High, `"10000000000"` for Medium and
      `"1000000000"` for Low. **The engine refuses any other amount when it mirrors the proposal.**

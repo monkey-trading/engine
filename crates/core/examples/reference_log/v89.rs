@@ -1,15 +1,17 @@
 //! The session's `V89` part: bug bounty awards. A vote activates the version. While votes govern, a High
 //! award to a researcher and a cap of 10% of the excess and 100,000 USDC then pass, beside an award for
 //! another amount than its severity's and a fast-path award, both refused when mirrored, and the key in
-//! office's own award is refused. Seven days on the award and the cap apply. A client loses a BTC round
-//! trip to the house, and the staking mirror passes the end of the oldest epoch not yet closed: its close
-//! pays the award a tenth of its excess first, into the researcher's distribution leaf, before the
+//! office's own award is refused. A second vote for the same award passes too. Seven days on the award and
+//! the cap apply, and the second vote's award is refused, its advisory already awarded. A client loses a BTC
+//! round trip to the house, and the staking mirror passes the end of the oldest epoch not yet closed: its
+//! close pays the award a tenth of its excess first, into the researcher's distribution leaf, before the
 //! operator's share and the stakers, and the rest of the award stays queued.
 
 use alloy_primitives::B256;
 use engine_core::awards::{AwardApproval, AwardCap, Severity};
 use engine_core::command::{AdminCommand, Command};
 use engine_core::event::Event;
+use engine_core::governance::VotedChange;
 use engine_core::operator_bounds::NOTICE_MS;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::staking::UsdcUnits;
@@ -56,10 +58,16 @@ pub(crate) fn session(h: &mut Harness) {
     assert!(matches!(events.last(), Some(Event::ProposalRefused { .. })), "{events:?}");
     let events = h.operate_as(office_seed(h), award.clone());
     assert!(matches!(events.last(), Some(Event::AdminRejected { .. })), "{events:?}");
+    scheduled(h, PROPOSAL + 5, &award);
 
     h.advance(NOTICE_MS);
-    applied(h, PROPOSAL + 1, award);
+    applied(h, PROPOSAL + 1, award.clone());
     applied(h, PROPOSAL + 2, AdminCommand::SetAwardCap(cap));
+    let again = VotedChange { proposal: PROPOSAL + 5, command: award };
+    let events = h.cmd(Command::ApplyProposal(Box::new(again)));
+    let refused =
+        matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("already has award 0"));
+    assert!(refused, "{events:?}");
     assert_eq!((h.engine.awards().len(), h.engine.award_cap()), (1, cap));
 
     // A client loses a BTC round trip to the house, which the next close distributes.

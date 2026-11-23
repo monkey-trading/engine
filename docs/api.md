@@ -1316,10 +1316,11 @@ been dropped.
 ### Bug bounty awards
 
 A bug bounty award is approved only by a passed vote of the rotation set, at the amount the scale
-fixes for the finding's severity. Each epoch close that distributes pays the queue of awards first,
-oldest award first, up to the cap, before the operator's share and the stakers' shares. Each payment
-is added to the recipient's cumulative USDC distribution, which `GET
-/v1/accounts/{address}/distributions` proves and the vault's `claimDistribution` pays.
+fixes for the finding's severity. An advisory is awarded once, and a second award naming an awarded
+advisory is refused when its vote applies. Each epoch close that distributes pays the queue of awards
+first, oldest award first, up to the cap, before the operator's share and the stakers' shares. Each
+payment is added to the recipient's cumulative USDC distribution, which
+`GET /v1/accounts/{address}/distributions` proves and the vault's `claimDistribution` pays.
 
 `GET /v1/awards` returns the awards as the server's durable state holds them:
 

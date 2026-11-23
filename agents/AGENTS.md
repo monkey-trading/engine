@@ -122,7 +122,7 @@ an index: load only the rule whose hint matches the current action.
   USDC distributions (`staking.rs`: stake mirroring, V27 authenticated identities and completed scan
   anchors, epoch closes at NAV above a liquidity floor, from `V47` a fifth to the operator in effect while rotation is on, from `V50` split by time in office (`staking/office.rs`), from `V70` cut by a proven fault's haircut, which starts at the recorded penalty and falls linearly to nothing, the withheld part going to stakers (`operator_faults.rs`), from `V75` a client's unfinalised deposit counted as its own cash, reserving only what its reversal would leave unpaid, and an epoch closed only once the mirror's finalised frontier has passed its end, within a day of it, `tests/staking/unfinalised_deposits.rs` and `tests/staking/mirror_frontier.rs`, from `V83` each such epoch closed in turn however late, none skipped, and the operator's share split by time in office to the epoch's end, the next counted from it, `tests/staking/held_closes.rs`, cumulative distributions proven on chain; `Engine::distributable_excess` in `staking/excess.rs` reads what a close would distribute),
   from `V89` bug bounty awards (`awards.rs`: an award approved only by a passed normal vote's `ApproveAward`, at the
-  scale's amount for its severity, and the cap moved only by a vote's `SetAwardCap` within 5–20% and 50,000–250,000
+  scale's amount for its severity and once per advisory id, a second refused when its vote applies, and the cap moved only by a vote's `SetAwardCap` within 5–20% and 50,000–250,000
   USDC, both refused for the operator's and the node's own commands in every state and on the fast path; each close
   that distributes pays the queue first, oldest first, up to the lesser of the cap's share of its excess and its
   limit, into each recipient's distribution leaf, before the operator's share and the stakers'; each award a leaf of
@@ -927,7 +927,8 @@ an index: load only the rule whose hint matches the current action.
   anyone proves them to `FaultProof`, the next closes cut B's share by the decaying haircut, a later turn
   is paid whole, and a pair across a promotion's signer change proves nothing;
   `dev-bounty-awards.sh`, the bug bounty awards scenario on the parameter votes scenario's Anvil stack, from
-  `V89`: a High and a Low award pass on `ParameterVote` and apply seven warped days on, while the operator's
+  `V89`: a High and a Low award pass on `ParameterVote` and apply seven warped days on, a second vote for the High
+  award passes and is refused when it applies, while the operator's
   own award, a fast-path award and one at another amount are refused, closes above the floor pay the High
   award 5% of each excess first while the Low waits, a close below the floor pays nothing, the next finishes
   both, each researcher claims through the vault, `/v1/awards` lists the queue, and the log replays;
