@@ -27,6 +27,52 @@ fn write_entries(label: &str, entries: &[LogEntry]) -> PathBuf {
     path
 }
 
+/// The engine `parts` leave after a fresh node's genesis staking, as a start's pre-run runs them.
+fn pre_run(parts: &[CarryPart]) -> engine_core::Engine {
+    pre_run_at(parts, 0).unwrap()
+}
+
+/// `pre_run`, stamped at `ts`, with staking from a day in.
+fn pre_run_at(parts: &[CarryPart], ts: engine_core::types::Millis) -> anyhow::Result<engine_core::Engine> {
+    let mut cfg = crate::test_support::dev_config();
+    cfg.genesis.staking = Some(engine_core::staking::StakingConfig {
+        liquidity_floor: engine_core::Fixed::from_int(1),
+        epoch_ms: 86_400_000,
+        start_ms: 86_400_000,
+        cooldown_ms: 3 * 86_400_000,
+    });
+    let cmds = crate::sequencer::carried_genesis_commands(&cfg.genesis, parts);
+    let (auth, operator) = (cfg.client_auth().unwrap(), cfg.operator().unwrap());
+    crate::sequencer::genesis::check_genesis_commands_at(&auth, operator, cmds, ts)
+}
+
+#[test]
+fn a_start_held_past_its_staking_start_is_refused_by_its_pre_run() {
+    let file = build(Path::new(CARRIED), None).unwrap();
+    assert!(pre_run_at(&file.parts, 86_400_000).is_ok());
+    let error = pre_run_at(&file.parts, 86_400_001).unwrap_err();
+    assert!(format!("{error:#}").contains("genesis.staking"), "{error:#}");
+}
+
+#[test]
+fn a_carry_whose_parts_apply_but_leave_it_unfinished_is_refused_at_the_start() {
+    let file = build(Path::new(CARRIED), None).unwrap();
+    assert!(boot::check_carried(&pre_run(&file.parts), &file).is_ok());
+    let mut cut = file.clone();
+    while cut.parts.last().is_some_and(|part| !matches!(part, CarryPart::Begin { .. })) {
+        cut.parts.pop();
+        let error = boot::check_carried(&pre_run(&cut.parts), &file).unwrap_err();
+        assert!(format!("{error:#}").contains("did not finish"), "{} parts: {error:#}", cut.parts.len());
+    }
+    // A file whose parts do not end the carry does not read.
+    let out = scratch_dir("carry-file-unended").join("carry.json");
+    fs::create_dir_all(out.parent().unwrap()).unwrap();
+    let mut unended = file;
+    unended.parts.pop();
+    fs::write(&out, serde_json::to_vec(&unended).unwrap()).unwrap();
+    assert!(format!("{:#}", read(&out).unwrap_err()).contains("do not end the carry"));
+}
+
 /// Checks that `file`'s parts apply in full after a fresh node's genesis staking, as a start's pre-run does.
 fn apply_after_genesis(file: &CarryFile) {
     let mut cfg = crate::test_support::dev_config();

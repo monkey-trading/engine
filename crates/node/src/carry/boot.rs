@@ -21,9 +21,10 @@ use tracing::{error, info, warn};
 use crate::carry::chain::{self, MoveContracts, MoveState};
 use crate::carry::{CarryFile, read};
 use crate::checkpoints::emission_budget::check_recorded;
+use crate::clock::Clock;
 use crate::config::NodeConfig;
 use crate::custody::ContractQuorum;
-use crate::sequencer::genesis::check_genesis_commands;
+use crate::sequencer::genesis::check_genesis_commands_at;
 use crate::sequencer::{Sequencer, carried_genesis_commands};
 
 /// How long a held start waits before it reads the chain and the file again.
@@ -136,14 +137,16 @@ where
 
 /// The parts a fresh log's genesis carries: none without `[genesis.carry]`. With it, holds as `hold` does, then
 /// checks the file names the source vault's last accepted checkpoint, and that the genesis it carries applies in
-/// full on a scratch engine with an emission budget matching `emission_budget`, the vault's.
+/// full on a scratch engine, stamped at `clock`'s time once the hold ends, with an emission budget matching
+/// `emission_budget`, the minter's: a hold past the genesis's staking start is refused here, not at its stamp.
 /// Error cases:
 /// - the custody quorum cannot be built, or a configured address does not parse
-/// - the file does not read, names another source, or carries a genesis that does not apply in full, or another
-///   emission budget (alert `carry_refused`)
+/// - the file does not read, names another source, or carries a genesis that does not apply in full at the time,
+///   or another emission budget (alert `carry_refused`)
 pub(crate) async fn carried_parts(
     cfg: &NodeConfig,
     emission_budget: Option<TokenUnits>,
+    clock: &dyn Clock,
 ) -> anyhow::Result<Vec<CarryPart>> {
     let Some(carry) = &cfg.genesis.carry else { return Ok(Vec::new()) };
     let refused = |e: &anyhow::Error| error!(alert = "carry_refused", "refusing to carry state into genesis: {e:#}");
@@ -168,7 +171,9 @@ pub(crate) async fn carried_parts(
     check_tokens(&state).inspect_err(refused)?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
-    let engine = check_genesis_commands(&cfg.client_auth()?, cfg.operator()?, cmds).inspect_err(refused)?;
+    let now = clock.now_ms();
+    let engine = check_genesis_commands_at(&cfg.client_auth()?, cfg.operator()?, cmds, now).inspect_err(refused)?;
+    check_carried(&engine, &file).inspect_err(refused)?;
     if let Some(budget) = emission_budget {
         check_recorded(budget, engine.emissions()).inspect_err(refused)?;
     }
@@ -184,6 +189,17 @@ pub(crate) async fn carried_parts(
     Ok(file.parts)
 }
 
+/// Checks that the scratch engine a carried genesis ran on finished the carry from `file`'s source: every part
+/// applying is not enough, as a file missing its last parts leaves the carry begun and its totals unchecked.
+/// Error cases:
+/// - the carry is still in progress, or the engine records another source or none
+pub(crate) fn check_carried(engine: &engine_core::Engine, file: &CarryFile) -> anyhow::Result<()> {
+    if engine.carry_progress().is_some() || engine.carried_from() != Some(file.source) {
+        bail!("the carry file's parts began carrying {:?} and did not finish it", file.source);
+    }
+    Ok(())
+}
+
 /// Refuses a log whose carried source is not the config's (`check_recovered`, alert `carry_refused`), then, on a
 /// fresh log, queues genesis, carrying the source's state when the config names one (`carried_parts`).
 /// Error cases:
@@ -192,10 +208,11 @@ pub(crate) async fn genesis(
     cfg: &NodeConfig,
     seq: &mut Sequencer,
     emission_budget: Option<TokenUnits>,
+    clock: &dyn Clock,
 ) -> anyhow::Result<()> {
     check_recovered(cfg, seq).inspect_err(|e| error!(alert = "carry_refused", "refusing to serve: {e:#}"))?;
     if seq.needs_genesis() {
-        let carry = carried_parts(cfg, emission_budget).await?;
+        let carry = carried_parts(cfg, emission_budget, clock).await?;
         info!(
             markets = cfg.genesis.markets.len(),
             carried = !carry.is_empty(),

@@ -186,6 +186,38 @@ async fn a_registry_naming_a_schedule_the_config_does_not_stalls_the_poll_before
 }
 
 #[tokio::test]
+async fn a_window_from_before_the_registry_moved_to_the_configured_schedule_mirrors_its_events() {
+    let dir = scratch("schedule-moved");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([0x0b; 20]);
+    let old = Address::repeat_byte(0x5d);
+    // The registry named the old schedule until block 5, the configured one from it; each window is 3 blocks.
+    let chains = schedule_chains(old, Some(REGISTRY), account);
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.moved = Some((5, SCHEDULE));
+    }
+    let mut watcher = schedule_watcher_with_range(&chains, &dir, Some(SCHEDULE), 3);
+    // The first window, which ends before the move, mirrors the stake; the next the set the schedule adopted.
+    for n in 0..4 {
+        watcher.poll(&node.tx).await.unwrap_or_else(|e| panic!("poll {n}: {e:?}"));
+    }
+    assert_eq!(mirrored(&node, account).await, (TokenUnits(500), vec![1]), "the window before the move mirrors");
+    // A registry that names the old schedule at the release tag too has not moved: its window stalls.
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.moved = None;
+    }
+    let dir = scratch("schedule-not-moved");
+    let node_unmoved = Node::start_confirmed(&dir);
+    init_staking(&node_unmoved).await;
+    let error = schedule_watcher_with_range(&chains, &dir, Some(SCHEDULE), 3).poll(&node_unmoved.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains(&format!("the registry names schedule {old}")), "{cause}");
+    node.stop().await;
+    node_unmoved.stop().await;
+}
+
+#[tokio::test]
 async fn a_schedule_recording_another_registry_stalls_the_poll_before_any_mirror() {
     let dir = scratch("schedule-records-registry");
     let node = Node::start_confirmed(&dir);
@@ -280,12 +312,22 @@ fn schedule_watcher(
     dir: &Path,
     schedule: Option<Address>,
 ) -> DepositWatcher<Quorum<FakeChain>> {
+    schedule_watcher_with_range(chains, dir, schedule, 100)
+}
+
+/// `schedule_watcher`, reading at most `range` blocks a window.
+fn schedule_watcher_with_range(
+    chains: &[FakeChain; 3],
+    dir: &Path,
+    schedule: Option<Address>,
+    range: u64,
+) -> DepositWatcher<Quorum<FakeChain>> {
     let schedule = schedule.map_or_else(String::new, |schedule| format!(r#", schedule = "{schedule}""#));
     let toml = format!(
         r#"{}
         staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", registry = {{ contract = "{REGISTRY}"{schedule} }} }}
         "#,
-        evm_toml(dir, 100),
+        evm_toml(dir, range),
         dir.join("staking-cursor.json").display()
     );
     let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();

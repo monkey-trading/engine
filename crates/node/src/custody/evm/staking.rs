@@ -96,15 +96,26 @@ impl<V: VaultReader> DepositWatcher<V> {
             }
         }
         // The schedule mirrored must be the one the registry names, once it names one: a node that
-        // mirrors another, or none, would never apply the turns that name the operator.
+        // mirrors another, or none, would never apply the turns that name the operator. A window that ends
+        // before the registry moved custody to the configured schedule, as a log that carried another's state
+        // reads from the carried frontier, names the one it followed then: the release tag's block must name
+        // the configured one.
         if let Some((_, true)) = self.registry {
             let hash = end.hash;
             let named = self.vault.registry_schedule(BlockRef { number: to, hash }).await.map_err(PollError::rpc)?;
             let configured = self.schedule.map(|(schedule, _)| schedule);
             if !named.is_zero() && configured != Some(named) {
-                return Err(PollError::inconsistent(anyhow!(
-                    "the registry names schedule {named}, but the config names {configured:?}"
-                )));
+                let moved = match release.filter(|release| release.number > to) {
+                    Some(release) => {
+                        Some(self.vault.registry_schedule(release).await.map_err(PollError::rpc)?) == configured
+                    }
+                    None => false,
+                };
+                if !moved {
+                    return Err(PollError::inconsistent(anyhow!(
+                        "the registry names schedule {named}, but the config names {configured:?}"
+                    )));
+                }
             }
         }
         // So must the schedule's registry: the schedule's events mirror only from the registry's own.

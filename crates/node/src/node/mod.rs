@@ -271,7 +271,7 @@ async fn serve_node(
     seq.carry_toxicity_notional(weighting)
         .and_then(|()| seq.activate_protocol())
         .inspect_err(|e| error!(alert = "protocol_activation_failed", "refusing to serve: {e:#}"))?;
-    crate::carry::boot::genesis(cfg, &mut seq, emission_budget).await?;
+    crate::carry::boot::genesis(cfg, &mut seq, emission_budget, clock.as_ref()).await?;
     history.catch_up_to(seq.last_seq());
 
     // Startup has committed through recovery: move the seeded marks cache into place, attach the

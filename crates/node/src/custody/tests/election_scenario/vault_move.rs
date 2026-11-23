@@ -256,9 +256,11 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
     crate::carry::write(&raised, &raised_path).unwrap();
     chain.carry = Some((alpha_vault, raised_path, at));
     let fresh = scratch_dir("vault-move-raised");
-    let refused = crate::carry::boot::carried_parts(&carry_config(&chain, &fresh), Some(emission_budget(&chain).await))
-        .await
-        .unwrap_err();
+    let budget = Some(emission_budget(&chain).await);
+    // At the time the launch node started, before its staking start, so the raised entitlement alone refuses.
+    let started_at = crate::clock::test_clock::TestClock::at(at);
+    let refused =
+        crate::carry::boot::carried_parts(&carry_config(&chain, &fresh), budget, &started_at).await.unwrap_err();
     assert!(format!("{refused:#}").contains("does not hold"), "{refused:#}");
     println!("PASS: the launch log replays and checks against the alpha's, and a raised entitlement is refused");
 }

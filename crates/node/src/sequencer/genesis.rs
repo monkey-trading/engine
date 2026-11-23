@@ -14,6 +14,7 @@ use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
 use engine_core::params::NotionalWeighting;
 use engine_core::protocol::ProtocolVersion;
+use engine_core::types::Millis;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Genesis;
@@ -50,6 +51,9 @@ pub struct GenesisProgress {
     /// The toxicity notional weighting the node carried, after genesis, into parameters set before
     /// `V11` without one (see `Sequencer::carry_toxicity_notional`).
     carried: Option<NotionalWeighting>,
+    /// The seq of a carried genesis's `Begin`, while the carry it began has not ended.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    carrying: Option<u64>,
 }
 
 impl GenesisProgress {
@@ -77,6 +81,14 @@ impl GenesisProgress {
             }
             None => self.credited = is_genesis_credit(cmd),
         }
+        if matches!(cmd, Command::Admin(AdminCommand::CarryState(CarryPart::Begin { .. })))
+            && rejection(events).is_none()
+        {
+            self.carrying = Some(sequenced.seq);
+        }
+        if events.iter().any(|event| matches!(event, Event::StateCarried(_))) {
+            self.carrying = None;
+        }
     }
 
     /// Takes the next checkpoint.
@@ -89,12 +101,15 @@ impl GenesisProgress {
     /// Error cases:
     /// - the engine rejected a command from the start of genesis to its house capital credit
     /// - genesis ran again before its first run reached the credit
+    /// - a carry genesis began had not ended at its credit
     /// - genesis started, but the log ends before the checkpoint after its house capital credit
     pub fn ensure_closed(&self) -> anyhow::Result<()> {
         let flaw = if let Some((seq, reason)) = &self.rejected {
             format!("genesis did not apply in full: the engine rejected seq {seq} ({reason})")
         } else if let Some(seq) = self.restarted {
             format!("genesis did not apply in full: it ran again from seq {seq} before its first run finished")
+        } else if let Some(seq) = self.carrying.filter(|_| self.credited) {
+            format!("genesis did not apply in full: the carry it began at seq {seq} did not end")
         } else if let (Some(seq), false) = (self.started, self.closed) {
             format!("genesis started at seq {seq} but did not reach the checkpoint after its house capital credit")
         } else {
@@ -285,10 +300,22 @@ pub(crate) fn check_genesis_commands(
     operator: Operator,
     genesis: Vec<Command>,
 ) -> anyhow::Result<Engine> {
+    check_genesis_commands_at(client_auth, operator, genesis, 0)
+}
+
+/// `check_genesis_commands`, each command stamped `ts`, as a genesis sequenced then would be.
+/// Error cases:
+/// - see `check_genesis_commands`
+pub(crate) fn check_genesis_commands_at(
+    client_auth: &ClientAuth,
+    operator: Operator,
+    genesis: Vec<Command>,
+    ts: Millis,
+) -> anyhow::Result<Engine> {
     let mut engine = Engine::new();
     let cmds = activation_commands(&engine, client_auth, operator, Vec::new()).into_iter().chain(genesis);
     for (seq, cmd) in (0..).zip(cmds) {
-        let sequenced = Sequenced { seq, ts: 0, cmd };
+        let sequenced = Sequenced { seq, ts, cmd };
         let events = engine.apply(&sequenced).context("checking genesis")?;
         if let Some(reason) = rejection(&events) {
             bail!("{}: the engine rejects it: {reason}", config_entry(&sequenced.cmd));

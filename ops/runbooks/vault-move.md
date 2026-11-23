@@ -176,9 +176,10 @@ vault = "0x..."            # $ALPHA_VAULT
 file = "/data/carry.json"  # the carry file that step 9 writes
 ```
 
-Set `[genesis.staking]`'s `start_ms` after the latest time the launch log's genesis can run, step 11's
-D plus a margin: the engine refuses a staking start before the genesis's own stamp, and the genesis then
-fails in full.
+Set `[genesis.staking]`'s `start_ms` after the latest time the launch log's genesis can run: step 11's
+D, plus a margin that covers step 8's three-day fallback. The engine refuses a staking start before the
+genesis's own stamp, and the start refuses with `carry_refused`, before anything is written, a carry it
+would run after `start_ms`.
 
 The configuration does not pin the carry file by hash. The launch log's own checks fix the carried
 values from the alpha's root, and the trading server reads that root from the alpha vault, so the
@@ -266,10 +267,12 @@ cast call $ALPHA_SCHEDULE 'turnsRunUntil()(uint64)' --rpc-url $RPC
 curl -sf $ALPHA_API/v1/operator | jq .
 ```
 
-Restart the turn's trading server with `engine run --frozen`: stop its virtual machine, put an empty
-file named `frozen` on its data disk, and start it again. A frozen trading server admits no client
-request. It keeps stamping prices, mirroring the chain and posting checkpoints on its usual pacing,
-and its reads and stream are unchanged.
+First put an empty file named `frozen` on the data disk of every other alpha member, and restart
+each: a member that is promoted or skipped to while the turn's trading server restarts then serves
+frozen too. Then restart the turn's trading server with `engine run --frozen`: stop its virtual
+machine, put the `frozen` file on its data disk, and start it again. A frozen trading server admits no
+client request. It keeps stamping prices, mirroring the chain and posting checkpoints on its usual
+pacing, and its reads and stream are unchanged.
 
 **Changes the live system.** The owner approves the restart.
 
@@ -277,7 +280,8 @@ and its reads and stream are unchanged.
 curl -s -o /dev/null -w '%{http_code}\n' -X POST $ALPHA_API/v1/orders
 ```
 
-The command prints `503`.
+The command prints `503`. If it prints anything else, the trading server serving the alpha's API
+is not frozen: find it with `/v1/operator`, put the `frozen` file on its data disk and restart it.
 
 Then check, after each checkpoint the alpha vault accepts, whether a carry from it would pass. Run
 the check on a copy of the alpha's log that holds the alpha vault's newest checkpoint, such as a
@@ -310,8 +314,9 @@ describes.
 
 ### 8. Retire the alpha's signer
 
-As soon as the check in step 7 passes at the alpha vault's `latestSeq`, the guardian retires the
-alpha's signer, before the vault accepts another checkpoint.
+Once the check in step 7 passes at the alpha vault's `latestSeq`, stop the virtual machine of the
+alpha's trading server, and of every member, so that no checkpoint past the one checked can reach the
+vault while the guardian collects its signatures. The guardian then retires the alpha's signer.
 
 **Changes the live system.** The owner and the guardian multisig approve the retirement.
 
@@ -327,7 +332,9 @@ launch log carries. If `$S` is past the sequence number that step 7 checked, run
 step 11.
 
 **If it fails:** the timelock calls `setSigner` on the alpha vault, which takes three days, and
-claims resume in a new signer epoch. Then undo step 7.
+claims resume in a new signer epoch. Then undo step 7. If the retirement is delayed past the
+`[genesis.staking]` start's margin that step 4 set, the launch release must be prepared again with a
+later start, or its genesis is refused.
 
 ### 9. Build the carry
 
@@ -399,9 +406,9 @@ providers, and holds under the Warning `carry_waiting` until all of these hold:
 - `MonkeyMinter` follows the launch vault;
 - the carry file is at `[genesis.carry] file`.
 
-It then checks that the carry file's source is the alpha vault's `latestSeq` and its root there,
-that the genesis with the carry applies in full, and that the carried emission budget matches the
-minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
+It then checks that the minter mints the token the staking contract holds, that the carry file's
+source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
+in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
 is claimable from that checkpoint.
 
 **Changes the live system.** The owner approved the execution when D was scheduled.
@@ -500,8 +507,9 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   names each condition from step 11 that does not yet hold. Nothing is written. A condition that
   waits on batch B, on the retirement of the alpha's signer or on the carry file resolves when you
   finish the step that it names. The alert resolves by itself once every condition holds.
-- **`carry_refused`** is Critical. The carry file's source is not the alpha vault's final
-  checkpoint, the file does not parse, the genesis with the carry does not apply in full, or the
+- **`carry_refused`** is Critical. The configured minter mints another token than the staking
+  contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
+  not parse, the genesis with the carry does not apply in full, or the
   carried emission budget differs from the minter's cap. Nothing is written, and the trading server
   stops. Build the file again from the alpha vault's `latestSeq` with step 9, put it on the data
   disk, and start the trading server again. If the configuration is wrong, prepare a new release,

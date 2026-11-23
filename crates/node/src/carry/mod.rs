@@ -72,11 +72,18 @@ pub fn run(args: CarryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Runs `engine replay --carry-source`'s check of the carried log at `carried` against `source`, printing it.
+/// Runs `engine replay --carry-source`'s check of the carried log at `carried`, whose replay recorded
+/// `replayed` as its carried source, against `source`, printing it.
 /// Error cases:
+/// - the replay recorded no carried source, or another than its parts name: a part was refused
 /// - see `check_carried`
-pub fn report_carried(carried: &Path, source: &Path) -> anyhow::Result<()> {
+pub fn report_carried(carried: &Path, replayed: Option<CarrySource>, source: &Path) -> anyhow::Result<()> {
     let from = check_carried(carried, source)?;
+    ensure!(
+        replayed == Some(from.source),
+        "the log's carry parts name {:?}, but its replay carried from {replayed:?}: a part was refused",
+        from.source
+    );
     println!(
         "carried from: chain {}, vault {}, seq {}, root {}, signed by {}; {} accounts and {} awards match the source",
         from.source.chain_id,
@@ -158,7 +165,7 @@ pub fn write(file: &CarryFile, out: &Path) -> anyhow::Result<[u8; 32]> {
 /// The carry file at `path`, with the SHA-256 of its bytes.
 /// Error cases:
 /// - the file cannot be read, is longer than `MAX_FILE_BYTES`, or is not a carry file
-/// - its source is not the one its parts begin with
+/// - its source is not the one its parts begin with, or its parts do not end with `End`
 pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
     let length = fs::metadata(path).with_context(|| format!("reading {}", path.display()))?.len();
     ensure!(length <= MAX_FILE_BYTES, "{} is longer than a carry file may be", path.display());
@@ -167,6 +174,7 @@ pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
         serde_json::from_slice(&bytes).with_context(|| format!("{} is not a carry file", path.display()))?;
     let begins = matches!(file.parts.first(), Some(CarryPart::Begin { source, .. }) if *source == file.source);
     ensure!(begins && file.totals.source == file.source, "{}'s parts do not begin with its source", path.display());
+    ensure!(file.parts.last() == Some(&CarryPart::End), "{}'s parts do not end the carry", path.display());
     Ok((file, Sha256::digest(&bytes).into()))
 }
 

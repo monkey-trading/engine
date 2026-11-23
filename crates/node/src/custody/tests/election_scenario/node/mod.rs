@@ -282,7 +282,7 @@ impl Node {
         let custody = Custody::connect(&custody_cfg, seq.last_seq()).unwrap().with_access(access.clone());
         seq.activate_protocol().unwrap();
         if seq.needs_genesis() {
-            seq.carried_genesis(&genesis, &setup::carried(chain, &dir).await).unwrap();
+            seq.carried_genesis(&genesis, &setup::carried(chain, &dir, clock.as_ref()).await).unwrap();
         }
         seq.trust(sample_around(clock.as_ref())).unwrap();
         history.catch_up_to(seq.last_seq());

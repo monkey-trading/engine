@@ -175,12 +175,13 @@ pub(in crate::custody::tests::election_scenario) fn carry_config(chain: &Chain, 
 
 /// The parts a fresh node's genesis carries: none unless `chain.carry` names a source, and then those a start
 /// takes once the chain shows the move done (`carry::boot::carried_parts`), at the minter's emission budget.
-pub(super) async fn carried(chain: &Chain, dir: &std::path::Path) -> Vec<CarryPart> {
+pub(super) async fn carried(chain: &Chain, dir: &std::path::Path, clock: &dyn crate::clock::Clock) -> Vec<CarryPart> {
     if chain.carry.is_none() {
         return Vec::new();
     }
     let budget = emission_budget(chain).await;
-    crate::carry::boot::carried_parts(&carry_config(chain, dir), Some(budget)).await.expect("the carry applies")
+    let cfg = carry_config(chain, dir);
+    crate::carry::boot::carried_parts(&cfg, Some(budget), clock).await.expect("the carry applies")
 }
 
 /// The emission period budget the minter's MONKEY cap was derived from.

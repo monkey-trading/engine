@@ -268,9 +268,13 @@ impl Sequencer {
     /// `genesis`, carrying `carry`'s parts right after staking is initialised (`[genesis.carry]`).
     /// Error cases:
     /// - see `genesis`
+    /// - parts that apply but leave the carry unfinished
     pub fn carried_genesis(&mut self, genesis: &Genesis, carry: &[CarryPart]) -> anyhow::Result<()> {
         let cmds = carried_genesis_commands(genesis, carry);
-        check_genesis_commands(&self.client_auth, self.operator, cmds.clone())?;
+        let engine = check_genesis_commands(&self.client_auth, self.operator, cmds.clone())?;
+        if !carry.is_empty() && (engine.carry_progress().is_some() || engine.carried_from().is_none()) {
+            bail!("genesis.carry: its parts begin carrying another log's state and do not finish");
+        }
         self.sequence_required("genesis", cmds)
     }
 

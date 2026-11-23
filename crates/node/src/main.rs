@@ -342,7 +342,10 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            carry_source.map_or(Ok(()), |source| engine_node::carry::report_carried(&path, &source))
+            let unfinished = replayed.engine.carry_progress().is_some();
+            anyhow::ensure!(!unfinished, "the log's genesis began carrying another log's state and did not finish");
+            let carried = replayed.engine.carried_from();
+            carry_source.map_or(Ok(()), |source| engine_node::carry::report_carried(&path, carried, &source))
         }
         Cmd::Carry(args) => {
             init_logging("error")?;
