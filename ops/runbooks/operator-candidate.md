@@ -103,7 +103,7 @@ trading server.
 
 | Must equal the running log | The candidate's own |
 | --- | --- |
-| `[genesis]`: the launch genesis, including the close-spread ceilings and staking | `node.listen`, the `[api]` limits and origins, and `[api.tls.acme]` with its hostname and contact |
+| `[genesis]`: the launch genesis, including the close-spread ceilings and staking, and `[genesis.carry]`'s `vault` when the launch log carried another log's state | `node.listen`, the `[api]` limits and origins, and `[api.tls.acme]` with its hostname and contact |
 | `node.auth = "eip712"`, `custody.chain_id` and `custody.vault` | The `[custody.evm]` providers and their credentials, and the `[checkpoints]` endpoint and relayer |
 | The `[custody.evm.staking]` contract and registry addresses | The `[feeds]` venues, vendors and symbols, and the names of their secrets |
 | The `[access]` `source` and `max_age`, which the log records once | The `[time]` servers, `[metrics]`, `[alerts]`, and the `[access]` endpoint |

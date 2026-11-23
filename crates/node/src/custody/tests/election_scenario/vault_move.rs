@@ -266,6 +266,8 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
         _ => None,
     });
     entries.expect("the alpha carries entitlements")[0].amount.0 += 1;
+    // With its totals raised to match, so the file reads and the engine's proof of the entitlement refuses it.
+    raised.totals.entitled.0 += 1;
     let raised_path = dir.join("raised.json");
     crate::carry::write(&raised, &raised_path).unwrap();
     chain.carry = Some((alpha_vault, raised_path, at));

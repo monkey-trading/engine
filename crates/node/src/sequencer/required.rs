@@ -10,7 +10,7 @@ use engine_core::deposits::LegacyDeposit;
 use engine_core::params::NotionalWeighting;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::config::Genesis;
 use crate::sequencer::Sequencer;
@@ -320,7 +320,8 @@ impl Sequencer {
             // past a value the stamp refuses, such as the staking start.
             if cmds.iter().any(is_carry_part) {
                 check_carried_genesis_at(&self.client_auth, self.operator, cmds.clone(), ts)
-                    .context("the carried genesis at its stamp")?;
+                    .context("the carried genesis at its stamp")
+                    .inspect_err(|e| error!(alert = "carry_refused", "refusing to sequence genesis: {e:#}"))?;
             }
             let mut stamped = false;
             let mut cmds = cmds.into_iter();

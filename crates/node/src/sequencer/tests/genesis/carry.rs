@@ -1,6 +1,6 @@
-//! A carried genesis is all or nothing too: parts that apply but leave the carry unfinished are refused before
-//! anything is written, and a log whose genesis credited its house capital with a carry still open is refused
-//! at recovery.
+//! A carried genesis is all or nothing too: parts that apply but leave the carry unfinished, and a genesis the
+//! stamp it takes refuses, are refused before anything is written, and a log whose genesis credited its house
+//! capital with a carry still open is refused at recovery.
 
 use std::path::Path;
 
@@ -46,6 +46,27 @@ fn parts_that_apply_but_leave_the_carry_unfinished_write_no_genesis() {
     assert!(format!("{err:#}").contains("do not finish"), "{err:#}");
     drop(seq);
     assert_eq!(log_entries(&dir), activated, "no genesis command reached the log");
+}
+
+/// The dev genesis's staking starts at 0: the start's check at 0 passes, but the stamp trusted time admits is past
+/// the start, which `InitStaking` refuses. The genesis pages Critical `carry_refused` and writes nothing.
+#[test]
+fn a_carried_genesis_its_stamp_refuses_writes_no_genesis() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let dir = scratch_dir("genesis-carry-stamp");
+    let mut seq = recover(&dir, &signed(31_337));
+    seq.activate_protocol().unwrap();
+    let activated = log_entries(&dir);
+    let parts = crate::carry::build(Path::new(CARRIED), None).unwrap().parts;
+    let err = seq.carried_genesis(&staked_genesis(), &parts).unwrap_err();
+    assert!(format!("{err:#}").contains("the carried genesis at its stamp"), "{err:#}");
+    drop(seq);
+    assert_eq!(log_entries(&dir), activated, "no genesis command reached the log");
+    let paged: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok())
+        .map(|alert| alert["alert"].clone())
+        .filter(|alert| alert.starts_with("carry_"))
+        .collect();
+    assert_eq!(paged, ["carry_refused"]);
 }
 
 #[test]

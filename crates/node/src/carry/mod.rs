@@ -7,6 +7,7 @@
 //! start requires that root to be the one the source vault last accepted, once the guardian has retired its
 //! signer. So the file can be built after the launch release is approved, from the source's final checkpoint.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow, ensure};
 use clap::Args;
 use engine_core::carry::{CarryPart, CarrySource, StateCarried};
+use engine_core::emissions::TokenUnits;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -182,6 +184,7 @@ pub fn write(file: &CarryFile, out: &Path) -> anyhow::Result<[u8; 32]> {
 /// Error cases:
 /// - the file cannot be read, is longer than `MAX_FILE_BYTES`, or is not a carry file
 /// - its source is not the one its parts begin with, or its parts do not end with `End`
+/// - its totals are not what its parts carry (`carried_by`)
 pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
     let length = fs::metadata(path).with_context(|| format!("reading {}", path.display()))?.len();
     ensure!(length <= MAX_FILE_BYTES, "{} is longer than a carry file may be", path.display());
@@ -191,7 +194,34 @@ pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
     let begins = matches!(file.parts.first(), Some(CarryPart::Begin { source, .. }) if *source == file.source);
     ensure!(begins && file.totals.source == file.source, "{}'s parts do not begin with its source", path.display());
     ensure!(file.parts.last() == Some(&CarryPart::End), "{}'s parts do not end the carry", path.display());
+    let carried = carried_by(file.source, &file.parts);
+    ensure!(carried == Some(file.totals), "{}'s totals are not what its parts carry: {carried:?}", path.display());
     Ok((file, Sha256::digest(&bytes).into()))
+}
+
+/// What `parts` carry from `source` once they apply, as `End`'s `StateCarried` reports it: the accounts holding an
+/// entitlement or a stake, the sums entitled and staked, and the number of awards. `None` for sums past
+/// `TokenUnits`, which no carry that applies reaches.
+fn carried_by(source: CarrySource, parts: &[CarryPart]) -> Option<StateCarried> {
+    let mut accounts = BTreeSet::new();
+    let (mut entitled, mut staked, mut awards) = (0u128, 0u128, 0u64);
+    for part in parts {
+        let (entries, sum) = match part {
+            CarryPart::Entitlements { entries } => (entries, &mut entitled),
+            CarryPart::Stakes { entries } => (entries, &mut staked),
+            CarryPart::Awards { awards: carried, .. } => {
+                awards += carried.len() as u64;
+                continue;
+            }
+            CarryPart::Begin { .. } | CarryPart::End => continue,
+        };
+        for entry in entries {
+            accounts.insert(entry.account);
+            *sum = sum.checked_add(entry.amount.0)?;
+        }
+    }
+    let (entitled, staked) = (TokenUnits(entitled), TokenUnits(staked));
+    Some(StateCarried { source, accounts: accounts.len() as u64, entitled, staked, awards })
 }
 
 #[cfg(test)]

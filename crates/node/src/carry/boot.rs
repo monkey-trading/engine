@@ -5,7 +5,8 @@
 //! the token the staking contract holds, the file must name the source vault's last accepted checkpoint, and the
 //! genesis it carries must apply in full on a scratch engine at the minter's emission budget, or the start stops
 //! with Critical `carry_refused` before anything is written.
-//! Every start also refuses a log whose carried source is not the config's.
+//! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
+//! turn's keys.
 
 use std::future::Future;
 use std::path::Path;
@@ -229,8 +230,23 @@ pub(crate) async fn genesis(
 /// Error cases:
 /// - see `check_carried_source`
 pub(crate) fn check_recovered(cfg: &NodeConfig, seq: &Sequencer) -> anyhow::Result<()> {
-    let configured = cfg.genesis.carry.as_ref().map(|carry| (cfg.custody.chain_id, carry.vault));
-    check_carried_source(seq.carried_from(), configured, seq.needs_genesis())
+    check_carried_source(seq.carried_from(), configured(cfg), seq.needs_genesis())
+}
+
+/// Refuses, before a member takes a turn's keys, a copy whose genesis carried from another source than the
+/// config's `[genesis.carry]`, from any when the config names none, or from none when it names one: the start
+/// would refuse to serve it (`check_recovered`) once the incumbent had handed over. A copy at a turn holds a
+/// closed genesis. Pages Critical `carry_refused`.
+/// Error cases:
+/// - see `check_carried_source`
+pub(crate) fn check_copy(cfg: &NodeConfig, copy: &engine_core::Engine) -> anyhow::Result<()> {
+    check_carried_source(copy.carried_from(), configured(cfg), false)
+        .inspect_err(|e| error!(alert = "carry_refused", "refusing to take the turn: {e:#}"))
+}
+
+/// The chain and source vault the config's `[genesis.carry]` names.
+fn configured(cfg: &NodeConfig) -> Option<(u64, AccountId)> {
+    cfg.genesis.carry.as_ref().map(|carry| (cfg.custody.chain_id, carry.vault))
 }
 
 /// Checks a log's carried source, `carried`, against the chain and source vault the config names, `configured`;

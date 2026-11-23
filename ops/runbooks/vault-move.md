@@ -19,6 +19,7 @@ approval, and an approval for one step does not cover the next.
 - [Start the launch log](#start-the-launch-log)
 - [Open to the public](#open-to-the-public)
 - [The carried genesis holds or is refused](#the-carried-genesis-holds-or-is-refused)
+- [Restore the alpha](#restore-the-alpha)
 - [After the move](#after-the-move)
 
 ## Know before you start
@@ -48,7 +49,10 @@ approval, and an approval for one step does not cover the next.
 - **Rotation pauses across the move.** From the alpha's last drawn turn until a rotation set adopted
   after the move has waited out its seven-day notice in the launch log, no standby can be promoted.
   Only the timelock's install fallback can replace a failed operator in that time. The public
-  opening is therefore at least eight days after the launch log starts.
+  opening is therefore at least eight days after the launch log starts, and every launch trading
+  server runs frozen until then, so that no client request is admitted. A deposit sent straight to
+  the launch vault before the opening is credited, and its account can trade or withdraw from the
+  opening on.
 - **The alpha's log stays published for good.** The launch log's audit starts from the alpha's final
   checkpoint, so anyone who verifies the launch log needs the alpha's whole log.
 - **Contracts.** `MonkeyToken`, `MonkeyMinter`, `Staking`, `OperatorRegistry`, the timelock,
@@ -331,8 +335,9 @@ launch log carries. If `$S` is past the sequence number that step 7 checked, run
 `$S`. The alpha vault now refuses checkpoints, withdrawals and claims, and MONKEY claims pause until
 step 11.
 
-**If it fails:** the timelock calls `setSigner` on the alpha vault, which takes three days, and
-claims resume in a new signer epoch. Then undo step 7. If the retirement is delayed past the
+**If it fails:** if the guardian has not retired the signer, start the alpha's trading servers
+again, which undoes step 7. If the move is abandoned once the signer is retired, follow
+[Restore the alpha](#restore-the-alpha). If the retirement is delayed past the
 `[genesis.staking]` start's margin that step 4 set, the launch release must be prepared again with a
 later start, or its genesis is refused.
 
@@ -358,13 +363,14 @@ jq -r '.parts[] | select(.part == "stakes") | .entries[] | "\(.account) \(.amoun
 ```
 
 Then put the file where the launch configuration's `[genesis.carry] file` names it: stop the launch
-trading server's virtual machine, copy `carry.json` to `/data/carry.json` on its data disk, and
-start it again without a `new-key` file. It opens the keys that it sealed in step 6, and it still
-serves only its attestation.
+trading server's virtual machine, copy `carry.json` to `/data/carry.json` on its data disk, put an
+empty file named `frozen` beside it, and start it again without a `new-key` file. It opens the keys
+that it sealed in step 6, and it still serves only its attestation. The `frozen` file stays until
+step 15.
 
 **Changes the live system.** The owner approves the totals, and the restart.
 
-**If it fails:** if the tool refuses, undo step 8 and then step 7.
+**If it fails:** if the tool refuses, follow [Restore the alpha](#restore-the-alpha).
 
 ## Start the launch log
 
@@ -392,9 +398,7 @@ cast call $REGISTRY 'operatorInEffect()((address,address,bytes32,uint64))' --rpc
 The commands print `$VAULT`, `$SCHEDULE`, `$VAULT`, and the launch operator with `$ADMIN_KEY`.
 
 **If it fails:** a batch that reverted on a condition runs again once the condition holds. To undo
-B, schedule a reverse batch, which takes three days: the guardian first retires the launch vault's
-placeholder signer, and the timelock then calls `setVault($ALPHA_VAULT)` on the minter and
-`setCustody($ALPHA_VAULT, $ALPHA_SCHEDULE)` on the registry.
+B before step 11, follow [Restore the alpha](#restore-the-alpha).
 
 ### 11. Run D
 
@@ -487,7 +491,11 @@ Deposit the house's capital in real USDC with `depositToHouse`, as step 11 of
 
 Members register standby keys with the launch schedule, as
 [Register your standby key](operator-candidate.md#register-your-standby-key) describes, and the
-timelock approves each member's launch release. Check the release condition in
+timelock approves each member's launch release. Each member's configuration names the launch
+operator's `[genesis.carry]` `vault`, as [The candidate's configuration](operator-candidate.md#the-candidates-configuration)
+requires: a member whose configuration does not raises `carry_refused` at its turn and stops before
+it takes the keys. A member needs no carry file. Each member's data disk holds a `frozen` file, as
+the operator's does, so that a member promoted or taking a turn before step 15 serves frozen too. Check the release condition in
 [Register the incumbent before rotation is turned on](operator-candidate.md#register-the-incumbent-before-rotation-is-turned-on),
 and then the timelock calls `setRotation(true)` on the registry. The next election close adopts a
 rotation set, and its turns run in the launch log once its seven-day notice has passed.
@@ -497,10 +505,24 @@ rotation set, and its turns run in the launch log once its seven-day notice has 
 ### 15. Open to the public
 
 Open to the public at least eight days after the launch log's first instruction, once a rotation
-set adopted after the move has waited out its notice and its turns run in the launch log. Announce
-the launch vault, and open deposits in the console.
+set adopted after the move has waited out its notice and its turns run in the launch log.
 
-**Approval:** the owner.
+Remove the `frozen` file from the data disk of every launch member but the one that holds the turn,
+and restart each. Then do the same for the turn's trading server, which `/v1/operator` names. Until
+then, check that the launch log admits no client request:
+
+```shell
+curl -s -o /dev/null -w '%{http_code}\n' -X POST $API/v1/orders
+```
+
+The command prints `503` before the opening, and any other code once the turn's trading server has
+restarted without the `frozen` file. Then announce the launch vault, and open deposits in the
+console.
+
+**Changes the live system.** The owner approves the opening and each restart.
+
+**If it fails:** a trading server that still answers `503` holds the `frozen` file. Remove it and
+restart that trading server.
 
 ## The carried genesis holds or is refused
 
@@ -512,9 +534,10 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   finish the step that it names. The alert resolves by itself once every condition holds.
 - **`carry_refused`** is Critical. The configured minter mints another token than the staking
   contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
-  not parse, the genesis with the carry does not apply in full, or the
-  carried emission budget differs from the minter's cap. Nothing is written, and the trading server
-  stops. Build the file again from the alpha vault's `latestSeq` with step 9, put it on the data
+  not parse or its totals are not what its parts carry, the genesis with the carry does not apply in
+  full at the start's time or at the stamp it takes, or the carried emission budget differs from the
+  minter's cap. Nothing is written, and the trading server stops. A refusal at the stamp, such as a
+  `[genesis.staking]` start that the hold ran past, needs a new release, as step 4 describes. Build the file again from the alpha vault's `latestSeq` with step 9, put it on the data
   disk, and start the trading server again. If the configuration is wrong, prepare a new release,
   which takes the timelock's three-day delay. Before any deposit, you may instead abandon the log:
   with the trading server stopped, remove `node.log_dir` and `history.dir`, and start again.
@@ -524,6 +547,63 @@ another source vault, or another chain. A configuration that names `[genesis.car
 refuses a log whose genesis carried nothing. Start it under the configuration that the log was
 started with, as [The trading server will not start](restart-and-recovery.md#the-trading-server-will-not-start)
 describes.
+
+## Restore the alpha
+
+Use this section when the move is abandoned after the guardian has retired the alpha's signer in
+step 8, and before the launch log's genesis in step 11. It gives the alpha back its operator, its
+release and a signer, and takes the timelock's delay twice. Start at once: anyone may start the alpha
+vault's exit fourteen days after its last checkpoint.
+
+Once the alpha's drawn turns end, the alpha vault names no release, and the last turn's member stays
+named, until the timelock installs an operator and names a release, as
+[When no standby qualifies](standby.md#when-no-standby-qualifies) describes. Its trading servers can
+open no keys until then. The alpha's candidate, admin key, launch measurement and configuration hash
+are those of the release that the alpha ran in step 7.
+
+1. If batch B ran, the guardian retires the launch vault's placeholder signer, which `setCustody`
+   and `setVault` require before they leave the launch vault:
+
+   ```shell
+   cast send $VAULT 'retireSigner()' --rpc-url $RPC --account <guardian>
+   ```
+
+   **Changes the live system.** The owner and the guardian multisig approve the retirement.
+
+2. Schedule one batch with the pattern in
+   [Calling several contracts in one timelock batch](reference.md#calling-several-contracts-in-one-timelock-batch).
+   If batch B ran, it calls these, in this order:
+
+   ```shell
+   TARGETS="[$REGISTRY,$REGISTRY,$ALPHA_VAULT,$MINTER]"
+   VALUES="[0,0,0,0]"
+   PAYLOADS="[$(cast calldata 'setCustody(address,address)' $ALPHA_VAULT $ALPHA_SCHEDULE),$(cast calldata \
+     'installOperator(address,address,bytes,bytes32)' <alpha candidate> <alpha admin key> <alpha digest> \
+     <alpha config hash>),$(cast calldata 'setCurrentRelease(bytes,bytes32)' <alpha digest> <alpha config hash>),$(cast \
+     calldata 'setVault(address)' $ALPHA_VAULT)]"
+   ```
+
+   If B has not run, leave out the first and the last call. Execute the batch once the alpha's drawn
+   turns have ended: before then, `installOperator` reverts with `TurnsPending`.
+
+   **Changes the live system.** The owner approves the batch, and the multisig signs it.
+
+   ```shell
+   cast call $REGISTRY 'operatorInEffect()((address,address,bytes32,uint64))' --rpc-url $RPC
+   cast call $ALPHA_VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+   cast call $MINTER 'vault()(address)' --rpc-url $RPC
+   ```
+
+   The first command names `<alpha admin key>`, and its third field equals the second command's
+   output. The third command prints `$ALPHA_VAULT`.
+
+3. The alpha's release now runs in a new generation. Boot the alpha's trading server with `new-key`,
+   verify its attestation, and have the timelock call `setSigner` on the alpha vault with its new
+   signer, as step 4 of [When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
+   Its trading servers start without the `frozen` file, which undoes step 7. Checkpoints, withdrawals
+   and claims resume on the alpha vault in a new signer epoch.
+
+   **Changes the live system.** The owner approves the boot and the contract call.
 
 ## After the move
 

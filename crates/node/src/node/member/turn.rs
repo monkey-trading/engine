@@ -214,6 +214,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                         catch_up(self.cfg, replica, operator).await;
                     }
                     let (replica, ..) = follower.as_mut().expect("opened above");
+                    // A config the copy's start would refuse is refused before the keys move, not after.
+                    crate::carry::boot::check_copy(self.cfg, replica.replica().engine())?;
                     info!(turn = turn.turn, "this member's turn has come: reading what its start needs, then the tail");
                     let operator = followed.as_ref().map(|(operator, _)| operator);
                     let span = info_span!("take", turn = turn.turn);

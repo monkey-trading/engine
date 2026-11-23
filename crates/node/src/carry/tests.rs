@@ -133,6 +133,28 @@ fn a_file_whose_source_is_not_its_first_parts_is_refused() {
     assert!(format!("{:#}", read(&out).unwrap_err()).contains("do not begin with its source"));
 }
 
+/// The host controls the disk, so totals edited past what the parts carry are refused, not logged as carried.
+#[test]
+fn a_file_whose_totals_are_not_what_its_parts_carry_is_refused() {
+    let file = build(Path::new(CARRIED), None).unwrap();
+    let dir = scratch_dir("carry-file-totals");
+    fs::create_dir_all(&dir).unwrap();
+    let edits: [fn(&mut StateCarried); 4] = [
+        |totals| totals.accounts += 1,
+        |totals| totals.entitled.0 += 1,
+        |totals| totals.staked.0 += 1,
+        |totals| totals.awards += 1,
+    ];
+    for (index, edit) in edits.into_iter().enumerate() {
+        let mut edited = file.clone();
+        edit(&mut edited.totals);
+        let out = dir.join(format!("carry-{index}.json"));
+        fs::write(&out, serde_json::to_vec(&edited).unwrap()).unwrap();
+        let refused = read(&out).unwrap_err();
+        assert!(format!("{refused:#}").contains("not what its parts carry"), "{index}: {refused:#}");
+    }
+}
+
 #[test]
 fn the_replay_check_ties_a_carried_log_to_its_signed_source() {
     let source = write_entries("carry-replay-source", &signed_fixture(Path::new(CARRIED)));

@@ -1,7 +1,7 @@
 //! A frozen node's API (`run --frozen`): every client request, a POST or DELETE but the operator's admin route
-//! and a standby's vouch, is refused with 503, so nothing a client sends changes the log before a new log
-//! carries its state. Reads and the stream answer as before, and the node goes on stamping prices, mirroring
-//! the chain and posting checkpoints.
+//! and a standby's vouch, is refused with 503, so nothing a client sends changes the old log before a new log
+//! carries its state, nor the new log before it opens to the public. Reads and the stream answer as before,
+//! and the node goes on stamping prices, mirroring the chain and posting checkpoints.
 
 use std::sync::Arc;
 

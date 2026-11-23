@@ -233,12 +233,14 @@ an index: load only the rule whose hint matches the current action.
   lose state of), a carried genesis's start (`carry/boot.rs`: with `[genesis.carry]`, held under Warning
   `carry_waiting` until the custody quorum reads, at a finalized block, the source vault's signer retired, the
   registry following this vault with rotation's switch off and the config's operator in effect, and MONKEY's minter
-  following this vault, then Critical `carry_refused`, nothing written, unless the file names the source vault's last
-  accepted checkpoint and its genesis applies in full at the vault's emission budget; every start refuses a log whose
-  carried source is not the config's), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
+  following this vault, then Critical `carry_refused`, nothing written, unless the minter mints the staking contract's
+  token, the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
+  genesis applies in full at the minter's emission budget, at the start's time and again at the stamp it takes; every
+  start refuses a log whose carried source is not the config's, and a member refuses such a copy before it takes a
+  turn's keys), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
   checkpoint at the carried seq holds the carried root, and the carried values are its state there), `run --frozen`
-  (`api/frozen.rs`: every client POST and DELETE refused with 503, for a source's last starts; `image/init` passes it
-  while `/data/frozen` exists),
+  (`api/frozen.rs`: every client POST and DELETE refused with 503, for a source's last starts and the new log's
+  until its public opening; `image/init` passes it while `/data/frozen` exists),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
   `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), `/v1/positions/levels` and an order's `take_profit` and `stop_loss` (from `V79`, `api/actions.rs`), screened and admitted as close-all is, the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
