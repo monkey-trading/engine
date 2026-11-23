@@ -517,28 +517,31 @@ contract OperatorRegistry {
 
     /// @notice Names the vault, whose checkpoints the liveness clock reads, and the schedule whose turns
     /// name the operator, together; with a schedule named, closes adopt rotation sets instead of
-    /// electing. The timelock may move the registry to another pair only while rotation is off and no
-    /// drawn turn runs, and to another vault only once the guardian has retired the signer of the vault
-    /// it leaves, which reads the new schedule from then on, when nothing in either is live. The
-    /// schedule must be built for this registry, over log heads that follow the vault, with an epoch of
-    /// at least `MIN_SCHEDULED_EPOCH`. Until a schedule is named the registry may follow a vault alone,
-    /// and elects; once one is, one stays.
+    /// electing. The timelock changes them only while rotation is off and no drawn turn runs and, but
+    /// to name a first schedule for the vault the registry follows, only once the guardian has retired
+    /// that vault's signer: the vault reads the registry's schedule, and one that drew none of its turns
+    /// has it name the release it held before them again. The vault must answer `checkpointSigner()`,
+    /// as a later change reads it, and the schedule be built for this registry, over log heads that
+    /// follow the vault, with an epoch of at least `MIN_SCHEDULED_EPOCH`. Until a schedule is named the
+    /// registry may follow a vault alone, and elects; once one is, one stays.
     function setCustody(address vault_, OperatorSchedule schedule_) external onlyGovernance {
         if (vault_.code.length == 0) revert ZeroAddress();
         _requireIdle();
-        IVault left = vault;
-        if (address(left) != address(0) && address(left) != vault_) {
-            address signer = left.checkpointSigner();
-            if (signer != address(0)) revert VaultSignerLive(signer);
-        }
+        _signerOf(IVault(vault_));
+        OperatorSchedule followed = schedule;
         if (address(schedule_) != address(0)) {
             uint64 epochLength = parameters.epochLength;
             if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);
             if (schedule_.registry() != this || address(schedule_.logHeads().vault()) != vault_) {
                 revert InvalidSchedule();
             }
-        } else if (address(schedule) != address(0)) {
+        } else if (address(followed) != address(0)) {
             revert InvalidSchedule();
+        }
+        IVault left = vault;
+        if (address(left) != address(0) && (address(left) != vault_ || address(followed) != address(0))) {
+            address signer = _signerOf(left);
+            if (signer != address(0)) revert VaultSignerLive(signer);
         }
         vault = IVault(vault_);
         schedule = schedule_;
@@ -785,6 +788,11 @@ contract OperatorRegistry {
     /// @dev Whether `candidate` held any assignment of `turn` in `turns`.
     function _held(OperatorSchedule turns, uint64 turn, address candidate) private view returns (bool) {
         return turns.heldTurn(turn, candidate);
+    }
+
+    /// @dev `vault_`'s signer, zero once the guardian has retired it.
+    function _signerOf(IVault vault_) private view returns (address) {
+        return vault_.checkpointSigner();
     }
 
     /// @dev Refuses while rotation is on or a drawn turn of the schedule runs.

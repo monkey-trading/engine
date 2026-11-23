@@ -1247,7 +1247,9 @@ Both answers have the same form.
 | `newest_seq`, `newest_entitled` | The newest checkpoint, and the amount it holds. |
 | `claimable` | Whether the vault can accept the proof now. |
 
-The vault pays the amount that a proof holds less what it has already paid. When `claimable` is
+The vault pays a distribution, and `MonkeyMinter` mints an emission against the vault's checkpoint,
+for the amount that a proof holds less what each has already paid or minted the account; the minter
+counts what it minted across every vault it has followed. When `claimable` is
 true, the proof is at `accepted_seq`, and its `entitled` can be below `newest_entitled`; a later
 claim pays the rest. When `claimable` is false, the proof is at the newest checkpoint, which the
 vault has not recorded yet, so the client asks again later rather than keeping the proof. The server

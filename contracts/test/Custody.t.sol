@@ -183,6 +183,37 @@ contract CustodyTest is ScheduleTest {
         assertEq(vault.checkpointSigner(), makeAddr("enclave"), "the vault it follows keeps its signer");
     }
 
+    /// A schedule that drew none of the vault's turns has it name the release it held before them again,
+    /// so the schedule changes under the vault it follows only once that vault's signer is retired too.
+    function test_TheScheduleChangesUnderAVaultOnlyOnceItsSignerIsRetired() public {
+        _runOneTurnAndStop(alice, bob);
+        bytes32 named = vault.currentRelease();
+        OperatorSchedule fresh = _newSchedule();
+        address signer = vault.checkpointSigner();
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultSignerLive.selector, signer));
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), fresh);
+        // Naming the same pair again changes nothing, and is held to the same rule.
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultSignerLive.selector, signer));
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), schedule);
+        assertEq(vault.currentRelease(), named, "the vault still names its last turn's release");
+
+        _retire(vault);
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), fresh);
+        assertEq(address(registry.schedule()), address(fresh));
+    }
+
+    function test_TheVaultMustAnswerItsSigner() public {
+        _deployRegistry();
+        // MONKEY has code but no `checkpointSigner()`, so no later change could leave it.
+        vm.expectRevert();
+        vm.prank(address(governance));
+        registry.setCustody(address(monkey), OperatorSchedule(address(0)));
+        assertEq(address(registry.vault()), address(0));
+    }
+
     function test_TheTimelockMovesTheRegistryBackOnceIdle() public {
         Vault old = vault;
         OperatorSchedule oldSchedule = schedule;
