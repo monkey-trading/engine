@@ -191,4 +191,131 @@ so please check that an issue still reproduces there before you report it.
 
 ## Bug bounty
 
-There is no bug bounty yet. We will announce one, with its scope and rewards, before launch.
+We reward valid reports of vulnerabilities in the components in scope. The rewards are paid only
+from the USDC that the engine distributes once people trade on it. The project holds no fund for
+them. An award is approved by a stake-weighted vote, queued in the engine's state, and paid by each
+epoch close ahead of the operator's and stakers' shares, up to a cap. It is paid only once the
+engine has earned it. Every award is the amount the scale below states for the finding's severity,
+so the only judgement in an award is the severity, which we grade by the rules below.
+
+Reports go through the channels in [Reporting a vulnerability](#reporting-a-vulnerability), and
+the response times, containment and disclosure rules above apply to them unchanged.
+
+### What the bounty covers
+
+The bounty covers each component in the [scope](#scope) table. A finding is rewarded for the
+component whose code or deployment it breaks:
+
+| Component | A finding in scope |
+| --- | --- |
+| `engine-core` | A way to break a trading rule, the state a command produces, or a guarantee in the [security model](docs/security-model.md#trading-rules-and-the-operators-bounds). |
+| `engine-node` | A way to make the trading server publish, sign or serve something its log does not support, to get past one of its checks, or to halt it with a client's request. |
+| `engine-wire`, `engine-verify` and the browser verifier | A signed answer or an attestation that a verifier accepts and should refuse, or the reverse. |
+| The vault and the MONKEY token | A way to take, freeze or mint funds that the contracts do not allow. |
+| The staking contract | A way to take or freeze staked MONKEY or a distribution, or to move votes that the contract does not allow. |
+| The operator contracts | A way to elect, draw, promote, fault or vote against the contracts' rules. |
+| The seed relay | A way to forge, bias or withhold a daily turn's seed. |
+| The enclave image | A flaw in what the image's code and build give the enclave, such as a key, clock or disk guarantee that `docs/enclave.md` states. |
+| `engine ct-watch` | A way to make the watcher miss or invent an unattested certificate. |
+
+The contracts and the image are in scope as published in this repository, before they are deployed.
+We grade a contract finding by the funds the contract is designed to hold at launch.
+
+### What it does not cover
+
+The [out of scope](#out-of-scope) list above applies, and so does
+[what counts as a new finding](#what-counts-as-a-new-finding). The bounty also does not cover:
+
+- a finding that rests on a known limit in the security model, an open issue or a `TODO` in the code;
+- a finding that needs an operator's key, or another credential, to be compromised first, except as
+  [findings that start from an operator's key](#findings-that-start-from-an-operators-key) describes;
+- the development-only parts: the mock TEE, custody and feed providers, the `short-turns` feature,
+  the dev configurations, and the keys that `config/test-keys.toml` lists as published;
+- `research/`, `agents/`, `docs/`, tests and scripts, unless a flaw there reaches a component in
+  scope;
+- the output of an automated scanner with no demonstrated effect, a missing hardening measure with
+  no path to an effect, and a vulnerability in a dependency that the engine's use of it does not
+  reach.
+
+### Who can be paid
+
+You can be paid for a report if:
+
+- it is the first report of the issue that we can reproduce. A later report of the same issue is
+  credited, and not paid;
+- you followed the [safe harbour](#safe-harbour) when you found it and sent it, and kept it private
+  as this policy asks;
+- you are not a maintainer, an employee or contractor of the project, or anyone paid to write,
+  review or audit the code in question;
+- you give an address on Arbitrum One from which you will claim the award;
+- you make no demand for payment, or for more than the scale states, as a condition of reporting
+  or of keeping a report private.
+
+Several reports with one root cause are one finding, paid once at the highest severity among them.
+A fix you send is welcome, and does not change the payout.
+
+### Severity and awards
+
+We grade severity by what an attacker achieves, and not by how hard the finding was to make, using
+the same grades as the project's [code review severity guide](agents/skills/agent-code-review/references/severity.md).
+The grade is the one whose description fits the worst effect a realistic attacker can reach:
+
+| Severity | What an attacker achieves | Award |
+| --- | --- | --- |
+| Critical | Funds are lost, frozen or taken: USDC in the vault, MONKEY minted that is not owed, or a claim paid that is not owed. Or a state is forged: the trading server reports a state that its log does not replay to, or the enclave signs a state that the rules do not produce, or a signature is forged or reused. Or a key is controlled: the enclave's keys are read or altered from its host, or the vault's signer, timelock or guardian, or an operator's election, is taken over. | 250,000 USDC |
+| High | Wrong behaviour on a realistic path that takes no funds: an order executes at a price the rules do not allow, a request that any client can send halts the engine, an effect is lost or duplicated after a restart, funds are frozen for a time without our action, or one of the engine's checks or an operator's bounds is passed. | 50,000 USDC |
+| Medium | Wrong behaviour on an edge path, a failure that nobody would notice, or a refusal of service to one account. | 10,000 USDC |
+| Low | A weakness with no effect on behaviour, such as a hardening gap that needs another flaw to matter. | 1,000 USDC |
+
+When a finding fits two rows, it takes the higher one. We grade a finding down one row when it needs
+a condition that an attacker cannot bring about, such as the holder of a key choosing to act against
+its own interest, and we say so in our reply.
+
+The [findings that matter most](#findings-that-matter-most) grade as follows. Taking funds, a
+reported state that differs from the replayed log, a forged or reused enclave signature, and
+reading or altering what the enclave holds are Critical. An order at a price the rules do not allow,
+and a halt by a request that any client can send, are High, unless they also take funds, which makes
+them Critical.
+
+### How an award is decided and paid
+
+1. We grade the finding within the ten business days that [What happens next](#what-happens-next)
+   gives, and tell you the grade and the reasons for it.
+2. If you disagree, send evidence of a worse effect within ten business days, and we regrade it once.
+   Our regrade is final.
+3. After the fix has shipped and the advisory is published, a member of the rotation set proposes
+   the award on the vote contract. The proposal names your address, the final grade, the scale's
+   amount for that grade and the advisory's identifier. Any member may propose an award, and we
+   propose one for every finding graded under this policy once its advisory is published. No
+   proposal is made while the finding is private, so a vote never reveals a live finding.
+4. The rotation set votes, weighted by the stake delegated to its members, and the proposal passes
+   at two thirds of the weight, as every parameter vote does. It applies seven days after it is
+   logged. The operator cannot register an award by its own command, and the fast path refuses one.
+5. The engine adds the award to its queue with the amount the scale states for the grade, and
+   refuses any other amount. It awards each advisory once, and refuses a second award that names an
+   advisory already awarded. The queue and each award are public in the log and in the API.
+6. Each epoch close pays the queue first, oldest award first, before it splits the rest of the
+   excess between the operator and the stakers. A close pays awards at most 5% of its
+   distributable excess, and never more than 50,000 USDC. An award that a close cannot finish stays
+   at the front of the queue with the rest of its amount.
+7. A payment is credited to your address as a distribution entitlement, and you claim it from the
+   vault with a proof, as a staker claims a distribution. Nothing is paid until you claim.
+8. We credit you in the advisory as [Coordinated disclosure](#coordinated-disclosure) describes.
+
+A report is paid only from distributions that the engine has earned, and an epoch distributes
+nothing while the house's net asset value is at or below the liquidity floor or nobody is staked.
+An award waits in the queue until a close can pay it. The queue's state and each payment can be
+checked by replaying the log, and each claim against a checkpoint root.
+
+The vote is only as independent as its weights. At launch the rotation set's stake is largely the
+project owner's, so the owner's votes decide which reports are awarded. What the engine enforces,
+whoever votes, is the scale's amount per grade, one award for each advisory, the cap on each close,
+the queue's order and that a paid award is final.
+
+If the vault's permanent exit starts, the part of an award already credited to your address ranks
+with the stakers' distributions in the exit, and you claim it as they do. The part still in the
+queue when the exit starts is lost.
+
+The scale is fixed in the engine's rules. A vote may move the cap to between 5% and 20% of a
+close's distributable excess, and its limit to between 50,000 and 250,000 USDC. The operator cannot
+change the scale or the cap, or register an award, by its own command.

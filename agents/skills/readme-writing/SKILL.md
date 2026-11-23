@@ -190,7 +190,7 @@ what the system can be trusted for. In this order:
    scope, and what counts as a new finding.
 5. **Supported versions** and **bug bounty**, short.
 
-The policy stays at about 200 lines. It links, near the top and from the scope, to
+The policy stays at about 200 lines, plus the bug bounty section once the programme runs. It links, near the top and from the scope, to
 `docs/security-model.md`, which holds what each component is trusted for and its known limits:
 one `##` heading per component (the engine, the trading server, custody, the enclave, price feeds,
 operator rotation, and so on). Under each, first what the component guarantees, then its known
