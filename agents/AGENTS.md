@@ -561,8 +561,9 @@ an index: load only the rule whose hint matches the current action.
   anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
   seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
   (`setCustody`, which names the vault and the schedule together, over log heads that follow that vault,
-  and changes them only while rotation is off and no drawn turn runs and, but to name a first schedule,
-  only once the guardian has retired the followed vault's signer, `test/Custody.t.sol`),
+  and changes them only while rotation is off and no drawn turn of the schedule it follows or names runs
+  and, but to name a first schedule, only once the guardian has retired the followed vault's signer,
+  `test/Custody.t.sol`),
   adopting a rotation set in it instead: anyone then draws each daily turn from the
   set in effect a day before its boundary, weighted by votes and seeded from `SeedReceiver`, the turn's
   member names the operator from its boundary in a generation the vault's one counter hands out, and

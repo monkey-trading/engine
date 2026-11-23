@@ -375,8 +375,9 @@ already names.
    the schedule and the execute.
 
    The call reverts with `RotationActive` while rotation is on, with `TurnsPending` while a drawn
-   turn runs, with `EpochTooShort` while the election epoch is shorter than a day, with `ZeroAddress`
-   for a vault with no code, without a reason for a contract that does not answer
+   turn of the schedule the registry follows or of the one the call names runs, with
+   `EpochTooShort` while the election epoch is shorter than a day, with `ZeroAddress` for a vault
+   with no code, without a reason for a contract that does not answer
    `checkpointSigner()`, with `VaultSignerLive` when it would change the vault or the schedule of a
    registry whose vault's signer the guardian has not retired, other than to name a first schedule,
    and with `InvalidSchedule` for a schedule built for another registry or
@@ -384,7 +385,8 @@ already names.
    `cast call $REGISTRY 'vault()(address)' --rpc-url $RPC` prints `$VAULT` and
    `cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`. The timelock may
    move the registry to another vault and schedule later, but only while rotation is off and no drawn
-   turn runs, and only once the guardian has retired the signer of the vault the registry follows.
+   turn of either schedule runs, and only once the guardian has retired the signer of the vault the
+   registry follows.
 
 5. **Deploy the parameter vote** on Arbitrum, over the schedule, with the `[parameter_vote]`
    windows.
