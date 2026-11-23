@@ -124,6 +124,10 @@
 #   is not out. Both libraries (NYSE, NASDAQ, XNYS, XNAS) give the same hours,
 #   holidays and early closes for both years. NYSE observes no New Year's Day
 #   holiday on 31 Dec 2027, as 1 Jan 2028 is a Saturday.
+#   Re-read on 2026-11-23: NYSE's page lists the same 2027 holidays (1 Jan,
+#   18 Jan, 15 Feb, 26 Mar, 31 May, 18 Jun, 5 Jul, 6 Sep, 25 Nov, 24 Dec) and
+#   the 26 Nov 2027 13:00 early close, as the schedule has them, and nothing
+#   for 31 Dec 2027. Nasdaq's page still gives 2026 only.
 # - FX (ids 10-13): Cboe FX spot, Sunday 17:00 to Friday 17:00 ET, closed on
 #   Christmas Day and New Year's Day:
 #   https://cdn.cboe.com/resources/fx/operation.pdf (section 22) and
@@ -141,6 +145,10 @@
 #   starts or how a Saturday Christmas is treated.
 #   Re-read on 2026-11-12: the same operating procedures (effective 16 Oct 2026)
 #   and the hours page, unchanged, give no closure start or Saturday rule.
+#   Re-read on 2026-11-23: TraderMade's API documentation
+#   (https://tradermade.com/docs/restful-api) gives only the week, and Massive's
+#   forex documentation (https://massive.com/docs/forex) names no holiday
+#   closure, so neither settles the start.
 #   NOT VERIFIED: that 17:00 ET start of each closure, and the closure on
 #   24 Dec 2027.
 # - US 500, US Tech 100, Wall St 30 (ids 20-22) and gold, silver, WTI
@@ -191,6 +199,9 @@
 #   so the sessions before each closure run, as the schedule has them. That
 #   page ends the night session at 5:30, against 06:00 on the hours page,
 #   which the schedule follows.
+#   Re-tried on 2026-11-23: jpx.co.jp answered HTTP 403 to an automated read
+#   of the holiday trading page, so it was not re-read and nothing below is
+#   newer than 2026-10-29.
 #   NOT VERIFIED: that holiday trading days from July 2027 hold, as they are
 #   scheduled until JPX finalizes them in December 2026; and whether the
 #   Friday night sessions before the BCP tests run, on which JPX says nothing
