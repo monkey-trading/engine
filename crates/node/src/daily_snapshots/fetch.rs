@@ -17,6 +17,7 @@ use tracing::debug;
 use crate::daily_snapshots::writer::{publish_staged, sync_dir};
 use crate::daily_snapshots::{Listed, MANIFEST, MAX_SNAPSHOT_BYTES, offset_named};
 use crate::log::Offset;
+use crate::paced::Paced;
 
 /// The most bytes a snapshot manifest may hold: one line a day for decades.
 const MAX_MANIFEST_BYTES: u64 = 8 << 20;
@@ -92,7 +93,9 @@ pub(crate) async fn download(
     let staged = dir.join(format!("{}.tmp", listing.file));
     let read = async {
         let mut response = client.get(&url).timeout(SNAPSHOT_TIMEOUT).send().await?.error_for_status()?;
-        let mut file = BufWriter::new(File::create(&staged).with_context(|| format!("creating {}", staged.display()))?);
+        let mut file = BufWriter::new(Paced::new(
+            File::create(&staged).with_context(|| format!("creating {}", staged.display()))?,
+        ));
         let (mut hash, mut bytes) = (Sha256::new(), 0u64);
         while let Some(chunk) = response.chunk().await? {
             bytes += chunk.len() as u64;
@@ -106,7 +109,7 @@ pub(crate) async fn download(
         );
         let file =
             file.into_inner().map_err(|e| e.into_error()).with_context(|| format!("writing {}", staged.display()))?;
-        file.sync_all().with_context(|| format!("syncing {}", staged.display()))?;
+        file.get_ref().sync_all().with_context(|| format!("syncing {}", staged.display()))?;
         anyhow::Ok(())
     };
     let fetched = timeout(SNAPSHOT_TIMEOUT, read).await.with_context(|| format!("fetching {url} timed out"));

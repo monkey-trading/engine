@@ -30,6 +30,7 @@ use tracing::warn;
 
 use crate::config::SnapshotSection;
 use crate::log::{Checkpoint, Offset};
+use crate::paced::Paced;
 use crate::tee::EnclaveKey;
 
 #[derive(Serialize, Deserialize)]
@@ -82,7 +83,7 @@ pub(crate) fn stage(cfg: &SnapshotSection, snapshot: &Snapshot, key: &EnclaveKey
     ensure!(bytes.len() <= cfg.max_bytes.get(), "snapshot exceeds snapshots.max_bytes");
     fs::create_dir_all(&cfg.dir).context("creating snapshot directory")?;
     Staged::create(cfg.dir.join(name(snapshot.offset)), cfg.retain.get(), is_snapshot_name, |file| {
-        file.write_all(&bytes).context("writing snapshot")?;
+        Paced::new(&mut *file).write_all(&bytes).context("writing snapshot")?;
         file.sync_all().context("syncing snapshot")
     })
 }

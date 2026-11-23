@@ -24,6 +24,7 @@ use tracing::{info, warn};
 
 use crate::daily_snapshots::{Listed, MANIFEST, SCHEMA, Signing, Written, day, offset_named, read_manifest};
 use crate::log::{Checkpoint, Offset};
+use crate::paced::Paced;
 use crate::snapshot::sealing::{ENCODE_WAIT, Encoding};
 
 /// A daily snapshot for the thread to publish.
@@ -303,14 +304,14 @@ pub(super) fn publish_staged(staged: &Path, to: &Path) -> std::io::Result<()> {
 /// - `path` exists or cannot be created, or `write`, the flush or the sync fails
 fn write_synced(
     path: &Path,
-    write: impl FnOnce(&mut Hashed<BufWriter<File>>) -> anyhow::Result<()>,
+    write: impl FnOnce(&mut Hashed<BufWriter<Paced<File>>>) -> anyhow::Result<()>,
 ) -> anyhow::Result<([u8; 32], u64)> {
     let written = (|| {
         let file = File::create_new(path).with_context(|| format!("creating {}", path.display()))?;
-        let mut out = Hashed::new(BufWriter::new(file));
+        let mut out = Hashed::new(BufWriter::new(Paced::new(file)));
         write(&mut out)?;
         out.flush()?;
-        out.inner.get_ref().sync_all().with_context(|| format!("syncing {}", path.display()))?;
+        out.inner.get_ref().get_ref().sync_all().with_context(|| format!("syncing {}", path.display()))?;
         Ok((out.hash.finalize().into(), out.bytes))
     })();
     if written.is_err() {
