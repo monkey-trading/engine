@@ -1321,14 +1321,15 @@ Run from the repo root:
   bounds the threads that check seals ahead of each replay that checks every seal, the node's included (one per core)
 - The replay's cost on a kept log (#1116), for profiling: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::bench -- --ignored --nocapture --test-threads=1` writes the launch book and
-  `RECOVERY_LAUNCH_SECS` (an hour) of launch flow into `<dir>` on its first run, then `replay_bench` times `engine
+  `RECOVERY_LAUNCH_SECS` (an hour) of launch flow, or of `REPLAY_BENCH_MULTIPLE` (1) times it, into `<dir>` on its
+  first run, then `replay_bench` times `engine
   replay`'s replay of it, in wall and CPU time, its seals checked at run ends or, with `REPLAY_BENCH_SEALS=every`, each
   in full, and `apply_bench` the apply thread's parts (each command kind's apply, the roots, the reads and the seal
   checks); run it under `nice`
 - The authenticated history index's ingest rate on a recorded log (#1114): `HISTORY_BENCH_LOG=<log dir> cargo test -p
   engine-node --lib history::authenticated::tests::bench -- --ignored --nocapture`, the log's first command at seq 0
   (as the recovery scenario's is), `HISTORY_BENCH_COMMANDS` (20,000) and `HISTORY_BENCH_BATCH` (128) sizing it;
-  it derives no rollover rows
+  it prints its time every 10,000 commands and the head's root at the end; it derives no rollover rows
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

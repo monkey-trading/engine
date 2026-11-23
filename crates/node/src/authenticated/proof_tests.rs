@@ -1,40 +1,18 @@
-//! A proof's reads load only the children upstream's proof can ask for, and every read still proves its value.
-
-use std::cell::Cell;
-use std::collections::BTreeMap;
+//! A read walks and checks only the nodes on its key's path, and still proves every value and absence.
 
 use anyhow::Result;
-use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
-use jmt::{JellyfishMerkleTree, KeyHash, RootHash, ValueHash};
+use jmt::storage::{LeafNode, Node};
+use jmt::{KeyHash, ValueHash};
+use rusqlite::params;
 
-use crate::authenticated::reader::proof_children;
-use crate::authenticated::tests::{fresh, put};
-use crate::authenticated::{Hasher, Root, codec};
+use crate::authenticated::reader::{Checked, Reader};
+use crate::authenticated::tests::{fresh, put, raw};
+use crate::authenticated::{Hasher, Root, codec, key_hash};
 
-/// For every set of two or more children and every nibble, upstream's own proof of a key through that
-/// nibble finishes, verifies against the root's hash, and asks only for children `proof_children` names.
-/// Every child is a leaf, the case in which upstream reads the most: it reads a sibling alone in its
-/// range only when that sibling is a leaf or the range is one wide.
+/// Reads of present and absent keys through trees of every depth the fixture reaches give each value, and
+/// absence.
 #[test]
-fn a_proof_loads_every_child_upstreams_proof_asks_for() -> Result<()> {
-    for existing in (1..=u16::MAX).filter(|bits| bits.count_ones() >= 2) {
-        let reader = Leaves::new(existing)?;
-        for nibble in 0..16u8 {
-            let mut key = [0x5a; 32];
-            key[0] = nibble << 4 | 0x5;
-            reader.asked.set(0);
-            let (value, proof) = JellyfishMerkleTree::<_, Hasher>::new(&reader).get_with_proof(KeyHash(key), 0)?;
-            proof.verify(RootHash(codec::hash(&reader.root)), KeyHash(key), value.as_deref())?;
-            assert_eq!(reader.asked.get() & !proof_children(existing, nibble), 0, "{existing:016b} at {nibble}");
-        }
-    }
-    Ok(())
-}
-
-/// Reads of present and absent keys through trees of every depth the fixture reaches give each value,
-/// and absence, as they did when every child was loaded.
-#[test]
-fn reads_through_the_proofs_children_prove_every_value_and_absence() -> Result<()> {
+fn reads_prove_every_value_and_absence() -> Result<()> {
     let (_dir, store) = fresh()?;
     let mut root = Root::empty([41; 32]);
     for round in 0..3u32 {
@@ -48,58 +26,68 @@ fn reads_through_the_proofs_children_prove_every_value_and_absence() -> Result<(
     Ok(())
 }
 
-// ── Helpers ──
-
-/// A tree at version 0 of one internal root whose children, one at each nibble in its bitmap, are leaves,
-/// as upstream reads it, recording the children upstream asks for.
-struct Leaves {
-    root: Node,
-    children: BTreeMap<NodeKey, Node>,
-    asked: Cell<u16>,
+/// A read of one key checks one node a level of its path, with none of the siblings beside it, and the
+/// same read again, of a value or of an absence, checks nothing more.
+#[test]
+fn a_read_checks_only_the_nodes_on_its_path() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let namespace = [42; 32];
+    let changes = (0..1_200u32).map(|n| put(&n.to_be_bytes(), &n.to_le_bytes())).collect();
+    let root = store.update(&Root::empty(namespace), changes)?;
+    let conn = raw(&dir)?;
+    let checked = Checked::default();
+    let reader = Reader::new(&conn, &root, true, &checked)?;
+    let present = key_hash(&namespace, &7u32.to_be_bytes())?;
+    assert!(reader.read(present)?.is_some());
+    let path = checked.nodes().borrow().len();
+    assert!((2..=6).contains(&path), "{path} nodes checked for one key in 1,200");
+    assert!(reader.read(present)?.is_some());
+    assert_eq!(checked.nodes().borrow().len(), path, "a second read of the key checks nothing more");
+    assert_eq!(reader.read(key_hash(&namespace, b"absent")?)?, None);
+    Ok(())
 }
 
-impl Leaves {
-    /// The tree with a leaf at each nibble in `existing`.
-    /// Error cases:
-    /// - a node does not encode or decode
-    fn new(existing: u16) -> Result<Self> {
-        let (root_key, mut children, mut wire) = (codec::root_key(0)?, BTreeMap::new(), Vec::new());
-        for nibble in 0..16u8 {
-            if existing & (1 << nibble) == 0 {
-                wire.push(serde_json::Value::Null);
-                continue;
-            }
-            let mut key = [0xa5; 32];
-            key[0] = nibble << 4 | 0xa;
-            let leaf = Node::from(LeafNode::new(KeyHash(key), ValueHash([nibble; 32])));
-            wire.push(serde_json::json!({ "hash": codec::hash(&leaf), "version": 0, "node_type": "Leaf" }));
-            children.insert(codec::child_key(&root_key, nibble, 0)?, leaf);
-        }
-        let count = existing.count_ones();
-        let root = serde_json::json!({
-            "Internal": { "children": { "children": wire, "num_children": count }, "leaf_count": count }
-        });
-        Ok(Self { root: codec::decode(&root_key, &serde_json::to_vec(&root)?)?, children, asked: Cell::new(0) })
+/// A leaf that stands where its key's path does not lead is refused, though every hash on the way matches:
+/// a leaf at nibble 3 of the root holds a key whose first nibble is 5, beside a leaf in its place at nibble 9,
+/// and a read of a key of nibble 3 finds it there.
+#[test]
+fn a_leaf_off_its_keys_path_is_refused() -> Result<()> {
+    let (dir, _store) = fresh()?;
+    let namespace = [43; 32];
+    let root_key = codec::root_key(0)?;
+    let conn = raw(&dir)?;
+    let mut wire = vec![serde_json::Value::Null; 16];
+    let mut held = [0xa5; 32];
+    // The leaf at each slot holds the key whose first nibble is its own, but at slot 3 it is 5's.
+    for (slot, first) in [(3u8, 0x5a), (9, 0x9a)] {
+        held[0] = first;
+        let value = vec![slot];
+        let leaf = Node::from(LeafNode::new(KeyHash(held), ValueHash::with::<Hasher>(&value)));
+        wire[usize::from(slot)] = serde_json::json!({ "hash": codec::hash(&leaf), "version": 0, "node_type": "Leaf" });
+        conn.execute(
+            "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
+            params![&namespace[..], codec::path(&codec::child_key(&root_key, slot, 0)?)?, codec::encode(&leaf, false)?],
+        )?;
+        conn.execute(
+            "INSERT INTO value_rows(namespace,key,version,data) VALUES(?1,?2,0,?3)",
+            params![&namespace[..], &held[..], value],
+        )?;
     }
-}
-
-impl TreeReader for Leaves {
-    /// The root, or a child, recording that upstream asked for it.
-    fn get_node_option(&self, key: &NodeKey) -> Result<Option<Node>> {
-        if key.nibble_path().num_nibbles() == 0 {
-            return Ok(Some(self.root.clone()));
-        }
-        self.asked.set(self.asked.get() | 1 << u8::from(key.nibble_path().get_nibble(0)));
-        Ok(self.children.get(key).cloned())
-    }
-
-    /// Never asked for: no queried key is a leaf's, so every proof is of absence.
-    fn get_value_option(&self, _: u64, _: KeyHash) -> Result<Option<Vec<u8>>> {
-        anyhow::bail!("unused")
-    }
-
-    /// Never asked for by a proof.
-    fn get_rightmost_leaf(&self) -> Result<Option<(NodeKey, LeafNode)>> {
-        anyhow::bail!("unused")
-    }
+    let internal = serde_json::json!({
+        "Internal": { "children": { "children": wire, "num_children": 2 }, "leaf_count": 2 }
+    });
+    let top = codec::decode(&root_key, &serde_json::to_vec(&internal)?)?;
+    conn.execute(
+        "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
+        params![&namespace[..], codec::path(&root_key)?, codec::encode(&top, false)?],
+    )?;
+    let root = Root { namespace, version: Some(0), hash: codec::hash(&top) };
+    let checked = Checked::default();
+    let reader = Reader::new(&conn, &root, true, &checked)?;
+    let mut asked = held;
+    asked[0] = 0x3a;
+    assert!(reader.read(KeyHash(asked)).is_err(), "a leaf off the path proved an absence");
+    asked[0] = 0x9a;
+    assert_eq!(reader.read(KeyHash(asked))?, Some(vec![9]), "a leaf on its path reads");
+    Ok(())
 }
