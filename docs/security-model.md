@@ -982,10 +982,14 @@ Known limits:
 - The engine cannot check that an award's advisory is real and published, that its severity is
   right, or that two advisories do not describe one finding. The voters judge those, and the vote is
   only as independent as the stake behind it.
-- A proposal passes only while rotation is on and a rotation set with members is in effect. A vote
-  that passed then still applies seven days after it is logged, even if rotation has turned off in
-  the meantime, so an award can be approved, or the cap move, while rotation is off. The queue is
-  paid whether or not rotation is on.
+- A proposal opens only while rotation is on and a rotation set is in effect, and only a member of
+  that set proposes it. It then takes votes from that set's members, at the weights the set adopted,
+  until its window closes, while rotation is on, and it passes when the yes weight first passes two
+  thirds. It can therefore pass after a later set with no members has taken effect, and the engine
+  records the pass while rotation is on and any set, with members or none, is in effect. A vote that
+  passed applies seven days after it is logged, even if rotation has turned off in the meantime, so
+  an award can be approved, or the cap move, while rotation is off. The queue is paid whether or not
+  rotation is on.
 - An award is paid only by closes that distribute. While the house's net asset value is at or below
   the liquidity floor, or nobody is staked, the queue waits.
 - The quorum alone stands behind a window's range read for a block from which it returns no event. If

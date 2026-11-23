@@ -200,7 +200,7 @@ jobs:
                   | crates/node/src/custody/registry* | crates/node/src/custody/staking* \
                   | crates/node/src/custody/evm/staking* | crates/node/src/custody/standby_keys* \
                   | crates/node/src/custody/operators/* | crates/node/src/api/operator* | crates/node/src/api/standby* \
-                  | crates/node/src/api/archive.rs)
+                  | crates/node/src/api/archive.rs | crates/node/src/api/awards.rs)
                   areas+=" rust $anvil log_heads scenario_tests recovery_scale" ;;
                 # Custody: the vault's deposits, checkpoints, withdrawals and payouts, the exit, and
                 # screened access.
