@@ -4,6 +4,7 @@
 use anyhow::bail;
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::carry::CarryPart;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::params::NotionalWeighting;
@@ -13,7 +14,7 @@ use tracing::{info, warn};
 
 use crate::config::Genesis;
 use crate::sequencer::Sequencer;
-use crate::sequencer::genesis::{GENESIS_REF, check_genesis, genesis_commands, rejection};
+use crate::sequencer::genesis::{GENESIS_REF, carried_genesis_commands, check_genesis_commands, rejection};
 use crate::trusted_time::Sample;
 
 impl Sequencer {
@@ -114,6 +115,11 @@ impl Sequencer {
     /// more than protocol activation.
     pub fn needs_genesis(&self) -> bool {
         !self.engine.is_credited(GENESIS_REF)
+    }
+
+    /// The checkpoint the log's carried genesis took its state from, once it applied in full.
+    pub(crate) fn carried_from(&self) -> Option<engine_core::carry::CarrySource> {
+        self.engine.carried_from()
     }
 
     /// Records the config's client auth and operator and activates the latest protocol version,
@@ -256,8 +262,16 @@ impl Sequencer {
     /// - the engine rejects one when it is sequenced
     /// - the log cannot be written
     pub fn genesis(&mut self, genesis: &Genesis) -> anyhow::Result<()> {
-        check_genesis(&self.client_auth, self.operator, genesis)?;
-        self.sequence_required("genesis", genesis_commands(genesis))
+        self.carried_genesis(genesis, &[])
+    }
+
+    /// `genesis`, carrying `carry`'s parts right after staking is initialised (`[genesis.carry]`).
+    /// Error cases:
+    /// - see `genesis`
+    pub fn carried_genesis(&mut self, genesis: &Genesis, carry: &[CarryPart]) -> anyhow::Result<()> {
+        let cmds = carried_genesis_commands(genesis, carry);
+        check_genesis_commands(&self.client_auth, self.operator, cmds.clone())?;
+        self.sequence_required("genesis", cmds)
     }
 
     /// Queues commands the engine must accept, `what` they are for, and sequences everything queued

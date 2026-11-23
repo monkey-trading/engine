@@ -1,5 +1,6 @@
-//! Genesis: the `[genesis]` config as the commands that open a log, the check that the engine
-//! accepts every one of them before any is written, and how far a replayed log got through them.
+//! Genesis: the `[genesis]` config as the commands that open a log, with a carried genesis's parts from its
+//! carry file, the check that the engine accepts every one of them before any is written, and how far a
+//! replayed log got through them.
 //! Genesis is all or nothing: recovery refuses a log that started genesis without reaching the
 //! checkpoint after its house capital credit, one whose genesis no config loaded today can give, and
 //! one whose genesis is not the config's.
@@ -7,6 +8,7 @@
 use anyhow::{Context, bail};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::carry::CarryPart;
 use engine_core::close_spread::CloseSpreadCeiling;
 use engine_core::command::{AdminCommand, Command, Sequenced};
 use engine_core::event::Event;
@@ -136,6 +138,9 @@ impl GenesisProgress {
                 ProtocolVersion::LATEST
             );
         }
+        // A carried genesis's parts come from the carry file, not the config: the in-log checks prove them,
+        // and the node compares their source with the config's (`carry::check_recovered`).
+        let ran: Vec<Command> = ran.into_iter().filter(|cmd| !is_carry_part(cmd)).collect();
         // Configs sequence the ceiling install at genesis; a log that predates it ran the same
         // genesis without that command and takes its ceilings at the `V40` upgrade instead (see
         // `Sequencer::activate_protocol`).
@@ -217,6 +222,11 @@ impl GenesisProgress {
 /// The commands that sequence `genesis` into a log, in order. The last is the house capital credit
 /// under `GENESIS_REF`, a zero one included, which marks genesis done.
 pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
+    carried_genesis_commands(genesis, &[])
+}
+
+/// `genesis_commands` carrying `carry`'s parts right after staking is initialised (`[genesis.carry]`).
+pub fn carried_genesis_commands(genesis: &Genesis, carry: &[CarryPart]) -> Vec<Command> {
     let mut cmds = vec![Command::Admin(AdminCommand::SetParams(genesis.params.clone()))];
     cmds.extend(genesis.benchmarks.iter().map(|b| {
         Command::Admin(AdminCommand::SetBenchmarkRate { benchmark: b.name.clone(), annual_bps: b.annual_bps })
@@ -225,6 +235,7 @@ pub fn genesis_commands(genesis: &Genesis) -> Vec<Command> {
     if let Some(staking) = &genesis.staking {
         cmds.push(Command::Admin(AdminCommand::InitStaking(*staking)));
     }
+    cmds.extend(carry.iter().map(|part| Command::Admin(AdminCommand::CarryState(part.clone()))));
     // Always, so a log with no markets still installs the registry: from `V40` a listing needs an
     // adopted ceiling, and a log that never installs one would list uncapped markets.
     cmds.push(Command::Admin(AdminCommand::SetCloseSpreadCeilings { ceilings: genesis.close_spread_ceilings.clone() }));
@@ -242,8 +253,14 @@ fn is_genesis_command(cmd: &Command) -> bool {
                 | AdminCommand::UpsertMarket(_)
                 | AdminCommand::InitStaking(_)
                 | AdminCommand::SetCloseSpreadCeilings { .. }
+                | AdminCommand::CarryState(_)
         )
     ) || is_genesis_credit(cmd)
+}
+
+/// Whether `cmd` is a part of a carried genesis.
+pub(crate) fn is_carry_part(cmd: &Command) -> bool {
+    matches!(cmd, Command::Admin(AdminCommand::CarryState(_)))
 }
 
 /// Whether `cmd` is the house capital credit that ends genesis.
@@ -257,13 +274,17 @@ fn is_genesis_credit(cmd: &Command) -> bool {
 /// Error cases:
 /// - the engine rejects a command; the error names the genesis entry it comes from
 pub(crate) fn check_genesis(client_auth: &ClientAuth, operator: Operator, genesis: &Genesis) -> anyhow::Result<()> {
-    check_genesis_commands(client_auth, operator, genesis_commands(genesis))
+    check_genesis_commands(client_auth, operator, genesis_commands(genesis)).map(drop)
 }
 
-/// As `check_genesis`, for the commands a genesis sequences.
+/// As `check_genesis`, for the commands a genesis sequences, returning the engine they leave.
 /// Error cases:
 /// - the engine rejects a command; the error names the genesis entry it comes from
-fn check_genesis_commands(client_auth: &ClientAuth, operator: Operator, genesis: Vec<Command>) -> anyhow::Result<()> {
+pub(crate) fn check_genesis_commands(
+    client_auth: &ClientAuth,
+    operator: Operator,
+    genesis: Vec<Command>,
+) -> anyhow::Result<Engine> {
     let mut engine = Engine::new();
     let cmds = activation_commands(&engine, client_auth, operator, Vec::new()).into_iter().chain(genesis);
     for (seq, cmd) in (0..).zip(cmds) {
@@ -273,7 +294,7 @@ fn check_genesis_commands(client_auth: &ClientAuth, operator: Operator, genesis:
             bail!("{}: the engine rejects it: {reason}", config_entry(&sequenced.cmd));
         }
     }
-    Ok(())
+    Ok(engine)
 }
 
 /// The reason the engine gave for rejecting an admin or house capital command, if it did.
@@ -292,6 +313,7 @@ fn config_entry(cmd: &Command) -> String {
         Command::Admin(AdminCommand::UpsertMarket(spec)) => format!("genesis market {}", spec.symbol),
         Command::Admin(AdminCommand::InitStaking(_)) => "genesis.staking".into(),
         Command::Admin(AdminCommand::SetCloseSpreadCeilings { .. }) => "genesis.close_spread_ceilings".into(),
+        Command::Admin(AdminCommand::CarryState(_)) => "genesis.carry".into(),
         Command::HouseCapital { .. } => "genesis.house_capital".into(),
         _ => "protocol activation".into(),
     }

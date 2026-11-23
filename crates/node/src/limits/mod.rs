@@ -94,6 +94,8 @@ pub struct ApiLimits<C: Clock = DefaultClock> {
     /// from its stamp to its send to a subscriber (`with_timing`).
     request_seconds: Histogram,
     stream_seconds: Histogram,
+    /// Whether the node admits no client request (`run --frozen`, `api::frozen`).
+    pub(crate) frozen: bool,
 }
 
 /// Open connections, in total and per client.
@@ -183,6 +185,7 @@ impl<C: Clock + Clone> ApiLimits<C> {
             quote_reads: Arc::new(Semaphore::new(QUOTE_READS_IN_FLIGHT)),
             allowed_origins: cfg.allowed_origins.iter().cloned().collect(),
             request_seconds: Histogram::new(LATENCY_BUCKETS),
+            frozen: false,
             stream_seconds: Histogram::new(LATENCY_BUCKETS),
         }
     }
@@ -191,6 +194,11 @@ impl<C: Clock + Clone> ApiLimits<C> {
     /// is sent into the node's registered histograms, in place of ones no registry exports.
     pub fn with_timing(self, latency: &LatencyMetrics) -> Self {
         Self { request_seconds: latency.request.clone(), stream_seconds: latency.stream_lag.clone(), ..self }
+    }
+
+    /// These limits, admitting no client request while `frozen` (`run --frozen`).
+    pub fn frozen(self, frozen: bool) -> Self {
+        Self { frozen, ..self }
     }
 
     /// The histogram each live message's time from its stamp to its send to a subscriber goes in.

@@ -38,7 +38,7 @@ use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
 mod backfill;
-mod chain;
+pub(crate) mod chain;
 mod cut;
 pub(crate) use cut::{cut_marked, finish as finish_cut};
 mod follow;

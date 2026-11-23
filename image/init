@@ -6,7 +6,9 @@
 # is bound into the attestation), the history index, the alert outbox, the custody
 # deposit cursor, the sealed keys, and the operator's one-off key choices: /data/new-key asks for new
 # keys for a release that has none sealed, and /data/predecessor holds the address of the running
-# release to take them from. Each choice is removed before the engine starts, so it applies once. The
+# release to take them from. Each choice is removed before the engine starts, so it applies once.
+# /data/frozen, which stays until the operator removes it, starts the engine admitting no client
+# request (`run --frozen`), for a log's last starts before a new log carries its state. The
 # event log is on the second disk, mounted at /data/log, so that the writes of the history index and
 # the recovery caches on the first never hold the log's syncs; a production build refuses a config
 # whose log directory shares a device with them.
@@ -36,6 +38,9 @@ if [ -e /data/predecessor ]; then
   predecessor=$(cat /data/predecessor)
   rm /data/predecessor
   set -- "$@" --predecessor "$predecessor"
+fi
+if [ -e /data/frozen ]; then
+  set -- "$@" --frozen
 fi
 /engine "$@" || status=$?
 echo "engine exited with status $status; powering off"

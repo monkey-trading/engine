@@ -469,7 +469,7 @@ pub(crate) mod genesis;
 mod governance;
 mod liveness;
 mod snapshots;
-pub use genesis::{GenesisProgress, genesis_commands};
+pub use genesis::{GenesisProgress, carried_genesis_commands, genesis_commands};
 mod quotes;
 mod required;
 pub(crate) mod turns;

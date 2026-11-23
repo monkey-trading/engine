@@ -9,6 +9,7 @@ mod alerts;
 mod api;
 pub(crate) mod authenticated;
 mod benchmarks;
+pub mod carry;
 mod checkpoints;
 pub use checkpoints::{ApprovalId, ApprovalStatus, LifecycleEvidence};
 mod clock;

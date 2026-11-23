@@ -45,6 +45,8 @@ pub struct KeyStart {
     /// The mock TEE's stand-in for the launch measurement, from which its public stand-in for
     /// sealing derives the key; a real platform measures the release itself.
     pub mock_launch_digest: Option<[u8; 48]>,
+    /// Admit no client request (`run --frozen`): a log's last start before a new log carries its state.
+    pub frozen: bool,
 }
 
 /// Parses `--mock-launch-digest`: 48 bytes of hex, with or without `0x`.

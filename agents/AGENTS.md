@@ -127,6 +127,14 @@ an index: load only the rule whose hint matches the current action.
   that distributes pays the queue first, oldest first, up to the lesser of the cap's share of its excess and its
   limit, into each recipient's distribution leaf, before the operator's share and the stakers'; each award a leaf of
   its own in `merkle/awards.rs`, `tests/bounty_awards.rs`),
+  from `V90` a carried genesis (`carry/`: at a move to a new vault, a new log's genesis takes, by the node's
+  `CarryState` parts right after `InitStaking`, each account's MONKEY entitlement and stake, the staking mirror's
+  frontier, the emission schedule and every award, unpaid, from another log's checkpoint root, each proven against
+  it, the sets checked complete against the source's totals and an absent next award id, consecutive commands only
+  and nothing else credited first; the first command after it closes the carried period with no weight; the staking
+  state's total staked, set at activation and kept by every mirrored stake; `Engine::carry_parts` builds the parts,
+  `tests/carried_genesis.rs` and `tests/carried_genesis/`, and `tests/reference/v90-carried.jsonl` is a log whose
+  genesis carries the reference session's frozen state, which `examples/reference_log` writes given a second path),
   from `V78` the operator's status notice (`notice.rs`: one 1 to 280 character plain-text message, no markup or link, set and cleared by the operator's signed `SetNotice` and `ClearNotice` whether or not votes govern, held in state with the time it was set, `tests/notice.rs`),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in
@@ -221,6 +229,16 @@ an index: load only the rule whose hint matches the current action.
   (`sequencer/replay/roots.rs`, `Replay::check_ahead` and `settled`; a member's live replica computes each root in
   place), `engine exit-proof` (`exit/`: the exit's proofs and vault calls from a published
   log, or with `--deposit` the refund of the vault's deposit at an id through the receipt the root holds there),
+  `engine carry` (`carry/`: the carry file of a source log's published checkpoint, refusing a source a carry would
+  lose state of), a carried genesis's start (`carry/boot.rs`: with `[genesis.carry]`, held under Warning
+  `carry_waiting` until the custody quorum reads, at a finalized block, the source vault's signer retired, the
+  registry following this vault with rotation's switch off and the config's operator in effect, and MONKEY's minter
+  following this vault, then Critical `carry_refused`, nothing written, unless the file names the source vault's last
+  accepted checkpoint and its genesis applies in full at the vault's emission budget; every start refuses a log whose
+  carried source is not the config's), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
+  checkpoint at the carried seq holds the carried root, and the carried values are its state there), `run --frozen`
+  (`api/frozen.rs`: every client POST and DELETE refused with 503, for a source's last starts; `image/init` passes it
+  while `/data/frozen` exists),
   `engine admin` (the operator's signing client), the REST API with the operator's admin
   route, the browser-origin allowlist (`api.allowed_origins`, in `api/origin.rs`), the
   `/v1/session-keys` registration and revocation a session key trades under (from `V41`), admission before a first deposit (`api/state.rs`: a never-credited account may declare, then manage its session keys, each within the fresh-account budgets in `limits/`, set by `[api.fresh_accounts]` apart from `api.per_ip` and `api.per_account` and capped in a production build (`config/fresh_accounts.rs`), with a declaration from an account with a pending deposit exempt from both, and nothing else; declarations hold at most half the API's screening slots), from `V66` a credited account's per-account and session-key buckets at its volume tier's request rate, read from the API's engine copy (`ApiState::read`), the bursts set in `[api.request_bursts]` as seconds of that rate and capped in a production build (`config/request_bursts.rs`), and a 429 naming the tier and its rate (`limits/`), `/v1/orders/cancel-all` and `/v1/positions/close-all` (from `V44`), `/v1/positions/levels` and an order's `take_profit` and `stop_loss` (from `V79`, `api/actions.rs`), screened and admitted as close-all is, the client address from a trusted pass-through proxy's PROXY protocol v2 header (`[api.proxy_protocol]`, in `tls/proxy.rs`), account proofs, exit proofs, MONKEY entitlement proofs, and MONKEY distribution proofs, and the resumable WebSocket stream (TLS from an attested in-enclave key,
@@ -737,7 +755,9 @@ an index: load only the rule whose hint matches the current action.
   values each deployment sets (`DEPLOYMENT`), and production to `ops/runbooks/production-node.toml` but for those,
   the host's product names, the rotation contracts and `[snapshots]`: a change to the template changes them too, and
   a decided value outside those goes into the template as well. Every section
-  rejects unknown keys. `access-source.md` documents the optional signed screening source,
+  rejects unknown keys. The optional `[genesis.carry]` names a source log's vault and the carry file `engine carry`
+  wrote, whose state the genesis carries after `[genesis.staking]` (EVM custody with `[custody.evm.staking]` only).
+  `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
   `Dockerfile` (static `engine`, kernel, busybox initramfs, OVMF, and the launch measurement, every
@@ -1087,7 +1107,9 @@ an index: load only the rule whose hint matches the current action.
   checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
   `unattested_certificate` alert, operator candidates and standbys, the seed relay, and an SEV-SNP host (ordering
   the server, enabling SEV-SNP, booting three guests against a local chain, verifying their attestations and
-  measuring the engine inside a guest against the host, `sev-snp-host.md`). `alerts.md` lists every alert
+  measuring the engine inside a guest against the host, `sev-snp-host.md`), and the move to a new vault at launch
+  (`vault-move.md`: the alpha's wind-down, the carry, the launch log's carried genesis, each step's approval and
+  rollback, and the public opening at least eight days after the move). `alerts.md` lists every alert
   the code raises with its level and where to go (a new alert gets a row there in the same change),
   `reference.md` holds the shared variables, checks and timelock call patterns (one call, or a batch
   of calls in one transaction), and `production-node.toml` is the production
@@ -1580,6 +1602,10 @@ Run from the repo root:
   release once the vault makes the new one current; both need the vault's current release to be
   this one, and the mock TEE also needs `--mock-launch-digest <hex>`
 - Exit dev scenario: `./scripts/dev-exit.sh` (the withdrawal scenario's requirements)
+- Carry a source log's state into a new log's genesis: `cargo run -p engine-node -- carry --log <source log>
+  [--seq <the source vault's latestSeq>] [--out <file>]` writes the carry file `[genesis.carry]` names and prints what
+  it carries and its SHA-256; `--check` only checks the checkpoint can be carried; `engine replay --log <new log>
+  --carry-source <source log>` checks a carried log against its source
 - Exit proofs from a published log: `cargo run -p engine-node -- exit-proof --log <path> --seq
   <the vault's latestSeq> --account <address>` (or `--house`, or `--deposit <id>`), printing the proofs and each vault
   call ABI-encoded; the log's commands must reproduce that checkpoint's root

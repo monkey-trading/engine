@@ -520,6 +520,15 @@ uses the nonce.
 | Open stream connections | 503 `too many stream subscribers` | `api.max_subscribers` |
 | Time for a client to take an answer or a stream message | The connection is closed | `api.send_timeout` |
 
+### A server frozen for a move
+
+Before a deployment moves to a new vault, its operator starts the server with `engine run --frozen`.
+A frozen server answers every client `POST` and `DELETE` with 503
+`the node is frozen for a move to a new vault and takes no client request`, and the request never
+reaches the log. Orders, cancels, closes, levels, session keys, eligibility declarations,
+withdrawals, payout reissues and simulated deposits are all refused. Reads, the stream,
+`POST /v1/admin` and `POST /v1/standby/vouch` answer as before.
+
 ### Browser origins
 
 A web page may call the API only from an origin that `api.allowed_origins` lists, such as

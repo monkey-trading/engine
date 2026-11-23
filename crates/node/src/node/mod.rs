@@ -271,10 +271,7 @@ async fn serve_node(
     seq.carry_toxicity_notional(weighting)
         .and_then(|()| seq.activate_protocol())
         .inspect_err(|e| error!(alert = "protocol_activation_failed", "refusing to serve: {e:#}"))?;
-    if seq.needs_genesis() {
-        info!(markets = cfg.genesis.markets.len(), "genesis queued for the first trusted time sample");
-        seq.genesis(&cfg.genesis).inspect_err(|e| error!(alert = "genesis_refused", "refusing to serve: {e:#}"))?;
-    }
+    crate::carry::boot::genesis(cfg, &mut seq, emission_budget).await?;
     history.catch_up_to(seq.last_seq());
 
     // Startup has committed through recovery: move the seeded marks cache into place, attach the
@@ -413,7 +410,7 @@ async fn serve_node(
 
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;
-    let limits = Arc::new(ApiLimits::new(&cfg.api).with_timing(&metrics.latency));
+    let limits = Arc::new(ApiLimits::new(&cfg.api).with_timing(&metrics.latency).frozen(start.frozen));
     ticker::start_screening_refresh(access.as_ref(), &client_auth, &operator, &mut tasks);
     let signing = Signing::new(key, cfg.custody.chain_id, vault, cfg.api.heartbeat_interval, trusted_clock);
     let app = router(ApiState {

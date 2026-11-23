@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand};
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
+use engine_node::carry::CarryArgs;
 use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
@@ -45,6 +46,10 @@ enum Cmd {
         /// `--mock-launch-digest` still names the release its delivered secrets are sealed for.
         #[arg(long, conflicts_with_all = ["new_key", "predecessor"])]
         standby: bool,
+        /// Admit no client request, for a log's last start before a new log carries its state: prices,
+        /// the chain's mirrors and checkpoints go on.
+        #[arg(long, conflicts_with = "standby")]
+        frozen: bool,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
     /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
@@ -98,7 +103,14 @@ enum Cmd {
         /// How many ranges replay at once with `--snapshots`; one per two physical cores when unset.
         #[arg(long, requires = "snapshots")]
         jobs: Option<NonZeroUsize>,
+        /// The published log a carried genesis took its state from: its checkpoint at the carried seq must
+        /// hold the carried root, signed, and the carried values must be its state there.
+        #[arg(long)]
+        carry_source: Option<PathBuf>,
     },
+    /// Build the carry file a new log's genesis takes MONKEY entitlements, stakes and awards from, from a source
+    /// log's published checkpoint, and print what it carries and its SHA-256.
+    Carry(CarryArgs),
     /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
     /// at a vault deposit id, from a published log alone, against the root of its checkpoint at
     /// `--seq`, which must be the vault's `latestSeq`. Prints
@@ -235,7 +247,7 @@ struct Cli {
 /// - the CT watcher cannot start, or stops with an error
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
-        Cmd::Run { config, new_key, predecessor, mock_launch_digest, standby } => {
+        Cmd::Run { config, new_key, predecessor, mock_launch_digest, standby, frozen } => {
             let cfg = NodeConfig::load(&config)?;
             let telemetry = init_telemetry(&cfg, |var| std::env::var(var).ok())?;
             if standby {
@@ -245,7 +257,7 @@ fn main() -> anyhow::Result<()> {
                     KeyStart { mock_launch_digest, ..Default::default() },
                 ))
             } else {
-                run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest })
+                run_dedicated(cfg, telemetry, KeyStart { new_key, predecessor, mock_launch_digest, frozen })
             }
         }
         Cmd::Replay {
@@ -263,6 +275,7 @@ fn main() -> anyhow::Result<()> {
             replay_workers,
             snapshots,
             jobs,
+            carry_source,
         } => {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
@@ -329,7 +342,11 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            Ok(())
+            carry_source.map_or(Ok(()), |source| engine_node::carry::report_carried(&path, &source))
+        }
+        Cmd::Carry(args) => {
+            init_logging("error")?;
+            engine_node::carry::run(args)
         }
         Cmd::ExitProof { log, seq, account, house: _, deposit } => {
             // The bundle is the output; only errors are logged.

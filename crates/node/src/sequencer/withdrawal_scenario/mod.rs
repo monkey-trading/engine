@@ -149,10 +149,10 @@ async fn node_child() -> anyhow::Result<()> {
     };
     let keys = match std::env::var(CHILD_KEYS).ok().as_deref() {
         None => crate::KeyStart { mock_launch_digest, ..Default::default() },
-        Some("new-key") => crate::KeyStart { new_key: true, predecessor: None, mock_launch_digest },
+        Some("new-key") => crate::KeyStart { new_key: true, mock_launch_digest, ..Default::default() },
         Some(other) => {
             let address = other.strip_prefix("predecessor=").context("unknown scenario key start")?;
-            crate::KeyStart { new_key: false, predecessor: Some(address.to_owned()), mock_launch_digest }
+            crate::KeyStart { predecessor: Some(address.to_owned()), mock_launch_digest, ..Default::default() }
         }
     };
     ensure!(cfg.custody.provider == CustodyProvider::Evm && cfg.custody.chain_id == 31337, "local Anvil only");

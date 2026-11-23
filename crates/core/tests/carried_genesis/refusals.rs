@@ -23,6 +23,8 @@ use crate::fixture::{
 
 /// A change to the source's parts, which a carry must refuse with a reason containing its text.
 type Tamper = (&'static str, fn(&mut Vec<CarryPart>), &'static str);
+/// A change to the source's state, which leaves it a source that builds no parts, with a reason containing its text.
+type Lossy = (&'static str, fn(&mut Harness), &'static str);
 
 /// The index of the first part of `kind`.
 fn first(parts: &[CarryPart], kind: fn(&CarryPart) -> bool) -> usize {
@@ -222,7 +224,7 @@ fn switch(h: &mut Harness, enabled: bool, block: u64) {
 
 #[test]
 fn a_source_whose_carry_would_lose_state_builds_no_parts() {
-    let refused: [(&str, fn(&mut Harness), &str); 4] = [
+    let refused: [Lossy; 4] = [
         ("rotation on", |h| switch(h, true, 9), "rotation is on"),
         ("results in the open period", |h| lose(h, TRADER_SEEDS[0]), "results in the open emission period"),
         (

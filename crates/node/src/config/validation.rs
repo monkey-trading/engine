@@ -270,6 +270,7 @@ impl NodeConfig {
             }
         }
         self.validate_custody()?;
+        self.validate_carry()?;
         self.validate_checkpoints()?;
         self.validate_log_heads()?;
         self.validate_liveness()?;
