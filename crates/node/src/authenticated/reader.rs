@@ -113,8 +113,7 @@ impl<'a> Reader<'a> {
     /// path ends in its leaf, to the leaf's hash. Upstream's point proof would hash the same nodes and every
     /// sibling beside them to reach the same root.
     /// Error cases:
-    /// - bounded storage traversal fails, a node or value does not match its authenticated hash, or a leaf
-    ///   stands off its key's path
+    /// - bounded storage traversal fails, or a node or value does not match its authenticated hash
     pub(super) fn read(&self, key: KeyHash) -> Result<Option<Vec<u8>>> {
         if let Some(value) = self.checked.reads.borrow().values.get(&(self.root.clone(), key)) {
             return Ok(value.clone());
@@ -140,9 +139,8 @@ impl<'a> Reader<'a> {
                     return Ok(None);
                 }
                 Node::Leaf(leaf) => {
-                    let found = leaf.key_hash();
-                    ensure!((0..depth).all(|at| nibble(&found, at) == nibble(&key, at)), "leaf stands off its path");
-                    if found != key {
+                    // `codec::decode` refused every leaf outside the path it was loaded at.
+                    if leaf.key_hash() != key {
                         return Ok(None);
                     }
                     let value = self
