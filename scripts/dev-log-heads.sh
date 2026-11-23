@@ -67,10 +67,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }
 step() { echo "==> $*"; }
 fail() {
   echo "FAIL: $*" >&2
   [[ -f "$work/node.log" ]] && tail -n 40 "$work/node.log" >&2
+  [[ -f "$work/node4.log" ]] && { echo "--- node4.log (leg 4's node), last 60 lines:" >&2; tail -n 60 "$work/node4.log" >&2; }
   exit 1
 }
 
@@ -155,13 +157,21 @@ for port in "$rpc_a_port" "$rpc_b_port" "$rpc_c_port"; do
   done
 done
 
-# How often the poster reads the posted head back, which is how soon it sees an overtaking head (the
-# default is 30 s). Leg 4 waits for the freeze that read causes: up to one read interval after the post,
-# plus the read itself, bounded by `checkpoints.rpc_timeout` (5 s), plus a margin for a slow runner.
+# Leg 4 waits for the node to stop after an overtaking post. The path, as measured (about 11.6 s locally):
+# - up to `read_interval` for the poster's next read (the default is 30 s);
+# - the read itself: four sequential quorum stages (identity, latest block, headers, head), each bounded
+#   by `custody.evm.rpc_timeout` (5 s), so 20 s only if every stage stalls to its timeout;
+# - the freeze and the sequencer's drain, which take milliseconds;
+# - the alert drain, which waits its whole 10 s grace (`SHUTDOWN_GRACE`) because this scenario's Critical
+#   route is a closed port, so the log_rollback page is never delivered;
+# - a margin for a slow runner.
 read_interval_secs=2
 rpc_timeout_secs=5
+read_stages=4
+alert_drain_secs=10
 freeze_margin_secs=10
-freeze_wait_secs=$((read_interval_secs + rpc_timeout_secs + freeze_margin_secs))
+grep -qF "rpc_timeout = \"${rpc_timeout_secs}s\"" "$root/config/anvil.toml" || fail "config/anvil.toml's custody rpc_timeout is not ${rpc_timeout_secs}s, which leg 4's wait assumes"
+freeze_wait_secs=$((read_interval_secs + read_stages * rpc_timeout_secs + alert_drain_secs + freeze_margin_secs))
 
 step "Write the node's config: anvil.toml's rewrites plus [checkpoints] and [log_heads]"
 # Rewrite original config tokens once so destination ports cannot cascade into later matches.
@@ -372,6 +382,7 @@ signature="$(cast wallet sign --no-hash --private-key "$mock_key" "$digest")"
 [[ "$signature" =~ ^0x[0-9a-f]{130}$ ]] || fail "no 65-byte signature for the overtaking head"
 cast send "$logheads" "post(uint64,bytes32,uint64,bytes32,bytes)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link" "$signature" \
   --private-key "$junk_relayer_key" --rpc-url "$rpc" >/dev/null
+posted_ms="$(now_ms)"
 # The poster reads at a majority-agreed latest block: the overtaking head is visible to its next
 # read, at most `read_interval_secs` away, without advancing the chain.
 frozen=""
@@ -382,6 +393,7 @@ done
 [[ -n "$frozen" ]] || fail "the node did not stop within ${freeze_wait_secs}s of the overtaking head"
 if wait "$node_pid"; then fail "the frozen node exited zero"; fi
 node_pid=""
+echo "leg 4: the node stopped $(( $(now_ms) - posted_ms )) ms after the overtaking post"
 grep -q 'alert="log_rollback"' "$work/node4.log" || fail "no Critical log_rollback in the freeze: $(tail -n 5 "$work/node4.log")"
 grep -Eq "over seqs [0-9]+\.\.=$junk_seq([^0-9]|\$)" "$work/node4.log" \
   || fail "the freeze did not name the range up to $junk_seq: $(tail -n 5 "$work/node4.log")"
