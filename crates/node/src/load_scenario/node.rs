@@ -268,13 +268,12 @@ impl Node {
         let Node { tx, mut sequencer, sync_end, tasks, history, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
         let outcome = std::mem::replace(&mut sequencer.outcome, oneshot::channel().1);
-        // Dropping the worker cancels the sequencer at its next async boundary, before `tx` can drain it.
+        // Dropping the worker cancels the sequencer at its next async boundary. This node's own sender stays
+        // until it has ended, so the queue cannot close, and the sequencer drain, before the cancel lands.
         drop(sequencer);
-        drop(tx);
         let ended = timeout(DRAIN, outcome).await.context("the cancelled sequencer did not end in time")?;
-        // Only the worker's own cancellation: any other error is the sequencer failing before the kill.
-        let cancelled = matches!(&ended, Ok(Err(error)) if format!("{error:#}").contains("cancelled after supervisor"));
-        anyhow::ensure!(cancelled, "the sequencer did not end by cancellation: {ended:?}");
+        drop(tx);
+        stopped_without_failing(&ended)?;
         log_sync_ended(sync_end).await?;
         match history {
             Some(history) => history.abort().await,
@@ -294,6 +293,18 @@ async fn log_sync_ended(end: Option<SyncEnd>) -> anyhow::Result<()> {
         }
     };
     timeout(SYNC_END, ended).await.context("the log-sync thread did not end in time")
+}
+
+/// Whether a sequencer's outcome is a stop and not a failure: the worker's own cancellation, or a clean end,
+/// which a sequencer busy in a synchronous step reaches when the cancel and a closing queue land together.
+/// Error cases:
+/// - the sequencer failed before it was stopped, or its outcome was lost
+fn stopped_without_failing(ended: &Result<anyhow::Result<()>, oneshot::error::RecvError>) -> anyhow::Result<()> {
+    match ended {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) if format!("{error:#}").contains("cancelled after supervisor") => Ok(()),
+        other => anyhow::bail!("the sequencer did not stop cleanly: {other:?}"),
+    }
 }
 
 /// Gives the sequencer, and the API's signing, a trusted time sample every `SAMPLE_EVERY`, but while
@@ -339,4 +350,23 @@ pub(super) async fn listen() -> (TcpListener, SocketAddr) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
     let addr = listener.local_addr().expect("local addr");
     (listener, addr)
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::anyhow;
+
+    use super::*;
+
+    #[test]
+    fn a_sequencer_that_was_cancelled_or_ended_cleanly_stopped_and_any_other_end_did_not() {
+        let cancelled = Err(anyhow!("sequencer cancelled after supervisor stopped"));
+        assert!(stopped_without_failing(&Ok(cancelled)).is_ok(), "the worker's cancellation");
+        assert!(stopped_without_failing(&Ok(Ok(()))).is_ok(), "a drain that beat the cancel");
+        let failed = Err(anyhow!("syncing the log: the disk failed"));
+        assert!(stopped_without_failing(&Ok(failed)).is_err(), "a failure before the kill");
+        let (gone, outcome) = oneshot::channel::<anyhow::Result<()>>();
+        drop(gone);
+        assert!(stopped_without_failing(&outcome.blocking_recv()).is_err(), "an outcome that never came");
+    }
 }
