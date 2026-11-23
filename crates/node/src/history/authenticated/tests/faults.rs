@@ -141,7 +141,7 @@ fn missing_nullable_certificate_fields_are_not_defaulted_to_authority() {
 fn rejected_store_batch_does_not_advance_the_in_memory_head_and_can_retry_cleanly() {
     let (mut index, path) = fixture("store-batch-failure", 100);
     let before = index.head();
-    let entry = command(0, 0, Some((0..100).map(|_| deposit(A, 1)).collect()));
+    let entry = command(0, 0, Some((0..PAST_A_STAGE).map(|_| deposit(A, 1)).collect()));
     let mut injected = false;
     assert!(
         index

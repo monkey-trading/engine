@@ -7,6 +7,10 @@ use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
 use crate::history::authenticated::staging::{STAGED_BYTES, STAGED_KEYS};
 use crate::history::authenticated::state::{STATE_KEY, State};
 
+/// Events in a fanout that fills several private stages: four in five events are an account's, each
+/// writing about four keys, so `FANOUT` events write about five stages of `STAGED_KEYS` keys.
+const FANOUT: usize = STAGED_KEYS * 3 / 2;
+
 /// Mixes accounts and kinds while preserving non-account gaps in the original cursor indices.
 fn fanout(seq: u64, ts: Millis, count: usize) -> CommandEntry {
     let events = (0..count)
@@ -19,6 +23,11 @@ fn fanout(seq: u64, ts: Millis, count: usize) -> CommandEntry {
         })
         .collect();
     command(seq, ts, Some(events))
+}
+
+/// The account events of a fanout of `count` events, which the index queues.
+fn fanout_accounts(count: usize) -> u64 {
+    (0..count).filter(|index| index % 5 != 4).count() as u64
 }
 
 /// Builds an attempted Head matching every pending field; only its complete marker is unavailable.
@@ -35,9 +44,9 @@ fn pending_candidate(root: &crate::authenticated::Root, state: &State) -> Head {
 }
 
 #[test]
-fn thousand_event_command_uses_bounded_private_batches_and_publishes_only_complete_pages() {
-    let (mut index, _) = fixture("thousand-fanout", 1_000);
-    let entry = fanout(0, 0, 1_257);
+fn a_fanout_command_uses_bounded_private_batches_and_publishes_only_complete_pages() {
+    let (mut index, _) = fixture("fanout", 1_000);
+    let entry = fanout(0, 0, FANOUT);
     let before = index.head();
     let mut commits = 0;
     index
@@ -57,10 +66,10 @@ fn thousand_event_command_uses_bounded_private_batches_and_publishes_only_comple
             Ok(())
         })
         .expect("whole large command");
-    assert!(commits > 20);
+    assert!(commits >= 3, "{commits} private stages");
     assert_eq!(index.head().last_command, Some(CommandId::of(&entry).expect("identity")));
     assert_eq!(index.head().command_prefix, prefix(std::slice::from_ref(&entry)));
-    assert_eq!(index.head().queue_hi, 1_006);
+    assert_eq!(index.head().queue_hi, fanout_accounts(FANOUT));
     for account in [A, B, AccountId([0xee; 20])] {
         for kind in std::iter::once(None).chain(KINDS.iter().copied().map(Some)) {
             assert_all_pages(&index, std::slice::from_ref(&entry), account, kind, 50);
@@ -77,12 +86,12 @@ fn a_commands_private_stages_sync_once_with_its_complete_stage() {
     let before = index.store.syncs();
     let mut stages = 0;
     index
-        .ingest_observed(fanout(0, 0, 1_257), |_, _, _| {
+        .ingest_observed(fanout(0, 0, FANOUT), |_, _, _| {
             stages += 1;
             Ok(())
         })
         .expect("whole large command");
-    assert!(stages > 20, "{stages} private stages");
+    assert!(stages >= 3, "{stages} private stages");
     assert_eq!(index.store.syncs() - before, 1, "only the complete stage syncs");
 }
 
@@ -112,9 +121,9 @@ fn the_index_writes_its_nodes_compact_and_its_values_whole() {
 }
 
 #[test]
-fn thousand_event_expiry_on_no_events_keeps_equality_then_expires_every_row_and_kind() {
-    let (mut index, _) = fixture("thousand-expiry", 100);
-    let initial = fanout(0, 0, 1_257);
+fn a_fanouts_expiry_on_no_events_keeps_equality_then_expires_every_row_and_kind() {
+    let (mut index, _) = fixture("fanout-expiry", 100);
+    let initial = fanout(0, 0, FANOUT);
     let equal = command(1, 100, None);
     let expired = command(2, 101, None);
     index.ingest(initial.clone()).expect("fanout");
@@ -132,8 +141,9 @@ fn thousand_event_expiry_on_no_events_keeps_equality_then_expires_every_row_and_
             Ok(())
         })
         .expect("all exact expiry pieces");
-    assert!(commits > 20);
-    assert_eq!((index.head().queue_lo, index.head().queue_hi), (1_006, 1_006));
+    assert!(commits >= 3, "{commits} private stages");
+    let queued = fanout_accounts(FANOUT);
+    assert_eq!((index.head().queue_lo, index.head().queue_hi), (queued, queued));
     assert_eq!(index.head().command_prefix, prefix(&[initial, equal, expired]));
     for account in [A, B] {
         for kind in std::iter::once(None).chain(KINDS.iter().copied().map(Some)) {
@@ -151,7 +161,7 @@ fn midstage_append_failure_leaves_old_complete_head_pinned_and_refuses_any_stale
     let original = command(0, 0, Some(vec![deposit(A, 7)]));
     index.ingest(original.clone()).expect("seed");
     let before = index.head();
-    let entry = fanout(1, 1, 1_257);
+    let entry = fanout(1, 1, FANOUT);
     let mut stages = 0;
     let mut failed_root = None;
     assert!(

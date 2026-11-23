@@ -10,7 +10,7 @@ use std::thread;
 
 use anyhow::Result;
 
-use super::{A, command, deposit, expected, query};
+use super::{A, PAST_A_STAGE, command, deposit, expected, query};
 use crate::history::authenticated::Index;
 use crate::history::authenticated::state::{CommandId, STATE_KEY, State};
 use crate::snapshot::generations::{Allocate, Manager, VerifiedReferences};
@@ -49,7 +49,7 @@ fn failed_first_private_ingest_replaces_live_actor_owners_and_preserves_cancelle
     });
     admitted_rx.recv()?;
 
-    let entry = command(0, 1, Some((0..96).map(|_| deposit(A, 1)).collect()));
+    let entry = command(0, 1, Some((0..PAST_A_STAGE).map(|_| deposit(A, 1)).collect()));
     let mut private_commits = 0;
     assert!(
         actor_index

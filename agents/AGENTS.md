@@ -1331,8 +1331,9 @@ Run from the repo root:
   checks); run it under `nice`
 - The authenticated history index's ingest rate on a recorded log (#1114): `HISTORY_BENCH_LOG=<log dir> cargo test -p
   engine-node --lib history::authenticated::tests::bench -- --ignored --nocapture`, the log's first command at seq 0
-  (as the recovery scenario's is), `HISTORY_BENCH_COMMANDS` (20,000) and `HISTORY_BENCH_BATCH` (128) sizing it;
-  it prints its time every 10,000 commands and the head's root at the end; it derives no rollover rows
+  (as the recovery scenario's is), `HISTORY_BENCH_COMMANDS` (20,000) and `HISTORY_BENCH_BATCH` (512, the history
+  owner's) sizing it; it prints its time every 10,000 commands and the head's root at the end; it derives no rollover
+  rows
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

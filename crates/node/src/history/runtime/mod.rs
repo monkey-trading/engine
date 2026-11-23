@@ -39,9 +39,10 @@ const CERTIFY_COMMANDS: u64 = 1024;
 /// small backlog spans turns.
 const MAX_COLLECTION_TURNS: usize = if cfg!(test) { 2 } else { 32 };
 
-/// Commands per history update. A requested stop waits for at most one update, so this bounds how
-/// long shutdown waits for history once its grace has run out.
-const INDEX_BATCH: usize = 128;
+/// Commands per history update. Each update ends in one synced commit, so an owner behind the log
+/// catches up faster in larger ones; a requested stop waits for at most one update, so this bounds
+/// how long shutdown waits for history once its grace has run out.
+pub(crate) const INDEX_BATCH: usize = 512;
 
 pub(crate) enum Input {
     Entry(Arc<StreamMsg>),

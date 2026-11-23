@@ -7,9 +7,11 @@ use crate::history::authenticated::model::PAYLOAD_CHUNK_BYTES;
 use crate::history::authenticated::overlay::Overlay;
 use crate::history::authenticated::state::{STATE_KEY, State};
 
-/// A physical staging preference, not a bound on commands, payloads, accounts, or expiry: about the
-/// keys one update of launch flow's commands writes, so such an update commits about once.
-pub(super) const STAGED_KEYS: usize = 128;
+/// A physical staging preference, not a bound on commands, payloads, accounts, or expiry: more than the
+/// keys an update of the history owner's `INDEX_BATCH` commands writes at ten times launch flow, appending
+/// and expiring, so such an update is one stage. Each stage is a SQLite transaction, whose commit syncs
+/// the database file.
+pub(super) const STAGED_KEYS: usize = 4096;
 
 /// The value bytes a stage holds before it commits, proved old values and staged ones, whatever its keys:
 /// 32 payload chunks, which a large event's chunks, written or expired, reach well before `STAGED_KEYS`.
