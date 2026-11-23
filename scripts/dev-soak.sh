@@ -32,7 +32,8 @@
 # - every SOAK_RESTART_HOURS (2, 0 for none) the node stops and starts again from its newest cache, on
 #   the same API address, the generator's clients reconnecting.
 # After each interval it prints the load scenario's figures, then a `SOAK` report: the windows judged
-# against #904's launch bar, those a fault, a restart or the start excuses apart; resident memory
+# against #904's launch bar, those a fault, a restart or the start excuses apart; memory (the physical
+# footprint on macOS, which counts compressed pages, resident memory elsewhere; the report names it)
 # against the first interval's, allowed the growth of the newest cache, which the state's size sets;
 # the bytes the log and the caches (with their history index) hold on disk and the log's growth a
 # command; the stats worker's lag; each fault's and restart's recovery; and the alerts no event

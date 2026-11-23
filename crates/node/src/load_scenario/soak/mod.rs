@@ -15,12 +15,12 @@
 //!
 //! At the end of each interval it prints the figures the load scenario prints, then the interval's
 //! report (`SOAK`): the windows judged against #904's launch bar, those a fault, a restart or the start
-//! excuses apart (`timeline`); resident memory against the first interval's, allowed the growth of the
-//! newest cache, which the state's size sets; the bytes the log and the caches hold on disk and the
-//! log's growth a command; the stats worker's lag; each fault's recovery and each restart's; and the
-//! alerts no event excused. It passes if every interval does (`hours`) and the log replays to its roots
-//! from the book at the end, as the load scenario's does. It does not run the marks cache or the
-//! alert outbox, so it holds no figure for their disk.
+//! excuses apart (`timeline`); memory (macOS's physical footprint, which counts compressed pages, else
+//! resident) against the first interval's, allowed the growth of the newest cache, which the state's size
+//! sets; the bytes the log and the caches hold on disk and the log's growth a command; the stats worker's
+//! lag; each fault's recovery and each restart's; and the alerts no event excused. It passes if every
+//! interval does (`hours`) and the log replays to its roots from the book at the end, as the load
+//! scenario's does. It runs no marks cache or alert outbox, so it reports no disk for them.
 //!
 //! `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20), `SOAK_RESTART_HOURS` (2,
 //! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300, the template's), `SOAK_MULTIPLE`
@@ -55,14 +55,14 @@ use crate::feeds::venue::Timing;
 use crate::load_scenario::durable::Durable;
 use crate::load_scenario::node::{Boot, Node};
 use crate::load_scenario::plan::{Leg, Line, Plan, requests_per_second};
-use crate::load_scenario::report::{Snapshot, judge, print, process, unmeasured};
+use crate::load_scenario::report::{Snapshot, judge, print, unmeasured};
 use crate::load_scenario::soak::alerts::Alerts;
 use crate::load_scenario::soak::config::Config;
 use crate::load_scenario::soak::faults::{Done, Rig, priced_within};
 use crate::load_scenario::soak::hours::{
     Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure, workload_gaps,
 };
-use crate::load_scenario::soak::support::{Reaper, newest_cache, rebind};
+use crate::load_scenario::soak::support::{Reaper, memory_mib, newest_cache, rebind};
 use crate::load_scenario::soak::timeline::{FEED_ALERTS, Timeline, WINDOW_SETTLE, restart_alerts, start_alerts};
 use crate::load_scenario::venues::{self, Venues};
 use crate::load_scenario::{
@@ -325,10 +325,10 @@ impl Soak {
         self.interval.faults.push(done);
     }
 
-    /// Takes a sample of resident memory and of how far the stats worker is behind.
+    /// Takes a sample of memory and of how far the stats worker is behind.
     fn sample(&mut self) {
         let behind = self.node.as_ref().map_or(0, |node| node.stats.behind());
-        self.samples.push((process().1, behind));
+        self.samples.push((memory_mib().0, behind));
     }
 
     /// Stops the node and starts it again from its newest cache, on the same API address. A node that does
@@ -427,7 +427,7 @@ impl Soak {
             Disk { log: dir_bytes(&self.durable.cfg.node.log_dir), snapshots: dir_bytes(self.durable.snapshots()) };
         let rss: Vec<u64> = self.samples.iter().map(|(rss, _)| *rss).collect();
         let standing = Standing {
-            rss_mib: if rss.is_empty() { process().1 } else { median(&rss) },
+            rss_mib: if rss.is_empty() { memory_mib().0 } else { median(&rss) },
             state_bytes: newest_cache(&self.durable),
         };
         self.first = baseline(self.first, standing);
@@ -447,7 +447,8 @@ impl Soak {
         let grown = disk.log.saturating_sub(self.disk.log);
         println!("SOAK {leg} windows={} judged={judged} excused={excused}", interval.windows.len());
         println!(
-            "SOAK {leg} memory resident_mib median={} max={} first_interval_median={} newest_cache_bytes={}",
+            "SOAK {leg} memory {} median={} max={} first_interval_median={} newest_cache_bytes={}",
+            memory_mib().1,
             standing.rss_mib,
             self.samples.iter().map(|(rss, _)| *rss).max().unwrap_or(0),
             first.rss_mib,
