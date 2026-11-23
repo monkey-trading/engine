@@ -113,3 +113,25 @@ fn an_operation_keeps_a_bounded_number_of_checked_nodes() -> Result<()> {
     assert!(forgotten, "the reads never passed the limit");
     Ok(())
 }
+
+/// A value an operation proved under a root is taken again under that root without a read of the host, and
+/// under no other root: damage the host does after the first read leaves the operation's second read as it
+/// was, each root of a key reads its own value, and a new operation refuses the damage.
+#[test]
+fn an_operation_takes_a_value_it_proved_under_the_same_root_only() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let namespace = [26; 32];
+    let first = store.update(&Root::empty(namespace), vec![put(b"a", b"one")])?;
+    let second = store.update(&first, vec![put(b"a", b"two")])?;
+    let conn = raw(&dir)?;
+    let key = key_hash(&namespace, b"a")?;
+    let checked = Checked::default();
+    let read = |root: &Root, checked: &Checked| blobs::read(&mut Points::new(&conn, root, checked), key);
+    assert_eq!(read(&first, &checked)?, Some(b"one".to_vec()));
+    assert_eq!(read(&second, &checked)?, Some(b"two".to_vec()), "another root's value is its own");
+    conn.execute("DELETE FROM value_rows", [])?;
+    assert_eq!(read(&first, &checked)?, Some(b"one".to_vec()), "the proved value is kept");
+    assert_eq!(read(&second, &checked)?, Some(b"two".to_vec()), "each root keeps its own");
+    assert!(read(&second, &Checked::default()).is_err(), "a new operation refuses the damage");
+    Ok(())
+}

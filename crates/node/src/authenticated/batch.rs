@@ -51,7 +51,7 @@ pub(super) fn prepare(
     exact.insert(receipt_key, Some(serde_json::to_vec(&receipt)?));
     // Both passes read the same immutable old root, so they share one checked node cache.
     let reader = Reader::new(conn, old, true, checked)?;
-    let preliminary = generate(&reader, old, exact.iter().map(|(k, v)| (*k, v.clone())).collect())?;
+    let preliminary = generate(&reader, old, exact.iter().map(|(k, v)| (*k, v.clone())).collect(), false)?;
     receipt.rows = retirements(&reader, old, &preliminary.batch, &preliminary.exact, version)?;
     ensure!(receipt.rows.len() <= MAX_RECEIPT_ROWS, "receipt exceeds derived physical-batch envelope");
     let raw = serde_json::to_vec(&receipt)?;
@@ -60,7 +60,7 @@ pub(super) fn prepare(
         "receipt encoding exceeds derived envelope"
     );
     exact.insert(receipt_key, Some(raw));
-    let final_batch = generate(&reader, old, exact.into_iter().collect())?;
+    let final_batch = generate(&reader, old, exact.into_iter().collect(), true)?;
     ensure!(
         preliminary.batch.stale_node_index_batch == final_batch.batch.stale_node_index_batch,
         "two-pass stale-node sets differ"
@@ -81,10 +81,11 @@ struct Generated {
     exact: Changes,
 }
 
-/// Generates and consumes the upstream proof for the exact effective sorted key/value set.
+/// Generates the batch for the exact effective sorted key/value set, and with `proved` the upstream proof of
+/// the update, which it verifies against the old and new roots.
 /// Error cases:
 /// - resource/representation failure, malformed disk graph, failed proof or unexpected batch data
-fn generate(reader: &Reader<'_>, old: &Root, exact: Changes) -> Result<Generated> {
+fn generate(reader: &Reader<'_>, old: &Root, exact: Changes, proved: bool) -> Result<Generated> {
     ensure!(exact.len() <= PHYSICAL_UPDATES, "excessive physical changes");
     reader.prepare(&exact.iter().map(|(key, _)| *key).collect::<Vec<_>>())?;
     let mut effective = Vec::new();
@@ -106,8 +107,13 @@ fn generate(reader: &Reader<'_>, old: &Root, exact: Changes) -> Result<Generated
     }
     let version = old.version.map_or(0, |v| v + 1);
     let tree = JellyfishMerkleTree::<_, Hasher>::new(reader);
-    let (hash, proof, batch) = tree.put_value_set_with_proof(effective.clone(), version)?;
-    proof.verify_update(RootHash(old.hash), hash, &effective)?;
+    let (hash, batch) = if proved {
+        let (hash, proof, batch) = tree.put_value_set_with_proof(effective.clone(), version)?;
+        proof.verify_update(RootHash(old.hash), hash, &effective)?;
+        (hash, batch)
+    } else {
+        tree.put_value_set(effective.clone(), version)?
+    };
     let expected: BTreeMap<_, _> = effective.iter().map(|(key, value)| ((version, *key), value.clone())).collect();
     ensure!(batch.node_batch.values() == &expected, "upstream value batch differs from exact changes");
     for stale in &batch.stale_node_index_batch {

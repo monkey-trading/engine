@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail, ensure};
 use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
-use jmt::{JellyfishMerkleTree, KeyHash, RootHash};
+use jmt::{KeyHash, ValueHash};
 use rusqlite::{Connection, params};
 
 use crate::authenticated::codec;
-use crate::authenticated::{Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
+use crate::authenticated::{EMPTY_HASH, Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
 
 /// The most nodes an operation keeps checked: a writing reader's node budget.
 pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
@@ -17,10 +17,24 @@ pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
 /// The nodes one operation has checked against an authenticated parent, each with the hash it was
 /// checked to have, shared by every reader of the operation: a node is fetched, decoded and hashed once
 /// per operation until the operation has checked its limit of nodes and forgotten them, and a reader
-/// takes it only where its own checked parent names that hash.
+/// takes it only where its own checked parent names that hash. It also keeps the values the operation has
+/// proved under each root, so a key is proved once under a root.
 pub(super) struct Checked {
     nodes: RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>>,
     limit: usize,
+    reads: RefCell<Reads>,
+}
+
+/// The most proved values the operation keeps, and the most bytes of them: a value read once under a root is
+/// not proved again under it, until the operation has kept its limit of them and forgotten them.
+const READS_KEPT: usize = 4 * PHYSICAL_UPDATES;
+const READ_BYTES_KEPT: usize = 256 * 1024;
+
+/// The values the operation has proved under each root, or their proved absence.
+#[derive(Default)]
+struct Reads {
+    values: BTreeMap<(Root, KeyHash), Option<Vec<u8>>>,
+    bytes: usize,
 }
 
 pub(super) struct Reader<'a> {
@@ -37,7 +51,7 @@ pub(super) struct Reader<'a> {
 impl Default for Checked {
     /// An operation's checked nodes, at most `CHECKED_NODES` at a time.
     fn default() -> Self {
-        Self { nodes: RefCell::default(), limit: CHECKED_NODES }
+        Self { nodes: RefCell::default(), limit: CHECKED_NODES, reads: RefCell::default() }
     }
 }
 
@@ -45,12 +59,26 @@ impl Default for Checked {
 impl Checked {
     /// An operation's checked nodes, at most `limit` at a time.
     pub(super) fn with_limit(limit: usize) -> Self {
-        Self { nodes: RefCell::default(), limit }
+        Self { nodes: RefCell::default(), limit, reads: RefCell::default() }
     }
 
     /// The nodes recorded, for a test to inspect or forge.
     pub(super) fn nodes(&self) -> &RefCell<BTreeMap<NodeKey, (Node, [u8; 32])>> {
         &self.nodes
+    }
+}
+
+impl Checked {
+    /// Records a value proved under `root`, forgetting every recorded one first once it holds its limit.
+    fn keep(&self, root: &Root, key: KeyHash, value: &Option<Vec<u8>>) {
+        let size = value.as_ref().map_or(0, Vec::len);
+        let mut reads = self.reads.borrow_mut();
+        if reads.values.len() >= READS_KEPT || reads.bytes.saturating_add(size) > READ_BYTES_KEPT {
+            *reads = Reads::default();
+        }
+        if size <= READ_BYTES_KEPT && reads.values.insert((root.clone(), key), value.clone()).is_none() {
+            reads.bytes += size;
+        }
     }
 }
 
@@ -81,15 +109,60 @@ impl<'a> Reader<'a> {
         Ok(reader)
     }
 
-    /// Returns exact value bytes or proved absence using JMT's point verifier.
+    /// Returns exact value bytes or proved absence: the walk of the key's path from the root, in which every
+    /// node is hashed and matched to its parent's record of it, up to the root's hash, and the value, if the
+    /// path ends in its leaf, to the leaf's hash. Upstream's point proof would hash the same nodes and every
+    /// sibling beside them to reach the same root.
     /// Error cases:
-    /// - bounded storage traversal or upstream membership/nonmembership verification fails
+    /// - bounded storage traversal fails, or a node or value does not match its authenticated hash
     pub(super) fn read(&self, key: KeyHash) -> Result<Option<Vec<u8>>> {
-        self.prepare_proof(key)?;
-        let tree = JellyfishMerkleTree::<_, Hasher>::new(self);
-        let (value, proof) = tree.get_with_proof(key, self.root.version.unwrap_or(0))?;
-        proof.verify(RootHash(self.root.hash), key, value.as_deref())?;
+        if let Some(value) = self.checked.reads.borrow().values.get(&(self.root.clone(), key)) {
+            return Ok(value.clone());
+        }
+        let value = self.walk(key)?;
+        self.checked.keep(&self.root, key, &value);
         Ok(value)
+    }
+
+    /// Walks the path of `key` through the authenticated old tree, loading and checking the one child of
+    /// each internal node that the path takes.
+    /// Error cases:
+    /// - as `read`
+    fn walk(&self, key: KeyHash) -> Result<Option<Vec<u8>>> {
+        let Some(version) = self.root.version else { return Ok(None) };
+        let mut node_key = codec::root_key(version)?;
+        for depth in 0..=64 {
+            let node =
+                self.cache.borrow().get(&node_key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
+            match &node {
+                Node::Null => {
+                    ensure!(depth == 0 && self.root.hash == EMPTY_HASH, "null node under a non-empty root");
+                    return Ok(None);
+                }
+                Node::Leaf(leaf) => {
+                    // `codec::decode` refused every leaf outside the path it was loaded at.
+                    if leaf.key_hash() != key {
+                        return Ok(None);
+                    }
+                    let value = self
+                        .get_value_option(version, key)?
+                        .ok_or_else(|| anyhow::anyhow!("missing value row for a leaf"))?;
+                    let stored = LeafNode::new(key, ValueHash::with::<Hasher>(&value));
+                    ensure!(stored.hash::<Hasher>() == leaf.hash::<Hasher>(), "value does not match its leaf");
+                    return Ok(Some(value));
+                }
+                Node::Internal(internal) => {
+                    ensure!(depth < 64, "terminal internal node");
+                    let at = nibble(&key, depth);
+                    self.prepare_children(&node_key, &node, 1 << at)?;
+                    let Some((_, child)) = internal.children_sorted().find(|(n, _)| u8::from(*n) == at) else {
+                        return Ok(None);
+                    };
+                    node_key = codec::child_key(&node_key, at, child.version)?;
+                }
+            }
+        }
+        bail!("path deeper than a key")
     }
 
     /// Fetches the old-tree path of every requested key and, at each internal node on them, the children
@@ -118,27 +191,6 @@ impl<'a> Reader<'a> {
             if let Some((_, child)) = internal.children_sorted().find(|(n, _)| u8::from(*n) == at) {
                 self.prepare_update(&codec::child_key(key, at, child.version)?, depth + 1, group)?;
             }
-        }
-        Ok(())
-    }
-
-    /// Fetches the old-tree path of `query` and, at each internal node on it, the children `proof_children`
-    /// names, before JMT's infallible sibling reads.
-    /// Error cases:
-    /// - an unavailable/malformed node, child inconsistency, or exhausted finite resource budget
-    fn prepare_proof(&self, query: KeyHash) -> Result<()> {
-        let Some(version) = self.root.version else { return Ok(()) };
-        let mut key = codec::root_key(version)?;
-        for depth in 0..=64 {
-            let node =
-                self.cache.borrow().get(&key).cloned().ok_or_else(|| anyhow::anyhow!("missing prepared node"))?;
-            let Node::Internal(internal) = &node else { break };
-            ensure!(depth < 64, "terminal internal node");
-            let at = nibble(&query, depth);
-            self.prepare_children(&key, &node, proof_children(internal.generate_bitmaps().0, at))?;
-            let child = internal.children_sorted().find(|(n, _)| u8::from(*n) == at);
-            let Some((_, child)) = child else { break };
-            key = codec::child_key(&key, at, child.version)?;
         }
         Ok(())
     }
@@ -361,18 +413,6 @@ fn ranges(nibble: u8) -> impl Iterator<Item = u16> {
         let start = (nibble >> height) << height;
         [range(height, start), range(height, start ^ (1 << height))]
     })
-}
-
-/// The children, as a bitmap of nibbles, a proof of the path through `nibble` of an internal node with
-/// the `existing` children can read: the child at `nibble`, and at each of the node's four heights the
-/// child alone in the range holding `nibble` or in its sibling range. Upstream reads a sibling only when
-/// it is alone in its range, and descends into a child other than `nibble`'s only when that child is
-/// alone in `nibble`'s range, so this is a superset of what its infallible reads can ask for.
-pub(super) fn proof_children(existing: u16, nibble: u8) -> u16 {
-    ranges(nibble)
-        .map(|range| existing & range)
-        .filter(|lone| lone.count_ones() == 1)
-        .fold(existing & (1 << nibble), |wanted, lone| wanted | lone)
 }
 
 /// The children, as a bitmap of nibbles, an update of keys through the `touched` nibbles of an internal

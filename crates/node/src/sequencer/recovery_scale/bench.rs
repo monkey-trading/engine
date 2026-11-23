@@ -1,7 +1,8 @@
 //! The replay's cost on a log of launch flow kept between runs, for profiling: `REPLAY_BENCH_DIR` holds
 //! the book's encoding and the log, written on the first run and replayed on each, its seals checked at
 //! the end of each run, as `engine replay` checks them, or with `REPLAY_BENCH_SEALS=every` each in full
-//! ahead of the replay by `RECOVERY_REPLAY_WORKERS` threads (one per core). Each run prints its wall
+//! ahead of the replay by `RECOVERY_REPLAY_WORKERS` threads (one per core); `REPLAY_BENCH_MULTIPLE` (1)
+//! sets the flow the first run writes, in multiples of launch flow. Each run prints its wall
 //! time and the CPU time the process spent on it, on every thread.
 
 use std::path::Path;
@@ -242,7 +243,7 @@ fn write(dir: &Path, key: Arc<EnclaveKey>) {
         let mut paired = Paired::start(base.engine(), &cfg, key).expect("the node takes over the book");
         let mut flow = Flow::new(traders, rates);
         let started = Instant::now();
-        flow.run(&mut paired.node, Duration::from_secs(launch_secs), 1.0, |_, _, _| {});
+        flow.run(&mut paired.node, Duration::from_secs(launch_secs), env("REPLAY_BENCH_MULTIPLE", 1.0), |_, _, _| {});
         let last = paired.node.checkpoint_now();
         println!("BENCH wrote seq={} s={:.0}", last.seq, started.elapsed().as_secs_f64());
         paired.stop().await.expect("the node stops");
