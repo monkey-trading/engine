@@ -1,4 +1,5 @@
 use super::*;
+use crate::load_scenario::host::{DiskIo, Disks};
 
 #[test]
 fn a_histogram_is_read_from_the_nodes_encoding_and_judged_at_its_bounds() {
@@ -88,16 +89,18 @@ fn a_windows_batch_p999_names_one_sync_stall_its_p99_misses() {
 
 #[test]
 fn a_snapshot_delta_carries_what_the_hosts_waits_grew_by() {
+    let disks =
+        |ops, bytes, request_ms| Disks { ops, bytes, request_ms: BTreeMap::from([("sda".to_owned(), request_ms)]) };
     let earlier = Snapshot {
-        waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000), disk_io: Some((10, 4_096)) },
+        waits: Waits { io_us: Some(1_000), cpu_us: Some(2_000), disks: Some(disks(10, 4_096, 700)) },
         ..Snapshot::take(&Metrics::new())
     };
     let later = Snapshot {
-        waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500), disk_io: Some((15, 8_192)) },
+        waits: Waits { io_us: Some(51_000), cpu_us: Some(2_500), disks: Some(disks(15, 8_192, 760)) },
         ..earlier.clone()
     };
-    let waited = Waited { io_ms: Some(50.0), cpu_ms: Some(0.5), disk_io: Some((5, 4_096)) };
-    assert_eq!(later.since(&earlier).host, waited);
+    let disk_io = Some(DiskIo { ops: 5, bytes: 4_096, busiest_ms: 60 });
+    assert_eq!(later.since(&earlier).host, Waited { io_ms: Some(50.0), cpu_ms: Some(0.5), disk_io });
 }
 
 #[test]

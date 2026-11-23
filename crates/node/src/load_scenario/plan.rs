@@ -6,6 +6,8 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::load_scenario::storage::Storage;
+
 /// Launch flow: the cap study's observed average of fills a second across markets
 /// (`research/cap-calibration/README.md`, "Data").
 pub(crate) const LAUNCH_FILLS_PER_SECOND: f64 = 3.7;
@@ -57,6 +59,8 @@ pub(super) struct Plan {
     /// How long a client keeps trying to reach the node before the generator gives up: a node that
     /// restarts is gone this long.
     pub connect_secs: u64,
+    /// Whether the generator runs the storage probe whose blocks may excuse a window (`storage`).
+    pub storage_probe: bool,
 }
 
 /// One leg: a multiple of launch flow for a time.
@@ -89,8 +93,8 @@ pub(super) enum Line {
     Ready { traders: u32, subscribers: u32 },
     /// A leg's first request is about to go.
     Start { leg: String, multiple: f64 },
-    /// A window of the leg has ended.
-    Window { leg: String, index: u32, figures: Figures },
+    /// A window of the leg has ended, with what the storage probe saw over it, None with no probe.
+    Window { leg: String, index: u32, figures: Figures, storage: Option<Storage> },
     /// The leg has ended and its replies are in.
     End { leg: String, multiple: f64, figures: Figures },
 }

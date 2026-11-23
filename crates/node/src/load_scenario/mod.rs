@@ -197,6 +197,7 @@ async fn run() {
         windows: WINDOWS,
         screening_bound_ms: u64::try_from(venues.access.max_age.as_millis()).expect("a bound in range"),
         connect_secs: CONNECT_SECS,
+        storage_probe: true,
     };
     if env("LOAD_RAMP", 0) == 1 {
         plan.ramp = Some(Ramp { max: plan.ceiling(), ..RAMP });
@@ -304,16 +305,10 @@ fn spawn_generator(plan: &Plan) -> Generator {
 async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
     let Generator { mut child, mut answers, mut lines } = spawn_generator(plan);
     let resident = Resident::start();
-    // Beside the node's log, on the same filesystem.
-    let probe_dir = scratch_dir("load-storage-probe");
-    std::fs::create_dir_all(&probe_dir).expect("the probe's directory");
-    let probe = storage::Probe::start(&probe_dir).expect("the storage probe starts");
-    if probe.is_none() {
-        println!("LOAD storage probe off: the host counts no thread's time, so no window is excused");
-    }
     let (mut start, mut window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
     let mut windows: Vec<Window> = Vec::new();
     let mut runs = Vec::new();
+    let mut probe_off_said = false;
     // The first multiple each budget broke at, over the ramp and the legs before it.
     let mut broken: BTreeMap<(&str, &str), f64> = BTreeMap::new();
     while let Some(line) = tokio::time::timeout(LINE_WITHIN, lines.recv())
@@ -331,20 +326,35 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 );
                 (start, window, windows) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics), Vec::new());
                 resident.reset();
-                if let Some(probe) = &probe {
-                    probe.take();
-                }
             }
-            Line::Window { leg, index, figures } => {
+            Line::Window { leg, index, figures, storage: reading } => {
                 let now = Snapshot::take(&node.metrics);
                 let delta = now.since(&window);
                 let breaches = judge(&figures, &delta);
-                let block = probe.as_ref().map(storage::Probe::take).unwrap_or_default();
-                let excused = storage::excuse(&breaches, &block, &delta.host, delta.secs);
+                let excused = reading.as_ref().and_then(|reading| storage::excuse(&breaches, reading));
+                if reading.is_none() && !probe_off_said {
+                    println!(
+                        "LOAD storage probe off: the host counts no thread's time or names no disk, so no window \
+                         is excused"
+                    );
+                    probe_off_said = true;
+                }
+                // The probe's longest block and what its disks did over it and over the generator's window.
+                let probe = reading.map_or_else(
+                    || "n/a".to_owned(),
+                    |reading| {
+                        let (block, window) = (reading.block, reading.window);
+                        format!(
+                            "[blocked_ms={} span_ms={} {}] window=[{window}]",
+                            block.blocked.as_millis(),
+                            block.span.as_millis(),
+                            block.host
+                        )
+                    },
+                );
                 println!(
-                    "LOAD leg={leg} window={index} breaches={breaches:?} {} probe_blocked_ms={} excused={excused:?}",
-                    window_figures(&delta),
-                    block.blocked.as_millis()
+                    "LOAD leg={leg} window={index} breaches={breaches:?} {} probe={probe} excused={excused:?}",
+                    window_figures(&delta)
                 );
                 window = now;
                 windows.push(Window { breaches, excused });
