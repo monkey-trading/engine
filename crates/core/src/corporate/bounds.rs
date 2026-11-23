@@ -114,7 +114,7 @@ impl Engine {
     /// Error cases:
     /// - from `V76`, changed bounds looser than launch's in any bound
     /// - from `V76`, unless `voted`, changed bounds no notice names, or whose notice takes effect later
-    ///   than the sequenced time
+    ///   than the sequenced time or from `V88` has lapsed
     pub(crate) fn check_corporate_bounds_change(
         &self,
         bounds: &CorporateBounds,
@@ -132,10 +132,7 @@ impl Engine {
             self.operator_bounds.notice.as_ref().filter(|notice| notice.corporate_bounds.as_ref() == Some(bounds));
         match named {
             None => Err("a corporate bounds change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the corporate bounds change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the corporate bounds change"),
         }
     }
 

@@ -132,7 +132,7 @@ impl Engine {
     /// Error cases:
     /// - from `V81`, a changed grid `PortfolioGrid::check_within_launch` refuses
     /// - from `V81`, unless `voted`, a changed grid no notice names, or whose notice takes effect later
-    ///   than the sequenced time
+    ///   than the sequenced time or from `V88` has lapsed
     pub(crate) fn check_grid_change(
         &self,
         grid: &PortfolioGrid,
@@ -149,10 +149,7 @@ impl Engine {
         }
         match self.operator_bounds.notice.as_ref().filter(|notice| notice.portfolio_grid.as_ref() == Some(grid)) {
             None => Err("a portfolio grid change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the portfolio grid change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the portfolio grid change"),
         }
     }
 

@@ -139,7 +139,7 @@ impl Engine {
     /// Error cases:
     /// - from `V59`, a changed table `check_volume_tier_bound` refuses
     /// - from `V59`, unless `voted`, a changed table no notice names, or whose notice takes effect later
-    ///   than the sequenced time
+    ///   than the sequenced time or from `V88` has lapsed
     pub(crate) fn check_volume_tier_change(
         &self,
         params: &ProtocolParams,
@@ -157,10 +157,7 @@ impl Engine {
         let named = self.operator_bounds.notice.as_ref().filter(|notice| notice.volume_tiers.as_ref() == Some(tiers));
         match named {
             None => Err("a volume tier table change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the volume tier table change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the volume tier table change"),
         }
     }
 

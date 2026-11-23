@@ -19,6 +19,7 @@ impl Engine {
     ///   transaction-local deposit with the same beneficiary and amount
     /// - the replacement is recorded but not reversed at the named revision
     /// - from `V83`, another live receipt holds the replacement's vault id
+    /// - from `V88`, the replacement's id is below the finalised frontier's deposit count
     pub(super) fn replace_deposit(
         &mut self,
         orphan: &DepositReceipt,
@@ -56,6 +57,7 @@ impl Engine {
     /// - the replacement is invalid, at or below the finalised frontier, or not the same
     ///   transaction-local deposit with the same beneficiary and amount
     /// - the replacement is recorded but not reversed at the named revision
+    /// - from `V88`, the replacement's id is below the finalised frontier's deposit count
     pub(super) fn check_replacement(
         &self,
         orphan: &DepositReceipt,
@@ -89,6 +91,7 @@ impl Engine {
         if self.custody_checkpoint.is_some_and(|checkpoint| replacement.block <= checkpoint.block) {
             return Err(DepositReject::SettledReceipt);
         }
+        self.check_id_above_frontier(replacement)?;
         match (current, replacement_reversed_at_seq) {
             (None, None) => {}
             (Some(d), _) if d.receipt != *replacement => return Err(DepositReject::ConflictingReceipt),

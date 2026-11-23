@@ -125,8 +125,9 @@ pub(super) async fn check_rotation_switch(
 /// Watches the mirrored election an incumbent with sealed keys runs under: raises `operator_elected`
 /// (Warning) once an election names another operator, and `handover_overdue` (Critical) once trusted
 /// time passes the registry's effective time with this node still running, on any transition into
-/// `Overdue`. A cancellation, or an election naming this operator's key again, resolves both alerts
-/// with the fields they fired under, so alert routing can close the episodes.
+/// `Overdue`. It follows the first election, waiting or last, that names another key (`challenger_of`). Once
+/// none does, after a cancellation or with only elections naming this operator's key, both alerts resolve with
+/// the fields they fired under, so alert routing can close the episodes.
 /// Error cases:
 /// - none; it runs until the node stops
 pub(super) async fn watch_handover(
@@ -143,19 +144,19 @@ pub(super) async fn watch_handover(
         let (reply, answered) = oneshot::channel();
         if tx
             .send(Request::Query(Box::new(move |engine| {
-                let _ = reply.send(engine.operator_election().last);
+                let _ = reply.send(challenger_of(engine.operator_election(), operator));
             })))
             .await
             .is_err()
         {
             return Ok(());
         }
-        let last = match answered.await {
-            Ok(last) => last,
+        let named = match answered.await {
+            Ok(named) => named,
             Err(_) => return Ok(()),
         };
-        let challenger = last.filter(|last| !last.cancelled && last.admin_key != operator);
-        let next = episode(last, operator, trusted.now_ms());
+        let challenger = named.filter(|named| !named.cancelled && named.admin_key != operator);
+        let next = episode(named, operator, trusted.now_ms());
         match (current, next) {
             (Episode::None, Episode::Elected) => {
                 if let Some(last) = challenger {
@@ -195,6 +196,17 @@ pub(super) async fn watch_handover(
     }
 }
 
+/// The election the watcher follows: the first not cancelled that names a key other than `operator`, of the
+/// elections waiting from `V88` and then the last, so an election naming this node again hides no later one, and
+/// the engine's own deferral of the one before delays no page.
+pub(super) fn challenger_of(
+    election: &engine_core::election::OperatorElection,
+    operator: AccountId,
+) -> Option<engine_core::election::Election> {
+    let mut elections = election.waiting.iter().chain(election.last.iter());
+    elections.find(|named| !named.cancelled && named.admin_key != operator).copied()
+}
+
 /// Emits the `handover_overdue` resolution for an open episode, with the fields it fired under.
 fn resolve_overdue(fired: &Option<engine_core::election::Election>) {
     if let Some(last) = fired {
@@ -218,5 +230,49 @@ fn resolve(fired: &mut Option<engine_core::election::Election>) {
             effective_at = last.registry_effective_at,
             "the election naming another operator ended: cancelled, superseded, or handed over"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine_core::election::{Election, OperatorElection};
+
+    /// From `V88` the watcher follows the first election that names another key, whichever of the waiting
+    /// elections and the last it is.
+    #[test]
+    fn the_watcher_follows_the_first_election_naming_another_key() {
+        let (operator, other) = (AccountId([0x42; 20]), AccountId([0x63; 20]));
+        let named = |epoch, admin_key| Election {
+            epoch,
+            candidate: admin_key,
+            admin_key,
+            effective_at: 1_700_000_000_000 + epoch as Millis,
+            registry_effective_at: 1_700_000_000_000,
+            cancelled: false,
+        };
+        let ours_first = OperatorElection {
+            waiting: vec![named(1, operator)],
+            last: Some(named(2, other)),
+            ..OperatorElection::default()
+        };
+        assert_eq!(challenger_of(&ours_first, operator), Some(named(2, other)), "a later one behind this node's");
+        let theirs_first = OperatorElection {
+            waiting: vec![named(1, other)],
+            last: Some(named(2, operator)),
+            ..OperatorElection::default()
+        };
+        assert_eq!(challenger_of(&theirs_first, operator), Some(named(1, other)), "a waiting one before this node's");
+        let another = AccountId([0x64; 20]);
+        let both_others = OperatorElection {
+            waiting: vec![named(1, operator), named(2, other)],
+            last: Some(named(3, another)),
+            ..OperatorElection::default()
+        };
+        assert_eq!(challenger_of(&both_others, operator), Some(named(2, other)), "the first of two naming others");
+        let mut cancelled = named(2, other);
+        cancelled.cancelled = true;
+        let none = OperatorElection { last: Some(cancelled), ..OperatorElection::default() };
+        assert_eq!(challenger_of(&none, operator), None);
     }
 }

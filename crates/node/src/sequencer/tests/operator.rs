@@ -444,5 +444,6 @@ fn start_over_a_rollover(
 mod faults;
 mod governance;
 mod hold;
+mod queued;
 mod turn_log;
 pub(crate) use turn_log::{recover_turns, turn_log, turn_log_under};

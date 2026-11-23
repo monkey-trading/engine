@@ -2,9 +2,11 @@
 //! vendors reached over TLS that price these markets, each reached over TLS a test CA certifies,
 //! price an FX pair from both, and an index and a commodity from front futures contracts and a US
 //! share from Massive alone, through the sequencer.
-//! The share's market is closed while the vendors start quoting it; once setup is done, a signed
-//! relisting opens it two seconds on, and another adds the index's next contract, rolling in half a
-//! second on, after its last. The log then replays with `engine replay`'s checks.
+//! Before any position opens, a signed relisting adds the index's next contract, rolling in a few
+//! seconds, after its last: added to a market that holds positions, a contract would need a notice of
+//! seven days. The share's market is closed while the vendors start quoting it; once positions are
+//! open, another relisting opens it two seconds on, and the index rolls across the positions it
+//! holds. The log then replays with `engine replay`'s checks.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -36,6 +38,8 @@ const GOLD: MarketId = 30;
 const AAPL: MarketId = 40;
 /// Far enough ahead that setup ends well before it, however long setup takes.
 const LATER_MS: Millis = 600_000;
+/// How long after its relisting US 500 rolls onto its next contract: past the first fills in it.
+const ROLL_AFTER_MS: Millis = 4_000;
 
 #[tokio::test]
 #[ignore = "dev scenario, run by scripts/dev-rwa-feeds.sh"]
@@ -63,6 +67,10 @@ async fn dev_scenario_rwa_price_feeds() {
     // EUR-USD prices from both vendors, at the median of their mids; the others from Massive's.
     node.wait_for_quotes(&[(EURUSD, "massive"), (EURUSD, "tradermade"), (US500, "massive"), (GOLD, "massive")]).await;
     node.deposit().await;
+    // US 500 takes March, its next contract, while no account holds it, so the relisting needs no
+    // notice; it rolls once the positions below are open.
+    let roll_at = now_ms() + ROLL_AFTER_MS;
+    node.relist(us500(Some(roll_at))).await;
     for (market, mid) in [(EURUSD, "1.08002"), (US500, "6000.5"), (GOLD, "2650.2")] {
         assert_eq!(fill_index(&node.buy(market, mid).await), Some(mid.parse().unwrap()), "market {market}");
     }
@@ -80,10 +88,12 @@ async fn dev_scenario_rwa_price_feeds() {
     assert!(fills[0].0 >= opens, "filled at {} before the open at {opens}", fills[0].0);
     assert!(priced(&applied, AAPL).iter().all(|(ts, _)| *ts >= opens), "Apple priced before its open");
 
-    // US 500 rolls onto March, 40 above December, without its index moving.
-    node.relist(us500(Some(now_ms() + 500))).await;
+    // US 500 rolls onto March at its roll time, 40 above December, across the position opened before
+    // it, without its index moving.
     let rolled = Event::MarketRolled { market: US500, contract: "ESH7".into(), adjustment: "-40".parse().unwrap() };
-    wait_for(WAIT, || events_of(&applied).contains(&rolled).then_some(())).await;
+    wait_for(WAIT * 2, || events_of(&applied).contains(&rolled).then_some(())).await;
+    let opened = filled(&applied, US500);
+    assert!(opened.first().is_some_and(|(ts, _)| *ts < roll_at), "US 500 opened at {opened:?}, not before {roll_at}");
     assert_eq!(fill_index(&node.buy(US500, "6000.5").await), Some("6000.5".parse().unwrap()));
 
     // No quote reached the engine for it to refuse: none from outside its market's hours, and

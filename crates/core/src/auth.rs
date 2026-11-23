@@ -192,6 +192,19 @@ impl Engine {
         auth.check_expiry(self.now)
     }
 
+    /// From `V88`, refuses a client request `signer` signed while it is the operator key in effect, for
+    /// any account, its own included: the operator's nonce sequence is the admin channel's.
+    /// Error cases:
+    /// - `InvalidSignature`: from `V88`, `signer` is the operator key in effect
+    pub(crate) fn refuse_operator_signer(&self, signer: AccountId) -> Result<(), Reject> {
+        if self.protocol_version >= ProtocolVersion::V88
+            && self.operator.is_some_and(|operator| operator.address == signer)
+        {
+            return Err(Reject::InvalidSignature);
+        }
+        Ok(())
+    }
+
     /// Checks a signed request's signature names `account`, or a session key of `account` allowed
     /// by `scope`, and uses the signer's nonce. A request a registered session key signs spends
     /// the key's nonce even when the key's state or the request's scope then refuses it, exactly as
@@ -199,7 +212,7 @@ impl Engine {
     /// Error cases:
     /// - `InvalidSignature`: not signed by `account` or, from `V41`, by one of its session keys
     ///   within `scope`; from `V75` a session key whose address is the operator key in effect is
-    ///   none, and spends no nonce
+    ///   none, and spends no nonce; from `V88` neither is an account whose address it is
     /// - the rejections of `use_nonce`
     /// - `SessionKeyRevoked` or `SessionKeyExpired`: the key's state refuses it
     /// - `SessionKeyScope`: a live session key signed a `Funds` request
@@ -211,6 +224,7 @@ impl Engine {
         hash: impl FnOnce(&RequestAuth) -> B256,
     ) -> Result<(), Reject> {
         let signer = eip712::recover(&hash(auth), &auth.signature).ok_or(Reject::InvalidSignature)?;
+        self.refuse_operator_signer(signer)?;
         if signer == account {
             return self.use_nonce(account, auth);
         }

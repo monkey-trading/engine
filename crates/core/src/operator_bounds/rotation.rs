@@ -13,7 +13,8 @@ impl Engine {
     /// - before `V35`, or with no operator recorded
     /// - from `V37`, while rotation is on, when only an election moves the key
     /// - from `V37`, while an uncancelled elected handover waits to take effect, even with rotation
-    ///   off: only that handover moves the key until it applies or the registry cancels it
+    ///   off: only that handover moves the key until it applies or the registry cancels it; from `V88`
+    ///   also while elections wait in turn
     /// - from `V48`, while an installed handover waits to take effect, even with rotation off: only
     ///   that handover moves the key until it applies
     /// - the zero address, or the address already operating
@@ -26,7 +27,11 @@ impl Engine {
         if address == AccountId([0; 20]) || address == operator.address {
             return Err("an operator rotation names a new, nonzero address".into());
         }
-        if self.operator_bounds.rotation.is_some_and(|rotation| self.is_elected(rotation)) {
+        // From `V88` elections waiting in turn hold the key's handovers too, even when the first names
+        // the key in effect and so leaves none pending.
+        if self.operator_bounds.rotation.is_some_and(|rotation| self.is_elected(rotation))
+            || !self.operator_election.waiting.is_empty()
+        {
             return Err("while an elected handover waits, only it moves the operator key".into());
         }
         if self.protocol_version >= ProtocolVersion::V48
@@ -40,14 +45,15 @@ impl Engine {
 
     /// Hands the operator's role to the pending rotation's address once it is due (see
     /// `Engine::due_rotation`), before the command stamped `ts` is authorised, so the old key signs
-    /// nothing from then.
+    /// nothing from then. From `V88` the waiting elections whose time has come are then seated, and
+    /// the next one's handover left pending (`Engine::advance_waiting_elections`).
     pub(crate) fn apply_due_rotation(&mut self, ts: Millis) {
-        let Some(rotation) = self.due_rotation(ts) else {
-            return;
-        };
-        // A rotation is recorded only beside a recorded operator, which is never removed.
-        self.operator.as_mut().expect("a rotation needs a recorded operator").address = rotation.address;
-        self.operator_bounds.rotation = None;
-        self.operator_bounds.rotations += 1;
+        if let Some(rotation) = self.due_rotation(ts) {
+            // A rotation is recorded only beside a recorded operator, which is never removed.
+            self.operator.as_mut().expect("a rotation needs a recorded operator").address = rotation.address;
+            self.operator_bounds.rotation = None;
+            self.operator_bounds.rotations += 1;
+        }
+        self.advance_waiting_elections(ts);
     }
 }

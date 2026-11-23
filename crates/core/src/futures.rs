@@ -234,6 +234,15 @@ impl MarketState {
         }
     }
 
+    /// Whether `spec` lists more contracts than this market's listing, from the one it prices from on.
+    pub(crate) fn adds_contracts(&self, spec: &MarketSpec) -> bool {
+        let Some(futures) = &self.futures else { return false };
+        match (from_front(&self.spec.contracts, &futures.contract), from_front(&spec.contracts, &futures.contract)) {
+            (Some(listed), Some(relisted)) => relisted.len() > listed.len(),
+            _ => false,
+        }
+    }
+
     /// The futures state for this market under a new listing `spec`: where it stands, and the next
     /// contract's quotes, the gap to it and when the front's index lapsed while that contract stays next.
     /// Error cases:

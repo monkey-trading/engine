@@ -40,6 +40,8 @@ use crate::types::{AccountId, MAX_STAMP_MS, MarketId, Millis};
 use crate::volume_tier::{VolumeTier, spend_volume_tier_notice};
 
 mod held;
+mod notices;
+pub use crate::operator_bounds::notices::{NOTICE_USE_MS, lapse_of};
 pub(crate) mod rollover;
 mod rotation;
 
@@ -323,7 +325,8 @@ impl Engine {
     /// names, once that notice's time has come, and returns whether the relisting spends it. A `voted`
     /// relisting's notice is its vote's.
     /// Error cases:
-    /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time
+    /// - a changed markup no notice names, or whose notice takes effect later than the sequenced time or
+    ///   from `V88` has lapsed
     pub(crate) fn check_markup_change(&self, spec: &MarketSpec, voted: bool) -> Result<bool, String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(false) };
         let (id, new) = (spec.id, spec.financing.markup_bps);
@@ -332,10 +335,9 @@ impl Engine {
         }
         match self.operator_bounds.markups.get(&id).filter(|notice| notice.markup_bps == Some(new)) {
             None => Err(format!("market {id}'s markup change to {new} needs a notice of at least seven days")),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("market {id}'s markup change to {new} takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(true),
+            Some(notice) => self
+                .check_notice_in_force(notice.effective_at, &format!("market {id}'s markup change to {new}"))
+                .map(|()| true),
         }
     }
 
@@ -359,9 +361,9 @@ impl Engine {
     /// Error cases:
     /// - a changed rate outside ±50% of its launch value, or from `V55` a profit fee below it
     /// - unless `voted`, a changed rate no notice names, or whose notice takes effect later than the
-    ///   sequenced time
+    ///   sequenced time or from `V88` has lapsed
     /// - from `V49`, unless `voted`, changed stress parameters no notice names, or whose notice takes
-    ///   effect later than the sequenced time
+    ///   effect later than the sequenced time or from `V88` has lapsed
     /// - from `V62`, changed stress levels that drop a launch house loss threshold
     ///   (`Engine::check_loss_triggers_kept`)
     /// - from `V54`, changed score tiers `Engine::check_score_tier_change` refuses
@@ -398,10 +400,9 @@ impl Engine {
             });
             match notice {
                 None => return Err(format!("a {name} change to {new} needs a notice of at least seven days")),
-                Some(notice) if notice.effective_at > self.now => {
-                    return Err(format!("the {name} change to {new} takes effect from {}", notice.effective_at));
+                Some(notice) => {
+                    self.check_notice_in_force(notice.effective_at, &format!("the {name} change to {new}"))?
                 }
-                Some(_) => {}
             }
         }
         self.check_score_tier_change(params, voted)?;
@@ -419,10 +420,7 @@ impl Engine {
         }
         match self.operator_bounds.notice.as_ref().filter(|notice| notice.stress.as_ref() == Some(&stress)) {
             None => Err("a stress parameter change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the stress parameter change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the stress parameter change"),
         }
     }
 

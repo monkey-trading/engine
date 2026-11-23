@@ -31,7 +31,7 @@ impl Engine {
     /// it. A `voted` change's notice is its vote's.
     /// Error cases:
     /// - from `V76`, unless `voted`, a changed rollover time no notice names, or whose notice takes
-    ///   effect later than the sequenced time
+    ///   effect later than the sequenced time or from `V88` has lapsed
     pub(crate) fn check_rollover_change(
         &self,
         rollover: &Rollover,
@@ -44,10 +44,7 @@ impl Engine {
         let named = self.operator_bounds.notice.as_ref().filter(|notice| notice.rollover.as_ref() == Some(rollover));
         match named {
             None => Err("a rollover change needs a notice of at least seven days".into()),
-            Some(notice) if notice.effective_at > self.now => {
-                Err(format!("the rollover change takes effect from {}", notice.effective_at))
-            }
-            Some(_) => Ok(()),
+            Some(notice) => self.check_notice_in_force(notice.effective_at, "the rollover change"),
         }
     }
 

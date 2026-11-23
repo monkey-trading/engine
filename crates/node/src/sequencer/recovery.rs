@@ -61,16 +61,15 @@ impl ReplayedLog {
         let same_domain =
             |recorded: &Operator| (recorded.chain_id, recorded.vault) == (cfg.operator.chain_id, cfg.operator.vault);
         // The config's key is the successor's, on this deployment, when a pending rotation (a promoted or elected
-        // standby's), a daily turn assigned to it (before or after it applies) or a promotion names it.
+        // standby's), an election still to take effect (from `V88`, waiting or the last behind them), a daily turn
+        // assigned to it (before or after it applies) or a promotion names it.
         let turns = engine.daily_turns();
         let turn_member = cfg.promoted_operator == Some(cfg.operator.address)
             || turns.assigned.values().chain(&turns.in_effect).any(|turn| turn.admin_key == cfg.operator.address);
         let named_successor = (turn_member
-            || engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address))
-            && match engine.operator() {
-                Some(recorded) => same_domain(recorded),
-                None => false,
-            };
+            || engine.operator_bounds().rotation.is_some_and(|rotation| rotation.address == cfg.operator.address)
+            || engine.awaited_election_keys().any(|key| key == cfg.operator.address))
+            && engine.operator().is_some_and(same_domain);
         // So does the key the finalised registry installed while rotation is off, before the log's
         // scan has passed the installation: the fallback for a failed operator boots under its config.
         let installed = cfg.registry_operator.and_then(|seated| seated.unscanned(engine)) == Some(cfg.operator.address);

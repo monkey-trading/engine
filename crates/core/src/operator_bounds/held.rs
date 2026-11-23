@@ -4,16 +4,18 @@
 use crate::engine::Engine;
 use crate::market::MarketSpec;
 use crate::protocol::ProtocolVersion;
+use crate::types::MarketId;
 
 impl Engine {
     /// Checks a relisting leaves priced the markets that hold positions and depend on its price: the
     /// market itself, and the markets that convert at it. Price rules no tighter than those in force
     /// (no more sources, no shorter freshness, no narrower divergence) always do. Tighter ones must
     /// still give the market an index, from the quotes it keeps through the relisting, as trading
-    /// reads it, unless every affected market that holds positions is reduce-only.
+    /// reads it, unless every affected market that holds positions is reduce-only, and from `V88`
+    /// whether or not it is: a market with no index sets no mark, so its close-outs wait.
     /// Error cases:
     /// - tighter price rules that give no index, in a market that holds positions and accepts new
-    ///   risk, or that markets holding positions and accepting new risk convert at
+    ///   risk, or from `V88` holds positions at all, or that such markets convert at
     pub(crate) fn check_priceable(&self, spec: &MarketSpec) -> Result<(), String> {
         let Some(market) = self.markets.get(&spec.id) else { return Ok(()) };
         let (old, new) = (&market.spec.price_rules, &spec.price_rules);
@@ -28,7 +30,6 @@ impl Engine {
             relisted.drop_quotes_older_than(self.now, old.max_age_ms);
         }
         let index = relisted.index(self.now).ok();
-        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
         for affected in self.markets.values() {
             let own = affected.spec.id == spec.id;
             let converts = affected.spec.quote_currency.fx_market() == Some(spec.id);
@@ -40,9 +41,16 @@ impl Engine {
                 None => true,
                 Some(index) => converts && !affected.spec.quote_currency.converts_at(index.mid),
             };
-            let held = holders.get(&affected.spec.id).is_some_and(|accounts| !accounts.is_empty());
-            if !unpriced || !held || self.is_reduce_only(affected) {
+            let held = self.holds_positions(affected.spec.id);
+            let exempt = self.protocol_version < ProtocolVersion::V88 && self.is_reduce_only(affected);
+            if !unpriced || !held || exempt {
                 continue;
+            }
+            if self.protocol_version >= ProtocolVersion::V88 {
+                return Err(format!(
+                    "market {} has open positions and would have no price under the price rules of market {}",
+                    affected.spec.id, spec.id
+                ));
             }
             return Err(if own {
                 format!(
@@ -57,6 +65,12 @@ impl Engine {
             });
         }
         Ok(())
+    }
+
+    /// Whether market `id` holds positions.
+    pub(crate) fn holds_positions(&self, id: MarketId) -> bool {
+        let holders = &self.hot_indexes.as_ref().expect("apply builds derived indexes").holders;
+        holders.get(&id).is_some_and(|accounts| !accounts.is_empty())
     }
 
     /// From `V46`, checks a relisting leaves a market that holds positions on its benchmark: a first

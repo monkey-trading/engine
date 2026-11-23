@@ -156,7 +156,9 @@ other side of every trade. The operator's key can move a trading setting only wi
 below, which the engine enforces. While [parameter votes](#parameter-votes) govern, a vote takes the
 place of a notice, within the same bounds, and a fast-path vote can tighten some settings at once.
 Sequenced time, used below, is the time that the trading server stamps on each instruction it
-processes. The bounds are:
+processes. A notice can be used from its time until seven days after it, in sequenced time; a change
+it names needs a new notice after that, so no notice stays armed for the operator to use at a moment
+of its choosing. The bounds are:
 
 - No spread band is below its asset class's floor.
 - A listed market's spread and margin bands change only after seven days' notice. Each spread rate
@@ -207,11 +209,14 @@ processes. The bounds are:
   rollover already due. Each rollover charges one day's financing for each day of sequenced time
   since the previous rollover, and financing charged faster than this is in scope.
 - A listed market's price rules change only after seven days' notice, tighter as well as looser and
-  whether or not the market is reduce-only, and are never loosened beyond the market's launch rules. A
-  change outside a vote with no notice, or price rules loosened beyond these bounds, is in scope.
+  whether or not the market is reduce-only, and are never loosened beyond the market's launch rules.
+  Rules under which a market that holds positions would have no price are refused, reduce-only or
+  not, noticed or voted. A change outside a vote with no notice, or price rules loosened beyond these
+  bounds, is in scope.
 - A futures market's contracts, from the one it prices from on, change only after seven days' notice,
-  though a contract can be added after the last at once. A contract renamed, dropped or moved outside a
-  vote with no notice is in scope. A market with no gap recorded to its next contract rolls onto it
+  though a contract can be added after the last at once to a market that holds no positions. A
+  contract renamed, dropped or moved, or added to a market that holds positions, outside a vote with
+  no notice is in scope. A market with no gap recorded to its next contract rolls onto it
   once its front contract has had no price for seven days, at the first command past the next
   contract's roll time at which the next contract has a price, from the market's last mark, so the move
   between the last mark and that price is never booked. The seven days count sequenced time, the
@@ -787,10 +792,11 @@ A reorganisation that includes another deposit ahead of credited ones shifts eac
 id. The trading server therefore applies all of one reorganisation's moves in a single command, in
 which every replaced receipt leaves its id before any replacement takes one. No deposit that is still
 on the chain is debited or closed out for holding an id that another deposit now has, and the engine
-refuses any credit or move that would land on an id a live receipt holds. Each moved deposit's cash
-nets out, and a Critical alert is still raised for each replaced receipt. The trading server
-sequences none of a reorganisation's changes until each orphaned deposit is either paired with its
-replacement or, once the scan reaches the eligible head, known to have been dropped.
+refuses any credit or move that would land on an id a live receipt holds, or above the finalised
+frontier on an id that the frontier counts, which belongs to a deposit at or below it. Each moved
+deposit's cash nets out, and a Critical alert is still raised for each replaced receipt. The trading
+server sequences none of a reorganisation's changes until each orphaned deposit is either paired with
+its replacement or, once the scan reaches the eligible head, known to have been dropped.
 
 The chain can drop a deposit at the eligible head and include the same transaction again a few
 blocks later. In that case the reversal may have left the client's account below zero, and the house
@@ -1141,7 +1147,13 @@ The operator registry elects the operator, and the operator in effect is the one
 currently names. The admin key that signs the operator's instructions follows the registry's
 elections, which the engine mirrors from finalised chain events. While rotation is on, the vault's
 current release follows the operator in effect, and an elected release takes the enclave's keys and
-the log from the incumbent's enclave from the election's effective time.
+the log from the incumbent's enclave from the election's effective time. The registry elects again
+only once the last election has taken effect, so an election that the engine mirrors while the one
+before it still waits for the mirror to pass its effective time takes effect after that one: the
+earlier winner's key signs from its own effective time until the later winner's, however many a
+catch-up mirrors at once. While rotation is on and an election hands the key over or names the key in
+effect, the node takes secret deliveries from its own operator's key only, whichever election is waiting,
+and its handover alerts follow the first election that names another operator.
 
 Once the registry names a schedule, the operator rotates daily among the members of a rotation set.
 When an election closes, it adopts a rotation set, which takes effect seven days plus the finality
