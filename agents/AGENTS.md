@@ -533,8 +533,8 @@ an index: load only the rule whose hint matches the current action.
   checkpoint of the signer epoch in force while the signer is not retired. `src/MonkeyMinter.sol`,
   MONKEY's only minter for good, takes the timelock and the engine's initial MONKEY emission period
   budget, which caps `src/MonkeyToken.sol`, the ERC-20 it deploys: `claimEmissions` mints an account's
-  entitlement, proven against a `claimRoot` of the vault the timelock named (`setVault`, moved to
-  another only once the guardian has retired the current one's signer), less what it already minted
+  entitlement, proven against a `claimRoot` of the vault the timelock named (`setVault`: a vault under the
+  same timelock, moved to another only once the guardian has retired the current one's signer), less what it already minted
   the account across every vault it followed (`test/MonkeyMinter.t.sol`, `test/MonkeyMinterMove.t.sol`
   and `test/MonkeyMinterInvariant.t.sol`). `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
@@ -561,7 +561,8 @@ an index: load only the rule whose hint matches the current action.
   anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
   seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
   (`setCustody`, which names the vault and the schedule together, over log heads that follow that vault,
-  and moves them to another pair only while rotation is off and no drawn turn runs, `test/Custody.t.sol`),
+  and moves them to another pair only while rotation is off and no drawn turn runs, and to another vault
+  only once the guardian has retired the left vault's signer, `test/Custody.t.sol`),
   adopting a rotation set in it instead: anyone then draws each daily turn from the
   set in effect a day before its boundary, weighted by votes and seeded from `SeedReceiver`, the turn's
   member names the operator from its boundary in a generation the vault's one counter hands out, and

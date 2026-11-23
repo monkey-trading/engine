@@ -376,6 +376,7 @@ pub(super) fn write_config(
     cfg["alerts"]["outbox"]["dir"] = dir.join("alerts").to_string_lossy().into_owned().into();
     cfg["custody"]["vault"] = format!("{:#x}", chain.vault).into();
     cfg["custody"]["evm"]["usdc"] = format!("{:#x}", chain.token).into();
+    cfg["custody"]["evm"]["minter"] = format!("{:#x}", chain.minter).into();
     cfg["custody"]["evm"]["providers"] = serde_json::Value::Array(
         services
             .rpcs

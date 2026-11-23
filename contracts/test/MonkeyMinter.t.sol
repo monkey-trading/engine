@@ -10,6 +10,15 @@ import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {MonkeyToken} from "../src/MonkeyToken.sol";
 import {Vault} from "../src/Vault.sol";
 
+/// A contract under the timelock that is no vault: it answers `governance()` but not `checkpointSigner()`.
+contract GovernedOnly {
+    TimelockController public immutable governance;
+
+    constructor(TimelockController governance_) {
+        governance = governance_;
+    }
+}
+
 /// MONKEY claims through the minter against the posted checkpoint roots of the vault it follows, and
 /// the timelock's moves of that vault. `crates/core/tests/fixtures/emissions.json` holds entitlement
 /// proofs the engine produced; `emissions_fixture.rs` checks them on the Rust side.
@@ -73,7 +82,7 @@ contract MonkeyMinterTest is GovernanceTest {
         new MonkeyMinter(zeroDelay, BUDGET);
     }
 
-    function testOnlyTheTimelockNamesTheVaultAndOnlyOneWithCode() public {
+    function testOnlyTheTimelockNamesAVaultOfItsOwn() public {
         MonkeyMinter fresh = new MonkeyMinter(governance, BUDGET);
         vm.expectRevert(MonkeyMinter.UnauthorizedGovernance.selector);
         fresh.setVault(vault);
@@ -83,6 +92,21 @@ contract MonkeyMinterTest is GovernanceTest {
         vm.expectRevert(MonkeyMinter.InvalidVault.selector);
         vm.prank(address(governance));
         fresh.setVault(Vault(makeAddr("no code")));
+        // A vault under another timelock, which this one could never move the minter off.
+        TimelockController other = _deployGovernance();
+        Vault foreign =
+            new Vault(IERC20(address(1)), vm.addr(KEY), other, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        vm.expectRevert(MonkeyMinter.InvalidVault.selector);
+        vm.prank(address(governance));
+        fresh.setVault(foreign);
+        // Contracts that answer neither, or `governance()` alone, so no later move could read their signer.
+        vm.expectRevert();
+        vm.prank(address(governance));
+        fresh.setVault(Vault(address(monkey)));
+        Vault governedOnly = Vault(address(new GovernedOnly(governance)));
+        vm.expectRevert();
+        vm.prank(address(governance));
+        fresh.setVault(governedOnly);
         assertEq(address(fresh.vault()), address(0));
 
         vm.expectEmit(address(fresh));

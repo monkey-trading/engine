@@ -78,6 +78,7 @@ contract CustodyTest is ScheduleTest {
 
     function test_TheCustodyMovesOnlyWhileRotationIsOff() public {
         (Vault next, OperatorSchedule nextSchedule) = _nextPair();
+        _retire(vault);
         _setRotation(true);
         vm.expectRevert(OperatorRegistry.RotationActive.selector);
         vm.prank(address(governance));
@@ -96,6 +97,7 @@ contract CustodyTest is ScheduleTest {
         vm.prank(address(governance));
         registry.setRotation(false);
         (Vault next, OperatorSchedule nextSchedule) = _nextPair();
+        _retire(vault);
         uint64 until = schedule.turnsRunUntil();
         assertGt(until, block.timestamp);
         vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.TurnsPending.selector, until));
@@ -116,8 +118,7 @@ contract CustodyTest is ScheduleTest {
         OperatorSchedule oldSchedule = schedule;
         LogHeads oldHeads = logHeads;
         _runOneTurnAndStop(alice, bob);
-        vm.prank(multisig);
-        old.retireSigner();
+        _retire(old);
 
         (Vault next, OperatorSchedule nextSchedule) = _nextPair();
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(next), nextSchedule)));
@@ -158,11 +159,37 @@ contract CustodyTest is ScheduleTest {
         _expectHeadRefused(oldHeads, NEXT_KEY);
     }
 
+    /// While the vault it leaves still has a signer, the registry stays: that vault would read the new
+    /// schedule's turns from then on, and name the release it folded before its own turns again.
+    function test_TheCustodyLeavesAVaultOnlyOnceItsSignerIsRetired() public {
+        (Vault next, OperatorSchedule nextSchedule) = _nextPair();
+        address signer = vault.checkpointSigner();
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultSignerLive.selector, signer));
+        vm.prank(address(governance));
+        registry.setCustody(address(next), nextSchedule);
+        // A new signer is live too.
+        _govern(address(vault), abi.encodeCall(Vault.setSigner, (vm.addr(NEXT_KEY + 1))));
+        vm.expectRevert(abi.encodeWithSelector(OperatorRegistry.VaultSignerLive.selector, vm.addr(NEXT_KEY + 1)));
+        vm.prank(address(governance));
+        registry.setCustody(address(next), nextSchedule);
+        // Naming a schedule for the vault it already follows leaves no vault.
+        _deployRegistry();
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), OperatorSchedule(address(0)));
+        OperatorSchedule own = _newSchedule();
+        vm.prank(address(governance));
+        registry.setCustody(address(vault), own);
+        assertEq(address(registry.schedule()), address(own));
+        assertEq(vault.checkpointSigner(), makeAddr("enclave"), "the vault it follows keeps its signer");
+    }
+
     function test_TheTimelockMovesTheRegistryBackOnceIdle() public {
         Vault old = vault;
         OperatorSchedule oldSchedule = schedule;
         (Vault next, OperatorSchedule nextSchedule) = _nextPair();
+        _retire(old);
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(next), nextSchedule)));
+        _retire(next);
         _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(old), oldSchedule)));
         assertEq(address(registry.vault()), address(old));
         assertEq(address(registry.schedule()), address(oldSchedule));
@@ -177,6 +204,12 @@ contract CustodyTest is ScheduleTest {
         _draw(turn);
         _setRotation(false);
         vm.warp(schedule.turnsRunUntil());
+    }
+
+    /// @dev The guardian retires `target`'s signer.
+    function _retire(Vault target) private {
+        vm.prank(multisig);
+        target.retireSigner();
     }
 
     /// @dev A launch vault on another token with `key` as its signer, and a schedule for this registry

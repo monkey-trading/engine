@@ -13,6 +13,7 @@ import {Staking} from "./Staking.sol";
 interface IVault {
     function lastCheckpointAt() external view returns (uint64);
     function signerEpoch() external view returns (uint64);
+    function checkpointSigner() external view returns (address);
 }
 
 /// @title OperatorRegistry
@@ -305,6 +306,7 @@ contract OperatorRegistry {
     error TurnsPending(uint64 until);
     error EpochTooShort(uint64 epochLength, uint64 minimum);
     error EnclaveIsStandbyKey(address enclave);
+    error VaultSignerLive(address signer);
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -516,12 +518,19 @@ contract OperatorRegistry {
     /// @notice Names the vault, whose checkpoints the liveness clock reads, and the schedule whose turns
     /// name the operator, together; with a schedule named, closes adopt rotation sets instead of
     /// electing. The timelock may move the registry to another pair only while rotation is off and no
-    /// drawn turn runs, when nothing in either is live. The schedule must be built for this registry,
-    /// over log heads that follow the vault, with an epoch of at least `MIN_SCHEDULED_EPOCH`. Until a
-    /// schedule is named the registry may follow a vault alone, and elects; once one is, one stays.
+    /// drawn turn runs, and to another vault only once the guardian has retired the signer of the vault
+    /// it leaves, which reads the new schedule from then on, when nothing in either is live. The
+    /// schedule must be built for this registry, over log heads that follow the vault, with an epoch of
+    /// at least `MIN_SCHEDULED_EPOCH`. Until a schedule is named the registry may follow a vault alone,
+    /// and elects; once one is, one stays.
     function setCustody(address vault_, OperatorSchedule schedule_) external onlyGovernance {
         if (vault_.code.length == 0) revert ZeroAddress();
         _requireIdle();
+        IVault left = vault;
+        if (address(left) != address(0) && address(left) != vault_) {
+            address signer = left.checkpointSigner();
+            if (signer != address(0)) revert VaultSignerLive(signer);
+        }
         if (address(schedule_) != address(0)) {
             uint64 epochLength = parameters.epochLength;
             if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);

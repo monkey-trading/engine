@@ -65,11 +65,14 @@ contract MonkeyMinter {
         monkey = new MonkeyToken(2 * PERIODS_PER_HALVING * periodBudget_);
     }
 
-    /// @notice Names the vault whose roots mint. The first needs no condition; a later one only once
-    /// the current vault's signer is retired (`checkpointSigner` zero), so no root of it claims.
+    /// @notice Names the vault whose roots mint: a vault under this timelock, which answers
+    /// `checkpointSigner()` as every later move reads it. The first needs no other condition; a later
+    /// one only once the current vault's signer is retired (`checkpointSigner` zero), so no root of it
+    /// claims.
     function setVault(Vault next) external {
         if (msg.sender != address(governance)) revert UnauthorizedGovernance();
-        if (address(next).code.length == 0) revert InvalidVault();
+        if (address(next).code.length == 0 || next.governance() != governance) revert InvalidVault();
+        next.checkpointSigner();
         Vault previous = vault;
         if (address(previous) != address(0)) {
             address signer = previous.checkpointSigner();

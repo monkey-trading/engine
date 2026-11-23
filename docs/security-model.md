@@ -899,11 +899,14 @@ address that the operator in effect registered. The vault also moves its signer,
 to a member's vouched standby key when the schedule promotes that member, as
 [liveness and promotion](#liveness-and-promotion) describes.
 
-The timelock also names the vault that `MonkeyMinter` mints against, and the vault and the schedule
-that the registry follows. It moves the minter to another vault only once the guardian has retired
-the current vault's signer, so that vault's roots claim nothing more. It moves the registry to another
-vault and schedule, which must be built for the registry over log heads that follow that vault, only
-while rotation is off and no drawn turn runs. The vault promotes a signer, and hands out a turn's
+The timelock also names the vault that `MonkeyMinter` mints against, which must be a vault under the
+same timelock, and the vault and the schedule that the registry follows. It moves the minter to
+another vault only once the guardian has retired the current vault's signer, so that vault's roots
+claim nothing more. It moves the registry to another vault and schedule, which must be built for the
+registry over log heads that follow that vault, only while rotation is off and no drawn turn runs,
+and to another vault only once the guardian has retired the signer of the vault it leaves. That vault
+keeps the registry, so from then on it reads the new schedule, which has drawn none of its turns, and
+names the release it held before its own turns again. The vault promotes a signer, and hands out a turn's
 generation, only for the schedule the registry names, so a schedule the registry has left cannot act
 on the vault it follows. Log heads follow one vault for good, so those of a vault whose signer is
 retired take no head.
@@ -928,7 +931,9 @@ Known limits:
   such a root on the vault itself, and turning rotation off takes the timelock's delay.
 - The registry trusts the timelock's choice of vault and schedule. While rotation is off and no drawn
   turn runs, the timelock can pair the vault with a schedule that promotes any key, which `setSigner`
-  under the same condition already allows.
+  under the same condition already allows. A vault the registry has left names the release it held
+  before its turns, in that release's generation, so a sealed copy of its keys from then opens again;
+  its signer is retired by then, so no key it opens signs for that vault.
 
 ## MONKEY staking and distributions
 

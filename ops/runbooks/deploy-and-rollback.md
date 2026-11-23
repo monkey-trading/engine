@@ -272,8 +272,8 @@ again before the registry records it.**
 5. Through the timelock, set the vault's registry with `setRegistry(address)` and the minter's vault
    with `setVault(address)`, as
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
-   describes. The vault's registry can be set only once. The minter moves to another vault only once
-   the guardian has retired the current vault's signer. The registry names the vault with the schedule,
+   describes. The vault's registry can be set only once. The minter takes only a vault under the same
+   timelock, and moves to another vault only once the guardian has retired the current vault's signer. The registry names the vault with the schedule,
    in step 4 of [Deploy the rotation contracts](#deploy-the-rotation-contracts).
 
 ## Deploy the rotation contracts
@@ -354,12 +354,13 @@ already names.
 
    The call reverts with `RotationActive` while rotation is on, with `TurnsPending` while a drawn
    turn runs, with `EpochTooShort` while the election epoch is shorter than a day, with `ZeroAddress`
-   for a vault with no code, and with `InvalidSchedule` for a schedule built for another registry or
+   for a vault with no code, with `VaultSignerLive` when it would leave a vault whose signer the
+   guardian has not retired, and with `InvalidSchedule` for a schedule built for another registry or
    over log heads that follow another vault, or for no schedule once one is named. Once it executes,
    `cast call $REGISTRY 'vault()(address)' --rpc-url $RPC` prints `$VAULT` and
    `cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`. The timelock may
    move the registry to another vault and schedule later, but only while rotation is off and no drawn
-   turn runs.
+   turn runs, and only once the guardian has retired the signer of the vault it leaves.
 
 5. **Deploy the parameter vote** on Arbitrum, over the schedule, with the `[parameter_vote]`
    windows.
