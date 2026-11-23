@@ -340,7 +340,7 @@ async fn a_start_that_fails_after_its_chain_read_ends_at_once() {
     cfg.custody.evm = Some(
         toml::from_str(
             "providers = [{ name = 'a', rpc_url = 'http://127.0.0.1:1' }]\n\
-             usdc = '0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0'\nfinality_tag = 'safe'\n\
+             usdc = '0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0'\nminter = '0x3030303030303030303030303030303030303030'\nfinality_tag = 'safe'\n\
              withdrawal_finality_tag = 'finalized'\nconfirmations = 0\nstart_block = 0\nmax_block_range = 1000\n\
              poll_interval = '10ms'\nrpc_timeout = '1s'\nstall_critical_after = '1s'\n\
              finality_stalled_after = '1s'\ncursor_path = 'unused.json'\n",

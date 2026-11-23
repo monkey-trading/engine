@@ -82,6 +82,8 @@ pub(super) struct Chain {
     pub(super) accounts: Vec<Address>,
     pub(super) usdc: Address,
     pub(super) vault: Address,
+    /// The `MonkeyMinter`, MONKEY's only minter.
+    pub(super) minter: Address,
     pub(super) monkey: Address,
     pub(super) governance: Address,
     pub(super) registry: Address,
@@ -149,17 +151,18 @@ impl Chain {
         let delay = U256::from(GOVERNANCE_DELAY_SECS);
         let timelock = (delay, vec![from], vec![from], Address::ZERO).abi_encode_params();
         let governance = deploy(&provider, from, "TimelockController.sol/TimelockController.json", &timelock).await;
-        // The MONKEY period budget, 10 MONKEY, is a development value, not an approved production
-        // parameter; it caps MONKEY at 525,600, above the scenario's stakes.
-        let budget = U256::from(10).pow(U256::from(19));
         let schedule = crate::test_support::DEV_EXIT_SCHEDULE;
         let vault = deploy(
             &provider,
             from,
             "Vault.sol/Vault.json",
-            &(usdc, enclave, governance, from, budget, schedule.0, schedule.1, schedule.2).abi_encode(),
+            &(usdc, enclave, governance, from, schedule.0, schedule.1, schedule.2).abi_encode(),
         )
         .await;
+        // The MONKEY period budget, 10 MONKEY, is a development value, not an approved production
+        // parameter; it caps MONKEY at 525,600, above the scenario's stakes.
+        let budget = (governance, U256::from(10).pow(U256::from(19))).abi_encode();
+        let minter = deploy(&provider, from, "MonkeyMinter.sol/MonkeyMinter.json", &budget).await;
         let mut chain = Chain {
             _anvil: anvil,
             _proxies: proxies,
@@ -169,6 +172,7 @@ impl Chain {
             accounts,
             usdc,
             vault,
+            minter,
             monkey: Address::ZERO,
             governance,
             registry: Address::ZERO,
@@ -180,7 +184,7 @@ impl Chain {
             release_tag,
             salts: 0,
         };
-        chain.monkey = chain.view(vault, monkeyCall {}).await;
+        chain.monkey = chain.view(minter, monkeyCall {}).await;
         let initial = InitialOperator {
             adminKey: deployer_key,
             launchDigest: Bytes::from(digest.to_vec()),
@@ -222,13 +226,13 @@ impl Chain {
         self.rpc("anvil_impersonateAccount", json!([account])).await;
     }
 
-    /// Mints `amount` MONKEY to `account` as the vault, its only minter, in place of a proven
+    /// Mints `amount` MONKEY to `account` as `MonkeyMinter`, its only minter, in place of a proven
     /// emission claim, then stakes it all.
     pub(super) async fn stake(&self, account: Address, amount: U256) -> TransactionReceipt {
-        self.rpc("anvil_impersonateAccount", json!([self.vault])).await;
-        self.rpc("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await;
-        self.send(self.vault, self.monkey, mintCall { to: account, amount }.abi_encode()).await;
-        self.rpc("anvil_stopImpersonatingAccount", json!([self.vault])).await;
+        self.rpc("anvil_impersonateAccount", json!([self.minter])).await;
+        self.rpc("anvil_setBalance", json!([self.minter, "0xde0b6b3a7640000"])).await;
+        self.send(self.minter, self.monkey, mintCall { to: account, amount }.abi_encode()).await;
+        self.rpc("anvil_stopImpersonatingAccount", json!([self.minter])).await;
         self.send(account, self.monkey, approveCall { spender: self.staking, amount }.abi_encode()).await;
         self.send(account, self.staking, stakeCall { amount }.abi_encode()).await
     }

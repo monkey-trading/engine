@@ -40,7 +40,7 @@ pub(crate) struct Ready {
     pub setup: Option<Setup>,
     /// The replica's checkpoint at the vault's finalized seq, which the vault authenticated.
     pub anchor: Option<Checkpoint>,
-    /// The emission period budget the vault's MONKEY cap was derived from.
+    /// The emission period budget the minter's MONKEY cap was derived from.
     pub emission_budget: Option<TokenUnits>,
     /// The staking contract's immutable epoch and cooldown, with one configured: the final replica's
     /// staking config is checked against them before the member serves, with no read of the chain.
@@ -124,7 +124,7 @@ impl Ready {
         let emission_budget = match &setup {
             Some(setup) => {
                 setup.poster.startup(anchor.as_ref()).await.context("checking the vault's anchor")?;
-                Some(emission_preflight(&setup.poster, replica.engine().emissions()).await?)
+                Some(emission_preflight(cfg, &setup.poster, replica.engine().emissions()).await?)
             }
             None => None,
         };
@@ -205,7 +205,7 @@ impl Ready {
             Some(setup) => {
                 let fixed = (promotion.checkpoint_seq, promotion.checkpoint_root);
                 setup.poster.startup_promoted(anchor.as_ref(), fixed).await.context("checking the vault's anchor")?;
-                Some(emission_preflight(&setup.poster, replica.engine().emissions()).await?)
+                Some(emission_preflight(cfg, &setup.poster, replica.engine().emissions()).await?)
             }
             None => None,
         };

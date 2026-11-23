@@ -1,5 +1,6 @@
 //! Persisted recovery starts only after the authenticated chain anchor passes.
 
+use anyhow::anyhow;
 use engine_core::emissions::{Emissions, TokenUnits};
 use engine_core::staking::StakingConfig;
 use tracing::error;
@@ -13,21 +14,23 @@ use crate::log::Checkpoint;
 use crate::node::ready::Ready;
 use crate::sequencer::ReplayedLog;
 
-/// Reads the emission period budget the vault's MONKEY cap was derived from, and refuses a log that
-/// records another: entitlements past the cap could never be claimed. Runs before anything is
+/// Reads the emission period budget the configured minter's MONKEY cap was derived from, and refuses a
+/// log that records another: entitlements past the cap could never be claimed. Runs before anything is
 /// written.
 /// Error cases:
-/// - the cap cannot be read (alert `checkpoint_startup_failed`)
+/// - custody is not EVM, so no minter is configured, or the cap cannot be read (alert
+///   `checkpoint_startup_failed`)
 /// - the log records emissions with another period budget (alert `emission_budget_mismatch`)
 pub(super) async fn emission_preflight<R: CheckpointChain>(
+    cfg: &NodeConfig,
     poster: &Poster<R>,
     recorded: Option<&Emissions>,
 ) -> anyhow::Result<TokenUnits> {
-    let budget = poster
-        .chain
-        .emission_budget()
-        .await
-        .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
+    let budget = match &cfg.custody.evm {
+        Some(evm) => poster.chain.emission_budget(evm.minter).await,
+        None => Err(anyhow!("checkpoint custody is not EVM")),
+    }
+    .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))?;
     check_recorded(budget, recorded)
         .inspect_err(|e| error!(alert = "emission_budget_mismatch", "refusing to serve: {e:#}"))?;
     Ok(budget)
@@ -114,10 +117,10 @@ pub(super) async fn chain_terms(
     setup: Option<&Setup>,
     log: &ReplayedLog,
 ) -> anyhow::Result<(Option<TokenUnits>, Option<StakingTerms>)> {
-    // The API also refuses an emission schedule with another budget than the vault's.
+    // The API also refuses an emission schedule with another budget than the minter's.
     let emission_budget = match (ready, setup) {
         (Some(ready), _) => ready.emission_budget,
-        (None, Some(setup)) => Some(emission_preflight(&setup.poster, log.emissions()).await?),
+        (None, Some(setup)) => Some(emission_preflight(cfg, &setup.poster, log.emissions()).await?),
         (None, None) => None,
     };
     // Nor may the log or the genesis carry a staking config the staking contract does not hold: a

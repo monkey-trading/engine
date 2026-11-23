@@ -213,8 +213,7 @@ contract FaultProofTest is LivenessTest {
 
     function test_NoScheduleProvesNothing() public {
         // A vault with no registry has no assignments to name.
-        Vault bare =
-            new Vault(new MockUSDC(), vault.checkpointSigner(), governance, multisig, 1e24, 7 days, 3 days, 1 days);
+        Vault bare = new Vault(new MockUSDC(), vault.checkpointSigner(), governance, multisig, 7 days, 3 days, 1 days);
         FaultProof unbound = new FaultProof(bare);
         (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
         bytes memory sigA = _signAt(a, _signerKey(), 1, address(bare));

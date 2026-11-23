@@ -91,7 +91,7 @@ sol! {
     function setRelease(bytes launchDigest, bytes32 configHash) external;
     function setRotation(bool enabled) external;
     function promote() external returns (uint64);
-    function setVault(address vault) external;
+    function setCustody(address vault_, address schedule_) external;
     function staking() external view returns (address);
     function delegate(address candidate, uint256 amount) external;
     function redelegate(address from, address to, uint256 amount) external;
@@ -112,6 +112,8 @@ pub(super) struct Chain {
     pub url: String,
     pub token: Address,
     pub vault: Address,
+    /// The `MonkeyMinter` the node reads the emission period budget from.
+    pub minter: Address,
     /// The vault's timelock, whose only proposer is `deployer` and whose delay is one second.
     pub timelock: Address,
     pub relayer: Address,
@@ -183,6 +185,7 @@ impl Chain {
             url,
             token: Address::ZERO,
             vault: Address::ZERO,
+            minter: Address::ZERO,
             timelock: Address::ZERO,
             relayer: Address::ZERO,
             payer: Address::ZERO,
@@ -209,24 +212,12 @@ impl Chain {
                 &(U256::from(1), vec![deployer], vec![Address::ZERO], Address::ZERO).abi_encode_params(),
             )
             .await?;
-        chain.vault = chain
-            .deploy(
-                deployer,
-                "Vault.sol/Vault.json",
-                // The MONKEY period budget, 1 MONKEY, is a development value.
-                &(
-                    chain.token,
-                    Address::from(key.address()),
-                    chain.timelock,
-                    deployer,
-                    U256::from(10).pow(U256::from(18)),
-                    crate::test_support::DEV_EXIT_SCHEDULE.0,
-                    crate::test_support::DEV_EXIT_SCHEDULE.1,
-                    crate::test_support::DEV_EXIT_SCHEDULE.2,
-                )
-                    .abi_encode(),
-            )
-            .await?;
+        let exit = crate::test_support::DEV_EXIT_SCHEDULE;
+        let vault = (chain.token, Address::from(key.address()), chain.timelock, deployer, exit.0, exit.1, exit.2);
+        chain.vault = chain.deploy(deployer, "Vault.sol/Vault.json", &vault.abi_encode()).await?;
+        // The MONKEY period budget, 1 MONKEY, is a development value.
+        let budget = (chain.timelock, U256::from(10).pow(U256::from(18))).abi_encode();
+        chain.minter = chain.deploy(deployer, "MonkeyMinter.sol/MonkeyMinter.json", &budget).await?;
         // The node's custody startup reads at the withdrawal finality tag, which trails `safe`.
         timeout(LOADED_WAIT, async {
             while chain.request::<String>("eth_getCode", json!([chain.vault, "finalized"])).await? == "0x" {

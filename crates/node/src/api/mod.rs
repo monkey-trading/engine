@@ -163,8 +163,8 @@ pub struct ApiState {
     pub operator_hostname: Option<crate::handover::hostname::HostnameFeed>,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
-    /// The emission period budget the configured vault's MONKEY cap was derived from, which an
-    /// emission schedule must match; `None` when the node reads no vault, as under mock custody.
+    /// The emission period budget the configured minter's MONKEY cap was derived from, which an
+    /// emission schedule must match; `None` when the node reads no minter, as without `[checkpoints]`.
     pub emission_budget: Option<TokenUnits>,
     /// The configured staking contract's epoch and cooldown, which `InitStaking` must match; read
     /// when it is sent. `None` when the node reads no staking contract, as under mock custody.
@@ -394,15 +394,15 @@ async fn proof(State(s): State<ApiState>, Path(address): Path<String>) -> ApiRes
     rx.await.map_err(|_| ApiError::Unavailable)?.map(Json).ok_or(ApiError::NotFound)
 }
 
-/// The proof of the account's cumulative MONKEY entitlement, as the vault's `claimEmissions` takes
+/// The proof of the account's cumulative MONKEY entitlement, as `MonkeyMinter`'s `claimEmissions` takes
 /// it, with `accepted_seq`, `newest_seq`, `newest_entitled` and `claimable` saying what it is proven
-/// against. The vault checks a claim against the root of the checkpoint named by the proof's `seq`,
+/// against. The minter checks a claim against the vault's root of the checkpoint named by the proof's `seq`,
 /// in the signer epoch in force: the proof is at the checkpoint the vault last recorded in that epoch
 /// when the node retained one for the account (from its first request on), and `claimable` is true.
 /// Otherwise it is the newest checkpoint's, and the claim waits for the vault to record that seq in
 /// the epoch in force, so a client asks again rather than keep it. A proof at the accepted root names
-/// the entitlement then, which only grows, so the vault pays that less what it has paid, and the rest
-/// on a later claim.
+/// the entitlement then, which only grows, so the minter mints that less what it has minted, and the
+/// rest on a later claim.
 /// Error cases:
 /// - the address is malformed
 /// - no checkpoint holds an entitlement for the account

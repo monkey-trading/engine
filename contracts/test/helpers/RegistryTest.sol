@@ -3,13 +3,14 @@ pragma solidity 0.8.36;
 
 import {GovernanceTest} from "./GovernanceTest.sol";
 
+import {MonkeyMinter} from "../../src/MonkeyMinter.sol";
 import {MonkeyToken} from "../../src/MonkeyToken.sol";
 import {OperatorRegistry} from "../../src/OperatorRegistry.sol";
 import {Staking} from "../../src/Staking.sol";
 import {Vault} from "../../src/Vault.sol";
 import {MockUSDC} from "../mocks/MockUSDC.sol";
 
-/// @notice A vault, its MONKEY, and an operator registry with the staking contract it deploys,
+/// @notice A vault, MONKEY and its minter, and an operator registry with the staking contract it deploys,
 /// under test parameters that are not proposed production values (#360 decides those).
 abstract contract RegistryTest is GovernanceTest {
     uint256 internal constant COOLDOWN = 3 days;
@@ -27,6 +28,7 @@ abstract contract RegistryTest is GovernanceTest {
     bytes32 internal constant CONFIG = keccak256("candidate config");
 
     Vault internal vault;
+    MonkeyMinter internal minter;
     MonkeyToken internal monkey;
     OperatorRegistry internal registry;
     Staking internal staking;
@@ -34,8 +36,9 @@ abstract contract RegistryTest is GovernanceTest {
 
     function _deployRegistry() internal {
         governance = _deployGovernance();
-        vault = new Vault(new MockUSDC(), makeAddr("enclave"), governance, multisig, 1e24, 7 days, 3 days, 1 days);
-        monkey = vault.monkey();
+        vault = new Vault(new MockUSDC(), makeAddr("enclave"), governance, multisig, 7 days, 3 days, 1 days);
+        minter = new MonkeyMinter(governance, 1e24);
+        monkey = minter.monkey();
         registry = new OperatorRegistry(
             monkey,
             COOLDOWN,
@@ -72,9 +75,9 @@ abstract contract RegistryTest is GovernanceTest {
         return keccak256(abi.encodePacked(_digest(seed), CONFIG));
     }
 
-    /// @dev Mints through the vault in place of a proven claim; the cap is far above test amounts.
+    /// @dev Mints through the minter in place of a proven claim; the cap is far above test amounts.
     function _stake(address account, uint256 amount) internal {
-        vm.prank(address(vault));
+        vm.prank(address(minter));
         monkey.mint(account, amount);
         vm.startPrank(account);
         monkey.approve(address(staking), amount);

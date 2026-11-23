@@ -323,14 +323,14 @@ proportion to the USDC it holds. `engine exit-proof` builds an account's claim f
 
 ## MONKEY and staking
 
-MONKEY is a token minted by the vault. Every ten minutes, a fixed amount of MONKEY is distributed
+MONKEY is a token minted against the vault's checkpoints. Every ten minutes, a fixed amount of MONKEY is distributed
 among the traders who realised a loss in that period, in proportion to the size of their losses. The
 amount is 100,000 MONKEY at launch, and it halves every 182.5 days.
 
 Staked MONKEY earns a share of the house's net asset value above a reserve of $30.5 million. The
 share is paid in USDC at the end of each day, to the extent that the house's cash covers it.
-Unstaking takes 28 days. Both MONKEY and USDC distributions are claimed from the vault with a proof
-against a checkpoint.
+Unstaking takes 28 days. MONKEY is claimed from the MONKEY minter, and USDC distributions from the
+vault, each with a proof against a checkpoint of the vault.
 
 Each day's distribution first pays the bug bounty awards that a vote has approved, oldest first. At
 launch, awards take at most 5% of the day's distribution, and at most 50,000 USDC. An award that a

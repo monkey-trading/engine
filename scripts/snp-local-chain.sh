@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sets up one SEV-SNP guest's deployment on a local Anvil chain, as a first deployment does on a real
 # one (ops/runbooks/sev-snp-host.md, ops/runbooks/deploy-and-rollback.md):
-#   prepare   deploys a mock USDC, a timelock with a one-second delay and a vault whose signer is a
-#             placeholder; writes the guest's node.toml from config/anvil.toml with real attestation,
+#   prepare   deploys a mock USDC, a timelock with a one-second delay, a vault whose signer is a
+#             placeholder, and the MONKEY minter; writes the guest's node.toml from config/anvil.toml with real attestation,
 #             paths under /data and the chain reached over TLS at <rpc-host> (snp-node-config.py);
 #             has the timelock name the release (the image's launch digest and the config's
 #             SHA-256); and writes release.toml, a fresh operator key, chain.env and the data disk's
@@ -31,7 +31,7 @@ rpc="${RPC:-http://127.0.0.1:8545}"
 read -r -a rpc_ports <<< "${RPC_PORTS:-18545 18546 18547 18548}"
 mnemonic="test test test test test test test test test test test junk"
 key() { cast wallet private-key --mnemonic "$mnemonic" --mnemonic-index "$1"; }
-# Anvil's account 0 deploys the token and the vault, 1 is the placeholder signer, guardian and the
+# Anvil's account 0 deploys the token, the vault and the minter, 1 is the placeholder signer, guardian and the
 # timelock's proposer, and 2 deploys the timelock.
 deployer_key="$(key 0)"
 proposer_key="$(key 1)"
@@ -76,14 +76,16 @@ prepare() {
   relayer_key="$(key "${RELAYER_INDEX:-3}")"
   relayer="$(cast wallet address --private-key "$relayer_key")"
 
-  echo "deploying the mock USDC, the timelock and the vault on $rpc" >&2
+  echo "deploying the mock USDC, the timelock, the vault and the MONKEY minter on $rpc" >&2
   cd "$root/contracts"
   create() { forge create --rpc-url "$rpc" --private-key "$1" --broadcast --json "${@:2}" | jq -er .deployedTo; }
   usdc="$(create "$deployer_key" test/mocks/MockUSDC.sol:MockUSDC)"
   timelock="$(create "$(key 2)" dependencies/@openzeppelin-contracts-5.7.0/governance/TimelockController.sol:TimelockController \
     --constructor-args 1 "[$proposer]" '[0x0000000000000000000000000000000000000000]' 0x0000000000000000000000000000000000000000)"
   vault="$(create "$deployer_key" src/Vault.sol:Vault \
-    --constructor-args "$usdc" "$proposer" "$timelock" "$proposer" 1000000000000000000 2592000 2592000 2592000)"
+    --constructor-args "$usdc" "$proposer" "$timelock" "$proposer" 2592000 2592000 2592000)"
+  # The MONKEY period budget, 1 MONKEY, is a development value, not an approved production parameter.
+  minter="$(create "$deployer_key" src/MonkeyMinter.sol:MonkeyMinter --constructor-args "$timelock" 1000000000000000000)"
   cd "$root"
 
   # The operator's admin key: a fresh one, since a node with real attestation refuses the published
@@ -93,7 +95,7 @@ prepare() {
   public_key="0x04$(cast wallet public-key --private-key "$operator_key" | sed 's/^0x//')"
   (umask 077 && echo "$operator_key" > "$guest/operator.key")
 
-  python3 -I "$root/scripts/snp-node-config.py" "$root/config/anvil.toml" "$guest/node.toml" "$host" "$vault" "$usdc" \
+  python3 -I "$root/scripts/snp-node-config.py" "$root/config/anvil.toml" "$guest/node.toml" "$host" "$vault" "$usdc" "$minter" \
     "$relayer" "$public_key" "${PROCESSOR:-Genoa}" "${PRODUCT_NAME:-Genoa-A2}" "${rpc_ports[@]}"
   config_hash="0x$(sha256sum "$guest/node.toml" | cut -d' ' -f1)"
   digest="0x$(jq -er .launch_digest "$measurement")"

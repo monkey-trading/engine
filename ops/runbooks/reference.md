@@ -49,6 +49,7 @@ export API=https://api.example.com     # the trading server's public API: api.tl
 export ENGINE=./engine                  # the binary built above
 export CONFIG=node.toml                 # the configuration the running release was started with
 export VAULT=0x...                      # custody.vault
+export MINTER=0x...                     # custody.evm.minter
 export LOG_HEADS=0x...                  # log_heads.contract, if configured
 export REGISTRY=0x...                   # custody.evm.staking.registry.contract
 export USDC=0x...                       # custody.evm.usdc

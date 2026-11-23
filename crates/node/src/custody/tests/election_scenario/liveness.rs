@@ -57,9 +57,8 @@ use rig::{Log, Rig, config, etch_arb_sys, sampling, warp};
 sol! {
     struct Turn { address candidate; uint16 position; uint8 reason; uint32 setId; uint64 generation; uint64 prior; bytes32 seed; address source; }
     function turnOf(uint64 turn) external view returns (Turn);
-    function setVault(address vault_) external;
+    function setCustody(address vault_, address schedule_) external;
     function setRegistry(address registry_) external;
-    function setSchedule(address schedule_) external;
     function draw(uint64 turn) external returns (address);
     function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt);
     function latches(uint64 turn, uint16 position) external view returns (uint64 at, uint64 signerEpoch, address member, bytes32 release, uint64 generation);
@@ -168,9 +167,8 @@ async fn dev_scenario_a_failed_operator_is_promoted_past_within_minutes() {
     let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
         (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
     ];
     calls.extend(members.iter().map(|member| (chain.registry, chain.approval(member.candidate, member.digest))));
     calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));

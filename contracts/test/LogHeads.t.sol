@@ -15,9 +15,8 @@ contract LogHeadsTest is GovernanceTest {
 
     function setUp() public {
         governance = _deployGovernance();
-        vault = new Vault(
-            IERC20(address(1)), vm.addr(KEY), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER
-        );
+        vault =
+            new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
         heads = new LogHeads(vault);
     }
 
@@ -163,9 +162,8 @@ contract LogHeadsTest is GovernanceTest {
 
     function testRefusesAnotherVaultOrChain() public {
         bytes memory signature = sign(2, bytes32(uint256(7)), 0, bytes32(0), KEY);
-        Vault other = new Vault(
-            IERC20(address(1)), vm.addr(KEY), governance, multisig, 1e18, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER
-        );
+        Vault other =
+            new Vault(IERC20(address(1)), vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
         LogHeads otherHeads = new LogHeads(other);
         vm.expectRevert(LogHeads.InvalidSigner.selector);
         otherHeads.post(2, bytes32(uint256(7)), 0, bytes32(0), signature);

@@ -98,6 +98,7 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
         })
         .collect();
     evm.usdc = chain.usdc;
+    evm.minter = chain.minter;
     evm.finality_tag = FinalityTag::Latest;
     evm.withdrawal_finality_tag = chain.release_tag;
     evm.confirmations = 0;

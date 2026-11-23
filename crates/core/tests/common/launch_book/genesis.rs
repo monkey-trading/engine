@@ -53,13 +53,13 @@ struct Genesis {
 #[derive(Deserialize)]
 struct Deployment {
     start: chrono::DateTime<chrono::Utc>,
-    vault: Vault,
+    minter: Minter,
     staking: Staking,
     init_staking: InitStaking,
 }
 
 #[derive(Deserialize)]
-struct Vault {
+struct Minter {
     period_budget: String,
 }
 
@@ -122,7 +122,7 @@ pub fn production_harness_at(
     let text = std::fs::read_to_string(DEPLOYMENT).expect("ops/runbooks/production-deployment.toml");
     let deployment: Deployment = toml::from_str(&text).expect("the deployment's inputs parse");
     let start_ms = origin.map_or(deployment.start.timestamp_millis(), |origin| at + origin.start_after);
-    let period_budget = deployment.vault.period_budget.parse().expect("a budget in base units");
+    let period_budget = deployment.minter.period_budget.parse().expect("a budget in base units");
     h.operator_admin(AdminCommand::InitEmissions(EmissionSchedule {
         start_ms,
         period_budget: TokenUnits(period_budget),

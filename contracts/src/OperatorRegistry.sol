@@ -13,6 +13,7 @@ import {Staking} from "./Staking.sol";
 interface IVault {
     function lastCheckpointAt() external view returns (uint64);
     function signerEpoch() external view returns (uint64);
+    function checkpointSigner() external view returns (address);
 }
 
 /// @title OperatorRegistry
@@ -43,12 +44,13 @@ interface IVault {
 /// @dev Not upgradeable. Rotation starts off, with the deployment's initial operator in effect, and
 /// while it is off a close elects and adopts nothing. Only the timelock turns rotation on and off
 /// (turning it off cancels an election not yet in effect; turns already drawn stand), names the
-/// schedule, approves candidates' releases, and changes the parameters within the bounds fixed at
-/// deployment. While rotation is off and no drawn turn runs, the timelock alone may also install a
-/// new operator in effect (#502), the fallback for a failed operator whose key is gone. The operator
-/// in effect, a candidate elected and waiting to take effect, and a member holding a turn cannot
-/// leave. A candidate registers an admin key only with that key's EIP-712 authorization, so no one
-/// can reserve a key the candidate advertised before it registers.
+/// vault and the schedule, approves candidates' releases, and changes the parameters within the bounds
+/// fixed at deployment. While rotation is off and no drawn turn runs, the timelock alone may also
+/// install a new operator in effect (#502), the fallback for a failed operator whose key is gone, and
+/// move the registry to another vault and schedule (`setCustody`). The operator in effect, a candidate
+/// elected and waiting to take effect, and a member holding a turn cannot leave. A candidate registers
+/// an admin key only with that key's EIP-712 authorization, so no one can reserve a key the candidate
+/// advertised before it registers.
 contract OperatorRegistry {
     /// @notice The election's adjustable values; the timelock changes them within deployment bounds.
     struct Parameters {
@@ -174,8 +176,8 @@ contract OperatorRegistry {
     /// @notice The deployment's timelock.
     TimelockController public immutable governance;
 
-    /// @notice The vault whose checkpoints the liveness clock reads; set once by governance after
-    /// deployment, since the vault and the registry name each other.
+    /// @notice The vault whose checkpoints the liveness clock reads; set by governance after deployment,
+    /// since the vault and the registry name each other (`setCustody`).
     IVault public vault;
 
     /// @notice The parameters in force.
@@ -188,8 +190,8 @@ contract OperatorRegistry {
     /// @notice Whether closes elect or adopt rotation sets, and draws run; off at deployment.
     bool public rotationSwitch;
 
-    /// @notice The schedule whose turns name the operator; set once by governance, and while it is
-    /// unset the registry elects.
+    /// @notice The schedule whose turns name the operator; set by governance with the vault
+    /// (`setCustody`), and while it is unset the registry elects.
     OperatorSchedule public schedule;
 
     /// @notice The election epoch now open, and when it started.
@@ -272,7 +274,8 @@ contract OperatorRegistry {
 
     event ParametersChanged(Parameters parameters);
 
-    event ScheduleSet(address indexed schedule);
+    /// @notice Governance named the vault and the schedule the registry follows; a zero schedule elects.
+    event CustodySet(address indexed vault, address indexed schedule);
 
     error ZeroAddress();
     error InvalidGovernance();
@@ -296,15 +299,14 @@ contract OperatorRegistry {
     error RotationActive();
     error ElectionPending();
     error VaultNotSet();
-    error VaultAlreadySet(address vault);
     error LivenessNotDue(uint256 dueAt);
     error NoQualifiedStandby();
     error InvalidSchedule();
-    error ScheduleAlreadySet(address schedule);
     error ScheduleNamesTurns();
     error TurnsPending(uint64 until);
     error EpochTooShort(uint64 epochLength, uint64 minimum);
     error EnclaveIsStandbyKey(address enclave);
+    error VaultSignerLive(address signer);
 
     /// @param monkey_ The MONKEY token the staking contract holds.
     /// @param cooldownSeconds_ The staking contract's unstake cooldown, in seconds, which also keeps
@@ -513,25 +515,37 @@ contract OperatorRegistry {
         if (address(schedule) != address(0)) schedule.releaseMoved(msg.sender);
     }
 
-    /// @notice Names the deployment's vault, whose `lastCheckpointAt` the liveness clock reads.
-    /// Set once, after both contracts deploy.
-    function setVault(address vault_) external onlyGovernance {
+    /// @notice Names the vault, whose checkpoints the liveness clock reads, and the schedule whose turns
+    /// name the operator, together; with a schedule named, closes adopt rotation sets instead of
+    /// electing. The timelock changes them only while rotation is off and no drawn turn runs and, but
+    /// to name a first schedule for the vault the registry follows, only once the guardian has retired
+    /// that vault's signer: the vault reads the registry's schedule, and one that drew none of its turns
+    /// has it name the release it held before them again. The vault must answer `checkpointSigner()`,
+    /// as a later change reads it, and the schedule be built for this registry, over log heads that
+    /// follow the vault, with an epoch of at least `MIN_SCHEDULED_EPOCH`. Until a schedule is named the
+    /// registry may follow a vault alone, and elects; once one is, one stays.
+    function setCustody(address vault_, OperatorSchedule schedule_) external onlyGovernance {
         if (vault_.code.length == 0) revert ZeroAddress();
-        if (address(vault) != address(0)) revert VaultAlreadySet(address(vault));
+        _requireIdle();
+        _signerOf(IVault(vault_));
+        OperatorSchedule followed = schedule;
+        if (address(schedule_) != address(0)) {
+            uint64 epochLength = parameters.epochLength;
+            if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);
+            if (schedule_.registry() != this || address(schedule_.logHeads().vault()) != vault_) {
+                revert InvalidSchedule();
+            }
+        } else if (address(followed) != address(0)) {
+            revert InvalidSchedule();
+        }
+        IVault left = vault;
+        if (address(left) != address(0) && (address(left) != vault_ || address(followed) != address(0))) {
+            address signer = _signerOf(left);
+            if (signer != address(0)) revert VaultSignerLive(signer);
+        }
         vault = IVault(vault_);
-    }
-
-    /// @notice Names the schedule whose turns name the operator, from which on closes adopt rotation
-    /// sets instead of electing. Set once, while rotation is off and the epoch is at least
-    /// `MIN_SCHEDULED_EPOCH`, to a schedule built for this registry.
-    function setSchedule(OperatorSchedule schedule_) external onlyGovernance {
-        if (address(schedule) != address(0)) revert ScheduleAlreadySet(address(schedule));
-        if (rotationSwitch) revert RotationActive();
-        uint64 epochLength = parameters.epochLength;
-        if (epochLength < MIN_SCHEDULED_EPOCH) revert EpochTooShort(epochLength, MIN_SCHEDULED_EPOCH);
-        if (schedule_.registry() != this) revert InvalidSchedule();
         schedule = schedule_;
-        emit ScheduleSet(address(schedule_));
+        emit CustodySet(vault_, address(schedule_));
     }
 
     /// @notice Approves, or withdraws approval of, `candidate` running the release with SEV-SNP launch
@@ -663,11 +677,7 @@ contract OperatorRegistry {
         external
         onlyGovernance
     {
-        if (rotationSwitch) revert RotationActive();
-        if (address(schedule) != address(0)) {
-            uint64 until = schedule.turnsRunUntil();
-            if (until > block.timestamp) revert TurnsPending(until);
-        }
+        _requireIdle();
         if (candidate == address(0) || adminKey == address(0)) revert ZeroAddress();
         bytes32 release = _release(launchDigest, configHash);
         _own(candidate, release);
@@ -778,6 +788,20 @@ contract OperatorRegistry {
     /// @dev Whether `candidate` held any assignment of `turn` in `turns`.
     function _held(OperatorSchedule turns, uint64 turn, address candidate) private view returns (bool) {
         return turns.heldTurn(turn, candidate);
+    }
+
+    /// @dev `vault_`'s signer, zero once the guardian has retired it.
+    function _signerOf(IVault vault_) private view returns (address) {
+        return vault_.checkpointSigner();
+    }
+
+    /// @dev Refuses while rotation is on or a drawn turn of the schedule runs.
+    function _requireIdle() private view {
+        if (rotationSwitch) revert RotationActive();
+        if (address(schedule) != address(0)) {
+            uint64 until = schedule.turnsRunUntil();
+            if (until > block.timestamp) revert TurnsPending(until);
+        }
     }
 
     /// @dev The operator in effect, pending one settled.

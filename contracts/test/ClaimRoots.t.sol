@@ -3,6 +3,7 @@ pragma solidity 0.8.36;
 
 import {ReentrancyGuardTransient} from "@openzeppelin-contracts/utils/ReentrancyGuardTransient.sol";
 
+import {MonkeyMinter} from "../src/MonkeyMinter.sol";
 import {MonkeyToken} from "../src/MonkeyToken.sol";
 import {Vault} from "../src/Vault.sol";
 import {GovernanceTest} from "./helpers/GovernanceTest.sol";
@@ -12,11 +13,14 @@ import {MockWallet} from "./mocks/MockWallet.sol";
 
 /// @notice A contract that relays a claim for someone else.
 contract ClaimRelayer {
-    function claimEmissions(Vault vault, address account, uint256 entitled, uint64 seq, bytes32[] calldata siblings)
-        external
-        returns (uint256)
-    {
-        return vault.claimEmissions(account, entitled, seq, siblings);
+    function claimEmissions(
+        MonkeyMinter minter,
+        address account,
+        uint256 entitled,
+        uint64 seq,
+        bytes32[] calldata siblings
+    ) external returns (uint256) {
+        return minter.claimEmissions(account, entitled, seq, siblings);
     }
 
     function claimDistribution(Vault vault, address account, uint256 entitled, uint64 seq, bytes32[] calldata siblings)
@@ -56,8 +60,9 @@ contract ClaimReentrantToken is MockUSDC {
     }
 }
 
-/// Claims against any recorded checkpoint of the current signer: an older root pays what was due at
-/// it and no more, and a signer's change ends its roots.
+/// Claims against any recorded checkpoint of the current signer, emissions through a minter that
+/// follows the vault: an older root pays what was due at it and no more, and a signer's change ends
+/// its roots.
 contract ClaimRootsTest is GovernanceTest {
     uint256 private constant KEY = 0x1234;
     uint256 private constant NEXT_KEY = 0x5678;
@@ -74,6 +79,7 @@ contract ClaimRootsTest is GovernanceTest {
 
     MockUSDC private usdc;
     Vault private vault;
+    MonkeyMinter private minter;
     MonkeyToken private monkey;
     address private alice = makeAddr("alice");
     uint256 private signerKey = KEY;
@@ -88,8 +94,10 @@ contract ClaimRootsTest is GovernanceTest {
         vm.warp(1_800_000_000);
         governance = _deployGovernance();
         usdc = new MockUSDC();
-        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, 1e27, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
-        monkey = vault.monkey();
+        vault = new Vault(usdc, vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        minter = new MonkeyMinter(governance, 1e27);
+        _govern(address(minter), abi.encodeCall(MonkeyMinter.setVault, (vault)));
+        monkey = minter.monkey();
         usdc.mint(address(vault), FUNDED);
     }
 
@@ -258,7 +266,8 @@ contract ClaimRootsTest is GovernanceTest {
         _post(10, address(wallet), 100);
         _post(11, address(wallet), 250);
         assertEq(
-            relayer.claimEmissions(vault, address(wallet), 100, 10, _siblings(Kind.Emissions, 10, address(wallet))), 100
+            relayer.claimEmissions(minter, address(wallet), 100, 10, _siblings(Kind.Emissions, 10, address(wallet))),
+            100
         );
         assertEq(
             relayer.claimDistribution(
@@ -274,8 +283,7 @@ contract ClaimRootsTest is GovernanceTest {
 
     function test_ReenteringAClaimAtAnotherRootIsRefusedAfterTheAccountingMoved() public {
         ClaimReentrantToken token = new ClaimReentrantToken();
-        Vault target =
-            new Vault(token, vm.addr(KEY), governance, multisig, 1e27, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
+        Vault target = new Vault(token, vm.addr(KEY), governance, multisig, EXIT_PERIOD, CLAIM_WINDOW, STALE_AFTER);
         token.mint(address(target), 1_000);
         bytes32 older = _singleLeaf(alice, 100);
         bytes32 newer = _singleLeaf(alice, 250);
@@ -397,7 +405,7 @@ contract ClaimRootsTest is GovernanceTest {
         returns (uint256)
     {
         return kind == Kind.Emissions
-            ? vault.claimEmissions(account, entitled, seq, siblings)
+            ? minter.claimEmissions(account, entitled, seq, siblings)
             : vault.claimDistribution(account, entitled, seq, siblings);
     }
 
@@ -406,12 +414,12 @@ contract ClaimRootsTest is GovernanceTest {
     }
 
     function _recorded(Kind kind, address account) private view returns (uint256) {
-        return kind == Kind.Emissions ? vault.emissionsClaimed(account) : vault.distributionsClaimed(account);
+        return kind == Kind.Emissions ? minter.emissionsClaimed(account) : vault.distributionsClaimed(account);
     }
 
     function _expectClaimed(Kind kind, uint256 amount, uint256 entitled, uint64 seq) private {
-        vm.expectEmit(address(vault));
-        if (kind == Kind.Emissions) emit Vault.EmissionsClaimed(alice, amount, entitled, seq);
+        vm.expectEmit(kind == Kind.Emissions ? address(minter) : address(vault));
+        if (kind == Kind.Emissions) emit MonkeyMinter.EmissionsClaimed(alice, amount, entitled, seq);
         else emit Vault.DistributionClaimed(alice, amount, entitled, seq);
     }
 

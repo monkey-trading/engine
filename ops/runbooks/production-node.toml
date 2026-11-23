@@ -133,6 +133,7 @@ providers = [
   { name = "provider-c", rpc_url = "https://rpc-c.example.com/v2/{provider_c_key}" }, # REPLACE
 ]
 usdc = "0x2222222222222222222222222222222222222222" # REPLACE: the vault's usdc()
+minter = "0xdddddddddddddddddddddddddddddddddddddddd" # REPLACE: the MonkeyMinter, whose vault() is the vault
 # Production credits at latest, less confirmations, and releases principal at finalized.
 finality_tag = "latest"
 withdrawal_finality_tag = "finalized"

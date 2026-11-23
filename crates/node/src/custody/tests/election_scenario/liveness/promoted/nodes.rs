@@ -238,6 +238,7 @@ fn write_config(
     cfg["custody"]["vault"] = format!("{:#x}", chain.vault).into();
     let evm = &mut cfg["custody"]["evm"];
     evm["usdc"] = format!("{:#x}", chain.usdc).into();
+    evm["minter"] = format!("{:#x}", chain.minter).into();
     evm["providers"] = chain
         .proxies
         .iter()

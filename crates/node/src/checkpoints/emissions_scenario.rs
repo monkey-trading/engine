@@ -1,5 +1,5 @@
 //! MONKEY emissions dev scenario on a local Anvil: the real sequencer, API routes, checkpoint worker,
-//! vault, and MONKEY token, on a clock the scenario moves.
+//! vault, MONKEY minter and token, on a clock the scenario moves.
 
 mod api;
 mod claims;
@@ -15,7 +15,7 @@ use std::time::Duration;
 use alloy::primitives::{Address, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::sol;
-use alloy::sol_types::{SolError, SolValue};
+use alloy::sol_types::{SolCall, SolError, SolValue};
 use axum::Router;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::StatusCode;
@@ -56,6 +56,7 @@ const BOB: AccountId = AccountId([0xb0; 20]);
 sol! {
     function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] siblings) external returns (uint256);
     function monkey() external view returns (address);
+    function setVault(address next) external;
     function balanceOf(address account) external view returns (uint256);
     function latestSeq() external view returns (uint64);
     function latestRoot() external view returns (bytes32);
@@ -71,7 +72,7 @@ async fn dev_scenario_emissions_share_fixed_budgets_halve_survive_restart_and_cl
         tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
     );
     let mut s = Scenario::start().await;
-    // A schedule with another budget than the vault's cap was derived from never reaches the log.
+    // A schedule with another budget than the minter's cap was derived from never reaches the log.
     let mismatched = EmissionSchedule { start_ms: NOW, period_budget: TokenUnits(DEV_PERIOD_BUDGET / 2) };
     let (status, body) = s.post("/v1/admin", s.signed(AdminCommand::InitEmissions(mismatched))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
@@ -179,6 +180,7 @@ struct Scenario {
     usdc: Address,
     governance: Address,
     vault: Address,
+    minter: Address,
     monkey: Address,
     key: Arc<EnclaveKey>,
     clock: Arc<TestClock>,
@@ -200,7 +202,7 @@ struct Node {
 }
 
 impl Scenario {
-    /// Starts Anvil, deploys a mock USDC and the vault with its MONKEY token, and starts the node.
+    /// Starts Anvil, deploys a mock USDC, the vault, and the minter following it, and starts the node.
     async fn start() -> Self {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let anvil = Anvil(
@@ -232,6 +234,8 @@ impl Scenario {
         let args = vault_args(usdc, Address::from(key.address()), governance, accounts[0]);
 
         let vault = deploy(&provider, accounts[0], "Vault.sol/Vault.json", &args).await;
+        let budget = (governance, U256::from(DEV_PERIOD_BUDGET)).abi_encode();
+        let minter = deploy(&provider, accounts[0], "MonkeyMinter.sol/MonkeyMinter.json", &budget).await;
         let section: CheckpointSection = toml::from_str(&format!(
             "rpc_url = {url:?}\nrelayer = '{:#x}'\nretry_interval = '40ms'\nrpc_timeout = '2s'",
             accounts[9]
@@ -247,6 +251,7 @@ impl Scenario {
             usdc,
             governance,
             vault,
+            minter,
             monkey: Address::ZERO,
             key,
             clock: Arc::new(TestClock::at(NOW)),
@@ -256,7 +261,8 @@ impl Scenario {
             operator: cfg.operator().unwrap(),
             node: None,
         };
-        s.monkey = s.view(vault, monkeyCall {}).await;
+        s.govern(minter, setVaultCall { next: vault }.abi_encode()).await;
+        s.monkey = s.view(minter, monkeyCall {}).await;
         s.start_node().await;
         s.fund(None, dev_config().genesis.house_capital).await;
         s
@@ -285,8 +291,8 @@ impl Scenario {
             episodes: Default::default(),
             relayer_gas: None,
         };
-        let emission_budget = poster.chain.emission_budget().await.unwrap();
-        assert_eq!(emission_budget, TokenUnits(DEV_PERIOD_BUDGET), "the vault's MONKEY cap gives its budget back");
+        let emission_budget = poster.chain.emission_budget(self.minter).await.unwrap();
+        assert_eq!(emission_budget, TokenUnits(DEV_PERIOD_BUDGET), "the minter's MONKEY cap gives its budget back");
         let parent = match poster.chain.state(View::Finalized).await.unwrap().checkpoint {
             Some((seq, root)) => CheckpointParent { has_checkpoint: true, seq, root: root.parse().unwrap() },
             None => CheckpointParent::default(),
@@ -487,9 +493,8 @@ fn entitlements(engine: &Engine) -> [u128; 2] {
     [ALICE, BOB].map(|account| engine.entitlement(account).0)
 }
 
-/// Encodes the Vault's constructor arguments: token, signer, governance, guardian, budget, and the
-/// thirty-day exit schedule.
+/// The Vault's constructor arguments: token, signer, governance, guardian, and a thirty-day exit.
 fn vault_args(usdc: Address, signer: Address, governance: Address, guardian: Address) -> Vec<u8> {
     let schedule = crate::test_support::DEV_EXIT_SCHEDULE;
-    (usdc, signer, governance, guardian, U256::from(DEV_PERIOD_BUDGET), schedule.0, schedule.1, schedule.2).abi_encode()
+    (usdc, signer, governance, guardian, schedule.0, schedule.1, schedule.2).abi_encode()
 }

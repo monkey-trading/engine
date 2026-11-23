@@ -44,9 +44,13 @@ abstract contract ScheduleTest is RegistryTest {
         schedule = _newSchedule();
         logHeads = schedule.logHeads();
         privateKeyOf[vault.checkpointSigner()] = uint256(keccak256(abi.encodePacked("enclave")));
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setVault, (address(vault))));
+        // The vault first, then the schedule, as the deployment names them.
+        _govern(
+            address(registry),
+            abi.encodeCall(OperatorRegistry.setCustody, (address(vault), OperatorSchedule(address(0))))
+        );
         _govern(address(vault), abi.encodeCall(Vault.setRegistry, (address(registry))));
-        _govern(address(registry), abi.encodeCall(OperatorRegistry.setSchedule, (schedule)));
+        _govern(address(registry), abi.encodeCall(OperatorRegistry.setCustody, (address(vault), schedule)));
     }
 
     /// @dev The turn length the schedule takes from its receiver: a day, as in production.

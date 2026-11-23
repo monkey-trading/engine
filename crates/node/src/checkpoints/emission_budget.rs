@@ -1,4 +1,4 @@
-//! The vault's MONKEY cap against the engine's emission schedule. The vault derives the cap from the
+//! The MONKEY cap against the engine's emission schedule. `MonkeyMinter` derives the cap from the
 //! period budget it was deployed with, and the operator signs the engine's budget separately; a
 //! mismatch would strand entitlements past the cap, and neither value can change once set. The
 //! engine cannot read the chain, so the node compares them: before it sequences an initialisation,
@@ -19,22 +19,22 @@ pub(crate) fn budget_from_cap(cap: U256) -> anyhow::Result<TokenUnits> {
     Ok(TokenUnits(budget))
 }
 
-/// Refuses an emission period budget other than the vault's.
+/// Refuses an emission period budget other than the minter's.
 /// Error cases:
-/// - `budget` differs from `vault`
-pub(crate) fn check_budget(vault: TokenUnits, budget: TokenUnits) -> Result<(), String> {
-    if budget == vault {
+/// - `budget` differs from `minter`
+pub(crate) fn check_budget(minter: TokenUnits, budget: TokenUnits) -> Result<(), String> {
+    if budget == minter {
         return Ok(());
     }
-    Err(format!("period budget {budget} differs from the vault's {vault}, which sets MONKEY's cap"))
+    Err(format!("period budget {budget} differs from the minter's {minter}, which sets MONKEY's cap"))
 }
 
-/// Refuses a log whose recorded emission schedule has another period budget than the vault's.
+/// Refuses a log whose recorded emission schedule has another period budget than the minter's.
 /// Error cases:
-/// - the log records emissions with a period budget other than `vault`
-pub(crate) fn check_recorded(vault: TokenUnits, emissions: Option<&Emissions>) -> anyhow::Result<()> {
+/// - the log records emissions with a period budget other than `minter`
+pub(crate) fn check_recorded(minter: TokenUnits, emissions: Option<&Emissions>) -> anyhow::Result<()> {
     match emissions {
-        Some(emissions) => check_budget(vault, emissions.schedule.period_budget).map_err(anyhow::Error::msg),
+        Some(emissions) => check_budget(minter, emissions.schedule.period_budget).map_err(anyhow::Error::msg),
         None => Ok(()),
     }
 }
@@ -58,10 +58,10 @@ mod tests {
     }
 
     #[test]
-    fn only_the_vaults_budget_passes() {
+    fn only_the_minters_budget_passes() {
         assert_eq!(check_budget(TokenUnits(7), TokenUnits(7)), Ok(()));
         let refused = check_budget(TokenUnits(7), TokenUnits(70)).unwrap_err();
-        assert!(refused.contains("70 differs from the vault's 7"), "{refused}");
+        assert!(refused.contains("70 differs from the minter's 7"), "{refused}");
 
         let emissions = |budget| Emissions {
             schedule: EmissionSchedule { start_ms: 0, period_budget: TokenUnits(budget) },

@@ -1,5 +1,5 @@
 //! The admin route's checks against what the contracts hold: an emission schedule's period budget
-//! against the vault's MONKEY cap, and a staking config's epoch and cooldown against the staking
+//! against the minter's MONKEY cap, and a staking config's epoch and cooldown against the staking
 //! contract's. A refused command stays out of the log.
 
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use super::*;
 use crate::custody::StakingTerms;
 
 #[tokio::test]
-async fn an_emission_schedule_must_have_the_period_budget_the_vaults_cap_was_derived_from() {
+async fn an_emission_schedule_must_have_the_period_budget_the_minters_cap_was_derived_from() {
     let mut node = Node::start("emission-budget").await;
     node.state.emission_budget = Some(TokenUnits(1_000));
     let init =
@@ -21,7 +21,7 @@ async fn an_emission_schedule_must_have_the_period_budget_the_vaults_cap_was_der
     let (status, body) =
         node.post("/v1/admin", serde_json::to_value(node.sign(0, init(1_001), NOW + 60_000)).unwrap()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(body.to_string().contains("1001 differs from the vault's 1000"), "{body}");
+    assert!(body.to_string().contains("1001 differs from the minter's 1000"), "{body}");
     assert!(admin_entries(&node.entries()).is_empty(), "a refused schedule stays out of the log");
 
     let (status, events) =

@@ -103,7 +103,7 @@ impl Chain {
                 livenessTimeout: 3_600,
             },
         );
-        let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
+        let monkey: Address = self.read(self.minter, monkeyCall {}).await?;
         let args = (
             monkey,
             U256::from(crate::test_support::DEV_EXIT_SCHEDULE.1),
@@ -119,7 +119,8 @@ impl Chain {
         // A rotating node refuses to start without `[log_heads]`.
         let heads = self.deploy(self.deployer, "LogHeads.sol/LogHeads.json", &self.vault.abi_encode()).await?;
         self.log_heads = (heads, self.request::<Vec<Address>>("eth_accounts", json!([])).await?[6]);
-        self.govern_target(self.registry, setVaultCall { vault: self.vault }.abi_encode()).await?;
+        let custody = setCustodyCall { vault_: self.vault, schedule_: Address::ZERO };
+        self.govern_target(self.registry, custody.abi_encode()).await?;
         self.govern(setRegistryCall { registry_: self.registry }.abi_encode()).await?;
         if rotation {
             self.govern_target(self.registry, setRotationCall { enabled: true }.abi_encode()).await?;
@@ -166,7 +167,7 @@ impl Chain {
         Ok(())
     }
 
-    /// Mints MONKEY to `account` as the vault, its only minter, stakes it, and registers `account`
+    /// Mints MONKEY to `account` as `MonkeyMinter`, its only minter, stakes it, and registers `account`
     /// as a candidate with `admin_key`'s authorization, the self-bond `bond`, and the release
     /// `launch_digest` under `config_hash`, whose approval the timelock then grants.
     /// Error cases:
@@ -183,11 +184,11 @@ impl Chain {
         api_hostname: &str,
         handover_endpoint: &str,
     ) -> anyhow::Result<()> {
-        let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
-        let _: Value = self.request("anvil_impersonateAccount", json!([self.vault])).await?;
-        let _: Value = self.request("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await?;
-        self.send(self.vault, monkey, mintCall { to: account, amount: bond }.abi_encode()).await?;
-        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.vault])).await?;
+        let monkey: Address = self.read(self.minter, monkeyCall {}).await?;
+        let _: Value = self.request("anvil_impersonateAccount", json!([self.minter])).await?;
+        let _: Value = self.request("anvil_setBalance", json!([self.minter, "0xde0b6b3a7640000"])).await?;
+        self.send(self.minter, monkey, mintCall { to: account, amount: bond }.abi_encode()).await?;
+        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.minter])).await?;
         let staking: Address = self.read(self.registry, stakingCall {}).await?;
         self.send(account, monkey, approveCall { spender: staking, amount: bond }.abi_encode()).await?;
         self.send(account, staking, stakeCall { amount: bond }.abi_encode()).await?;
@@ -259,16 +260,16 @@ impl Chain {
         sent.map(|_| ())
     }
 
-    /// Mints MONKEY to `account` as the vault and stakes `amount` of it, so a non-candidate
+    /// Mints MONKEY to `account` as the minter and stakes `amount` of it, so a non-candidate
     /// account can delegate.
     /// Error cases:
     /// - a local transaction fails
     pub(crate) async fn stake_from(&self, account: Address, amount: U256) -> anyhow::Result<()> {
-        let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
-        let _: Value = self.request("anvil_impersonateAccount", json!([self.vault])).await?;
-        let _: Value = self.request("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await?;
-        self.send(self.vault, monkey, mintCall { to: account, amount }.abi_encode()).await?;
-        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.vault])).await?;
+        let monkey: Address = self.read(self.minter, monkeyCall {}).await?;
+        let _: Value = self.request("anvil_impersonateAccount", json!([self.minter])).await?;
+        let _: Value = self.request("anvil_setBalance", json!([self.minter, "0xde0b6b3a7640000"])).await?;
+        self.send(self.minter, monkey, mintCall { to: account, amount }.abi_encode()).await?;
+        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.minter])).await?;
         let staking: Address = self.read(self.registry, stakingCall {}).await?;
         self.send(account, monkey, approveCall { spender: staking, amount }.abi_encode()).await?;
         self.send(account, staking, stakeCall { amount }.abi_encode()).await?;
@@ -328,12 +329,12 @@ impl Chain {
         api_hostname: &str,
         handover_endpoint: &str,
     ) -> anyhow::Result<()> {
-        let monkey: Address = self.read(self.vault, monkeyCall {}).await?;
+        let monkey: Address = self.read(self.minter, monkeyCall {}).await?;
         let staking: Address = self.read(self.registry, stakingCall {}).await?;
-        let _: Value = self.request("anvil_impersonateAccount", json!([self.vault])).await?;
-        let _: Value = self.request("anvil_setBalance", json!([self.vault, "0xde0b6b3a7640000"])).await?;
-        self.send(self.vault, monkey, mintCall { to: account, amount: bond }.abi_encode()).await?;
-        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.vault])).await?;
+        let _: Value = self.request("anvil_impersonateAccount", json!([self.minter])).await?;
+        let _: Value = self.request("anvil_setBalance", json!([self.minter, "0xde0b6b3a7640000"])).await?;
+        self.send(self.minter, monkey, mintCall { to: account, amount: bond }.abi_encode()).await?;
+        let _: Value = self.request("anvil_stopImpersonatingAccount", json!([self.minter])).await?;
         let admin = Address::from(engine_core::eip712::address(admin_key.verifying_key()).0);
         let registration = CandidateRegistration {
             adminKey: admin,

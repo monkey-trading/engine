@@ -529,11 +529,14 @@ an index: load only the rule whose hint matches the current action.
   authorized by its attestation-verified enclave signer. Withdrawals require its current signer and
   epoch, an unused account nonce, a 24-hour authorization, and approval inclusion in an accepted root.
   The constructor takes the token, the signer, an existing OpenZeppelin timelock with a nonzero
-  delay, the guardian, the exit timings below, and the engine's initial MONKEY emission period
-  budget, which caps `src/MonkeyToken.sol`,
-  the ERC-20 the vault deploys and alone mints: `claimEmissions` mints an account's entitlement,
-  proven against the root of any recorded checkpoint of the signer epoch in force, less what it already
-  claimed. `src/Staking.sol` holds
+  delay, the guardian and the exit timings below; `claimRoot` gives the root of any recorded
+  checkpoint of the signer epoch in force while the signer is not retired. `src/MonkeyMinter.sol`,
+  MONKEY's only minter for good, takes the timelock and the engine's initial MONKEY emission period
+  budget, which caps `src/MonkeyToken.sol`, the ERC-20 it deploys: `claimEmissions` mints an account's
+  entitlement, proven against a `claimRoot` of the vault the timelock named (`setVault`: a vault under the
+  same timelock, moved to another only once the guardian has retired the current one's signer), less what it already minted
+  the account across every vault it followed (`test/MonkeyMinter.t.sol`, `test/MonkeyMinterMove.t.sol`
+  and `test/MonkeyMinterInvariant.t.sol`). `src/Staking.sol` holds
   MONKEY staked for USDC distributions, enforces the unstake cooldown — the constructor refuses a
   cooldown shorter than the engine's epoch, the lock-up that prices jumping in just before a
   snapshot — and emits the events the engine mirrors; `claimDistribution` pays an account the USDC
@@ -557,7 +560,10 @@ an index: load only the rule whose hint matches the current action.
   `test/OperatorSchedule.t.sol`) and moves parameters within deployment bounds, and
   anyone closes an election epoch, electing the top eligible candidate past quorum to take effect
   seven days plus a finality margin later, or, once the timelock names `src/OperatorSchedule.sol`
-  (`setSchedule`), adopting a rotation set in it instead: anyone then draws each daily turn from the
+  (`setCustody`, which names the vault and the schedule together, over log heads that follow that vault,
+  and changes them only while rotation is off and no drawn turn runs and, but to name a first schedule,
+  only once the guardian has retired the followed vault's signer, `test/Custody.t.sol`),
+  adopting a rotation set in it instead: anyone then draws each daily turn from the
   set in effect a day before its boundary, weighted by votes and seeded from `SeedReceiver`, the turn's
   member names the operator from its boundary in a generation the vault's one counter hands out, and
   drawn turns stand after rotation turns off until `installOperator`. Deployment gives that
@@ -638,7 +644,9 @@ an index: load only the rule whose hint matches the current action.
   and checks the clock against public Roughtime servers, citing each server's key source;
   `feeds.provider = "venues"` prices its crypto markets from live venues instead, leaving the others
   unpriced. `[feeds.venues]`'s `ping_interval` and `max_delay` bound how far behind a venue's stream
-  may be, with `docs/security-model.md` stating the resulting bound on a price's age. `anvil.toml` runs EVM custody against the vault on a local Anvil chain. The optional
+  may be, with `docs/security-model.md` stating the resulting bound on a price's age. `anvil.toml` runs EVM custody against the vault on a local Anvil chain, its
+  `[custody.evm] minter` the `MonkeyMinter` the scenarios deploy right after the vault; with `[checkpoints]` the node
+  reads the emission period budget from that minter's token cap. The optional
   `[api.tls.acme]` names the API's domain and the ACME CA that certifies its key. The `[genesis]`
   section is protocol: it is sequenced into the log as admin commands on first boot, all or
   nothing, and credits house capital from config only under mock custody. Loading refuses a genesis
@@ -1071,8 +1079,8 @@ an index: load only the rule whose hint matches the current action.
   node config without `[genesis]`, assembled with `config/benchmark-publishers.toml` and
   `config/production-genesis.toml`, each placeholder or open decision marked `OWNER` or `REPLACE`,
   with a test that it loads. `production-deployment.toml` holds the launch deployment's one-time
-  inputs, the owner's #436 values: the timelock's delay, the vault's period budget, exit period,
-  claim window and staleness, `Staking`'s epoch and cooldown, the liquidity floor and the opening
+  inputs, the owner's #436 values: the timelock's delay, the minter's period budget, the vault's exit
+  period, claim window and staleness, `Staking`'s epoch and cooldown, the liquidity floor and the opening
   day's start, and `OperatorSchedule`'s constructor, the owner's heartbeat rule of 2026-11-21 (140 s,
   40 s tolerance, three misses, a two-slot take window) with its switch budget, held-head blocks and
   bounds, and `ParameterVote`'s windows, all decided on #1175, with a test that holds each to the decision
@@ -1438,15 +1446,15 @@ Run from the repo root:
   `RPC_QUORUM_SCENARIO=1` also injects a fictional deposit, stops providers and checks recovery;
   needs `python3`)
 - MONKEY emissions dev scenario: `./scripts/dev-monkey-emissions.sh` (starts Anvil, deploys the
-  vault and its token, and drives allocation, halving, a restart, and claims through the real
+  vault and the minter with its token, and drives allocation, halving, a restart, and claims through the real
   sequencer, API, and checkpoint worker; needs Anvil, Forge, and installed Soldeer dependencies)
 - MONKEY staking dev scenario: `./scripts/dev-monkey-staking.sh` (starts Anvil, deploys the vault,
-  its token, and the staking contract, and drives staking mirrored into the engine, an epoch above
+  the minter with its token, and the staking contract, and drives staking mirrored into the engine, an epoch above
   the liquidity floor paying pro-rata in USDC against posted checkpoint roots, an unstake through
   the cooldown, and an epoch below the floor paying nothing; needs Anvil, Forge, and installed
   Soldeer dependencies)
 - Launch values dev scenario: `./scripts/dev-launch-values.sh` (the same requirements; deploys the
-  vault, its token, the timelock and the staking contract at the values in
+  vault, the minter with its token, the timelock and the staking contract at the values in
   `ops/runbooks/production-deployment.toml`, and posts `InitEmissions` and `InitStaking` to a node whose
   checks read the contracts (the staking one through the custody quorum): the decided values apply, a budget, epoch or
   cooldown that differs is refused and stays out of the log; then, on a second Anvil, the rotation contracts at the

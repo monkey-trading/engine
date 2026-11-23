@@ -10,7 +10,6 @@ import {TimelockController} from "@openzeppelin-contracts/governance/TimelockCon
 import {Math} from "@openzeppelin-contracts/utils/math/Math.sol";
 
 import {ExitVerifier, HELD_DEPOSIT_LEAF, PENDING_DEPOSIT_LEAF} from "./ExitVerifier.sol";
-import {MonkeyToken} from "./MonkeyToken.sol";
 import {OperatorRegistry} from "./OperatorRegistry.sol";
 
 /// @title Vault
@@ -20,13 +19,11 @@ import {OperatorRegistry} from "./OperatorRegistry.sol";
 /// the engine accepts no contract signatures. A contract wallet funds a key that signs for it
 /// through `depositFor`; a balance credited to a contract account can be recovered only through
 /// the exit (#48).
-/// @notice MONKEY emissions: the vault deploys the MONKEY token as its only minter, and mints to an
-/// account what its cumulative entitlement, proven against a recorded checkpoint root of the signer
-/// epoch in force, adds to what it was already minted.
+/// @notice MONKEY emissions are minted by `MonkeyMinter`, against the roots `claimRoot` gives it.
 /// @notice Distributions: each epoch the engine sets aside house NAV above the liquidity floor for
 /// stakers; the vault pays an account the USDC its cumulative distribution, proven against a recorded
 /// checkpoint root of the signer epoch in force, adds to what it was already paid.
-/// @notice Both amounts only grow from one checkpoint to the next, and each claim pays what the
+/// @notice A distribution only grows from one checkpoint to the next, and each claim pays what the
 /// proven amount adds to what was already paid, so an older root pays no more than was due at it and
 /// a later root pays the rest.
 /// @notice Exit: once no checkpoint has been posted for `exitPeriod`, anyone may start the exit,
@@ -76,16 +73,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// the gas the exit's refund accounting spends on them; the engine names the lowest.
     uint256 public constant MAX_EXIT_GAPS = 64;
 
-    /// @notice Emission periods between halvings, as the engine counts them.
-    uint256 public constant PERIODS_PER_HALVING = 26_280;
-
-    /// @notice The largest initial period budget the engine accepts: the one whose nominal maximum
-    /// supply fits a `uint128`.
-    uint256 public constant MAX_PERIOD_BUDGET = type(uint128).max / (2 * PERIODS_PER_HALVING);
-
-    /// @notice The first byte of an emission entitlement leaf's key in the engine's state tree.
-    uint8 private constant ENTITLEMENT_LEAF = 8;
-
     /// @notice The first byte of a withdrawal approval leaf's key in the engine's state tree.
     uint8 private constant APPROVAL_LEAF = 32;
     /// @notice The first byte of a distribution leaf's key in the engine's state tree.
@@ -103,12 +90,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice The collateral token: USDC, 6 decimals.
     IERC20 public immutable usdc;
-
-    /// @notice MONKEY, which this vault alone mints, capped at the schedule's nominal maximum supply.
-    MonkeyToken public immutable monkey;
-
-    /// @notice MONKEY base units minted to each account so far against its entitlement.
-    mapping(address account => uint256 claimed) public emissionsClaimed;
 
     /// @notice USDC base units paid to each account so far against its distribution.
     mapping(address account => uint256 claimed) public distributionsClaimed;
@@ -268,10 +249,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// Unlike HouseDeposited, a surplus books no funding address: whoever calls is not a payer.
     event SurplusBooked(uint256 indexed id, uint256 amount);
 
-    /// @notice `amount` MONKEY base units minted to `account`, bringing its total to `entitled`, the
-    /// entitlement checkpoint `seq` proves.
-    event EmissionsClaimed(address indexed account, uint256 amount, uint256 entitled, uint64 seq);
-
     /// @notice `amount` USDC base units paid to `account`, bringing its total to `entitled`, the
     /// distribution checkpoint `seq` proves.
     event DistributionClaimed(address indexed account, uint256 amount, uint256 entitled, uint64 seq);
@@ -312,7 +289,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     error InvalidWithdrawalSigner();
     error InexactWithdrawalTransfer();
     error NoSurplus(uint256 surplus);
-    error InvalidPeriodBudget(uint256 periodBudget);
     error NoCheckpoint();
     error InvalidEntitlementProof();
     error NothingToClaim(uint256 entitled, uint256 claimed);
@@ -340,8 +316,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
     /// installs a signer, with no timelock, when it promotes a member's standby key (`promoteSigner`).
     /// @param guardian_ The deployment's multisig, which may also pause withdrawals and retire the
     /// signer at once.
-    /// @param periodBudget_ The engine's initial emission period budget in MONKEY base units, which
-    /// sets the token's cap at `2 * PERIODS_PER_HALVING * periodBudget_`.
     /// @param exitPeriod_ Seconds without a checkpoint before the exit may start; longer than the
     /// timelock's delay, so governance can install a new signer first.
     /// @param claimWindow_ Seconds during which exit claims register.
@@ -352,7 +326,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         address checkpointSigner_,
         TimelockController governance_,
         address guardian_,
-        uint256 periodBudget_,
         uint64 exitPeriod_,
         uint64 claimWindow_,
         uint64 staleAfter_
@@ -362,7 +335,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         }
         if (block.chainid > type(uint64).max) revert UnsupportedChain();
         if (address(governance_).code.length == 0 || governance_.getMinDelay() == 0) revert InvalidGovernance();
-        if (periodBudget_ == 0 || periodBudget_ > MAX_PERIOD_BUDGET) revert InvalidPeriodBudget(periodBudget_);
         if (
             exitPeriod_ <= governance_.getMinDelay() || claimWindow_ == 0 || staleAfter_ == 0
                 || staleAfter_ > exitPeriod_
@@ -374,7 +346,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         wasSigner[checkpointSigner_] = true;
         governance = governance_;
         guardian = guardian_;
-        monkey = new MonkeyToken(2 * PERIODS_PER_HALVING * periodBudget_);
         exitPeriod = exitPeriod_;
         claimWindow = claimWindow_;
         staleAfter = staleAfter_;
@@ -601,29 +572,6 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         emit CheckpointPosted(seq, root, signature);
     }
 
-    /// @notice Mints to `account` the MONKEY its cumulative entitlement `entitled` adds to what it
-    /// was already minted, once `siblings` prove that entitlement against the root of checkpoint
-    /// `checkpointSeq` (see `_claimRoot`). Anyone may relay a claim; the tokens always go to `account`.
-    /// @dev No pause stops it, nor the exit: it stays open on any recorded root of the signer epoch in
-    /// force while the signer is not retired, and pays no USDC. Once the exit has started no signer
-    /// can post again, so MONKEY not minted when its signer was replaced or retired stays unminted.
-    /// @return amount The base units minted.
-    function claimEmissions(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] calldata siblings)
-        external
-        nonReentrant
-        returns (uint256 amount)
-    {
-        bytes32 root = _claimRoot(checkpointSeq);
-        bytes32 key = keccak256(abi.encodePacked(ENTITLEMENT_LEAF, account));
-        if (!_proves(root, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
-        uint256 claimed = emissionsClaimed[account];
-        if (entitled <= claimed) revert NothingToClaim(entitled, claimed);
-        amount = entitled - claimed;
-        emissionsClaimed[account] = entitled;
-        emit EmissionsClaimed(account, amount, entitled, checkpointSeq);
-        monkey.mint(account, amount);
-    }
-
     /// @notice Pays a signed approval included in an accepted checkpoint, once per account and nonce.
     /// @dev Anyone may relay it; the USDC, in whole base units as approved, always goes to
     /// `withdrawal.account`, which may be neither zero nor this vault, and a zero amount is refused.
@@ -712,7 +660,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
 
     /// @notice Pays `account` the USDC its cumulative distribution `entitled` adds to what it was
     /// already paid, once `siblings` prove that distribution against the root of checkpoint
-    /// `checkpointSeq` (see `_claimRoot`). Anyone may relay a claim; the USDC always goes to `account`.
+    /// `checkpointSeq` (see `claimRoot`). Anyone may relay a claim; the USDC always goes to `account`.
     /// @return amount The USDC base units paid.
     function claimDistribution(address account, uint256 entitled, uint64 checkpointSeq, bytes32[] calldata siblings)
         external
@@ -720,7 +668,7 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         returns (uint256 amount)
     {
         if (exitStartedAt != 0) revert ExitActive();
-        bytes32 root = _claimRoot(checkpointSeq);
+        bytes32 root = claimRoot(checkpointSeq);
         bytes32 key = keccak256(abi.encodePacked(DISTRIBUTION_LEAF, account));
         if (!_proves(root, key, keccak256(abi.encode(entitled)), siblings)) revert InvalidEntitlementProof();
         uint256 claimed = distributionsClaimed[account];
@@ -732,10 +680,11 @@ contract Vault is ReentrancyGuardTransient, EIP712 {
         _pay(account, amount);
     }
 
-    /// @dev The root a claim proves against: checkpoint `seq`'s, once the vault has recorded it, in
-    /// the signer epoch still in force. A rotation or a guardian's retirement ends the claims on
-    /// every earlier root, and the next signer's first checkpoint proves at least as much.
-    function _claimRoot(uint64 seq) private view returns (bytes32) {
+    /// @notice The root a claim proves against, a distribution's here and an emission's at `MonkeyMinter`:
+    /// checkpoint `seq`'s, once the vault has recorded it, in the signer epoch still in force. A rotation
+    /// or a guardian's retirement ends the claims on every earlier root, and the next signer's first
+    /// checkpoint proves at least as much. Reverts `UnknownCheckpoint`, `InvalidSignerEpoch` or `NoSigner`.
+    function claimRoot(uint64 seq) public view returns (bytes32) {
         if (!hasCheckpointAt[seq]) revert UnknownCheckpoint();
         if (checkpointEpochAt[seq] != signerEpoch) revert InvalidSignerEpoch();
         if (checkpointSigner == address(0)) revert NoSigner();

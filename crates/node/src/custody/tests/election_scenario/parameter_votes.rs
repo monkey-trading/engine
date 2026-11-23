@@ -31,9 +31,8 @@ use crate::sequencer::replay_path;
 use crate::tee::EnclaveKey;
 
 sol! {
-    function setVault(address vault_) external;
+    function setCustody(address vault_, address schedule_) external;
     function setRegistry(address registry_) external;
-    function setSchedule(address schedule_) external;
     function currentSetId() external view returns (uint32);
     function propose(bytes command, bool fast) external returns (uint256);
     function vote(uint256 id) external;
@@ -210,9 +209,8 @@ pub(super) async fn adopted_set(posting: bool) -> (Chain, Node, [Address; 3], Si
     let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
         (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
     ];
     for (member, digest) in members.iter().zip([DIGEST_A, DIGEST_B, DIGEST_C]) {
         calls.push((chain.registry, chain.approval(*member, digest)));

@@ -28,7 +28,7 @@ impl Scenario {
         let proof = serde_json::from_value::<crate::sequencer::ClaimAnswer<EntitlementProof>>(body).unwrap().proof;
         assert_eq!(proof.root, self.view(self.vault, latestRootCall {}).await, "the proof is for the posted root");
         let before = self.monkey_balance(account).await;
-        self.send_tx(self.relayer, self.vault, emissions_call(&proof)).await;
+        self.send_tx(self.relayer, self.minter, emissions_call(&proof)).await;
         self.monkey_balance(account).await - before
     }
 
@@ -215,7 +215,7 @@ impl Scenario {
     }
 }
 
-/// The vault call that claims `proof`.
+/// The minter call that claims `proof`.
 fn emissions_call(proof: &EntitlementProof) -> Vec<u8> {
     let siblings: Vec<B256> = proof.siblings.clone();
     claimEmissionsCall {

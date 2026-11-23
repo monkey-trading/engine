@@ -2,18 +2,18 @@
 attestation with sealed keys and delivered secrets, the Siena CPU model under the given product name
 as the one a peer guest's quote may come from, paths under /data, listeners on every address,
 the chain reached over TLS at <rpc-host> on four ports (three custody providers and the checkpoint
-endpoint), deposits credited at `latest`, and the given vault, token, checkpoint relayer and operator
-key. crates/node/tests/snp_guest_config.rs loads what it writes.
+endpoint), deposits credited at `latest`, and the given vault, token, MONKEY minter, checkpoint relayer
+and operator key. crates/node/tests/snp_guest_config.rs loads what it writes.
 
-Usage: python3 -I scripts/snp-node-config.py <anvil.toml> <out> <rpc-host> <vault> <usdc> <relayer>
-       <operator-public-key> <processor> <product-name> <custody-port> <custody-port> <custody-port>
-       <checkpoint-port>
+Usage: python3 -I scripts/snp-node-config.py <anvil.toml> <out> <rpc-host> <vault> <usdc> <minter>
+       <relayer> <operator-public-key> <processor> <product-name> <custody-port> <custody-port>
+       <custody-port> <checkpoint-port>
 """
 
 import sys
 from pathlib import Path
 
-source, target, host, vault, usdc, relayer, public_key, processor, product_name, *ports = sys.argv[1:]
+source, target, host, vault, usdc, minter, relayer, public_key, processor, product_name, *ports = sys.argv[1:]
 assert len(ports) == 4, "four ports: three custody providers and the checkpoint endpoint"
 text = Path(source).read_text()
 old_key = text.split('public_key = "', 1)[1].split('"', 1)[0]
@@ -32,6 +32,7 @@ for literal, replacement in {
     old_key: public_key,
     'vault = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"': 'vault = "%s"' % vault,
     'usdc = "0x5FbDB2315678afecb367f032d93F642f64180aa3"': 'usdc = "%s"' % usdc,
+    'minter = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"': 'minter = "%s"' % minter,
     '"http://127.0.0.1:8545"': '"https://%s:%s"' % (host, ports[0]),
     '"http://127.0.0.1:8546"': '"https://%s:%s"' % (host, ports[1]),
     '"http://127.0.0.1:8547"': '"https://%s:%s"' % (host, ports[2]),

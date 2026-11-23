@@ -189,10 +189,12 @@ governance="$(forge create --rpc-url "$rpc" --private-key "$house_key" --broadca
   dependencies/@openzeppelin-contracts-5.7.0/governance/TimelockController.sol:TimelockController \
   --constructor-args 1 "[$trader]" '[0x0000000000000000000000000000000000000000]' \
   0x0000000000000000000000000000000000000000 | jq -r '.deployedTo')"
-vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" "$trader" 1000000000000000000 \
+vault="$(create src/Vault.sol:Vault --constructor-args "$usdc" "$trader" "$governance" "$trader" \
   2592000 2592000 2592000)"
+minter="$(create src/MonkeyMinter.sol:MonkeyMinter --constructor-args "$governance" 1000000000000000000)"
 cd "$root"
 grep -qi "vault = \"$vault\"" config/anvil.toml || fail "vault deployed at $vault, not the address config/anvil.toml names"
+grep -qi "minter = \"$minter\"" config/anvil.toml || fail "minter deployed at $minter, not the address config/anvil.toml names"
 send "$usdc" "mint(address,uint256)" "$trader" $((1000000 * usdc_units)) --private-key "$deployer_key"
 send "$usdc" "approve(address,uint256)" "$vault" $((1000000 * usdc_units)) --private-key "$trader_key"
 

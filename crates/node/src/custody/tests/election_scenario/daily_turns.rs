@@ -58,10 +58,9 @@ use switch::{Members, Switched, switch};
 
 sol! {
     struct Turn { address candidate; uint16 position; uint8 reason; uint32 setId; uint64 generation; uint64 prior; bytes32 seed; address source; }
-    function setVault(address vault_) external;
+    function setCustody(address vault_, address schedule_) external;
     function installOperator(address candidate, address adminKey, bytes calldata launchDigest, bytes32 configHash) external;
     function setRegistry(address registry_) external;
-    function setSchedule(address schedule_) external;
     function draw(uint64 turn) external returns (address);
     function turnOf(uint64 turn) external view returns (Turn);
     function currentRelease() external view returns (bytes32);
@@ -139,9 +138,8 @@ async fn scenario() {
     let daily = Parameters { epochLength: DAY_SECS, ..super::dev_parameters().0 };
     let mut calls = vec![
         (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
     ];
     calls.extend(members.iter().map(|member| (chain.registry, chain.approval(member.candidate, member.digest))));
     calls.push((chain.registry, setRotationCall { enabled: true }.abi_encode()));

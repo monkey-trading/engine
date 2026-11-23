@@ -14,7 +14,7 @@ contract RegistryHandler is Test {
     OperatorRegistry internal registry;
     Staking internal staking;
     MonkeyToken internal monkey;
-    address internal vault;
+    address internal minter;
     address internal governance;
     address[5] internal actors =
         [makeAddr("actor 0"), makeAddr("actor 1"), makeAddr("actor 2"), makeAddr("actor 3"), makeAddr("actor 4")];
@@ -34,11 +34,11 @@ contract RegistryHandler is Test {
     /// left delegated stake below what they did not take.
     uint256 public misallocatedUnstakes;
 
-    constructor(OperatorRegistry registry_, address vault_) {
+    constructor(OperatorRegistry registry_, address minter_) {
         registry = registry_;
         staking = registry_.staking();
         monkey = MonkeyToken(address(staking.monkey()));
-        vault = vault_;
+        minter = minter_;
         governance = address(registry_.governance());
     }
 
@@ -53,7 +53,7 @@ contract RegistryHandler is Test {
     function stake(uint256 actorSeed, uint256 amount) external {
         address account = actors[actorSeed % actors.length];
         amount = bound(amount, 1, 1e24);
-        vm.prank(vault);
+        vm.prank(minter);
         monkey.mint(account, amount);
         vm.startPrank(account);
         monkey.approve(address(staking), amount);
@@ -258,7 +258,7 @@ contract OperatorRegistryInvariantTest is RegistryTest {
 
     function setUp() public {
         _deployRegistry();
-        handler = new RegistryHandler(registry, address(vault));
+        handler = new RegistryHandler(registry, address(minter));
         targetContract(address(handler));
     }
 

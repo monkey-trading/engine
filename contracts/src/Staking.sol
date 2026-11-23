@@ -8,7 +8,7 @@ import {ReentrancyGuardTransient} from "@openzeppelin-contracts/utils/Reentrancy
 import {EnumerableSet} from "@openzeppelin-contracts/utils/structs/EnumerableSet.sol";
 
 /// @title Staking
-/// @notice MONKEY staking for USDC distributions. Holders stake the MONKEY the vault minted them;
+/// @notice MONKEY staking for USDC distributions. Holders stake the MONKEY `MonkeyMinter` minted them;
 /// each epoch the engine distributes house NAV above its liquidity floor to stakers pro-rata from
 /// the staked snapshot, paid in USDC by the vault against a checkpoint proof. This contract is
 /// custody only: it holds MONKEY, enforces the unstake cooldown, and emits the events the engine
@@ -34,7 +34,7 @@ contract Staking is ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
     using EnumerableSet for EnumerableSet.AddressSet;
 
-    /// @notice The token staked: MONKEY, minted only by the vault.
+    /// @notice The token staked: MONKEY, minted only by `MonkeyMinter`.
     IERC20 public immutable monkey;
 
     /// @notice How long an unstake waits before it completes, in seconds.
@@ -128,7 +128,7 @@ contract Staking is ReentrancyGuardTransient {
     error InsufficientDelegation(uint256 delegated, uint256 amount);
     error SameCandidate(address candidate);
 
-    /// @param monkey_ The MONKEY token the vault mints.
+    /// @param monkey_ The MONKEY token `MonkeyMinter` mints.
     /// @param cooldownSeconds_ How long an unstake waits before it completes, in seconds; the
     /// engine records the same value at `InitStaking` so the log names it. Must cover at least
     /// one `epochSeconds_`.

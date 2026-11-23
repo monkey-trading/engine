@@ -119,7 +119,7 @@ Withdrawals join a public first-in, first-out queue. The vault pays each withdra
 has signed an authorisation for it. If the enclave stops posting checkpoints for 14 days, anyone can
 start the vault's exit. The exit pays each account what the last checkpoint shows it is owed.
 
-MONKEY is a token minted by the vault. Every ten minutes, a fixed amount of MONKEY is distributed
+MONKEY is a token minted against the vault's checkpoints. Every ten minutes, a fixed amount of MONKEY is distributed
 among the traders who realised a loss in that period, in proportion to the size of their losses.
 Staked MONKEY earns a daily share, paid in USDC, of the house's net asset value above a reserve of
 $30.5 million. Bug bounty awards that a vote approves are paid first from each day's distribution,

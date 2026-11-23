@@ -14,17 +14,16 @@ contract GovernanceTestCases is WithdrawalTest {
             vm.addr(KEY),
             TimelockController(payable(address(0))),
             multisig,
-            1e18,
             EXIT_PERIOD,
             CLAIM_WINDOW,
             STALE_AFTER
         );
         vm.expectRevert(Vault.InvalidGovernance.selector);
-        new Vault(usdc, vm.addr(KEY), TimelockController(payable(multisig)), multisig, 1e18, 7 days, 3 days, 1 days);
+        new Vault(usdc, vm.addr(KEY), TimelockController(payable(multisig)), multisig, 7 days, 3 days, 1 days);
         address[] memory roles = new address[](0);
         TimelockController zeroDelay = new TimelockController(0, roles, roles, address(0));
         vm.expectRevert(Vault.InvalidGovernance.selector);
-        new Vault(usdc, vm.addr(KEY), zeroDelay, multisig, 1e18, 7 days, 3 days, 1 days);
+        new Vault(usdc, vm.addr(KEY), zeroDelay, multisig, 7 days, 3 days, 1 days);
     }
 
     function test_OnlyTimelockCanSetSignerOrPausesEvenForMultisigProposer() public {

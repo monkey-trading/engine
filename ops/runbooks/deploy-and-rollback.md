@@ -187,28 +187,29 @@ Use this procedure once, before the first deployment. **Changes the live system.
 approve each deployment. The constructor values are in
 [production-deployment.toml](production-deployment.toml).
 
-**Plan the addresses after step 1, before step 2.** Step 3 records the first release's configuration
-hash in the registry, and that configuration names the vault, the registry, its staking contract and
-the contracts that [Deploy the rotation contracts](#deploy-the-rotation-contracts) deploys. Deploy
-those seven contracts on Arbitrum from one deployer account that sends nothing else in between, in
-this order: the vault, the registry, the log heads, the seed receiver, the operator schedule, the
-parameter vote and the fault proof. `<deployer>` is that account's Foundry keystore name. Compute the
-seven addresses in that order from the account's address and its next nonce:
+**Plan the addresses after step 1, before step 2.** Step 4 records the first release's configuration
+hash in the registry, and that configuration names the vault, the minter, the registry, its staking
+contract and the contracts that [Deploy the rotation contracts](#deploy-the-rotation-contracts)
+deploys. Deploy those eight contracts on Arbitrum from one deployer account that sends nothing else in
+between, in this order: the vault, the minter, the registry, the log heads, the seed receiver, the
+operator schedule, the parameter vote and the fault proof. `<deployer>` is that account's Foundry
+keystore name. Compute the eight addresses in that order from the account's address and its next
+nonce:
 
 ```shell
 DEPLOYER=$(cast wallet address --account <deployer>)
 NONCE=$(cast nonce $DEPLOYER --rpc-url $RPC)
-for i in 0 1 2 3 4 5 6; do cast compute-address $DEPLOYER --nonce $((NONCE + i)); done
+for i in 0 1 2 3 4 5 6 7; do cast compute-address $DEPLOYER --nonce $((NONCE + i)); done
 ```
 
-The registry deploys its staking contract itself, at
-`cast compute-address <registry address> --nonce 1`. The seed relay is on Ethereum, at the address
+The minter deploys the MONKEY token itself, at `cast compute-address <minter address> --nonce 1`, and
+the registry deploys its staking contract itself, at `cast compute-address <registry address> --nonce 1`. The seed relay is on Ethereum, at the address
 that [Deploy the relay and receiver](seed-relay.md#deploy-the-relay-and-receiver) computes. Write
 each address into `node.toml` before [Prepare a release](#prepare-a-release) hashes it. The template
 carries the schedule, the vote and the fault proof commented out: uncomment them, since without them
 the release mirrors no turn.
 
-- `custody.vault` and `custody.evm.staking.registry.contract`;
+- `custody.vault`, `custody.evm.minter` and `custody.evm.staking.registry.contract`;
 - `custody.evm.staking.contract`, the staking contract;
 - `log_heads.contract`, and `seed_relay.receiver` and `seed_relay.relay`;
 - `custody.evm.staking.registry.schedule`;
@@ -229,19 +230,31 @@ again before the registry records it.**
 
 2. Deploy `Vault`, with these constructor arguments in this order: the USDC token; the signer, which
    is a placeholder until [First deployment](#first-deployment) registers the enclave's address; the
-   timelock; the multisig as guardian; and the `[vault]` values `period_budget`, `exit_period`,
-   `claim_window` and `stale_after`. The vault deploys the MONKEY token and its exit verifier
-   itself. The constructor reverts with `InvalidGovernance` when the timelock has no code or no
-   delay. It reverts with `InvalidExitSchedule` when the exit period is no longer than the delay,
+   timelock; the multisig as guardian; and the `[vault]` values `exit_period`, `claim_window` and
+   `stale_after`. The vault deploys its exit verifier itself. The constructor reverts with
+   `InvalidGovernance` when the timelock has no code or no delay. It reverts with `InvalidExitSchedule` when the exit period is no longer than the delay,
    when the claim window or the staleness limit is zero, or when the staleness limit is longer than
    the exit period. A new vault starts empty. No balance, accepted root or used nonce carries over
    from another vault, and the trading server reads the new vault's signer epoch and reconciles
    against it before it releases any withdrawal authorisation.
 
-3. Deploy `OperatorRegistry`, with these constructor arguments in this order:
+3. Deploy `MonkeyMinter`, MONKEY's only minter for good, with the timelock and the `[minter]` value
+   `period_budget`. It deploys the MONKEY token, capped at `2 x 26,280 x period_budget`. The
+   constructor reverts with `InvalidGovernance` when the timelock has no code or no delay, and with
+   `InvalidPeriodBudget` for a budget of zero or one whose cap would not fit 128 bits. It mints
+   nothing until the timelock names the vault in step 5. From `contracts/` in a checkout of the
+   release's commit:
 
-   - the MONKEY token that the vault deployed in step 2, whose address
-     `cast call $VAULT 'monkey()(address)' --rpc-url $RPC` prints;
+   ```shell
+   forge create src/MonkeyMinter.sol:MonkeyMinter --rpc-url $RPC --account <deployer> --broadcast --constructor-args $TIMELOCK 100000000000000000000000
+   ```
+
+   Set `MINTER` to the address that the command prints, which must be the planned one.
+
+4. Deploy `OperatorRegistry`, with these constructor arguments in this order:
+
+   - the MONKEY token that the minter deployed in step 3, whose address
+     `cast call $MINTER 'monkey()(address)' --rpc-url $RPC` prints;
    - the `[staking]` values `cooldown` and `epoch`, in seconds, as `cooldownSeconds_` and
      `epochSeconds_`, with which the registry deploys the `Staking` contract;
    - the timelock;
@@ -256,10 +269,12 @@ again before the registry records it.**
    with `ZeroAddress` when the initial admin key is zero. It reverts with `InvalidBounds` when the
    bounds are not valid, and with `ParameterOutOfBounds` when a parameter lies outside them.
 
-4. Through the timelock, set the vault's registry with `setRegistry(address)` and the registry's
-   vault with `setVault(address)`, as
+5. Through the timelock, set the vault's registry with `setRegistry(address)` and the minter's vault
+   with `setVault(address)`, as
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
-   describes. Each can be set only once.
+   describes. The vault's registry can be set only once. The minter takes only a vault under the same
+   timelock, and moves to another vault only once the guardian has retired the current vault's signer. The registry names the vault with the schedule,
+   in step 4 of [Deploy the rotation contracts](#deploy-the-rotation-contracts).
 
 ## Deploy the rotation contracts
 
@@ -274,9 +289,9 @@ timelock turns it on later, as
 describes.
 
 Run the commands from `contracts/` in a checkout of the release's commit, with `<deployer>` the
-keystore name of the account that deployed the vault and the registry. `$VAULT`, `$REGISTRY`,
-`$TIMELOCK` and `$RPC` are set as [Variables](reference.md#variables) describes, and `$L1_RPC` is an
-Ethereum provider. Each contract lands at the address that
+keystore name of the account that deployed the vault, the minter and the registry. `$VAULT`,
+`$REGISTRY`, `$TIMELOCK` and `$RPC` are set as [Variables](reference.md#variables) describes, and
+`$L1_RPC` is an Ethereum provider. Each contract lands at the address that
 [Deploy the contracts](#deploy-the-contracts) planned for it, which the release's configuration
 already names.
 
@@ -325,22 +340,29 @@ already names.
    The first command prints `$REGISTRY`, the second `140`, `40`, `3` and `200`, and the third `2`,
    `2` and `4`.
 
-4. **Name the schedule in the registry,** through the timelock, as
+4. **Name the vault and the schedule in the registry,** through the timelock, as
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
    describes, with these values:
 
    ```shell
    TARGET=$REGISTRY
-   DATA=$(cast calldata 'setSchedule(address)' $SCHEDULE)
+   DATA=$(cast calldata 'setCustody(address,address)' $VAULT $SCHEDULE)
    ```
 
    **Changes the live system.** The owner must approve this contract call, and the multisig signs
    the schedule and the execute.
 
-   The call reverts with `ScheduleAlreadySet` once a schedule is named, with `RotationActive` while
-   rotation is on, with `EpochTooShort` while the election epoch is shorter than a day, and with
-   `InvalidSchedule` for a schedule built for another registry. Once it executes,
-   `cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`.
+   The call reverts with `RotationActive` while rotation is on, with `TurnsPending` while a drawn
+   turn runs, with `EpochTooShort` while the election epoch is shorter than a day, with `ZeroAddress`
+   for a vault with no code, without a reason for a contract that does not answer
+   `checkpointSigner()`, with `VaultSignerLive` when it would change the vault or the schedule of a
+   registry whose vault's signer the guardian has not retired, other than to name a first schedule,
+   and with `InvalidSchedule` for a schedule built for another registry or
+   over log heads that follow another vault, or for no schedule once one is named. Once it executes,
+   `cast call $REGISTRY 'vault()(address)' --rpc-url $RPC` prints `$VAULT` and
+   `cast call $REGISTRY 'schedule()(address)' --rpc-url $RPC` prints `$SCHEDULE`. The timelock may
+   move the registry to another vault and schedule later, but only while rotation is off and no drawn
+   turn runs, and only once the guardian has retired the signer of the vault the registry follows.
 
 5. **Deploy the parameter vote** on Arbitrum, over the schedule, with the `[parameter_vote]`
    windows.
@@ -385,11 +407,13 @@ Before step 1, complete and check each of the following:
   cast call $VAULT 'claimWindow()(uint64)' --rpc-url $RPC
   cast call $VAULT 'staleAfter()(uint64)' --rpc-url $RPC
   cast call $TIMELOCK 'getMinDelay()(uint256)' --rpc-url $RPC
+  cast call $MINTER 'vault()(address)' --rpc-url $RPC
   cast call $STAKING 'epoch()(uint256)' --rpc-url $RPC
   cast call $STAKING 'cooldown()(uint256)' --rpc-url $RPC
   ```
 
-  Each value equals the one in [production-deployment.toml](production-deployment.toml).
+  Each value equals the one in [production-deployment.toml](production-deployment.toml), and the
+  minter's vault is `$VAULT`.
 - The host is a bare-metal AMD SEV-SNP machine.
 - DNS for the API domain and a CAA record are in place, as
   [Before the first certificate](certificate-renewal-failure.md#before-the-first-certificate)
@@ -506,7 +530,7 @@ Before step 1, complete and check each of the following:
 9. **Record the emission schedule.** The values are the owner's, held in
    [production-deployment.toml](production-deployment.toml). `$START` is that file's `start`,
    00:00:00 UTC on the day that restricted mainnet trading opens. It is the origin of both emission
-   period 0 and staking epoch 0. The same file's `[vault]` and `[staking]` values are the ones the
+   period 0 and staking epoch 0. The same file's `[minter]` and `[staking]` values are the ones the
    contracts were deployed with.
 
    **Changes the live system.** The owner must approve the exact command, including its values, and
@@ -519,7 +543,7 @@ Before step 1, complete and check each of the following:
    ```
 
    The budget is 100,000 MONKEY a period, which is 10^23 base units, and it caps the maximum supply
-   at 5,256,000,000 MONKEY. It must equal the vault's budget, and the trading server refuses any
+   at 5,256,000,000 MONKEY. It must equal the minter's budget, and the trading server refuses any
    other value with `emission_budget_mismatch`.
 
 10. **Record the staking configuration,** with the same `$START`.

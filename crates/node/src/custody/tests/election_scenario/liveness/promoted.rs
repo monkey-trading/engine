@@ -32,7 +32,7 @@ use tokio::time::{sleep, timeout};
 use super::{
     BOUNDARY_OFFSET_SECS, DAY_SECS, DIGEST_C, KEYS, RULE, SET_CLOSE_SECS, STAKES, SWITCH_BUDGET_SECS, Turn,
     checkpointSignerCall, drawCall, etch_arb_sys, headsCall, latchesCall, receiveSeedCall, relayAliasCall,
-    seedEpochCall, setRegistryCall, setScheduleCall, setVaultCall, signerEpochCall, turnOfCall,
+    seedEpochCall, setCustodyCall, setRegistryCall, signerEpochCall, turnOfCall,
 };
 use crate::checkpoints::scenario::deploy;
 use crate::clock::now_ms;
@@ -396,9 +396,8 @@ async fn adopt(chain: &mut Chain, seats: &[Seat], schedule: Address, signing: &E
     let daily = Parameters { epochLength: DAY_SECS, ..dev_parameters().0 };
     let mut calls = vec![
         (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
-        (chain.registry, setVaultCall { vault_: chain.vault }.abi_encode()),
+        (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
         (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
-        (chain.registry, setScheduleCall { schedule_: schedule }.abi_encode()),
     ];
     calls.extend(
         seats.iter().map(|seat| (chain.registry, chain.approval_of(seat.candidate, seat.digest, seat.config_hash))),

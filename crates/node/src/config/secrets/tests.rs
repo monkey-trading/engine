@@ -346,7 +346,7 @@ fn the_config_load_checks_a_named_url_as_it_checks_a_written_one() {
     cfg.custody.provider = crate::config::CustodyProvider::Evm;
     let providers = |one: &str, two: &str, three: &str| {
         format!(
-            "usdc = '0x0000000000000000000000000000000000000002'\nfinality_tag = 'latest'\n\
+            "usdc = '0x0000000000000000000000000000000000000002'\nminter = '0x3030303030303030303030303030303030303030'\nfinality_tag = 'latest'\n\
              withdrawal_finality_tag = 'finalized'\nconfirmations = 0\nstart_block = 0\nmax_block_range = 10\n\
              poll_interval = '1s'\nrpc_timeout = '1s'\nstall_critical_after = '1s'\nfinality_stalled_after = '1s'\n\
              cursor_path = 'cursor.json'\n\
