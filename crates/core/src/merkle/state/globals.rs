@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::Fixed;
 use crate::access::AccessPolicy;
 use crate::auth::{ClientAuth, Operator};
+use crate::awards::AwardCap;
 use crate::benchmark::BenchmarkHistory;
 use crate::close_spread::PendingCeiling;
 use crate::deposits::CustodyCheckpoint;
@@ -83,6 +84,9 @@ pub(super) struct Globals<'a> {
     /// From `V78`; omitted until a notice is set, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     notice: &'a Option<Notice>,
+    /// From `V89`; omitted until a vote moves the award cap, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    award_cap: &'a Option<AwardCap>,
 }
 
 impl Engine {
@@ -136,6 +140,9 @@ impl Engine {
             governance,
             operator_faults,
             notice,
+            // Each award has a leaf of its own (`merkle::award_key`).
+            awards: _,
+            award_cap,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -186,6 +193,7 @@ impl Engine {
             house_loss,
             operator_faults,
             notice,
+            award_cap,
         }
     }
 }

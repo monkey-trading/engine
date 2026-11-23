@@ -17,6 +17,7 @@ fn close(rig: &mut Rig, ts: Millis, mut events: Vec<Event>, epoch: u64, allocate
         floor: Fixed::from_int(1_000),
         excess: UsdcUnits(allocated + 7),
         allocated: UsdcUnits(allocated),
+        awarded: UsdcUnits(0),
     });
     rig.stats.observe(&rig.engine, ts, &events);
 }
@@ -95,6 +96,7 @@ fn closes_in_one_command_each_record_only_their_own_allocations() {
             floor: Fixed::from_int(1_000),
             excess: UsdcUnits(100),
             allocated: UsdcUnits(100),
+            awarded: UsdcUnits(0),
         },
     ];
     close(&mut rig, T0 + 2 * 86_400_000, events, 1, 0);
@@ -199,6 +201,7 @@ fn page_cost_from_a_full_history() {
             floor: Fixed::from_int(1_000),
             excess_usdc_units: UsdcUnits(600),
             allocated_usdc_units: UsdcUnits(590),
+            awarded_usdc_units: UsdcUnits(0),
             stakers_usdc_units: UsdcUnits(472),
             stakers: 40,
             operator_shares: vec![crate::stats::distributions::OperatorShare {

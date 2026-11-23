@@ -46,6 +46,7 @@ pub(crate) struct Touched {
     pub(crate) markout_spreads: BTreeSet<MarketId>,
     pub(crate) volumes: BTreeSet<AccountId>,
     pub(crate) reversed_deposits: BTreeSet<AccountId>,
+    pub(crate) awards: BTreeSet<u64>,
     pub(crate) deposits: BTreeSet<String>,
     pub(crate) deposit_transactions: BTreeSet<String>,
     pub(crate) legacy_deposits: BTreeSet<String>,
@@ -92,6 +93,7 @@ impl crate::engine::Engine {
             markout_spreads: self.markout_spreads.take_touched(),
             volumes: self.volumes.take_touched(),
             reversed_deposits: self.reversed_deposits.take_touched(),
+            awards: self.awards.take_touched(),
             deposits: self.deposits.take_touched(),
             deposit_transactions: self.deposit_transactions.take_touched(),
             legacy_deposits: self.legacy_deposits.take_touched(),
@@ -125,6 +127,7 @@ impl crate::engine::Engine {
             + self.markout_spreads.touched_len()
             + self.volumes.touched_len()
             + self.reversed_deposits.touched_len()
+            + self.awards.touched_len()
             + self.deposits.touched_len()
             + self.deposit_transactions.touched_len()
             + self.legacy_deposits.touched_len()
@@ -167,6 +170,7 @@ impl crate::engine::Engine {
             markout_spreads: self.markout_spreads.keys().copied().collect(),
             volumes: self.volumes.keys().copied().collect(),
             reversed_deposits: self.reversed_deposits.keys().copied().collect(),
+            awards: self.awards.keys().copied().collect(),
             deposits: self.deposits.keys().cloned().collect(),
             deposit_transactions: self.deposit_transactions.keys().cloned().collect(),
             legacy_deposits: self.legacy_deposits.keys().cloned().collect(),
@@ -211,6 +215,7 @@ impl Touched {
             markout_spreads,
             volumes,
             reversed_deposits,
+            awards,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -238,6 +243,7 @@ impl Touched {
         self.markout_spreads.extend(markout_spreads);
         self.volumes.extend(volumes);
         self.reversed_deposits.extend(reversed_deposits);
+        self.awards.extend(awards);
         self.deposits.extend(deposits);
         self.deposit_transactions.extend(deposit_transactions);
         self.legacy_deposits.extend(legacy_deposits);
@@ -272,6 +278,7 @@ impl crate::engine::Engine {
         let markout_spreads = take_first(self.markout_spreads.touched_mut(), &mut left);
         let volumes = take_first(self.volumes.touched_mut(), &mut left);
         let reversed_deposits = take_first(self.reversed_deposits.touched_mut(), &mut left);
+        let awards = take_first(self.awards.touched_mut(), &mut left);
         let deposits = take_first(self.deposits.touched_mut(), &mut left);
         let deposit_transactions = take_first(self.deposit_transactions.touched_mut(), &mut left);
         let legacy_deposits = take_first(self.legacy_deposits.touched_mut(), &mut left);
@@ -303,6 +310,7 @@ impl crate::engine::Engine {
             markout_spreads,
             volumes,
             reversed_deposits,
+            awards,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -337,6 +345,7 @@ impl crate::engine::Engine {
             markout_spreads,
             volumes,
             reversed_deposits,
+            awards,
             deposits,
             deposit_transactions,
             legacy_deposits,
@@ -364,6 +373,7 @@ impl crate::engine::Engine {
         self.markout_spreads.touched_mut().extend(markout_spreads);
         self.volumes.touched_mut().extend(volumes);
         self.reversed_deposits.touched_mut().extend(reversed_deposits);
+        self.awards.touched_mut().extend(awards);
         self.deposits.touched_mut().extend(deposits);
         self.deposit_transactions.touched_mut().extend(deposit_transactions);
         self.legacy_deposits.touched_mut().extend(legacy_deposits);

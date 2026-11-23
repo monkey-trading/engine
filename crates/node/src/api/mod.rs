@@ -16,6 +16,7 @@ mod admin;
 mod archive;
 pub use archive::ServedSnapshots;
 mod attestation;
+mod awards;
 mod benchmark_schedule;
 mod distributions;
 mod exit;
@@ -280,6 +281,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/markets", get(markets))
         .route("/v1/status", get(operating::status))
         .route("/v1/notice", get(notice::notice))
+        .route("/v1/awards", get(awards::awards))
         .route("/v1/markets/{id}/marks", get(marks::marks))
         .route("/v1/benchmarks", get(benchmarks))
         .route("/v1/benchmarks/schedule", get(benchmark_schedule::schedule))

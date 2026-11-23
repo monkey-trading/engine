@@ -530,4 +530,8 @@ pub enum ProtocolVersion {
     /// after the last to a futures market holding positions needs a notice (`listing_bounds`). The operator
     /// key in effect signs no client request, for its own address either (`auth`).
     V88,
+    /// Bug bounty awards: a passed vote alone queues an award, at the scale's amount for its severity, or moves
+    /// the cap; each epoch close that distributes pays the queue first, oldest first, up to the cap in force,
+    /// crediting each recipient's distribution, before the operator's share and the stakers' (`awards`).
+    V89,
 }

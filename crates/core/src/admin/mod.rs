@@ -89,6 +89,7 @@ impl Engine {
     ///   (`Engine::check_rollover_change`, `Engine::check_corporate_bounds_change`), and `UpsertMarket`
     ///   loosening a listed market's price rules without a notice or past its launch rules
     /// - `SetNotice` and `ClearNotice` with any error case of `Engine::set_notice` and `Engine::clear_notice`
+    /// - `ApproveAward` and `SetAwardCap`, which only a passed vote applies (`Engine::apply_proposal`)
     /// - from `V79`, `UpsertMarket` naming no minimum level distance, or moving one past its bounds
     /// - `SetParams` naming a portfolio grid that does not fit the markets listed, and `UpsertMarket` that
     ///   would leave a group's listed members on different asset classes or schedules, or one quoted outside
@@ -358,6 +359,10 @@ impl Engine {
             AdminCommand::SetFaultProof(config) => self.set_fault_proof(config)?,
             AdminCommand::SetNotice { text } => self.set_notice(text)?,
             AdminCommand::ClearNotice => self.clear_notice()?,
+            // A passed vote applies these through `Engine::apply_proposal` alone, so every other path is refused.
+            AdminCommand::ApproveAward(_) | AdminCommand::SetAwardCap(_) => {
+                return Err("only a passed vote approves an award or moves the award cap".into());
+            }
         }
         Ok(())
     }

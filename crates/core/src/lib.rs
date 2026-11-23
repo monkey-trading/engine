@@ -91,6 +91,7 @@ pub mod access;
 pub mod account;
 mod admin;
 pub mod auth;
+pub mod awards;
 pub mod benchmark;
 pub mod close_spread;
 mod closeout;

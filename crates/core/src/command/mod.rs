@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::Fixed;
 use crate::access::{AccessDeposit, AccessEvidence, AccessPolicy, EligibilityRequest};
 use crate::auth::{ClientAuth, Operator, RequestAuth};
+use crate::awards::{AwardApproval, AwardCap};
 use crate::benchmark::BenchmarkBatch;
 use crate::close_spread::CloseSpreadCeiling;
 use crate::corporate::CorporateAction;
@@ -274,10 +275,9 @@ pub enum AdminCommand {
     },
     /// An atomic publisher-history snapshot, installed before missed rollovers are charged.
     SetBenchmarkRates(BenchmarkBatch),
-    /// The operator's stress floor for one market, or every market if
-    /// `market` is `None`. The effective level is the higher of this and the
-    /// automatic level, so the operator can raise stress but never suppress it. From `V46` the level
-    /// is at most 1, and the floor lapses 72 hours after it is set.
+    /// The operator's stress floor for one market, or every market if `market` is `None`. The effective level is the
+    /// higher of this and the automatic level, so the operator can raise stress but never suppress it. From `V46` the
+    /// level is at most 1, and the floor lapses 72 hours after it is set.
     SetStressFloor {
         market: Option<MarketId>,
         level: usize,
@@ -302,9 +302,8 @@ pub enum AdminCommand {
     /// From `V19`, records the MONKEY emission schedule: when period 0 starts, no earlier than this
     /// command, and its budget. A log records it once, and only signed by the operator.
     InitEmissions(EmissionSchedule),
-    /// From `V25`, records the MONKEY staking config: the liquidity floor, the epoch length, when
-    /// epoch 0 starts, and the unstake cooldown the staking contract enforces. A log records it
-    /// once.
+    /// From `V25`, records the MONKEY staking config: the liquidity floor, the epoch length, when epoch 0 starts, and
+    /// the unstake cooldown the staking contract enforces. A log records it once.
     InitStaking(StakingConfig),
     /// From `V35`, signed notice of a new profit fee or close-out level, and from `V49` of new stress
     /// parameters, which a `SetParams` may apply from the notice's time on, at least seven days
@@ -318,33 +317,29 @@ pub enum AdminCommand {
         markup_bps: i64,
         effective_at: Millis,
     },
-    /// From `V52`, signed notice of a listed market's new spread bands, margin bands or financing
-    /// markup, which an `UpsertMarket` may apply from the notice's time on, at least seven days after
-    /// the sequenced time, each within the market's launch bounds (`listing_bounds`). Replaces that
-    /// market's pending listing notice.
+    /// From `V52`, signed notice of a listed market's new spread bands, margin bands or financing markup, which an
+    /// `UpsertMarket` may apply from the notice's time on, at least seven days after the sequenced time, each within
+    /// the market's launch bounds (`listing_bounds`). Replaces that market's pending listing notice.
     AnnounceListing {
         market: MarketId,
         notice: ListingNotice,
     },
-    /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it
-    /// is logged. Replaces a pending rotation. From `V37`, refused while the operator registry has
-    /// rotation on.
+    /// From `V35`, signed rotation of the operator key to `address`, in effect seven days after it is logged. Replaces
+    /// a pending rotation. From `V37`, refused while the operator registry has rotation on.
     RotateOperator {
         address: AccountId,
     },
-    /// From `V40`, installs the close-spread ceiling registry: one entry per listed market, kept
-    /// apart from `MarketSpec` so a listing can neither replace nor raise one. The node alone
-    /// sequences it, at genesis or carrying the config's ceilings into a log upgrading to `V40`;
-    /// a log records it once, and later entries move only by an adopted
-    /// `AdoptCloseSpreadCeiling`.
+    /// From `V40`, installs the close-spread ceiling registry: one entry per listed market, kept apart from
+    /// `MarketSpec` so a listing can neither replace nor raise one. The node alone sequences it, at genesis or carrying
+    /// the config's ceilings into a log upgrading to `V40`; a log records it once, and later entries move only by an
+    /// adopted `AdoptCloseSpreadCeiling`.
     SetCloseSpreadCeilings {
         ceilings: Vec<CloseSpreadCeiling>,
     },
-    /// From `V40`, signed adoption of one close-spread ceiling — an entry for a market not yet
-    /// listed, or a strictly lower value for an adopted one — in effect from `effective_at`, at
-    /// least seven days after it is logged. Replaces a pending adoption. From `V52` an adoption for a
-    /// market not yet listed names the `listing` its first listing must be, and none other does;
-    /// left out of the encoding when none is named.
+    /// From `V40`, signed adoption of one close-spread ceiling — an entry for a market not yet listed, or a strictly
+    /// lower value for an adopted one — in effect from `effective_at`, at least seven days after it is logged. Replaces
+    /// a pending adoption. From `V52` an adoption for a market not yet listed names the `listing` its first listing
+    /// must be, and none other does; left out of the encoding when none is named.
     AdoptCloseSpreadCeiling {
         market: MarketId,
         max_close_spread_bps: i64,
@@ -371,6 +366,10 @@ pub enum AdminCommand {
     RelistMarkets {
         specs: Vec<MarketSpec>,
     },
+    /// From `V89`, only by a passed vote: queues a bug bounty award at the scale's amount (`awards`).
+    ApproveAward(AwardApproval),
+    /// From `V89`, only by a passed vote: moves the cap on what one close pays awards (`awards`).
+    SetAwardCap(AwardCap),
 }
 
 /// An admin command with the operator's signature, nonce, and expiry, as `engine admin` signs and

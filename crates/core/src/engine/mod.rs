@@ -27,6 +27,7 @@ use crate::Fixed;
 use crate::access::{AccessDeposit, AccessPolicy, CreditScreening, EligibilityClass, HeldDeposit};
 use crate::account::Account;
 use crate::auth::{ClientAuth, Operator};
+use crate::awards::{Award, AwardCap};
 use crate::benchmark::BenchmarkHistory;
 use crate::close_spread::PendingCeiling;
 use crate::command::{Command, Sequenced};
@@ -188,6 +189,13 @@ pub struct Engine {
     /// From `V78`, the operator's status notice, absent until one is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) notice: Option<Notice>,
+    /// From `V89`, every award a vote approved, by id in the order approved, with what the closes have paid
+    /// of it (`awards`).
+    #[serde(default, skip_serializing_if = "TrackedMap::is_empty")]
+    pub(crate) awards: TrackedMap<u64, Award>,
+    /// From `V89`, the cap a vote set on what one close pays awards, absent while the launch cap is in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) award_cap: Option<AwardCap>,
     /// From `V40`, the most each market's closing slice may pay, in bps of the index: adopted once
     /// (genesis, or one signed install) and changed only by a signed adoption, so `UpsertMarket`
     /// can neither replace nor raise an entry. Absent until installed.

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, ensure};
 use engine_core::Fixed;
 use engine_core::access::{AccessDeposit, AccessReject};
+use engine_core::awards::AwardPaid;
 use engine_core::command::Command;
 use engine_core::deposits::{DepositReceipt, DepositStatus, DepositUpdate};
 use engine_core::event::Event;
@@ -120,7 +121,9 @@ impl Accounting {
                         self.unpaid.raw().checked_add(amount.raw()).context("checkpoint unpaid approvals overflow")?,
                     );
                 }
-                Event::DistributionAllocated { amount, .. } | Event::OperatorShareAllocated { amount, .. } => {
+                Event::DistributionAllocated { amount, .. }
+                | Event::OperatorShareAllocated { amount, .. }
+                | Event::AwardPaid(AwardPaid { amount, .. }) => {
                     // Allocations change the claim holder, not cumulative custody credits.
                     i128::try_from(amount.0)
                         .ok()

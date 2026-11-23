@@ -122,7 +122,8 @@ start the vault's exit. The exit pays each account what the last checkpoint show
 MONKEY is a token minted by the vault. Every ten minutes, a fixed amount of MONKEY is distributed
 among the traders who realised a loss in that period, in proportion to the size of their losses.
 Staked MONKEY earns a daily share, paid in USDC, of the house's net asset value above a reserve of
-$30.5 million.
+$30.5 million. Bug bounty awards that a vote approves are paid first from each day's distribution,
+within a cap, as the [security policy](SECURITY.md#bug-bounty) describes.
 
 ### Changes to the rules
 
