@@ -32,7 +32,8 @@
 //!   reverse is reserved (`excess`).
 //!   House cash falls by the allocated total. Each account's cumulative distribution is a leaf of
 //!   its own in the state tree, which the vault checks a claim against.
-//! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)` credits the
+//! - **The operator's share**, from V47. While rotation is on, `floor(excess / 5)`, from `V89` of what
+//!   the awards leave, credits the
 //!   operator in effect when the close runs, after any handover due then, and stakers share the
 //!   rest as above, so the fraction that rounding leaves goes to them and their dust to the house.
 //!   The allocated total never passes the excess. The share is the same whatever the excess holds:

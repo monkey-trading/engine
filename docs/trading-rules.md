@@ -336,7 +336,8 @@ Each day's distribution first pays the bug bounty awards that a vote has approve
 launch, awards take at most 5% of the day's distribution, and at most 50,000 USDC. An award that a
 day does not finish is paid on the following days before any later award. The stakers and the
 operator share what the awards leave. A day that distributes nothing pays no award. The
-[security policy](../SECURITY.md#bug-bounty) sets out the awards and how they are approved.
+[security model](security-model.md#monkey-staking-and-distributions) sets out the awards and how they
+are approved.
 
 ## Changes to the rules
 

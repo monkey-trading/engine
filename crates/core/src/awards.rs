@@ -90,23 +90,23 @@ pub struct AwardCap {
     pub max: UsdcUnits,
 }
 
-/// `AwardApproved`: an award a passed vote approved, queued at the back under `award`.
+/// `AwardApproved`: an award a passed vote approved for `account`, queued at the back under `award`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AwardApproved {
     pub award: u64,
     pub proposal: u64,
-    pub recipient: AccountId,
+    pub account: AccountId,
     pub severity: Severity,
     pub advisory: String,
     pub amount: UsdcUnits,
 }
 
-/// `AwardPaid`: what the close of `epoch` paid award `award`, credited to `recipient`'s cumulative
+/// `AwardPaid`: what the close of `epoch` paid award `award`, credited to `account`'s cumulative
 /// distribution; `owed` is what is left of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AwardPaid {
     pub award: u64,
-    pub recipient: AccountId,
+    pub account: AccountId,
     pub epoch: u64,
     pub amount: UsdcUnits,
     pub owed: UsdcUnits,
@@ -221,7 +221,8 @@ impl Engine {
             approved_at: self.now,
         };
         self.awards.insert(award, queued);
-        let approved = AwardApproved { award, proposal, recipient, severity, advisory: advisory.clone(), amount };
+        let approved =
+            AwardApproved { award, proposal, account: recipient, severity, advisory: advisory.clone(), amount };
         events.push(Event::AwardApproved(approved));
         Ok(())
     }
@@ -255,7 +256,8 @@ impl Engine {
             self.credit_distribution(recipient, amount);
             left -= amount;
             total += amount;
-            let paid = AwardPaid { award: id, recipient, epoch, amount: UsdcUnits(amount), owed: UsdcUnits(owed) };
+            let paid =
+                AwardPaid { award: id, account: recipient, epoch, amount: UsdcUnits(amount), owed: UsdcUnits(owed) };
             events.push(Event::AwardPaid(paid));
         }
         total

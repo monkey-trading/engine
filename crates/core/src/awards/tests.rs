@@ -106,3 +106,12 @@ fn every_other_command_passes_the_award_check() {
     assert_eq!(check_award_vote(&AdminCommand::ClearNotice), Ok(()));
     assert_eq!(check_award_vote(&AdminCommand::SetReduceOnly { market: None, reduce_only: true }), Ok(()));
 }
+
+#[test]
+fn the_runbooks_encodings_are_canonical() {
+    let award = r#"{"action":"approve_award","recipient":"0x7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e","severity":"high","advisory":"GHSA-4v2c-9xq8-jm3w","amount":"50000000000"}"#;
+    assert_eq!(crate::governance::decode_command(award.as_bytes()), Some(approval(Severity::High, 50_000_000_000)));
+    let cap = r#"{"action":"set_award_cap","excess_bps":1000,"max":"100000000000"}"#;
+    let expected = AdminCommand::SetAwardCap(AwardCap { excess_bps: 1_000, max: UsdcUnits(100_000_000_000) });
+    assert_eq!(crate::governance::decode_command(cap.as_bytes()), Some(expected));
+}

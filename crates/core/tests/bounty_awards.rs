@@ -39,6 +39,9 @@ const USDC: u128 = 1_000_000;
 /// The seed of the trader whose losses the house earns from.
 const TRADER_SEED: u8 = 0x89;
 
+/// Builds a harness in one of the states a test walks.
+type Build = fn() -> Harness;
+
 /// Staking in one-day epochs with the house `excess` USD above its floor, then `version`, the recorded vote
 /// contract, a one-member rotation set in effect and rotation on, so votes govern, and two stakers at 3:1.
 fn governed(version: ProtocolVersion, excess: i64) -> Harness {
@@ -148,7 +151,7 @@ fn an_award_applies_seven_days_after_its_vote_is_logged_and_queues_at_the_back()
     let approved = engine_core::awards::AwardApproved {
         award: 0,
         proposal: 11,
-        recipient: RESEARCHER,
+        account: RESEARCHER,
         severity: Severity::High,
         advisory: "GHSA-4v2c-9xq8-jm3w".into(),
         amount: UsdcUnits(50_000 * USDC),
@@ -191,7 +194,7 @@ fn the_operator_and_the_node_never_approve_an_award_or_move_the_cap_in_any_state
         award(Client::operator().account, Severity::Critical, "GHSA-1"),
         AdminCommand::SetAwardCap(AwardCap { excess_bps: 2_000, max: UsdcUnits(250_000 * USDC) }),
     ];
-    let states: [(&str, fn() -> Harness); 4] = [
+    let states: [(&str, Build); 4] = [
         ("before V89", || voting(ProtocolVersion::V88, 0)),
         ("V89 with rotation off", || voting(ProtocolVersion::V89, 0)),
         ("V89 with rotation on and no set", || {
@@ -258,15 +261,28 @@ fn a_vote_moves_the_cap_within_its_bounds_only() {
 }
 
 #[test]
-fn awards_and_the_cap_are_in_the_state_root_and_a_replay_reproduces_them() {
+fn an_award_and_the_cap_each_move_the_root_alone() {
+    // Engines that run the same commands at the same seqs and times, and differ only in what one vote names.
+    let root_after = |command: AdminCommand| {
+        let mut h = governed(ProtocolVersion::V89, 0);
+        vote_in(&mut h, 70, &command);
+        h.engine.state_root()
+    };
+    let medium = root_after(award(RESEARCHER, Severity::Medium, "GHSA-1"));
+    assert_eq!(medium, root_after(award(RESEARCHER, Severity::Medium, "GHSA-1")));
+    assert_ne!(medium, root_after(award(RESEARCHER, Severity::Medium, "GHSA-2")), "the advisory is committed");
+    assert_ne!(medium, root_after(award(SECOND, Severity::Medium, "GHSA-1")), "the recipient is committed");
+    assert_ne!(medium, root_after(award(RESEARCHER, Severity::Low, "GHSA-1")), "the severity is committed");
+    let cap = |excess_bps| AdminCommand::SetAwardCap(AwardCap { excess_bps, max: UsdcUnits(60_000 * USDC) });
+    assert_ne!(root_after(cap(700)), root_after(cap(800)), "the cap is committed");
+}
+
+#[test]
+fn a_replay_reproduces_the_awards_the_cap_and_the_root() {
     let mut h = governed(ProtocolVersion::V89, 0);
-    let before = h.engine.state_root();
     vote_in(&mut h, 70, &award(RESEARCHER, Severity::Medium, "GHSA-1"));
-    let with_award = h.engine.state_root();
-    assert_ne!(before, with_award);
     vote_in(&mut h, 71, &AdminCommand::SetAwardCap(AwardCap { excess_bps: 700, max: UsdcUnits(60_000 * USDC) }));
     let expected = h.engine.state_root();
-    assert_ne!(with_award, expected);
 
     let mut replica = engine_core::Engine::new();
     for sequenced in &h.log {

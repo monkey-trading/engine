@@ -59,6 +59,9 @@ mod withdrawal;
 pub use withdrawal::*;
 mod exit;
 pub use exit::*;
+// From `V89`, each award a vote approved.
+mod awards;
+pub use awards::award_key;
 mod credits;
 pub use credits::{ReceiptKind, ReceiptProof, UnfinalisedCreditProof, unfinalised_credit_key};
 mod levels;
@@ -69,9 +72,7 @@ mod toxicity;
 pub use toxicity::{markout_spread_key, toxicity_score_key};
 mod volume;
 // From `V83`, each account's reversed deposits awaiting repayment.
-mod awards;
 mod reversed;
-pub use awards::award_key;
 pub use volume::volume_key;
 pub(crate) mod state;
 pub use state::{CommitInputs, RootDelta, RootWork, TreeEvent};

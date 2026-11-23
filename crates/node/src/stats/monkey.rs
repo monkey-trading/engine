@@ -64,8 +64,8 @@ struct DistributionView {
     /// When the engine's open epoch ends, the earliest its close can run. From `V75` the close also
     /// waits for the staking mirror to pass that end, so it can lie before `time_ms`.
     next_close_ms: Millis,
-    /// USDC base units allocated across every closed epoch: to stakers, and from `V47` to the
-    /// operator.
+    /// USDC base units allocated across every closed epoch: to stakers, from `V47` to the operator, and
+    /// from `V89` to bug bounty awards.
     distributed_usdc_units: UsdcUnits,
     /// The last close this record saw, with what it measured.
     last_distribution: Option<LastDistribution>,

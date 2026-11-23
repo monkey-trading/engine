@@ -243,14 +243,14 @@ pub fn every_event() -> Vec<Event> {
         Event::AwardApproved(AwardApproved {
             award: 0,
             proposal: 7,
-            recipient: account,
+            account,
             severity: Severity::High,
             advisory: "GHSA-4v2c-9xq8-jm3w".into(),
             amount: Severity::High.amount(),
         }),
         Event::AwardPaid(AwardPaid {
             award: 0,
-            recipient: account,
+            account,
             epoch: 3,
             amount: engine_core::UsdcUnits(200),
             owed: engine_core::UsdcUnits(49_999_999_800),

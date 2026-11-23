@@ -424,8 +424,8 @@ pub fn account_of(event: &Event) -> Option<AccountId> {
             }
         }
         Event::Fill(fill) => Some(fill.account),
-        Event::AwardApproved(approved) => Some(approved.recipient),
-        Event::AwardPaid(paid) => Some(paid.recipient),
+        Event::AwardApproved(approved) => Some(approved.account),
+        Event::AwardPaid(paid) => Some(paid.account),
         Event::HouseCapitalMoved { .. }
         | Event::CorporateActionScheduled { .. }
         | Event::CorporateEntitlementsCaptured { .. }

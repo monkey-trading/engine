@@ -3,7 +3,6 @@
 //! payment in the recipient's cumulative distribution leaf; and nothing at a close that distributes nothing.
 
 use alloy_primitives::B256;
-use engine_core::Fixed;
 use engine_core::awards::{AwardCap, AwardPaid, Severity};
 use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
@@ -11,6 +10,7 @@ use engine_core::event::Event;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::staking::UsdcUnits;
 use engine_core::types::{AccountId, Side};
+use engine_core::{Engine, Fixed};
 
 use crate::common::close_spread::trade;
 use crate::common::{BTC, Client, Harness};
@@ -97,7 +97,7 @@ fn a_close_pays_the_oldest_award_first_up_to_the_cap_and_the_rest_waits_at_the_f
     assert_eq!(close.excess, 400_000 * USDC, "{events:?}");
     let first = AwardPaid {
         award: 0,
-        recipient: RESEARCHER,
+        account: RESEARCHER,
         epoch: 0,
         amount: UsdcUnits(20_000 * USDC),
         owed: UsdcUnits(30_000 * USDC),
@@ -134,8 +134,7 @@ fn a_close_pays_the_oldest_award_first_up_to_the_cap_and_the_rest_waits_at_the_f
     let third = launch_cap(close.excess);
     let (rest, younger) = (30_000 * USDC - second, third - (30_000 * USDC - second));
     assert!(younger > 0 && younger < 10_000 * USDC, "{third}");
-    let paid: Vec<_> =
-        close.awards.iter().map(|paid| (paid.award, paid.recipient, paid.amount.0, paid.owed.0)).collect();
+    let paid: Vec<_> = close.awards.iter().map(|paid| (paid.award, paid.account, paid.amount.0, paid.owed.0)).collect();
     assert_eq!(paid, [(0, RESEARCHER, rest, 0), (1, SECOND, younger, 10_000 * USDC - younger)]);
     assert_eq!(close.awarded, third);
     assert_eq!(h.engine.distribution(RESEARCHER), UsdcUnits(50_000 * USDC));
@@ -219,4 +218,23 @@ fn a_payment_is_in_the_recipients_distribution_leaf_beside_its_stake() {
     assert_eq!(proof.entitled, entitled);
     assert!(proof.verify(root));
     assert!(h.engine.distribution_proof(AccountId([0x99; 20])).is_none());
+}
+
+#[test]
+fn the_root_after_each_award_change_is_the_root_rebuilt_from_the_encoding() {
+    // A leaf the incremental root misses after an approval, a payment or a cap move would part the two.
+    let rebuilt_matches = |h: &mut Harness| {
+        let root = h.engine.state_root();
+        let mut rebuilt: Engine = serde_json::from_slice(&serde_json::to_vec(&h.engine).unwrap()).unwrap();
+        assert_eq!(rebuilt.state_root(), root);
+    };
+    let mut h = governed(ProtocolVersion::V89, 400_000);
+    rebuilt_matches(&mut h);
+    vote_in(&mut h, 1, &award(RESEARCHER, Severity::High, "GHSA-1"));
+    rebuilt_matches(&mut h);
+    let close = paying(&close_due(&mut h));
+    assert_eq!(close.awarded, 20_000 * USDC);
+    rebuilt_matches(&mut h);
+    vote_in(&mut h, 2, &AdminCommand::SetAwardCap(AwardCap { excess_bps: 2_000, max: UsdcUnits(250_000 * USDC) }));
+    rebuilt_matches(&mut h);
 }
