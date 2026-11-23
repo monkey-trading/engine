@@ -48,6 +48,8 @@ struct Gated {
     /// The log writer's manifest, as the API watches it.
     manifest: watch::Receiver<Manifest>,
     task: JoinHandle<anyhow::Result<()>>,
+    /// Whether the sync thread has ended.
+    sync_end: SyncEnd,
 }
 
 impl Gated {
@@ -84,9 +86,10 @@ impl Gated {
         seq.activate_protocol().unwrap();
         seq.genesis(&dev_config().genesis).unwrap();
         seq.trust(sample_around(clock.as_ref())).unwrap();
+        let sync_end = seq.log_sync_end().expect("the sync thread runs");
         let (tx, rx) = mpsc::channel(64);
         let task = tokio::spawn(seq.run(rx));
-        Self { tx, permits, stream: stream_rx, stats, syncs, entered, manifest, task }
+        Self { tx, permits, stream: stream_rx, stats, syncs, entered, manifest, task, sync_end }
     }
 
     /// Ticks, each synced on its own, until the next command opens a segment, so a test's batches
@@ -473,4 +476,25 @@ async fn refused_signed_and_admin_requests_wait_for_their_batchs_sync() {
     assert_eq!(signed, StatusCode::FORBIDDEN);
     let admin = timeout(Duration::from_secs(10), admin_rx).await.expect("the admin refusal is answered").unwrap();
     assert_eq!(admin, StatusCode::UNAUTHORIZED);
+}
+
+/// A dropped sequencer leaves its sync thread writing what was queued to it: the thread has not ended
+/// while a sync is held, and has once the sync returns and no job is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sync_thread_ends_only_once_the_batches_queued_to_it_are_written() {
+    let node = Gated::start("pipeline-sync-end");
+    let reply = node.tick().await;
+    node.sync_started();
+    assert!(!node.sync_end.ended(), "the thread is inside a held sync");
+    node.task.abort(); // as a killed node's sequencer is, with a sync in flight
+    let _ = node.task.await;
+    drop(reply);
+    assert!(!node.sync_end.ended(), "a dropped sequencer does not end the thread while it writes");
+    node.permits.send(Verdict::Pass).unwrap();
+    let ended = async {
+        while !node.sync_end.ended() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    timeout(Duration::from_secs(10), ended).await.expect("the thread ends once its last sync returns");
 }
