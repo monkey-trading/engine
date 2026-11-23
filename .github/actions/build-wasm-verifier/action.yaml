@@ -1,0 +1,33 @@
+name: Build the browser verifier
+description: >-
+  Builds the browser verifier's npm package from the checkout at `path` with
+  scripts/build-wasm-verifier.sh and the toolchain and wasm-bindgen CLI it pins, into out/wasm-verifier
+  under that checkout, and uploads it as an artifact. CI and the release build it the same way.
+inputs:
+  artifact:
+    description: The name of the artifact that holds the package.
+    required: true
+  path:
+    description: The checkout to build from, relative to the workspace.
+    default: .
+runs:
+  using: composite
+  steps:
+    # scripts/build-wasm-verifier.sh pins this toolchain and the wasm-bindgen CLI version.
+    - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      with:
+        toolchain: 1.99.1
+        targets: wasm32-unknown-unknown
+    - name: Install wasm-bindgen-cli
+      shell: bash
+      run: cargo install wasm-bindgen-cli --version 0.2.129 --locked
+    - name: Build the package
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      run: ./scripts/build-wasm-verifier.sh out/wasm-verifier
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifact }}
+        path: ${{ inputs.path }}/out/wasm-verifier/
+        retention-days: 14
+        if-no-files-found: error

@@ -151,10 +151,13 @@ mod tests {
             .map(|key| public_key_address(key).unwrap())
             .collect();
         let dir = Path::new(DEV_CONFIG).parent().unwrap();
-        // Every full node config in `config/`; the genesis and key lists alone are not configs.
+        // Every full node config in `config/`; the genesis and key lists alone are not configs, and
+        // `config/release/` holds a release's node sections, which name no published key.
         let configs: Vec<NodeConfig> = std::fs::read_dir(dir)
             .unwrap()
-            .map(|file| std::fs::read_to_string(file.unwrap().path()).unwrap())
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| std::fs::read_to_string(path).unwrap())
             .filter_map(|text| toml::from_str::<NodeConfig>(&text).ok())
             .collect();
         assert!(configs.len() >= 2, "dev.toml and anvil.toml at least");

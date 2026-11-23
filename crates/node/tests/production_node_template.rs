@@ -9,8 +9,14 @@ use std::fs;
 use std::path::Path;
 
 use engine_node::NodeConfig;
-use engine_node::config::{CustodyProvider, FeedProvider, TeeProvider, Venue};
+use engine_node::config::Venue;
 
+#[path = "common/production_config.rs"]
+mod production_config;
+
+/// Keys the template marks whatever their value: the host's product names, which a deployment confirms
+/// from its own host and then sets without a marker.
+const TEMPLATE_KEYS: [&str; 2] = ["processor = ", "product_name = "];
 const TEMPLATE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/production-node.toml");
 const PUBLISHERS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/benchmark-publishers.toml");
 const GENESIS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../config/production-genesis.toml");
@@ -37,39 +43,7 @@ fn the_template_with_the_production_genesis_loads_as_a_node_config() {
 
 #[test]
 fn the_template_holds_what_a_production_build_requires() {
-    let cfg = assembled("production");
-    // The refusals of a production build, which `NodeConfig::load` applies only when built with it.
-    assert_eq!(cfg.tee.provider, TeeProvider::ConfigfsTsm);
-    assert_eq!(cfg.custody.provider, CustodyProvider::Evm);
-    assert_eq!(cfg.feeds.provider, FeedProvider::Venues);
-    assert!(cfg.api.tls.is_some(), "[api.tls.acme] is required");
-    assert!(cfg.api.allowed_origins.iter().all(|origin| origin.starts_with("https://")));
-    assert!(cfg.alerts.critical.is_some(), "real attestation needs a Critical route");
-    assert!(cfg.checkpoints.is_some() && cfg.tee.sealing.is_some(), "hardware custody needs both");
-    // The launch release takes quotes from Siena (EPYC 8004) alone, at AMD's floor for it.
-    let models: Vec<_> = cfg.tee.cpu_models.iter().map(|model| (model.cpuid(), model.minimum_tcb)).collect();
-    let siena = engine_verify::Cpuid { family: 0x19, model: 0xA0, stepping: 0x02 };
-    let floor = engine_verify::MinimumTcb { boot_loader: 0, tee: 0, snp: 0x1D, microcode: 0x1B };
-    assert_eq!(models, [(siena, floor)]);
-    // A rotation-set member witnesses, promotes and relays heads through its own funded caller.
-    assert!(cfg.log_heads.is_some() && cfg.liveness.is_some(), "[log_heads] and [liveness] run the heartbeat rule");
-    let evm = cfg.custody.evm.as_ref().expect("EVM custody");
-    assert!(evm.providers.len() >= 3);
-    // The template's fresh-account budgets are the production values, the ceiling a production build enforces.
-    let fresh = cfg.api.fresh_accounts;
-    assert_eq!((fresh.shared.per_minute.get(), fresh.shared.burst.get()), (60, 120));
-    assert_eq!((fresh.per_client.per_minute.get(), fresh.per_client.burst.get()), (12, 6));
-    // Its screening slots, shares and reserve are within what a production build allows.
-    cfg.access.as_ref().expect("[access]").refuse_dev_screening_slots(true).expect("the production screening slots");
-    // A production build reads secrets only from a delivered bundle.
-    let sealing = cfg.tee.sealing.as_ref().expect("[tee.sealing]");
-    assert!(sealing.secrets.is_some(), "[tee.sealing.secrets] takes the delivery");
-    let text = template();
-    assert!(!text.contains("api_key_env =") && !text.contains("url_env ="), "the environment is refused");
-    // Crypto from Coinbase and Kraken, FX from Massive and TraderMade, and the US shares from Massive
-    // and Alpaca meet min_sources 2. The index and commodity futures, every contract, meet their
-    // min_sources 1 from Massive alone (owner's decision of 2026-11-20).
-    cfg.refuse_unmet_min_sources(true).expect("every launch market has its min_sources over TLS");
+    production_config::assert_holds_what_a_production_build_requires(&assembled("production"), &template());
 }
 
 /// The template takes a recovery cache every five minutes of sequenced time: a restart replays at most
@@ -148,37 +122,9 @@ fn the_futures_markets_price_from_massive_alone_by_the_decision_of_2026_11_20() 
 
 #[test]
 fn every_placeholder_is_marked_and_no_marker_is_a_standalone_comment() {
-    const PLACEHOLDERS: [&str; 17] = [
-        "example.com",
-        "0x1111111111111111",
-        "0x2222222222222222",
-        "0x3333333333333333",
-        "0x4444444444444444",
-        "0x5555555555555555",
-        "0x6666666666666666",
-        "0x7777777777777777",
-        "0x8888888888888888",
-        "0x9999999999999999",
-        "0xaaaaaaaaaaaaaaaa",
-        "0xbbbbbbbbbbbbbbbb",
-        "0xcccccccccccccccc",
-        "0xdddddddddddddddd",
-        "start_block = 1 ",
-        "processor = ",
-        "product_name = ",
-    ];
-    for (n, line) in template().lines().enumerate() {
-        let code = line.split('#').next().unwrap();
-        let marked = line.contains("# OWNER") || line.contains("# REPLACE");
-        if PLACEHOLDERS.iter().any(|placeholder| code.contains(placeholder)) {
-            assert!(marked, "line {}: a placeholder with no marker: {line}", n + 1);
-        }
-        assert!(
-            !line.trim_start().starts_with("# OWNER") && !line.trim_start().starts_with("# REPLACE"),
-            "line {}",
-            n + 1
-        );
-    }
+    let placeholders = [production_config::PLACEHOLDER_VALUES.as_slice(), &TEMPLATE_KEYS].concat();
+    assert_eq!(production_config::unmarked_placeholders(&template(), &placeholders), Vec::<String>::new());
+    assert_eq!(production_config::unlisted_placeholders(&template()), Vec::<String>::new());
 }
 
 /// The log is a mount point of its own volume: no store the production build keeps off the log's device is a path

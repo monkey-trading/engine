@@ -1,0 +1,538 @@
+# The staging trading server's config, without [genesis]: a second guest on the production host,
+# against Arbitrum Sepolia with contracts of its own. Each release runs here for 24 hours before it
+# runs in production, so this file differs from config/release/production.toml only in its chain, its
+# contracts, accounts and providers, and its domain.
+#
+# Its keyed market-data connections need vendor accounts of their own: Massive, TraderMade and Alpaca
+# each allow one live connection per account, and production holds that connection.
+#
+# The release workflow (.github/workflows/release.yaml) appends config/benchmark-publishers.toml and
+# config/production-genesis.toml to this file and ships the result as staging.toml, whose SHA-256
+# release.toml pins. The hash is part of the release the vault's timelock names, so one changed byte, a
+# comment included, is another release. Anyone can check it at the release's tag:
+#
+#   cat config/release/staging.toml config/benchmark-publishers.toml \
+#       config/production-genesis.toml | sha256sum
+#
+# Every value that is a placeholder or a decision still open carries a trailing marker comment. Set
+# the value and delete the comment; the release refuses a tag while any marker is left.
+# ops/runbooks/deploy-and-rollback.md has the procedure.
+#
+# Secrets never appear in this file, so it is published whole. It names them: `{name}` in an RPC
+# provider's or the screening source's URL, `api_key_secret`, an Alpaca connection's `key_pair`
+# secrets, and `url_secret`. The operator delivers their values into the attested enclave
+# (key-recovery.md, "Secrets"); a production build refuses `api_key_env` and `url_env`. A URL's origin
+# stays here, so a delivered value never changes who answers.
+#
+# Paths are under /data, the image's writable disk. The log directory is a mount point of its own
+# volume, the host's first NVMe drive, and everything else under /data is on the second: the history
+# index, the marks cache and the daily snapshots write buffered data whose flush holds the log's batch
+# syncs when it shares their disk. A production build refuses a log directory on the device of any of
+# them (sev-snp-host.md, "Storage"). The alert outbox must be a sibling of the log directory. A
+# production build refuses mock providers, an unsigned API, plain-http origins and a config without
+# [api.tls.acme].
+
+[node]
+# The guest address the host forwards port 443 to. The CA validates on it too.
+listen = "0.0.0.0:8080"
+log_dir = "/data/log"
+segment_commands = 1000
+# A ceiling: at most one checkpoint is in flight, so the cadence follows the chain's finality.
+checkpoint_every = 1000
+tick = "250ms"
+# Recorded in the log on first start, with the custody chain id and vault.
+auth = "eip712"
+
+[logging]
+level = "info"
+
+[api]
+# Keep max_connections below the process's open-file limit.
+max_connections = 512
+max_connections_per_ip = 32
+handshake_timeout = "10s"
+read_timeout = "30s"
+max_body_bytes = 65536
+per_ip = { per_second = 50, burst = 100 }
+per_account = { per_second = 10, burst = 20 }
+per_ip_connections = { per_second = 100, burst = 200 } # OWNER: keep it above per_ip
+max_subscribers = 256
+send_timeout = "30s"
+# The console's https origin; any other browser origin is refused. A production build takes only https.
+allowed_origins = ["https://staging-console.example.com"] # REPLACE
+
+# What wallets that have paid nothing may add to the public log: a token bucket, `burst` requests at
+# once, refilled at `per_minute`, shared by all clients and one client's share of it. A production
+# build refuses anything above these values.
+[api.fresh_accounts]
+shared = { per_minute = 60, burst = 120 }
+per_client = { per_minute = 12, burst = 6 }
+
+# Seconds of its tier's request rate each of a credited account's buckets holds at once: the
+# account's own, and its session keys' together. The rate is the tier's (`volume_tiers`, from
+# protocol V66). A production build refuses more than 5 seconds.
+[api.request_bursts]
+account = 2
+session_key = 2
+
+[api.tls.acme]
+# The API's DNS name, lowercase. The CA connects to it on port 443.
+domain = "staging-api.example.com" # REPLACE
+# Rehearse on the CA's staging directory first (a separate release).
+directory_url = "https://acme-v02.api.letsencrypt.org/directory" # OWNER: the CA
+contact = "mailto:ops@example.com" # REPLACE
+
+# Behind a pass-through proxy that sends PROXY protocol v2, list its address ranges here. The header
+# is unauthenticated: list only addresses that reach the node solely through your own proxy.
+# [api.proxy_protocol]
+# trusted = []
+
+[tee]
+provider = "configfs_tsm"
+# The vendor's product name for the host's certificate chain, whose collateral the node relays:
+# Milan, or Genoa for a Genoa, Bergamo or Siena host. The host's VCEK must name this product line.
+processor = "Genoa" # OWNER: the host's product name
+
+# Each CPU model a peer enclave's quote may come from, with the lowest TCB taken from that model: a
+# successor's, a vouched standby key's and a log check's. It is the release manifest's `cpu_models`,
+# entry for entry. The launch release takes Siena (EPYC 8004) alone; another model needs a new
+# release with its own floor. The floor is AMD's for EPYC 8004: TCB[SNP] 0x1D (AMD-SB-3038) and
+# TCB[MICROCODE] 0x1B (AMD-SB-3027); the bulletins set no boot loader or TEE level.
+[[tee.cpu_models]]
+product_name = "Genoa-A2" # REPLACE: the productName the host's VCEK carries
+family = 0x19
+model = 0xA0
+stepping = 0x02
+minimum_tcb = { boot_loader = 0, tee = 0, snp = 0x1D, microcode = 0x1B }
+
+[tee.sealing]
+dir = "/data/keys"
+
+[tee.sealing.secrets]
+# Where the operator delivers secrets. Forward it from the operator's addresses, not the public.
+listen = "0.0.0.0:9472"
+
+[tee.sealing.handover]
+# Where another member's release asks this one for the keys, and members ask for statuses and log
+# checks. Reachable from every member's trading server, so forward it with each peer's own address:
+# its limits count connections per address.
+listen = "0.0.0.0:9471"
+# Archive mirrors of the incumbent's log, for when this node takes the keys over an election.
+mirrors = ["https://mirror-a.example.com", "https://mirror-b.example.com"] # REPLACE
+
+[operator]
+# Off at launch. The deployer is the only operator until the timelock turns the registry's rotation on.
+rotation_enabled = false
+# SEC1 public key of the operator's admin key (hex, 0x04 then 64 bytes). A placeholder: its private
+# key was discarded.
+public_key = "0x045a1ac079d8e8d39ae3b157534b725ac6249271c637e4990e757031332c9f5a3a94358448d7b698b31a8b99cd137c950532ad908acda681abdc19489fccb87a14" # REPLACE
+
+[custody]
+provider = "evm"
+chain_id = 421614 # Arbitrum Sepolia
+vault = "0x1111111111111111111111111111111111111111" # REPLACE
+
+[custody.evm]
+# At least three providers run by different operators, each serving state back to start_block.
+# Each `{name}` is a key the operator delivers, in the URL's path or query.
+providers = [
+  { name = "provider-a", rpc_url = "https://rpc-a.example.com/v2/{provider_a_key}" }, # REPLACE
+  { name = "provider-b", rpc_url = "https://rpc-b.example.com/v2/{provider_b_key}" }, # REPLACE
+  { name = "provider-c", rpc_url = "https://rpc-c.example.com/v2/{provider_c_key}" }, # REPLACE
+]
+usdc = "0x2222222222222222222222222222222222222222" # REPLACE: the vault's usdc(), the project's mock USDC on Arbitrum Sepolia
+minter = "0xdddddddddddddddddddddddddddddddddddddddd" # REPLACE: the MonkeyMinter on Arbitrum Sepolia, whose vault() is the vault
+# Production credits at latest, less confirmations, and releases principal at finalized.
+finality_tag = "latest"
+withdrawal_finality_tag = "finalized"
+confirmations = 2 # OWNER: blocks of the credit tag to wait
+start_block = 1 # REPLACE: the vault's deployment block
+max_block_range = 1000 # OWNER: within every provider's limits; a production build allows at most 10000
+# A deposit is credited up to one interval, 15 s, after its block is two blocks deep. The RPC budget in
+# feed-and-custody-failures.md counts the requests and names the plans that carry them.
+poll_interval = "15s"
+rpc_timeout = "5s"
+# Must exceed the credit tag's lag, one finalized-tag delay, and the wait for the next checkpoint, or
+# a deposit pauses withdrawals; and the longest gap between batch posts. Not measured on Arbitrum
+# One. The config hash is part of the release, so set it before the release is named.
+stall_critical_after = "1h" # OWNER: measure on Arbitrum One first
+# On Arbitrum One the finalized tag follows batch posting by about one Ethereum finality period.
+finality_stalled_after = "30m"
+cursor_path = "/data/custody-cursor.json"
+
+[custody.evm.staking]
+contract = "0x3333333333333333333333333333333333333333" # REPLACE
+cursor_path = "/data/staking-cursor.json"
+
+[custody.evm.staking.registry]
+contract = "0x4444444444444444444444444444444444444444" # REPLACE
+# The RegistryLens beside the registry, which GET /v1/operators reads through the custody quorum.
+# Absent, that route answers 404; a node's config is part of its release, so a lens added later
+# needs a new release.
+lens = "0x5555555555555555555555555555555555555555" # REPLACE
+# The OperatorSchedule the registry names, whose rotation sets and daily turns the watcher mirrors
+# from protocol V51. Absent, no turn is mirrored. Like the lens, it is part of the release.
+schedule = "0x6666666666666666666666666666666666666666" # REPLACE
+
+# The ParameterVote over the schedule, whose passed proposals the watcher mirrors from protocol V56,
+# and how long a fast-path restriction lasts (at most 7d). The node records both in the log once, so
+# every member's release names the same. Without it, while rotation is on and, from V65, a rotation set with
+# members is in effect, nothing changes the governed parameters. It needs the schedule above.
+[custody.evm.staking.registry.vote]
+contract = "0x7777777777777777777777777777777777777777" # REPLACE
+restriction_ttl = "24h" # OWNER: the restriction lifetime
+
+# The FaultProof over the vault, whose proven faults the watcher mirrors from protocol V70, and the
+# haircut a proven fault puts on its member's operator share. The node records both in the log once,
+# so every member's release names the same. It needs the schedule above. The rogue-operator study
+# values the seat a removal forfeits at one year of the member's share; a haircut from the whole share
+# falling linearly to nothing over two years withholds the same.
+[custody.evm.staking.registry.fault_proof]
+contract = "0x8888888888888888888888888888888888888888" # REPLACE
+penalty = { initial_bps = 10000, decay = "730d" } # OWNER: confirm the haircut and its decay
+
+[checkpoints]
+# A separate endpoint from the custody providers. It signs and funds the relayer's transactions,
+# so it must support eth_sendTransaction and hold a funded relayer dedicated to this log.
+rpc_url = "https://checkpoint-rpc.example.com/v2/{checkpoint_rpc_key}" # REPLACE
+relayer = "0x5555555555555555555555555555555555555555" # REPLACE
+retry_interval = "2s"
+rpc_timeout = "10s"
+
+# Warns (`checkpoint_relayer_low`) when the relayer holds less than this many ether, read through
+# the custody providers. Set it to several days of posting at the current gas price.
+[checkpoints.relayer_gas]
+min_balance = "0.01" # REPLACE
+
+[log_heads]
+# The LogHeads companion contract the enclave posts its newest released (seq, link) to. The
+# checkpoint endpoint funds a second relayer dedicated to these posts; it must differ from the
+# checkpoint relayer, whose nonce tracking assumes it alone uses its account.
+contract = "0x7777777777777777777777777777777777777777" # REPLACE: the LogHeads deployment for this vault
+relayer = "0x8888888888888888888888888888888888888888" # REPLACE: funded by the checkpoint endpoint
+interval = "1h" # OWNER: the truncation window is the interval plus chain inclusion
+# Reads the posted head back every 30 s: a post lands at most once an hour outside a turn. While a turn
+# names the operator it reads every sixth of the heartbeat interval, and with EVM custody never less
+# often than every 30 s, whatever this says. While none does, it also reads every second from each turn's
+# boundary, by trusted time, until 30 s past it or the first head of a turn it found.
+read_interval = "30s"
+
+[liveness]
+# This member's liveness caller: it witnesses missed heartbeat slots, promotes the next member once
+# the rule allows, relays signed heads when the operator's own posts fail, and, for the node's whole
+# life, fixes the fallback seed of a turn with no relayed seed. Its account, funded
+# by the checkpoint endpoint, must differ from the checkpoint, log-head and seed relayers.
+caller = "0xcccccccccccccccccccccccccccccccccccccccc" # REPLACE: funded by the checkpoint endpoint
+min_balance = "0.01" # OWNER: liveness_caller_unfunded fires below it
+# The caller's and the operator's liveness rule's chain reads while they know no heartbeat interval, as
+# before a schedule is named. With one, each reads four times an interval, every 35 s at 140 s.
+read_interval = "15s"
+# The fallback fixer's reads, and every 5 s once anyone fixes a turn's fallback block, so its hash is
+# recorded within the 256 blocks (64 s) it can be. A production build allows at most 30s.
+fallback_interval = "30s"
+
+[seed_relay]
+# Proves each daily operator turn's RANDAO seed on Sepolia, Arbitrum Sepolia's parent chain, and relays
+# it to the receiver on Arbitrum Sepolia, which it reads through the custody providers
+# (ops/runbooks/seed-relay.md).
+providers = [
+  { name = "ethereum-a", rpc_url = "https://eth-a.example.com/v2/{ethereum_a_key}" }, # REPLACE
+  { name = "ethereum-b", rpc_url = "https://eth-b.example.com/v2/{ethereum_b_key}" }, # REPLACE
+  { name = "ethereum-c", rpc_url = "https://eth-c.example.com/v2/{ethereum_c_key}" }, # REPLACE
+]
+chain_id = 11155111 # Sepolia
+# Signs and funds the relays as relayer, a key apart from the checkpoint relayer's.
+rpc_url = "https://seed-relay-rpc.example.com/v2/{seed_relay_rpc_key}" # REPLACE
+relayer = "0x9999999999999999999999999999999999999999" # REPLACE
+# A beacon node that serves /eth/v2/debug/beacon/states, run by the operator.
+beacon_api = "https://beacon.example.com" # REPLACE
+relay = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" # REPLACE: SeedRelay on Sepolia
+receiver = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" # REPLACE: SeedReceiver on Arbitrum Sepolia
+poll_interval = "60s"
+rpc_timeout = "10s"
+state_timeout = "300s" # OWNER: measure a state download from the beacon node
+resend_after = "1h" # OWNER: above Arbitrum's usual delay for an Ethereum message
+l2_max_fee_per_gas = "0.1" # OWNER: gwei; the unspent part is refunded on Arbitrum
+min_balance = "0.05" # REPLACE: a week of relays at the current gas price
+
+[feeds]
+provider = "venues"
+interval = "200ms"
+
+[feeds.venues]
+timeout = "10s"
+reconnect_min = "500ms"
+reconnect_max = "30s"
+stale_after = "1s"
+min_quote_spacing = "10ms"
+# A stream further behind than max_delay, by its pings on the monotonic clock, counts as no quote.
+# max_delay less ping_interval is the round trip tolerated. docs/security-model.md states the bound.
+ping_interval = "500ms"
+max_delay = "2s"
+
+# A keyed vendor allows one live connection per account, and the three launch operators share one
+# account per vendor (Massive, TraderMade, Alpaca). A member therefore opens a keyed connection when its
+# turn starts, not ahead of it (`warm = false`, the default for a connection that carries a key), and
+# the incumbent has closed its own by then. Those markets are unpriced for a few seconds at each daily
+# handover. Keyless connections warm up before the turn.
+
+# Crypto: Coinbase and Kraken, public feeds with no key. Each market needs both (min_sources = 2).
+# Coinbase is read on two hosts, Advanced Trade and Exchange, quoted as the one source `coinbase`,
+# and Kraken on two connections, quoted as `kraken`: the engine holds the later-stamped of a source's
+# quotes, so either connection keeps its venue's leg while the other fails.
+[[feeds.venues.connections]]
+venue = "coinbase"
+url = "wss://advanced-trade-ws.coinbase.com"
+symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" }, { market = 3, symbol = "SOL-USD" }]
+
+[[feeds.venues.connections]]
+venue = "kraken"
+url = "wss://ws.kraken.com/v2"
+symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" }, { market = 3, symbol = "SOL/USD" }]
+
+# Foreign exchange: two vendors a market. Every launch market has min_sources = 2, so a market
+# priced by two vendors has no price when either is down. The vendors' account plans and
+# redistribution rights are open.
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/forex"
+api_key_secret = "massive_api_key"
+warm = false
+symbols = [
+  { market = 10, symbol = "EUR-USD" },
+  { market = 11, symbol = "GBP-USD" },
+  { market = 12, symbol = "USD-JPY" },
+  { market = 13, symbol = "AUD-USD" },
+]
+
+[[feeds.venues.connections]]
+venue = "tradermade"
+url = "wss://stream.tradermade.com/feedAdv"
+api_key_secret = "tradermade_api_key"
+warm = false
+symbols = [
+  { market = 10, symbol = "EURUSD" },
+  { market = 11, symbol = "GBPUSD" },
+  { market = 12, symbol = "USDJPY" },
+  { market = 13, symbol = "AUDUSD" },
+]
+
+# Index and commodity futures. A symbol names the contract it quotes, one of the market's `contracts`
+# in config/production-genesis.toml, and the feed sends each contract the market takes now. Every
+# contract a listing names is listed here, rolled off or not: the check reads the genesis listing for
+# the life of the log, so keep every venue and contract it needs even after a relisting lowers
+# min_sources or the market rolls past a contract. Only a source reached over TLS may set a price.
+# Markets 20 to 22, 25 and 30 to 32 trade on CME Group's exchanges and price from Massive's futures
+# feed alone, with min_sources = 1: Massive's futures data derives
+# from CME's, so these markets pause while Massive is down and a bad Massive print has no second
+# source to check it. The Eurex and ICE markets (DE40,
+# UK100 and BRENT) are not in the launch genesis.
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/futures"
+api_key_secret = "massive_api_key"
+warm = false
+symbols = [
+  { market = 20, symbol = "ESZ6", contract = "ESZ6" },
+  { market = 20, symbol = "ESH7", contract = "ESH7" },
+  { market = 20, symbol = "ESM7", contract = "ESM7" },
+  { market = 20, symbol = "ESU7", contract = "ESU7" },
+  { market = 20, symbol = "ESZ7", contract = "ESZ7" },
+  { market = 20, symbol = "ESH8", contract = "ESH8" },
+  { market = 21, symbol = "NQZ6", contract = "NQZ6" },
+  { market = 21, symbol = "NQH7", contract = "NQH7" },
+  { market = 21, symbol = "NQM7", contract = "NQM7" },
+  { market = 21, symbol = "NQU7", contract = "NQU7" },
+  { market = 21, symbol = "NQZ7", contract = "NQZ7" },
+  { market = 21, symbol = "NQH8", contract = "NQH8" },
+  { market = 22, symbol = "YMZ6", contract = "YMZ6" },
+  { market = 22, symbol = "YMH7", contract = "YMH7" },
+  { market = 22, symbol = "YMM7", contract = "YMM7" },
+  { market = 22, symbol = "YMU7", contract = "YMU7" },
+  { market = 22, symbol = "YMZ7", contract = "YMZ7" },
+  { market = 22, symbol = "YMH8", contract = "YMH8" },
+  { market = 25, symbol = "NIYZ6", contract = "NIYZ6" },
+  { market = 25, symbol = "NIYH7", contract = "NIYH7" },
+  { market = 25, symbol = "NIYM7", contract = "NIYM7" },
+  { market = 25, symbol = "NIYU7", contract = "NIYU7" },
+  { market = 25, symbol = "NIYZ7", contract = "NIYZ7" },
+  { market = 25, symbol = "NIYH8", contract = "NIYH8" },
+  { market = 30, symbol = "GCZ6", contract = "GCZ6" },
+  { market = 30, symbol = "GCG7", contract = "GCG7" },
+  { market = 30, symbol = "GCJ7", contract = "GCJ7" },
+  { market = 30, symbol = "GCM7", contract = "GCM7" },
+  { market = 30, symbol = "GCQ7", contract = "GCQ7" },
+  { market = 30, symbol = "GCV7", contract = "GCV7" },
+  { market = 30, symbol = "GCZ7", contract = "GCZ7" },
+  { market = 30, symbol = "GCG8", contract = "GCG8" },
+  { market = 30, symbol = "GCJ8", contract = "GCJ8" },
+  { market = 31, symbol = "SIZ6", contract = "SIZ6" },
+  { market = 31, symbol = "SIH7", contract = "SIH7" },
+  { market = 31, symbol = "SIK7", contract = "SIK7" },
+  { market = 31, symbol = "SIN7", contract = "SIN7" },
+  { market = 31, symbol = "SIU7", contract = "SIU7" },
+  { market = 31, symbol = "SIZ7", contract = "SIZ7" },
+  { market = 31, symbol = "SIH8", contract = "SIH8" },
+  { market = 31, symbol = "SIK8", contract = "SIK8" },
+  { market = 32, symbol = "CLZ6", contract = "CLZ6" },
+  { market = 32, symbol = "CLF7", contract = "CLF7" },
+  { market = 32, symbol = "CLG7", contract = "CLG7" },
+  { market = 32, symbol = "CLH7", contract = "CLH7" },
+  { market = 32, symbol = "CLJ7", contract = "CLJ7" },
+  { market = 32, symbol = "CLK7", contract = "CLK7" },
+  { market = 32, symbol = "CLM7", contract = "CLM7" },
+  { market = 32, symbol = "CLN7", contract = "CLN7" },
+  { market = 32, symbol = "CLQ7", contract = "CLQ7" },
+  { market = 32, symbol = "CLU7", contract = "CLU7" },
+  { market = 32, symbol = "CLV7", contract = "CLV7" },
+  { market = 32, symbol = "CLX7", contract = "CLX7" },
+  { market = 32, symbol = "CLZ7", contract = "CLZ7" },
+  { market = 32, symbol = "CLF8", contract = "CLF8" },
+  { market = 32, symbol = "CLG8", contract = "CLG8" },
+  { market = 32, symbol = "CLH8", contract = "CLH8" },
+]
+
+# US shares: Massive's stocks feed and Alpaca's consolidated (SIP) feed, two vendors a market. Alpaca's
+# login message carries its API key ID and secret key, two delivered secrets; until both are delivered
+# the connection stays off under secret_missing, and the shares have Massive alone, which is no price.
+# An Alpaca account streams on one connection at a time, so no other node may use its keys.
+[[feeds.venues.connections]]
+venue = "massive"
+url = "wss://socket.massive.com/stocks"
+api_key_secret = "massive_api_key"
+warm = false
+symbols = [
+  { market = 40, symbol = "AAPL" },
+  { market = 41, symbol = "MSFT" },
+  { market = 42, symbol = "NVDA" },
+  { market = 43, symbol = "AMZN" },
+  { market = 44, symbol = "GOOGL" },
+  { market = 45, symbol = "META" },
+  { market = 46, symbol = "TSLA" },
+  { market = 47, symbol = "AVGO" },
+  { market = 48, symbol = "BRK.B" },
+  { market = 49, symbol = "JPM" },
+  { market = 50, symbol = "V" },
+  { market = 51, symbol = "MA" },
+  { market = 52, symbol = "LLY" },
+  { market = 53, symbol = "JNJ" },
+  { market = 54, symbol = "XOM" },
+  { market = 55, symbol = "WMT" },
+  { market = 56, symbol = "COST" },
+  { market = 57, symbol = "NFLX" },
+  { market = 58, symbol = "AMD" },
+  { market = 59, symbol = "ORCL" },
+]
+
+[[feeds.venues.connections]]
+venue = "alpaca"
+url = "wss://stream.data.alpaca.markets/v2/sip"
+key_pair = { key_id_secret = "alpaca_key_id", secret_key_secret = "alpaca_secret_key" } # OWNER: the secret names, once the Alpaca account is set up
+warm = false
+symbols = [
+  { market = 40, symbol = "AAPL" },
+  { market = 41, symbol = "MSFT" },
+  { market = 42, symbol = "NVDA" },
+  { market = 43, symbol = "AMZN" },
+  { market = 44, symbol = "GOOGL" },
+  { market = 45, symbol = "META" },
+  { market = 46, symbol = "TSLA" },
+  { market = 47, symbol = "AVGO" },
+  { market = 48, symbol = "BRK.B" },
+  { market = 49, symbol = "JPM" },
+  { market = 50, symbol = "V" },
+  { market = 51, symbol = "MA" },
+  { market = 52, symbol = "LLY" },
+  { market = 53, symbol = "JNJ" },
+  { market = 54, symbol = "XOM" },
+  { market = 55, symbol = "WMT" },
+  { market = 56, symbol = "COST" },
+  { market = 57, symbol = "NFLX" },
+  { market = 58, symbol = "AMD" },
+  { market = 59, symbol = "ORCL" },
+]
+
+# Coinbase's second host for the crypto markets above, quoted as the same source, `coinbase`.
+[[feeds.venues.connections]]
+venue = "coinbase_exchange"
+url = "wss://ws-feed.exchange.coinbase.com"
+symbols = [{ market = 1, symbol = "BTC-USD" }, { market = 2, symbol = "ETH-USD" }, { market = 3, symbol = "SOL-USD" }]
+
+# Kraken's second connection, for the crypto markets above. Kraken ignores the query, which gives the
+# connection a URL, and so alerts, of its own.
+[[feeds.venues.connections]]
+venue = "kraken"
+url = "wss://ws.kraken.com/v2?connection=2"
+symbols = [{ market = 1, symbol = "BTC/USD" }, { market = 2, symbol = "ETH/USD" }, { market = 3, symbol = "SOL/USD" }]
+
+# Trusted time: a strict majority of these independent servers must agree. The attestation binds
+# this file, so a verifier checks the keys against a published copy.
+[time]
+max_drift = "15s"
+interval = "10s"
+
+[[time.servers]]
+name = "int08h"
+address = "roughtime.int08h.com:2002"
+public_key = "AW5uAoTSTDfG5NfY1bTh08GUnOqlRb+HVhbJ3ODJvsE="
+
+[[time.servers]]
+name = "TimeNL"
+address = "rough.time.nl:2002"
+public_key = "v2CievhgKsxzlWPwIkYFUXeA51Akhkv5uhJCj1/kbiY="
+
+[[time.servers]]
+name = "txryan"
+address = "time.txryan.com:5319"
+public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
+
+# No [snapshots]: a first release creates the enclave key, which [snapshots] trusted_signers must pin, so
+# every start of this release replays the whole log. A later release adds the section from the
+# template, pinning the enclave address the running release attests (deploy-and-rollback.md).
+
+# The engine's state at the first checkpoint the node writes on each UTC day, served beside the archive at
+# /v1/archive/snapshots/, from which `engine replay --snapshots` replays the log's days in parallel.
+# About 420 MB a day at 100k accounts; every day's is kept.
+[daily_snapshots]
+dir = "/data/daily-snapshots"
+
+[history]
+dir = "/data/history"
+retention = "365d"
+
+# Plain HTTP, no per-account data. Listen on an address only the monitoring network reaches.
+[metrics]
+listen = "0.0.0.0:9464"
+
+[alerts]
+outbox = { dir = "/data/alerts", max_pages = 2048, max_bytes = 16777216, max_age = "1h" }
+no_price_after = "5s"
+episode_quiet = "15m"
+
+# The webhook URLs are credentials: the operator delivers them.
+[alerts.critical]
+url_secret = "alerts_critical_url"
+
+[alerts.warning]
+url_secret = "alerts_warning_url"
+
+# The signed screening source. Its signing authority and freshness bound are recorded once in the
+# log. Without this section the actions it screens are refused. See config/access-source.md.
+[access]
+source = "0x6666666666666666666666666666666666666666" # REPLACE: the screening authority's address
+endpoint = "https://screening.example.com/v1/{screening_key}" # REPLACE
+timeout = "2s" # OWNER
+max_age = "30s" # OWNER
+max_response_bytes = 4096
+# Requests waiting on the source at once: ten times launch flow's screened requests, 68 a second
+# rounded up, each held for the whole `timeout`. A production build refuses fewer than 68 a second of
+# `timeout`.
+max_in_flight = 136
+# Of those slots, the most one account's requests, or one client's, may hold, and how many only
+# requests the account's state shows can reduce risk may take, one at a time for an account: closes,
+# close-alls, take-profit and stop-loss requests, withdrawals and payout reissues. A production build
+# refuses shares above these values and a smaller reserve.
+max_in_flight_per_account = 2
+max_in_flight_per_client = 4
+reserved_in_flight = 2
+

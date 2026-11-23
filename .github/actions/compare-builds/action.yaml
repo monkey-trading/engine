@@ -1,0 +1,24 @@
+name: Compare two builds
+description: >-
+  Downloads the artifacts `<prefix>-first` and `<prefix>-second`, checks each against its own
+  SHA256SUMS, and fails if the two SHA256SUMS differ by a single byte.
+inputs:
+  prefix:
+    description: The two artifacts' name before `-first` and `-second`.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: ${{ inputs.prefix }}-*
+    - name: Compare the two builds
+      shell: bash
+      env:
+        PREFIX: ${{ inputs.prefix }}
+      run: |
+        (cd "$PREFIX-first" && sha256sum -c SHA256SUMS)
+        (cd "$PREFIX-second" && sha256sum -c SHA256SUMS)
+        diff "$PREFIX-first/SHA256SUMS" "$PREFIX-second/SHA256SUMS"
+        cat "$PREFIX-first/SHA256SUMS"
+        if [[ -f "$PREFIX-first/measurement.json" ]]; then cat "$PREFIX-first/measurement.json"; fi

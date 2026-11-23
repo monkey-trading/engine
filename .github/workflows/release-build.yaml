@@ -1,0 +1,193 @@
+name: Release build
+
+# Builds and checks a release's files, and publishes nothing: release.yaml calls it for a tag and for a
+# dry run, and CI calls it as a dry run on a pull request or merge group in its `release` area. It
+# builds the production image and the browser verifier twice each, on separate runners, through the
+# same actions CI's own builds use, and fails if either pair differs by a byte. It then writes the
+# configurations, release.toml and the release notes into the `release` artifact.
+#
+# With `tag`, the commit must be the tag's, of `main`, with a passing ci.yaml run that ran every job
+# (a push to main, the nightly run or a manual run), and the configurations must carry no marker. A
+# dry run checks the same and reports each failure as a warning, so it can build any commit.
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: The commit to build; empty for the commit of the event that started the run.
+        type: string
+        default: ""
+      tag:
+        description: The release's tag, a `v` and a semantic version; empty for a dry run.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      name: ${{ steps.check.outputs.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: Check the commit
+        id: check
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./scripts/release-gate.sh
+
+  image:
+    name: image (${{ matrix.run }})
+    needs: gate
+    strategy:
+      matrix:
+        run: [first, second]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.gate.outputs.sha }}
+      - uses: ./.github/actions/build-image
+        with:
+          artifact: release-image-${{ matrix.run }}
+
+  image-compare:
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/compare-builds
+        with:
+          prefix: release-image
+
+  # The second build runs from another checkout path, with a space in it, as CI's does.
+  wasm-verifier:
+    name: wasm-verifier (${{ matrix.run }})
+    needs: gate
+    strategy:
+      matrix:
+        run: [first, second]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.gate.outputs.sha }}
+          sparse-checkout: ${{ matrix.run == 'second' && '.github/actions' || '' }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.run == 'second'
+        with:
+          persist-credentials: false
+          ref: ${{ needs.gate.outputs.sha }}
+          path: elsewhere/engine copy
+      - uses: ./.github/actions/build-wasm-verifier
+        with:
+          artifact: release-wasm-verifier-${{ matrix.run }}
+          path: ${{ matrix.run == 'second' && 'elsewhere/engine copy' || '.' }}
+
+  wasm-verifier-compare:
+    needs: wasm-verifier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+      - uses: ./.github/actions/compare-builds
+        with:
+          prefix: release-wasm-verifier
+
+  files:
+    needs: [gate, image-compare, wasm-verifier-compare]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*-first
+          path: out
+      - name: Write the release files
+        env:
+          NAME: ${{ needs.gate.outputs.name }}
+          SHA: ${{ needs.gate.outputs.sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          files=out/release/files
+          mkdir -p "$files"
+          # Each build's files, as its own SHA256SUMS lists them; the verifier's sums keep their own name.
+          for build in image wasm-verifier; do
+            dir="out/release-$build-first"
+            (cd "$dir" && sha256sum -c SHA256SUMS)
+            while read -r _ file; do
+              [[ ! -e "$files/$file" ]] || { echo "::error::two builds write $file"; exit 1; }
+              cp "$dir/$file" "$files/"
+            done < "$dir/SHA256SUMS"
+          done
+          cp out/release-image-first/SHA256SUMS "$files/SHA256SUMS"
+          cp out/release-wasm-verifier-first/SHA256SUMS "$files/engine-verify.SHA256SUMS"
+          final=()
+          if [[ -n "$TAG" ]]; then final=(--final); fi
+          python3 -I scripts/release-files.py "${final[@]}" "$NAME" "$files/measurement.json" "$files"
+
+          previous=$(git tag --merged "$SHA^" --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          {
+            echo "Built from $SHA. \`release.toml\` is the manifest that \`engine verify-attestation\` checks a"
+            echo "trading server's attestation against."
+            if [[ -n "$TAG" ]]; then echo "Each file carries a GitHub artifact attestation."; fi
+            echo
+            echo "Launch digest: \`0x$(jq -r .launch_digest "$files/measurement.json")\`"
+            echo
+            echo "| File | SHA-256 |"
+            echo "| --- | --- |"
+            (cd "$files" && sha256sum -- *.toml) | awk '{ printf "| `%s` | `%s` |\n", $2, $1 }'
+            echo
+            if [[ -n "$previous" ]]; then
+              echo "## Changes since $previous"
+              echo
+              git log --no-merges --format='- %s (%h)' "$previous..$SHA"
+            else
+              echo "## Changes"
+              echo
+              echo "The first release."
+            fi
+          } > out/release/notes.md
+          {
+            echo '```toml'
+            cat "$files/release.toml"
+            echo '```'
+            cat out/release/notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: out/release/
+          retention-days: 14
+          if-no-files-found: error

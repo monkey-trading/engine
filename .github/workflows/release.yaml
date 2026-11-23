@@ -1,0 +1,77 @@
+name: Release
+
+# A `v` tag on a commit of `main` whose CI passed becomes a draft GitHub release: release-build.yaml
+# builds and checks its files, and the `publish` job attests each file and creates the draft, which
+# the owner reviews and publishes. A manual run is a dry run of a commit: it builds and checks every
+# file, leaves them in the run's `release` artifact, and publishes nothing.
+#
+#   gh workflow run release.yaml -f commit=<sha>
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to build, a SHA or a branch.
+        required: true
+        type: string
+
+# A tag's run is its own; dry runs of different commits run apart, and a second of one commit waits.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.commit || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/release-build.yaml
+    with:
+      commit: ${{ github.event_name == 'push' && github.sha || inputs.commit }}
+      tag: ${{ github.event_name == 'push' && github.ref_name || '' }}
+
+  # The only job that writes: it runs no repository code, only the attestation action and `gh` on the
+  # files the build checked.
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+      - name: Check the files against their sums
+        working-directory: release/files
+        run: sha256sum -c SHA256SUMS engine-verify.SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/files/*
+      # A rerun after a partial upload completes the draft, and never changes a published release.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2> /dev/null); then
+            if [[ "$draft" != true ]]; then
+              echo "::error::$TAG is already published, and a published release is never changed"
+              exit 1
+            fi
+            gh release upload "$TAG" --clobber release/files/*
+            gh release edit "$TAG" --notes-file release/notes.md
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$TAG" --notes-file release/notes.md release/files/*
+          fi
