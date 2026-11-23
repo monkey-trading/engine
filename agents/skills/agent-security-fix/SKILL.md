@@ -131,9 +131,13 @@ one. Land a protocol version only while no other version PR is queued. The advis
 
 - Close the advisory fork's PR.
 - Delete the mirror's branch, then remove the worktree and the `private-xxxx` remote.
+- Once the advisory's last fix has landed and its fork has no open PR, delete the fork with
+  `gh repo delete monkey-trading/<fork> --yes`, which needs the token's `delete_repo` scope. Record
+  the landing in the working record first: the landed commits and the record keep everything the
+  fork held. A fork whose advisory still has a follow-up fix to land stays until that fix lands.
 - Keep the advisory in draft.
 - Publish every advisory together at launch, with the first release and the audit report.
-  Publishing deletes each temporary fork. Request no CVEs for pre-launch code.
+  Publishing deletes any temporary fork still left. Request no CVEs for pre-launch code.
 
 ## After launch
 
