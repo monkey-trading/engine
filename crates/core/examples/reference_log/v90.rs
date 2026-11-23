@@ -1,9 +1,10 @@
 //! The session's `V90` part: a carried genesis. A vote activates the version, which sets the staking state's total
 //! staked from the balances; a mirrored stake and unstake keep it, and a carry part outside a genesis is refused.
+//! The session's log then freezes as a carry's source must: the registry mirror switches rotation off, the staking
+//! mirror's frontier passes every block it mirrored, and the open emission period closes.
 //!
-//! `carried` then writes the log a carried genesis opens. The session's log freezes as a source must: the registry
-//! mirror switches rotation off, the staking mirror's frontier passes every block it mirrored, and the open emission
-//! period closes. A new log's genesis activates `V90`, sets its parameters and markets, initialises staking and
+//! `carried` then writes the log a carried genesis opens from the session's last command. A new log's genesis
+//! activates `V90`, sets its parameters and markets, initialises staking and
 //! carries every entitlement, stake and award the session's root proves, in parts; the next command closes the
 //! carried period with no weight and cancels the periods since. A carried staker unstakes and a new stake mirrors
 //! past the carried frontier; the first epoch close pays the carried award from its whole amount before the
@@ -65,6 +66,7 @@ pub(crate) fn session(h: &mut Harness) {
     let refused =
         matches!(events.last(), Some(Event::AdminRejected { reason }) if reason.contains("no carried genesis"));
     assert!(refused, "{events:?}");
+    freeze(h);
 }
 
 /// The staking state's total staked.
@@ -72,9 +74,9 @@ fn total(h: &Harness) -> u128 {
     h.engine.staking().and_then(|staking| staking.staked_total).expect("V90 keeps a total").0
 }
 
-/// Freezes `alpha` as a carry's source and returns the log whose genesis carries it, as described above.
+/// The log whose genesis carries `alpha`'s state at its last command, as described above.
 pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
-    freeze(alpha);
+    alpha.engine.state_root();
     let (parts, carried) = alpha.engine.carry_parts().expect("the frozen session carries");
     let source = alpha.engine.emissions().expect("the session emits").clone();
 
@@ -113,7 +115,7 @@ pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
 }
 
 /// Switches rotation off in the registry mirror, completes the staking mirror's frontier through every block it
-/// mirrored, and closes the open emission period, then computes the root a carry proves against.
+/// mirrored, and closes the open emission period.
 fn freeze(alpha: &mut Harness) {
     let staking = alpha.engine.staking().expect("the session staked");
     let completed = staking.completed_through.map_or(0, |completed| completed.block);
@@ -133,7 +135,6 @@ fn freeze(alpha: &mut Harness) {
     let emissions = alpha.engine.emissions().expect("the session emits");
     alpha.advance_to(emissions.schedule.period_end(emissions.period));
     alpha.cmd(Command::Tick);
-    alpha.engine.state_root();
 }
 
 /// The carried log holds every value the source's root proves, each award unpaid, and the source's emissions and

@@ -32,6 +32,7 @@ use crate::emissions::{Emissions, TokenUnits};
 use crate::engine::Engine;
 use crate::event::Event;
 use crate::merkle::Witness;
+use crate::protocol::ProtocolVersion;
 use crate::staking::StakingCheckpoint;
 use crate::types::AccountId;
 
@@ -165,8 +166,8 @@ impl Engine {
     /// - before `V90`, or under a passed vote
     /// - any error case of the part's own check (`Engine::carry_begin` and the others in `carry::apply`)
     pub(crate) fn carry_state(&mut self, part: &CarryPart, voted: bool, events: &mut Vec<Event>) -> Result<(), String> {
-        if self.protocol_version < crate::protocol::ProtocolVersion::V90 {
-            return Err(format!("a carried genesis needs protocol {:?}", crate::protocol::ProtocolVersion::V90));
+        if self.protocol_version < ProtocolVersion::V90 {
+            return Err(format!("a carried genesis needs protocol {:?}", ProtocolVersion::V90));
         }
         if voted {
             return Err("only the node carries state into a genesis".into());

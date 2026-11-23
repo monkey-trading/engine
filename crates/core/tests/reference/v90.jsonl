@@ -1662,3 +1662,6 @@
 {"seq":1661,"ts":1871758800000,"cmd":{"type":"stake","account":"0x9090909090909090909090909090909090909090","amount":"9000","block":90001661,"chain_ref":"0xv90:stake"},"root":"0xf2edec869625041d8206ce5bc7c8d916d7f68ee688add743adda9f12c1113599"}
 {"seq":1662,"ts":1871758800000,"cmd":{"type":"unstake","account":"0x9090909090909090909090909090909090909090","amount":"4000","block":90001662,"chain_ref":"0xv90:unstake"},"root":"0xdf48fa66f1ad45121a73269127fa437f5a94cbfa867361a29a5de043009dea24"}
 {"seq":1663,"ts":1871758800000,"cmd":{"type":"admin","action":"carry_state","part":"end"},"root":"0xe5bfb5d2ad88d29858e787d03017881b99b0e03318fdf65bba536203629bf3b8"}
+{"seq":1664,"ts":1871758800000,"cmd":{"type":"switch_rotation","enabled":false,"election_cancelled":false,"block":90001663,"chain_ref":"0xv90:rotation"},"root":"0x56af23929e9628d810943bd8a8ff68fea61f0317fc0b434ddf46d8d47109f1af"}
+{"seq":1665,"ts":1871758800000,"cmd":{"type":"staking_progress","block":90001663,"block_hash":"0x9090909090909090909090909090909090909090909090909090909090909090"},"root":"0x5cf0b98fe181d21fa095611352b185b4883c94e9d446003a7948b708546275ab"}
+{"seq":1666,"ts":1871758800001,"cmd":{"type":"tick"},"root":"0xb6f129f7d4ba5e7e3cc1a46848e7c8253518e3d1e69b25221fc025e0763265eb"}

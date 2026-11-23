@@ -24,7 +24,7 @@ use crate::checkpoints::emission_budget::check_recorded;
 use crate::clock::Clock;
 use crate::config::NodeConfig;
 use crate::custody::ContractQuorum;
-use crate::sequencer::genesis::check_genesis_commands_at;
+use crate::sequencer::genesis::check_carried_genesis_at;
 use crate::sequencer::{Sequencer, carried_genesis_commands};
 
 /// How long a held start waits before it reads the chain and the file again.
@@ -172,8 +172,8 @@ pub(crate) async fn carried_parts(
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
     let now = clock.now_ms();
-    let engine = check_genesis_commands_at(&cfg.client_auth()?, cfg.operator()?, cmds, now).inspect_err(refused)?;
-    check_carried(&engine, &file).inspect_err(refused)?;
+    let engine = check_carried_genesis_at(&cfg.client_auth()?, cfg.operator()?, cmds, now).inspect_err(refused)?;
+    check_finished(&engine, &file).inspect_err(refused)?;
     if let Some(budget) = emission_budget {
         check_recorded(budget, engine.emissions()).inspect_err(refused)?;
     }
@@ -189,13 +189,13 @@ pub(crate) async fn carried_parts(
     Ok(file.parts)
 }
 
-/// Checks that the scratch engine a carried genesis ran on finished the carry from `file`'s source: every part
-/// applying is not enough, as a file missing its last parts leaves the carry begun and its totals unchecked.
+/// Checks that the scratch engine a carried genesis ran on, which finished its carry
+/// (`check_carried_genesis_at`), carried from `file`'s source.
 /// Error cases:
-/// - the carry is still in progress, or the engine records another source or none
-pub(crate) fn check_carried(engine: &engine_core::Engine, file: &CarryFile) -> anyhow::Result<()> {
-    if engine.carry_progress().is_some() || engine.carried_from() != Some(file.source) {
-        bail!("the carry file's parts began carrying {:?} and did not finish it", file.source);
+/// - the engine records another source
+pub(crate) fn check_finished(engine: &engine_core::Engine, file: &CarryFile) -> anyhow::Result<()> {
+    if engine.carried_from() != Some(file.source) {
+        bail!("the carry file names {:?}, but its parts carried from {:?}", file.source, engine.carried_from());
     }
     Ok(())
 }

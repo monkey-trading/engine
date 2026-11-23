@@ -61,7 +61,7 @@ use crate::telemetry::Telemetry;
 /// takeover's worst-case delay after the liveness timeout passes.
 const STINT: Duration = Duration::from_secs(15);
 /// The most archive bytes one fetch reads, bounding memory for a manifest or segment.
-pub(super) const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 /// The most segments one manifest may list.
 pub(super) const MAX_ARCHIVE_LISTINGS: usize = 65_536;
 /// How long one archive GET's connection or a WebSocket connect waits.

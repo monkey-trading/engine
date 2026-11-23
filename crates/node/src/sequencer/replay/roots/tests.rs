@@ -340,16 +340,26 @@ fn sealed(entries: impl IntoIterator<Item = LogEntry>, mut change: impl FnMut(&m
 }
 
 /// The latest protocol version's reference log, which walks every activation before most of its
-/// checkpoints.
+/// checkpoints, and not the carried genesis's log beside it.
 fn latest_reference() -> PathBuf {
-    reference_logs().into_iter().max_by_key(|path| version(path)).expect("a reference log")
+    reference_logs()
+        .into_iter()
+        .filter(|path| !name(path).contains('-'))
+        .max_by_key(|path| version(path))
+        .expect("a reference log")
 }
 
-/// The protocol version a reference log is named for.
+/// The protocol version a reference log is named for, `v<N>`, or `v<N>-carried` for the log a carried genesis
+/// begins.
 fn version(path: &Path) -> u32 {
-    path.file_stem()
-        .and_then(|stem| stem.to_str()?.strip_prefix('v')?.parse().ok())
+    name(path)
+        .strip_prefix('v')
+        .and_then(|name| name.split('-').next()?.parse().ok())
         .expect("a log named for its version")
+}
+
+fn name(path: &Path) -> &str {
+    path.file_stem().and_then(|stem| stem.to_str()).expect("a log's name")
 }
 
 /// Every reference log's path, in order.

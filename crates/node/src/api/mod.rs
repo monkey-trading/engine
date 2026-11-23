@@ -272,7 +272,7 @@ fn retry_after(wait: Duration, body: Value) -> Response {
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,
-/// the body read, and the response signature.
+/// the body read, the response signature, and a frozen node's refusal of client requests.
 pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()

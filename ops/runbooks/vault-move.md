@@ -127,7 +127,7 @@ propose it, as [Parameter votes](operator-candidate.md#parameter-votes) describe
 before T0.
 
 ```shell
-curl -sf $ALPHA_API/v1/house/state | jq -r .protocol_version
+curl -sf $ALPHA_API/v1/benchmarks | jq -r .protocol_version
 ```
 
 The command prints `v90`, or a later version.
@@ -345,7 +345,9 @@ $ENGINE carry --log <alpha log copy> --seq $S --out carry.json
 ```
 
 The command replays the log to its checkpoint at `$S`, checks the checkpoint's root, writes
-`carry.json`, and prints the totals and the file's SHA-256. It refuses to overwrite `carry.json`.
+`carry.json`, and prints the totals and the file's SHA-256. It refuses to overwrite `carry.json`, and
+refuses a carry over 48 MiB, which the launch log's first segment could not hold for the members
+that fetch it from the archive.
 The totals name the accounts that hold an entitlement or a stake, the MONKEY entitled, the MONKEY
 staked and the number of awards. The owner reviews them, and the file and its totals are published
 with the launch, so that anyone can see what each alpha account carries:
@@ -414,7 +416,7 @@ is claimable from that checkpoint.
 **Changes the live system.** The owner approved the execution when D was scheduled.
 
 ```shell
-curl -sf $API/v1/house/state | jq -r .protocol_version
+curl -sf $API/v1/benchmarks | jq -r .protocol_version
 curl -sf $API/v1/monkey | jq .emissions
 curl -sf $API/v1/awards | jq .
 ```
@@ -440,8 +442,9 @@ These checks only read.
    After the usual replay, the command replays the alpha's log to the carried sequence number. It
    requires the alpha's checkpoint there to hold the carried root, signed by a checkpoint signer
    that the alpha's log names. It requires the launch log's carried entitlements, stakes, emissions
-   and staking frontier, and its awards with nothing paid, to equal the alpha's state there. It
-   prints a line that begins `verified:`, and any other ending is a failure.
+   and staking frontier, and its awards with nothing paid, to equal the alpha's state there, and the
+   replay to have applied every part. It passes only when it exits with status 0 and its last line
+   begins `carried from:`; any other exit is a failure, whatever it printed before.
 
 2. Check a carried account's claim. When a carried account claims, read what the minter has minted
    to it:

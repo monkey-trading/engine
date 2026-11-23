@@ -303,6 +303,25 @@ pub(crate) fn check_genesis_commands(
     check_genesis_commands_at(client_auth, operator, genesis, 0)
 }
 
+/// `check_genesis_commands_at` for a genesis that may carry another log's state: when `genesis` holds carry parts,
+/// they must also finish the carry, as every part applying is not enough.
+/// Error cases:
+/// - see `check_genesis_commands`
+/// - carry parts that apply but leave the carry unfinished
+pub(crate) fn check_carried_genesis_at(
+    client_auth: &ClientAuth,
+    operator: Operator,
+    genesis: Vec<Command>,
+    ts: Millis,
+) -> anyhow::Result<Engine> {
+    let carries = genesis.iter().any(is_carry_part);
+    let engine = check_genesis_commands_at(client_auth, operator, genesis, ts)?;
+    if carries && (engine.carry_progress().is_some() || engine.carried_from().is_none()) {
+        bail!("genesis.carry: its parts begin carrying another log's state and do not finish");
+    }
+    Ok(engine)
+}
+
 /// `check_genesis_commands`, each command stamped `ts`, as a genesis sequenced then would be.
 /// Error cases:
 /// - see `check_genesis_commands`

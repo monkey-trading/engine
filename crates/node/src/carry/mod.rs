@@ -24,8 +24,10 @@ mod chain;
 mod replay;
 pub use replay::{CarriedFrom, check_carried};
 
-/// The largest carry file read: past it, a start refuses the file rather than hold it in memory.
-const MAX_FILE_BYTES: u64 = 1 << 30;
+/// The largest carry file built or read: three quarters of the largest archive file a member fetches, since the
+/// genesis's carry parts all fall in the log's first segment, which members and standbys fetch whole. A source
+/// whose carry is larger is refused, rather than open a log no member could follow.
+const MAX_FILE_BYTES: u64 = crate::standby::MAX_ARCHIVE_BYTES / 4 * 3;
 
 /// `engine carry`'s arguments.
 #[derive(Args)]
@@ -57,13 +59,14 @@ pub fn run(args: CarryArgs) -> anyhow::Result<()> {
         totals.source.seq, totals.source.root, totals.accounts, totals.entitled, totals.staked, totals.awards
     );
     if args.check {
+        encode(&file)?;
         eprintln!("carriable: {summary}");
         return Ok(());
     }
     let sha256 = match &args.out {
         Some(out) => write(&file, out)?,
         None => {
-            let bytes = serde_json::to_vec(&file).context("encoding the carry file")?;
+            let bytes = encode(&file)?;
             std::io::stdout().write_all(&bytes).context("writing the carry file")?;
             Sha256::digest(&bytes).into()
         }
@@ -145,11 +148,24 @@ fn last_checkpoint(path: &Path) -> anyhow::Result<Option<u64>> {
     Ok(last)
 }
 
+/// `file` as JSON.
+/// Error cases:
+/// - it is longer than `MAX_FILE_BYTES`
+fn encode(file: &CarryFile) -> anyhow::Result<Vec<u8>> {
+    let bytes = serde_json::to_vec(file).context("encoding the carry file")?;
+    ensure!(
+        bytes.len() as u64 <= MAX_FILE_BYTES,
+        "the carry is {} bytes, past the {MAX_FILE_BYTES} the launch log's first segment can hold for its members",
+        bytes.len()
+    );
+    Ok(bytes)
+}
+
 /// Writes `file` as JSON to `out`, which must not exist yet, and returns the SHA-256 of the bytes written.
 /// Error cases:
-/// - `out` exists or cannot be written
+/// - `file` is longer than `MAX_FILE_BYTES`, or `out` exists or cannot be written
 pub fn write(file: &CarryFile, out: &Path) -> anyhow::Result<[u8; 32]> {
-    let bytes = serde_json::to_vec(file).context("encoding the carry file")?;
+    let bytes = encode(file)?;
     let mut created = fs::OpenOptions::new()
         .write(true)
         .create_new(true)

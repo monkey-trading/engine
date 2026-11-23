@@ -101,14 +101,15 @@ pub(crate) const GOLD: MarketId = 11;
 pub(crate) const OIL: MarketId = 12;
 
 /// Writes the session to the given path and prints the event counts; given a second path, writes there the log
-/// whose genesis carries the session's state (`v90::carried`).
+/// whose genesis carries the state the session ends in (`v90::carried`).
 /// Fails if a path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let path = args.next().ok_or_else(|| anyhow!("usage: reference_log <output.jsonl> [<carried.jsonl>]"))?;
-    write(&path, session::session().log)?;
+    let mut session = session::session();
+    write(&path, session.log.clone())?;
     if let Some(carried) = args.next() {
-        write(&carried, v90::carried(&mut session::session()))?;
+        write(&carried, v90::carried(&mut session))?;
     }
     Ok(())
 }

@@ -69,7 +69,7 @@ server against a root without trusting the server.
 | Toxicity | `markouts`, `toxicity/` | Markouts after each trade and the toxicity score built from them |
 | Funds and access | `funds`, `financing/`, `deposits/`, `withdrawal`, `access/`, `auth`, `eip712`, `session_keys` | Deposits, overnight financing and the root over each account's charges, withdrawals and their queue, eligibility and screening, signed requests and session keys |
 | Operator and governance | `admin/`, `operator_bounds/`, `listing_bounds/`, `notice/`, `governance/`, `election`, `turns/`, `operator_faults`, `protocol/` | Operator instructions and the bounds on them, notices, votes, the elected operator, daily turns, fault penalties and protocol versions |
-| MONKEY | `emissions`, `staking/`, `awards` | MONKEY emissions, the USDC distributions to stakers, and the bug bounty awards each distribution pays first |
+| MONKEY | `emissions`, `staking/`, `awards`, `carry/` | MONKEY emissions, the USDC distributions to stakers, the bug bounty awards each distribution pays first, and the genesis that carries them from another log |
 | State tree | `merkle/`, `tracked`, `fixed/` | The state tree in versions that a node can feed in parts, its proofs, change tracking for the root, and fixed-point arithmetic |
 
 Each module's own documentation describes how it works. Protocol tests are in `tests/`, grouped

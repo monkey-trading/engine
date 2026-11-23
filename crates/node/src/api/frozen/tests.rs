@@ -42,3 +42,22 @@ async fn a_frozen_node_refuses_every_client_request_and_keeps_reads_and_the_oper
         assert_eq!(status(true, method, path).await.0, StatusCode::OK, "{method} {path}");
     }
 }
+
+#[tokio::test]
+async fn the_api_router_refuses_a_client_request_while_frozen() {
+    use axum::extract::ConnectInfo;
+    let (mut state, _requests) = crate::api::tests::api_state(true);
+    state.limits = Arc::new(ApiLimits::new(&dev_config().api).frozen(true));
+    let app = crate::api::router(state);
+    let request = HttpRequest::builder()
+        .method("POST")
+        .uri("/v1/orders")
+        .header("content-type", "application/json")
+        .extension(ConnectInfo(std::net::SocketAddr::from(([127, 0, 0, 1], 9))))
+        .body(Body::from("{}"))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = to_bytes(response.into_body(), 1 << 16).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains(FROZEN));
+}

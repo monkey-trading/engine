@@ -12,7 +12,7 @@ use crate::test_support::scratch_dir;
 /// The node's reference log whose genesis carries the reference session's state, at its last checkpoint a source
 /// that can be carried again.
 const CARRIED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90-carried.jsonl");
-/// The node's reference log of the session through `V90`'s activation, with rotation on.
+/// The node's reference log of the session through `V90`'s activation, frozen as a carry's source at its end.
 const SESSION: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90.jsonl");
 
 /// `entries`, one JSON line each, in a single log file under a scratch directory for `label`.
@@ -43,7 +43,7 @@ fn pre_run_at(parts: &[CarryPart], ts: engine_core::types::Millis) -> anyhow::Re
     });
     let cmds = crate::sequencer::carried_genesis_commands(&cfg.genesis, parts);
     let (auth, operator) = (cfg.client_auth().unwrap(), cfg.operator().unwrap());
-    crate::sequencer::genesis::check_genesis_commands_at(&auth, operator, cmds, ts)
+    crate::sequencer::genesis::check_carried_genesis_at(&auth, operator, cmds, ts)
 }
 
 #[test]
@@ -57,12 +57,12 @@ fn a_start_held_past_its_staking_start_is_refused_by_its_pre_run() {
 #[test]
 fn a_carry_whose_parts_apply_but_leave_it_unfinished_is_refused_at_the_start() {
     let file = build(Path::new(CARRIED), None).unwrap();
-    assert!(boot::check_carried(&pre_run(&file.parts), &file).is_ok());
+    assert!(boot::check_finished(&pre_run(&file.parts), &file).is_ok());
     let mut cut = file.clone();
     while cut.parts.last().is_some_and(|part| !matches!(part, CarryPart::Begin { .. })) {
         cut.parts.pop();
-        let error = boot::check_carried(&pre_run(&cut.parts), &file).unwrap_err();
-        assert!(format!("{error:#}").contains("did not finish"), "{} parts: {error:#}", cut.parts.len());
+        let error = pre_run_at(&cut.parts, 0).unwrap_err();
+        assert!(format!("{error:#}").contains("do not finish"), "{} parts: {error:#}", cut.parts.len());
     }
     // A file whose parts do not end the carry does not read.
     let out = scratch_dir("carry-file-unended").join("carry.json");
@@ -107,9 +107,18 @@ fn a_carry_file_builds_from_a_source_logs_last_checkpoint_and_reads_back() {
 
 #[test]
 fn a_source_whose_carry_would_lose_state_or_has_no_checkpoint_there_is_refused() {
-    // The session's last checkpoint has rotation on, and its mirror short of the blocks it mirrored.
-    let error = build(Path::new(SESSION), None).unwrap_err();
-    assert!(format!("{error:#}").contains("cannot be carried: the source's staking mirror"), "{error:#}");
+    // A checkpoint of the session from before it froze has rotation on and its mirror short of its blocks.
+    let mut checkpoints = Vec::new();
+    crate::log::read_file(Path::new(SESSION), |entry| {
+        if let LogEntry::Checkpoint(checkpoint) = entry {
+            checkpoints.push(checkpoint.seq);
+        }
+        Ok(())
+    })
+    .unwrap();
+    let before_the_freeze = checkpoints[checkpoints.len() - 3];
+    let error = build(Path::new(SESSION), Some(before_the_freeze)).unwrap_err();
+    assert!(format!("{error:#}").contains("cannot be carried"), "{error:#}");
     let not_a_checkpoint = build(Path::new(CARRIED), Some(1)).unwrap_err();
     assert!(format!("{not_a_checkpoint:#}").contains("holds no checkpoint at seq 1"), "{not_a_checkpoint:#}");
 }
@@ -168,4 +177,23 @@ fn engine_core_parts(parts: &[CarryPart]) -> Vec<LogEntry> {
             LogEntry::Command(CommandEntry { sequenced: Sequenced { seq, ts: 0, cmd }, events: None, seal: None })
         })
         .collect()
+}
+
+#[test]
+fn a_carry_past_what_the_first_segment_holds_for_its_members_is_refused() {
+    let mut file = build(Path::new(CARRIED), None).unwrap();
+    let CarryPart::Begin { globals, .. } = &mut file.parts[0] else { unreachable!("Begin comes first") };
+    globals.push_str(&" ".repeat(MAX_FILE_BYTES as usize));
+    let out = scratch_dir("carry-file-oversize").join("carry.json");
+    fs::create_dir_all(out.parent().unwrap()).unwrap();
+    let error = write(&file, &out).unwrap_err();
+    assert!(format!("{error:#}").contains("first segment"), "{error:#}");
+    assert!(!out.exists(), "nothing is written");
+}
+
+#[test]
+fn the_carried_reference_log_carries_the_reference_sessions_last_checkpoint() {
+    let source = write_entries("carry-reference-pair", &signed_fixture(Path::new(SESSION)));
+    let from = check_carried(Path::new(CARRIED), &source).unwrap();
+    assert_eq!(from.signer, AccountId(crate::tee::EnclaveKey::test_key().address()));
 }

@@ -1,7 +1,7 @@
 //! Commands the engine must accept before anything else: the client auth, the operator, protocol
 //! activation, and genesis. Like any command, they wait for a stamp trusted time admits.
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
 use engine_core::carry::CarryPart;
@@ -14,7 +14,9 @@ use tracing::{info, warn};
 
 use crate::config::Genesis;
 use crate::sequencer::Sequencer;
-use crate::sequencer::genesis::{GENESIS_REF, carried_genesis_commands, check_genesis_commands, rejection};
+use crate::sequencer::genesis::{
+    GENESIS_REF, carried_genesis_commands, check_carried_genesis_at, is_carry_part, rejection,
+};
 use crate::trusted_time::Sample;
 
 impl Sequencer {
@@ -268,13 +270,11 @@ impl Sequencer {
     /// `genesis`, carrying `carry`'s parts right after staking is initialised (`[genesis.carry]`).
     /// Error cases:
     /// - see `genesis`
-    /// - parts that apply but leave the carry unfinished
+    /// - parts that apply but leave the carry unfinished; at the stamp it takes, a carried genesis the engine
+    ///   would refuse there, before any of it is written
     pub fn carried_genesis(&mut self, genesis: &Genesis, carry: &[CarryPart]) -> anyhow::Result<()> {
         let cmds = carried_genesis_commands(genesis, carry);
-        let engine = check_genesis_commands(&self.client_auth, self.operator, cmds.clone())?;
-        if !carry.is_empty() && (engine.carry_progress().is_some() || engine.carried_from().is_none()) {
-            bail!("genesis.carry: its parts begin carrying another log's state and do not finish");
-        }
+        check_carried_genesis_at(&self.client_auth, self.operator, cmds.clone(), 0)?;
         self.sequence_required("genesis", cmds)
     }
 
@@ -316,6 +316,12 @@ impl Sequencer {
         let mut queued = std::mem::take(&mut self.required).into_iter();
         while let Some((what, cmds)) = queued.next() {
             info!(what, commands = cmds.len(), "sequencing required commands");
+            // A carried genesis runs again at the stamp it takes, before any of it is written: a hold may have run
+            // past a value the stamp refuses, such as the staking start.
+            if cmds.iter().any(is_carry_part) {
+                check_carried_genesis_at(&self.client_auth, self.operator, cmds.clone(), ts)
+                    .context("the carried genesis at its stamp")?;
+            }
             let mut stamped = false;
             let mut cmds = cmds.into_iter();
             while let Some(cmd) = cmds.next() {

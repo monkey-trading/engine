@@ -1831,4 +1831,7 @@
 {"entry":"command","seq":1661,"ts":1871758800000,"cmd":{"type":"stake","account":"0x9090909090909090909090909090909090909090","amount":"9000","block":90001661,"chain_ref":"0xv90:stake"},"events":[{"type":"staked","account":"0x9090909090909090909090909090909090909090","amount":"9000"}]}
 {"entry":"command","seq":1662,"ts":1871758800000,"cmd":{"type":"unstake","account":"0x9090909090909090909090909090909090909090","amount":"4000","block":90001662,"chain_ref":"0xv90:unstake"},"events":[{"type":"unstaked","account":"0x9090909090909090909090909090909090909090","amount":"4000"}]}
 {"entry":"command","seq":1663,"ts":1871758800000,"cmd":{"type":"admin","action":"carry_state","part":"end"},"events":[{"type":"admin_rejected","reason":"no carried genesis has begun"}]}
-{"entry":"checkpoint","seq":1663,"root":"0xe5bfb5d2ad88d29858e787d03017881b99b0e03318fdf65bba536203629bf3b8","signature":"0x","signer":"0x"}
+{"entry":"command","seq":1664,"ts":1871758800000,"cmd":{"type":"switch_rotation","enabled":false,"election_cancelled":false,"block":90001663,"chain_ref":"0xv90:rotation"},"events":[{"type":"rotation_switched","enabled":false,"election_cancelled":false}]}
+{"entry":"command","seq":1665,"ts":1871758800000,"cmd":{"type":"staking_progress","block":90001663,"block_hash":"0x9090909090909090909090909090909090909090909090909090909090909090"},"events":[]}
+{"entry":"command","seq":1666,"ts":1871758800001,"cmd":{"type":"tick"},"events":[{"type":"emission_period_closed","period":130601,"budget":"62500000000000000","allocated":"0","cancelled":"62500000000000000"}]}
+{"entry":"checkpoint","seq":1666,"root":"0xb6f129f7d4ba5e7e3cc1a46848e7c8253518e3d1e69b25221fc025e0763265eb","signature":"0x","signer":"0x"}

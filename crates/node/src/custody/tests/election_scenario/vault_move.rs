@@ -26,6 +26,7 @@ use engine_core::carry::CarryPart;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::{EmissionSchedule, TokenUnits};
 use engine_core::event::Event;
+use engine_core::operator_faults::Penalty;
 use engine_core::staking::UsdcUnits;
 use engine_core::types::{AccountId, Millis, Side};
 use k256::ecdsa::SigningKey;
@@ -34,7 +35,10 @@ use serde_json::json;
 use super::chain::{operatorInEffectCall, setRotationCall};
 use super::node::{Node, carry_config, emission_budget};
 use super::operator_share::{FLOOR_UNITS, TRADER_KEY, declare, next_epoch, round_trip};
-use super::parameter_votes::{NOTICE_MS, SET_EFFECTIVE_SECS, adopted_set, propose, setCustodyCall, setRegistryCall};
+use super::parameter_votes::{
+    FAST_WINDOW_SECS, NORMAL_WINDOW_SECS, NOTICE_MS, SET_EFFECTIVE_SECS, TTL_MS, adopted_set, propose, setCustodyCall,
+    setRegistryCall,
+};
 use super::{address, completed_through, monkey};
 use crate::checkpoints::scenario::deploy;
 use crate::clock::Clock;
@@ -179,7 +183,14 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
         .await;
     let in_effect = chain.view(registry, operatorInEffectCall {}).await;
     assert_eq!(in_effect.adminKey, address(&operator), "the launch node's operator key is in effect");
-    (chain.vote, chain.fault_proof) = (None, None);
+    // The launch deployment's vote and fault proof contracts, over the launch schedule and vault, which the launch
+    // node records and mirrors from the carried frontier on.
+    let vote_args = (schedule, NORMAL_WINDOW_SECS, FAST_WINDOW_SECS).abi_encode_params();
+    let vote = deploy(&chain.provider, guardian, "ParameterVote.sol/ParameterVote.json", &vote_args).await;
+    let fault_proof =
+        deploy(&chain.provider, guardian, "FaultProof.sol/FaultProof.json", &(vault,).abi_encode_params()).await;
+    chain.vote = Some((vote, TTL_MS));
+    chain.fault_proof = Some((fault_proof, Penalty { initial_bps: 5_000, decay_ms: 4 * DAY_SECS as Millis * 1000 }));
     println!("PASS: the guardian retired the alpha's signer, and one timelock batch moved custody and minting");
 
     // 5. The launch node passes the start's checks and sequences a genesis carrying the alpha's state.
@@ -201,6 +212,9 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
     assert_eq!((&carried.1, &carried.2), (alpha.entitlements(), alpha.staked_balances()));
     assert_eq!(carried.3, alpha.staking().map(|staking| staking.mirrored_through));
     assert_eq!(carried.4, unpaid);
+    let recorded = node.query(|e| (e.governance().config, e.operator_faults().config)).await;
+    assert_eq!(recorded.0.map(|config| config.vote.0), Some(vote.0.0), "the launch node records its vote contract");
+    assert_eq!(recorded.1.map(|config| config.contract.0), Some(fault_proof.0.0), "and its fault proof contract");
     assert!(alpha.awards()[&0].paid.0 > 0, "the alpha paid its award in part");
     let after = node.query(|e| e.emissions().map(|emissions| emissions.entitled)).await;
     let alpha_entitled = alpha.emissions().map(|emissions| emissions.entitled);

@@ -9,6 +9,7 @@ use engine_core::command::Command;
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
 use engine_core::staking::UsdcUnits;
+use engine_core::types::AccountId;
 
 use crate::common::close_spread::{attest, fund};
 use crate::common::{HOUSE_CAPITAL, Harness};
@@ -143,4 +144,28 @@ fn the_first_distributing_close_pays_the_carried_award_from_its_whole_amount() {
     let allocated =
         events.iter().any(|event| matches!(event, Event::DistributionAllocated { account, .. } if *account == staker));
     assert!(allocated, "{events:?}");
+}
+
+#[test]
+fn the_launch_operators_installation_past_the_carried_frontier_keeps_its_key_and_the_carried_state() {
+    let (_, mut h, _) = carried();
+    let operator = crate::common::Client::operator().account;
+    let before = (h.engine.entitlements().clone(), h.engine.staked_balances().clone(), h.engine.awards().clone());
+    let block = h.engine.staking().and_then(|staking| staking.completed_through).expect("a frontier").block + 1;
+    let installation = engine_core::election::RegistryInstallation {
+        candidate: AccountId([0xc1; 20]),
+        admin_key: operator,
+        block,
+        chain_ref: "0xinstall:launch".into(),
+    };
+    let events = h.cmd(Command::InstallOperator(installation));
+    assert!(events.iter().any(|event| matches!(event, Event::OperatorInstalled { .. })), "{events:?}");
+    // Seven days on, the key in effect is still the operator's: its admin commands apply.
+    h.advance(engine_core::operator_bounds::NOTICE_MS);
+    h.operator_admin(engine_core::command::AdminCommand::SetReduceOnly {
+        market: Some(crate::common::BTC),
+        reduce_only: false,
+    });
+    let after = (h.engine.entitlements().clone(), h.engine.staked_balances().clone(), h.engine.awards().clone());
+    assert_eq!(after, before);
 }
