@@ -222,6 +222,26 @@ fn the_script_refuses_a_dev_image_no_secure_tsc_unlike_cpu_models_and_a_tags_mar
     refused(release_files(&repo, &scratch("models"), &[]), "differ from production.toml's");
 }
 
+#[test]
+fn the_script_refuses_a_malformed_name_or_field_and_a_repository_without_production() {
+    let refused = |output: Output, why: &str| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success() && stderr.contains(why), "{why}: {stderr}");
+    };
+    let root = Path::new(ROOT);
+    let named = |name: &str, label: &str| release_files_named(root, &scratch(label), &[], MEASUREMENT, name);
+    refused(named("v1\"0", "quote"), "a release name is letters, digits, dots, dashes and underscores");
+    let digest = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30";
+    let short = MEASUREMENT.replace(digest, &digest[..95]);
+    refused(release_files_measured(root, &scratch("digits"), &[], &short), "launch_digest is not 48 bytes");
+    let not_hex = MEASUREMENT.replace(r#""policy": "0x30000""#, r#""policy": "0xzz""#);
+    refused(release_files_measured(root, &scratch("policy"), &[], &not_hex), "policy is not hex");
+
+    let bare = scratch("bare");
+    write(&bare, "config/release/staging.toml", &read("config/release/staging.toml"));
+    refused(release_files(&bare, &scratch("no-production"), &[]), "holds no production.toml");
+}
+
 // ── Helpers ──
 
 /// The deployments a release ships: each file under `config/release/`, by name.
@@ -254,6 +274,10 @@ fn release_files(repo: &Path, out: &Path, flags: &[&str]) -> Output {
 }
 
 fn release_files_measured(repo: &Path, out: &Path, flags: &[&str], measurement: &str) -> Output {
+    release_files_named(repo, out, flags, measurement, "v0.1.0")
+}
+
+fn release_files_named(repo: &Path, out: &Path, flags: &[&str], measurement: &str, name: &str) -> Output {
     let measured = out.with_extension("measurement.json");
     fs::write(&measured, measurement).unwrap();
     Command::new("python3")
@@ -262,7 +286,7 @@ fn release_files_measured(repo: &Path, out: &Path, flags: &[&str], measurement: 
         .args(flags)
         .arg("--repo")
         .arg(repo)
-        .arg("v0.1.0")
+        .arg(name)
         .arg(&measured)
         .arg(out)
         .output()
