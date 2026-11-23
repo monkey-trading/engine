@@ -8,7 +8,8 @@
 # keys for a release that has none sealed, and /data/predecessor holds the address of the running
 # release to take them from. Each choice is removed before the engine starts, so it applies once.
 # /data/frozen, which stays until the operator removes it, starts the engine admitting no client
-# request (`run --frozen`), for a log's last starts before a new log carries its state. The
+# request (`run --frozen`), for a log's last starts before a new log carries its state, and the new
+# log's starts before its public opening. The
 # event log is on the second disk, mounted at /data/log, so that the writes of the history index and
 # the recovery caches on the first never hold the log's syncs; a production build refuses a config
 # whose log directory shares a device with them.
