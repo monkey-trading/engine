@@ -237,7 +237,7 @@ an index: load only the rule whose hint matches the current action.
   vault reads and the minter mints the staking contract's token (each read of the chain, held or not), or later unless the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
   genesis applies in full at the minter's emission budget, at the start's time and again at the stamp it takes; every
   start refuses a log whose carried source is not the config's, a member refuses such a copy before it takes a
-  turn's keys or registers its standby key, and a whole-log take before it confirms the handover), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
+  turn's keys or registers its standby key (over its open copy, or the operator's archived genesis while it holds none, `carry/archive.rs`), and a whole-log take before it confirms the handover), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
   checkpoint at the carried seq holds the carried root, and the carried values are its state there), `run --frozen`
   (`api/frozen.rs`: every client POST and DELETE refused with 503, for a source's last starts and the new log's
   until its public opening; `image/init` passes it while `/data/frozen` exists),

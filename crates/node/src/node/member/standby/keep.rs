@@ -94,11 +94,11 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
             let start = self.start_promoted(standby, promotion, opened, operator).await?;
             return Ok(Kept::Start(Box::new(start)));
         }
-        // A member whose start would refuse its copy under this config never makes its standby key promotable.
-        let refused = follower.as_ref().is_some_and(|(replica, ..)| {
-            crate::carry::boot::check_copy(self.cfg, replica.replica().engine(), true).is_err()
+        // A member makes its standby key promotable only over a copy its start would serve under this config.
+        let served = follower.as_ref().is_some_and(|(replica, ..)| {
+            crate::carry::boot::check_copy(self.cfg, replica.replica().engine(), true).is_ok()
         });
-        if !refused && let Ok(reached) = self.reached().await {
+        if served && let Ok(reached) = self.reached().await {
             if let Some(sample) = self.sample {
                 open.sampled(sample);
             }

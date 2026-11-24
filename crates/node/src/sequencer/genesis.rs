@@ -279,7 +279,7 @@ pub(crate) fn is_carry_part(cmd: &Command) -> bool {
 }
 
 /// Whether `cmd` is the house capital credit that ends genesis.
-fn is_genesis_credit(cmd: &Command) -> bool {
+pub(crate) fn is_genesis_credit(cmd: &Command) -> bool {
     matches!(cmd, Command::HouseCapital { chain_ref, .. } if chain_ref == GENESIS_REF)
 }
 

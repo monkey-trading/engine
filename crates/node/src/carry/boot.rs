@@ -7,7 +7,8 @@
 //! engine at the minter's emission budget, or the start stops with Critical `carry_refused` before anything is
 //! written.
 //! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
-//! turn's keys or registers its standby key, as a whole-log take does before it confirms the handover.
+//! turn's keys or registers its standby key (from the operator's archive while it holds no copy, `archive`), as a
+//! whole-log take does before it confirms the handover.
 
 use std::future::Future;
 use std::path::Path;
