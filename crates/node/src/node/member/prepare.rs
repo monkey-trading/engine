@@ -15,8 +15,9 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
     /// Prepares this member's standby key while the registry's rotation switch is off, as the
     /// deployment does before it turns rotation on: opens or generates the key, answers on the member
     /// link, and writes its vouched registration once the operator in effect, or a member, vouches for
-    /// it (`standby_unregistered` until the candidate sends it). Returns once the switch is on, with
-    /// `chain_read` set at the first read of it.
+    /// it (`standby_unregistered` until the candidate sends it), once the operator's archived genesis
+    /// carries what the config's `[genesis.carry]` names (`carry::archive::check_archived`). Returns once
+    /// the switch is on, with `chain_read` set at the first read of it.
     /// Error cases:
     /// - none: failed reads and vouches are retried
     pub(crate) async fn prepare_standby(&mut self, chain_read: &mut bool) {
@@ -26,6 +27,8 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
             return;
         }
         let mut standby: Option<Standby> = None;
+        // Whether the archived log's genesis carries what the config names, as the start checks it.
+        let mut carry_checked = false;
         loop {
             match self.vault.rotation_enabled().await {
                 Ok(on) => {
@@ -49,7 +52,9 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
                     info!("rotation is off: preparing this member's standby key");
                     let operator = crate::standby::resolve(self.cfg, &self.vault).await;
                     let operator = operator.inspect_err(|e| warn!("no operator in effect to vouch: {e:#}")).ok();
-                    if let Ok(reached) = self.reached().await {
+                    // A member registers its standby key only for a log its start would serve under this config.
+                    let carried = crate::carry::archive::held(self.cfg, operator.as_ref(), &mut carry_checked).await;
+                    if carried && let Ok(reached) = self.reached().await {
                         if let Some(sample) = self.sample {
                             open.sampled(sample);
                         }

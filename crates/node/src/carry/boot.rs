@@ -7,7 +7,8 @@
 //! engine at the minter's emission budget, or the start stops with Critical `carry_refused` before anything is
 //! written.
 //! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
-//! turn's keys or registers its standby key, as a whole-log take does before it confirms the handover.
+//! turn's keys or registers its standby key (from the operator's archive while it holds no copy, `archive`), as a
+//! whole-log take does before it confirms the handover.
 
 use std::future::Future;
 use std::path::Path;
@@ -256,6 +257,12 @@ pub(crate) fn check_recovered(cfg: &NodeConfig, seq: &Sequencer) -> anyhow::Resu
 pub(crate) fn check_copy(cfg: &NodeConfig, copy: &Engine, open: bool) -> anyhow::Result<()> {
     check_carried_source(copy.carried_from(), configured(cfg), open)
         .inspect_err(|e| error!(alert = "carry_refused", "refusing to hold this log's keys: {e:#}"))
+}
+
+/// Whether a member may register its standby key over its open copy, `copy`: only one its start would serve under
+/// this config (`check_copy`, open), so a member with no copy open registers nothing.
+pub(crate) fn serves_copy(cfg: &NodeConfig, copy: Option<&Engine>) -> bool {
+    copy.is_some_and(|copy| check_copy(cfg, copy, true).is_ok())
 }
 
 /// The chain and source vault the config's `[genesis.carry]` names.

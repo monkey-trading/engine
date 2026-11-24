@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 
 use crate::log::{self, LogEntry, SegmentedLog};
 
+pub(crate) mod archive;
 pub(crate) mod boot;
 mod chain;
 mod replay;
