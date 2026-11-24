@@ -6,7 +6,8 @@
 //! so a match proves the snapshot's history holds the head, and only the commands since the head
 //! are read. A mismatch refuses startup. With no head posted, `verify` hashes and seal-checks the
 //! on-disk prefix from the log's start through the base, binding it to the snapshot, and stamps
-//! the command a vault-finalized checkpoint under the base covers, for the stall alarm.
+//! the command a vault-finalized checkpoint under the base covers, for the stall alarm. A cache's
+//! history head before its checkpoint is bound the same way, by `bind_history`.
 
 use std::path::Path;
 
@@ -56,29 +57,8 @@ pub(crate) fn since(
     base_ts: Millis,
     certified_prefix: [u8; 32],
 ) -> anyhow::Result<Millis> {
-    let mut command_prefix: [u8; 32] = posted.link.into();
-    let (mut next, mut first_ts) = (posted.seq + 1, None);
-    if next <= base {
-        let result = log::read_from(dir, next, |entry| {
-            let LogEntry::Command(command) = &entry else { return Ok(()) };
-            let seq = command.sequenced.seq;
-            if first_ts.is_none() && seq < next {
-                // The segment holding the head's next command starts at or before the head.
-                return Ok(());
-            }
-            ensure!(seq == next, "the log holds seq {seq} where seq {next} follows");
-            command_prefix = log::extend_command_prefix(command_prefix, log::command_digest(command)?);
-            first_ts.get_or_insert(command.sequenced.ts);
-            next += 1;
-            if seq == base { Err(Stop.into()) } else { Ok(()) }
-        });
-        match result {
-            Err(cause) if !cause.is::<Stop>() => {
-                return Err(cause).context("binding the on-chain log head to the snapshot");
-            }
-            _ => ensure!(next > base, "the log holds no command at the snapshot base {base}"),
-        }
-    }
+    let (command_prefix, first_ts) =
+        extend(dir, (posted.seq, posted.link.into()), base).context("binding the on-chain log head to the snapshot")?;
     if command_prefix != certified_prefix {
         error!(
             alert = "log_rollback",
@@ -92,6 +72,62 @@ pub(crate) fn since(
         return Err(anyhow::Error::new(Rollback));
     }
     Ok(first_ts.unwrap_or(base_ts))
+}
+
+/// Whether the log's commands after a paired cache's history head, `head` (its seq and cumulative
+/// command-prefix digest), through the cache's checkpoint at `base`, extend the head's digest to the
+/// cache's certified one, so the history the head certifies is the cache's own up to the head. Both
+/// digests are signed: the head's certificate and the cache's.
+/// Error cases:
+/// - the log cannot be read, skips a seq, or ends before the base, or the digests differ: a rejected cache
+pub(crate) fn bind_history(
+    dir: &Path,
+    head: (u64, [u8; 32]),
+    base: u64,
+    certified_prefix: [u8; 32],
+) -> anyhow::Result<()> {
+    let (command_prefix, _) = extend(dir, head, base).context("binding the cache's history head to its checkpoint")?;
+    ensure!(
+        command_prefix == certified_prefix,
+        "the commands after the cache's history head at seq {} do not give its certified prefix at its checkpoint, \
+         seq {base}",
+        head.0
+    );
+    Ok(())
+}
+
+/// The cumulative command-prefix digest at `base`, extended from `from`'s (a seq and its digest) by the
+/// log's commands after it, and the stamp of the first of them, if any. Only the segments from the one
+/// holding the next command are read, and no seal is checked: the caller compares the digest with a signed
+/// one.
+/// Error cases:
+/// - the log cannot be read, skips a seq, or ends before `base`
+fn extend(
+    dir: &Path,
+    (seq, mut command_prefix): (u64, [u8; 32]),
+    base: u64,
+) -> anyhow::Result<([u8; 32], Option<Millis>)> {
+    let (mut next, mut first_ts) = (seq + 1, None);
+    if next <= base {
+        let result = log::read_from(dir, next, |entry| {
+            let LogEntry::Command(command) = &entry else { return Ok(()) };
+            let seq = command.sequenced.seq;
+            if first_ts.is_none() && seq < next {
+                // The segment holding the next command starts at or before `from`.
+                return Ok(());
+            }
+            ensure!(seq == next, "the log holds seq {seq} where seq {next} follows");
+            command_prefix = log::extend_command_prefix(command_prefix, log::command_digest(command)?);
+            first_ts.get_or_insert(command.sequenced.ts);
+            next += 1;
+            if seq == base { Err(Stop.into()) } else { Ok(()) }
+        });
+        match result {
+            Err(cause) if !cause.is::<Stop>() => return Err(cause),
+            _ => ensure!(next > base, "the log holds no command at the snapshot base {base}"),
+        }
+    }
+    Ok((command_prefix, first_ts))
 }
 
 /// Whether the on-disk log through the snapshot base `base` carries the snapshot's certified

@@ -1,4 +1,5 @@
-//! Completing a checkpoint capture into the paired cache, and the alert its failures raise.
+//! Completing a checkpoint capture into the paired cache, at its checkpoint or, for an owner behind its
+//! input, before it, and the alert its failures raise.
 
 use std::fmt::Display;
 
@@ -9,8 +10,9 @@ use crate::history::runtime::Actor;
 use crate::snapshot::sealing::{Capture, HistorySeal};
 
 impl Actor {
-    /// Holds `capture` until the index reaches its checkpoint, or completes it at once when the index stands
-    /// there.
+    /// Holds `capture` until the owner takes its checkpoint, or until a full turn shows the input running
+    /// ahead of the owner (`complete_behind`), or completes it at once when the owner stands at its
+    /// checkpoint.
     /// Error cases:
     /// - another capture is in flight, or indexing the turn's commands fails
     pub(super) fn seal(&mut self, capture: Box<Capture>) -> Result<()> {
@@ -32,13 +34,33 @@ impl Actor {
     }
 
     /// Publishes the paired cache for a capture whose checkpoint is the last entry taken, `taken`
-    /// when that entry is a checkpoint; any other entry drops the capture.
+    /// when that entry is a checkpoint, with the history indexed by then; any other entry drops the
+    /// capture.
     pub(super) fn complete_capture(&mut self, capture: Box<Capture>, taken: Option<&crate::log::Checkpoint>) {
         let offset = capture.snapshot.offset;
         if self.last_entry != Some(offset) || taken != Some(&capture.snapshot.checkpoint) {
             self.capture_failed(offset.seq, "history did not observe the exact captured checkpoint");
             return;
         }
+        self.store_capture(capture);
+    }
+
+    /// Publishes the paired cache for the capture waiting for its checkpoint, if any, with the history
+    /// indexed so far, which is before its checkpoint: for an owner its input runs ahead of, whose backlog
+    /// the capture would otherwise wait for. An owner that has indexed no command keeps it waiting.
+    pub(super) fn complete_behind(&mut self) {
+        if self.current.index.head().last_seq().is_none() {
+            return;
+        }
+        if let Some(capture) = self.pending.take() {
+            self.store_capture(capture);
+        }
+    }
+
+    /// Publishes the paired cache for `capture` with the history indexed so far, at or before its
+    /// checkpoint, which is durable in the log: the sequencer syncs the log before it hands a capture over.
+    fn store_capture(&mut self, capture: Box<Capture>) {
+        let offset = capture.snapshot.offset;
         // A rename followed by failed directory sync must not release this version's data.
         self.retained_catalog.insert(offset, capture.catalog_pin.clone());
         // `stored` resolves only failures raised before this take; one raised later, such as the
@@ -52,7 +74,7 @@ impl Actor {
         };
         match (*capture).complete(&self.cfg, &mut history, (&self.key, &self.lifecycle), &self.stopped) {
             Ok(()) => {
-                // The pair's history certificate is a signed head at this checkpoint.
+                // The pair's history certificate is a signed head at the history it took.
                 let head = self.current.index.head();
                 self.certified_seq = head.last_seq();
                 self.last_certified = Some(head.root);

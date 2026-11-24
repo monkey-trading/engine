@@ -28,6 +28,13 @@ fn complete_head_requires_independent_authority_deployment_and_exact_replayed_pr
     assert!(restored.verify_prefix(1, 2, replay.command_prefix, 1000).is_err());
     assert!(restored.verify_prefix(2, 3, replay.command_prefix, 1000).is_err());
     assert!(restored.verify_prefix(2, 2, replay.command_prefix, 999).is_err());
+    // A paired head may stand before its checkpoint, never after it; at it, it must be the checkpoint's.
+    restored.verify_through(2, 2, replay.command_prefix, 1000).unwrap();
+    restored.verify_through(5, 9, [0; 32], 1000).unwrap();
+    assert!(restored.verify_through(1, 2, replay.command_prefix, 1000).is_err(), "a head after its checkpoint");
+    assert!(restored.verify_through(5, 1, [0; 32], 1000).is_err(), "a head later in time than its checkpoint");
+    assert!(restored.verify_through(2, 2, [0; 32], 1000).is_err(), "another prefix at the checkpoint");
+    assert!(restored.verify_through(5, 9, [0; 32], 999).is_err(), "another retention");
     let untrusted = SnapshotSection { trusted_signers: Vec::new(), ..cfg.clone() };
     assert!(read(&untrusted, &path, domain).is_err());
     assert!(read(&cfg, &path, CheckpointDomain { chain_id: 1, ..domain }).is_err());

@@ -175,7 +175,9 @@ impl AnchorChain {
     }
 }
 
-/// Accepts no later head as checkpoint C; every suffix entry still passes current strict Replay.
+/// Accepts no later head as checkpoint C's paired history; a head before C is bound to C by the commands
+/// between them, and history resumes from it and indexes them again. Every suffix entry still passes
+/// current strict Replay.
 /// A posted head at or under C is bound to C's history by the commands since it before the
 /// snapshot is accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather
 /// than falling back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and
@@ -183,7 +185,8 @@ impl AnchorChain {
 /// finalized checkpoint at or past C, the suffix's signed parent chain from C to it is checked
 /// (`AnchorChain`).
 /// Error cases:
-/// - certificate, fixed metadata, prefix extension, boundary bytes, replay, the posted-head prefix
+/// - certificate, fixed metadata, prefix extension, the paired head's binding to C, boundary bytes, replay,
+///   the posted-head prefix
 ///   check, the parent chain to the finalized checkpoint, or the anchor-stamping pass, or availability
 ///   fails
 #[allow(clippy::too_many_arguments)]
@@ -229,6 +232,11 @@ fn candidate(
         ts: engine.now(),
     };
     let history_c = pair.verify(snapshots, &expected, cfg.history.retention_ms()?)?;
+    // A pair's history head before C is the cache's own history only if the commands between them carry its
+    // prefix to C's: both are signed.
+    if let Some(seq) = history_c.head.last_seq().filter(|seq| *seq < at.seq) {
+        crate::log_heads::prefix::bind_history(dir, (seq, history_c.head.command_prefix), at.seq, certified)?;
+    }
     let mut stores = BTreeMap::new();
     let store_c = open_store(snapshots, history_c.store, &mut stores)?;
     Index::resume(store_c.clone(), history_c.head.clone())?;
@@ -299,9 +307,9 @@ fn candidate(
             h_seq.filter(|_| history_lost)
         );
     }
-    // History resumes from the pair's own head at C, which matches the replay by construction,
-    // when no retained head resumes or the log ends before the newest one; activation discards the
-    // later versions and history indexes the rest of the log again. The catalog does the same.
+    // History resumes from the pair's own head, at C or bound to it above, when no retained head resumes
+    // or the log ends before the newest one; activation discards the later versions and history indexes
+    // the rest of the log again, from the head. The catalog resumes from C.
     let (history_id, history_store, history_head) = match history_h {
         Some((history_h, history_store)) if matched_h => (history_h.store, history_store, history_h.head),
         _ => {

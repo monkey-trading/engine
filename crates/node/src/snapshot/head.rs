@@ -63,6 +63,27 @@ impl HeadStatement {
         ensure!(self.head.retention_ms == retention_ms, "history head retention differs from config");
         Ok(())
     }
+
+    /// Matches a head at or before a checkpoint at `seq`, `ts`, with `command_prefix`: at it, as
+    /// `verify_prefix` does; before it, no later in time, its prefix left for the caller to bind to the
+    /// checkpoint's through the commands between them.
+    /// Error cases:
+    /// - the head follows the checkpoint, differs from it at its seq, or has another retention
+    pub(crate) fn verify_through(
+        &self,
+        seq: u64,
+        ts: Millis,
+        command_prefix: [u8; 32],
+        retention_ms: Millis,
+    ) -> anyhow::Result<()> {
+        let at = self.head.last_seq().context("history head has no complete command")?;
+        ensure!(at <= seq && self.head.last_ts() <= Some(ts), "history head follows its checkpoint");
+        if at == seq {
+            return self.verify_prefix(seq, ts, command_prefix, retention_ms);
+        }
+        ensure!(self.head.retention_ms == retention_ms, "history head retention differs from config");
+        Ok(())
+    }
 }
 
 impl StoreId {

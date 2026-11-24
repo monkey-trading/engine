@@ -41,6 +41,7 @@
 mod bench;
 mod cache;
 mod daily;
+mod final_capture;
 pub(crate) mod flow;
 mod handover;
 mod member_snapshot;

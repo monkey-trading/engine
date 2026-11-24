@@ -1,7 +1,7 @@
 //! The capture cadence through the node's startup order: a cache at a start's first checkpoint, then
 //! one every `[snapshots] interval` of sequenced time, and one at shutdown; a capture that finds one in
-//! flight, or that a stopped history owner cannot take, stays due; an owner behind the log takes a capture
-//! and completes it once it reaches the checkpoint, with a warning once it has waited a minute, and
+//! flight, or that a stopped history owner cannot take, stays due; an owner whose queue is held takes a
+//! capture and completes it once it reaches the checkpoint, with a warning once it has waited a minute, and
 //! leaves its encoding wait at once when stopped; a handover's sealed log, or a checkpoint
 //! a withdrawal entry follows, is not captured at shutdown;
 //! a node without a stats worker encodes its caches itself; a restart resumes from the newest.
@@ -22,7 +22,7 @@ use crate::snapshot;
 use crate::snapshot::sealing::{CaptureStage, ENCODE_WAIT};
 use crate::test_support::{deposit, log_entries, withdraw};
 
-const INTERVAL: Duration = Duration::from_secs(3_600);
+pub(super) const INTERVAL: Duration = Duration::from_secs(3_600);
 
 #[tokio::test]
 async fn captures_wait_for_the_interval_and_shutdown_captures_the_last_checkpoint() {
@@ -100,10 +100,10 @@ async fn a_capture_the_history_owner_cannot_take_stays_due() {
     assert!(failed >= 3, "every checkpoint past the interval tries the capture again: {failed} refusals");
 }
 
-/// A capture due while the history owner's queue has no free slot, as an index behind the log leaves it,
-/// is still taken, with no alert, and the owner completes it once it reaches the checkpoint.
+/// A capture due while the history owner's queue has no free slot is still taken, with no alert, and the
+/// owner, its input no longer ahead of it, completes it once it reaches the checkpoint.
 #[tokio::test]
-async fn an_owner_behind_the_log_takes_a_capture_and_completes_it_at_its_checkpoint() {
+async fn an_owner_whose_queue_is_held_takes_a_capture_and_completes_it_at_its_checkpoint() {
     let mut cfg = configuration("paired-cadence-behind");
     cfg.snapshots.as_mut().unwrap().interval = INTERVAL;
     let (collector, router) = collect_alerts();
@@ -128,12 +128,12 @@ async fn an_owner_behind_the_log_takes_a_capture_and_completes_it_at_its_checkpo
     assert!(lines.iter().all(|line| line.severity.is_none()), "no capture was refused: {lines:#?}");
 }
 
-/// A capture due while the one handed over before it has waited, for an index behind the log, past the
+/// A capture due while the one handed over before it has waited, for an owner that has not taken it, past the
 /// interval and a minute at least alerts, and the owner's storing of that capture, once its index reaches
 /// it, resolves it. With a one-second interval the minute decides, and with an hour the next capture is due
 /// only after the minute.
 #[tokio::test]
-async fn a_capture_waiting_a_minute_for_the_index_alerts_until_it_is_stored() {
+async fn a_capture_the_owner_has_not_stored_for_a_minute_alerts_until_it_is_stored() {
     let (second, minute) = (Duration::from_secs(1), Duration::from_secs(60));
     for (interval, late) in [(second, minute), (INTERVAL, INTERVAL)] {
         let mut cfg = configuration(&format!("paired-cadence-late-{}", interval.as_secs()));
@@ -292,7 +292,7 @@ async fn a_node_without_a_stats_worker_encodes_its_caches_itself() {
 // ── Helpers ──
 
 /// Submits deposits until the next command ends with a checkpoint, and returns its seq.
-async fn to_checkpoint(node: &Node, label: &str) -> u64 {
+pub(super) async fn to_checkpoint(node: &Node, label: &str) -> u64 {
     let every = node.cfg.node.checkpoint_every;
     let flushed = || node.manifest.borrow().flushed.expect("commands are logged").seq;
     let mut n = 0;
@@ -305,7 +305,7 @@ async fn to_checkpoint(node: &Node, label: &str) -> u64 {
 
 /// Sequences `count` deposits labelled `label`, each indexed before the next, so no capture finds the
 /// previous one in flight.
-async fn deposits(node: &Node, label: &str, count: usize) {
+pub(super) async fn deposits(node: &Node, label: &str, count: usize) {
     for n in 0..count {
         node.submit(deposit(1, &format!("{label}-{n}"))).await;
         node.history_caught_up().await;
@@ -313,6 +313,6 @@ async fn deposits(node: &Node, label: &str, count: usize) {
 }
 
 /// The node's caches, newest first.
-fn caches(node: &Node) -> Vec<std::path::PathBuf> {
+pub(super) fn caches(node: &Node) -> Vec<std::path::PathBuf> {
     snapshot::candidates_readonly(node.cfg.snapshots.as_ref().unwrap()).unwrap()
 }

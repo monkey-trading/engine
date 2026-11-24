@@ -123,6 +123,15 @@ impl Store {
             .map_or(version, |(v, _)| (*v).min(version)))
     }
 
+    /// The oldest version anything pins in `root`'s namespace, `root`'s own at most, for tests that watch
+    /// how far collection may retire versions.
+    /// Error cases:
+    /// - as `floor_snapshot`
+    #[cfg(test)]
+    pub(crate) fn pinned_floor(&self, root: &Root) -> Result<u64> {
+        self.floor_snapshot(root)
+    }
+
     /// Reserves lease admission only if every selected retirement is still protected from new old pins.
     /// Error cases:
     /// - poisoned registry or a pre-version collection request

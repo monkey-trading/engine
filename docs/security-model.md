@@ -711,6 +711,10 @@ Known limits:
   pinned signer and a checkpoint root that the snapshot or the log holds, not against the vault's
   signer-epoch history, which only full replay reads. With snapshots, account history and the
   segment catalog are read and updated only through proofs against roots the trading server signed.
+  A snapshot's account history may trail its checkpoint. A start then hashes the log's instructions
+  between them onto the history's signed instruction-prefix digest, requires the snapshot's signed
+  digest, and refuses the snapshot otherwise; the history index takes those instructions again from
+  the log, through the segment catalog's proofs.
   Their signatures establish integrity, not freshness, so the same independent check against custody
   applies, and a full `engine replay` checks the log segments a snapshot skipped.
 - A read of the authenticated account history checks each value, and each node along its proof,

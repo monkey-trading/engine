@@ -284,7 +284,13 @@ an index: load only the rule whose hint matches the current action.
   with bounded durable schedule watches in `admin/benchmark_watch.rs` and `api/benchmark_schedule.rs`),
   optional checkpoint snapshots authenticated by pinned attested signers for suffix recovery, one due
   every `[snapshots] interval` of sequenced time and at shutdown, the sequencer sealing the catalog and
-  staging the stats worker's encode of its copy (`sequencer/snapshots.rs`), each carrying the
+  staging the stats worker's encode of its copy (`sequencer/snapshots.rs`), each paired with the newest
+  history head the history owner has indexed at or before its checkpoint, which it signs as it stores the
+  cache: at the checkpoint once it takes it, or, after a turn that took a full queue, wherever it has
+  indexed by then, so a cache never waits for the index's backlog (`history/runtime/capture.rs`; format 2
+  pairs, format 1 ones, at their checkpoint, still read, `snapshot/paired.rs`), a start binding a head
+  before the checkpoint to it by the commands between, as it binds a posted log head
+  (`log_heads/prefix.rs`), and history resuming from that head; each cache carrying the
   withdrawal approvals still unpaid, their latest authorizations and the roots of the checkpoints
   their proofs are at (`snapshot/payouts.rs`), and a posted log head
   under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
@@ -1418,7 +1424,20 @@ Run from the repo root:
   engine-node --lib history::authenticated::tests::bench -- --ignored --nocapture`, the log's first command at seq 0
   (as the recovery scenario's is), `HISTORY_BENCH_COMMANDS` (20,000) and `HISTORY_BENCH_BATCH` (512, the history
   owner's) sizing it; it prints its time every 10,000 commands and the head's root at the end; it derives no rollover
-  rows
+  rows; and indexing and collection against the index's size: `HISTORY_BENCH_LOG=<log dir>
+  HISTORY_SCALE_STORE=<store file> cargo test -p engine-node --lib
+  history::authenticated::tests::bench::ingest_and_collection_at_scale -- --ignored --nocapture`, which grows the
+  store, or resumes it from `HISTORY_SCALE_HEAD` (the head it saves beside the store, or a history-head
+  certificate), to `HISTORY_SCALE_UNTIL`, printing every `HISTORY_SCALE_STEP` (20,480) commands its size,
+  commands a second and indexing's and collection's time a command, then probes `HISTORY_SCALE_PROBE` (10,240)
+  commands at each update size in `HISTORY_SCALE_BATCHES` (8,32,128,512)
+- A drained stop's final capture with the history index lagging at a multi-GB size:
+  `FINAL_CAPTURE_BENCH_DIR=<dir> cargo test -p engine-node --lib
+  sequencer::recovery_scale::final_capture::final_capture_bench -- --ignored --nocapture` empties `<dir>`, writes
+  `RECOVERY_LAUNCH_SECS` (two hours) of `REPLAY_BENCH_MULTIPLE` (10) times launch flow on a book of
+  `RECOVERY_ACCOUNTS`, a cache every `FINAL_CAPTURE_INTERVAL_SECS` (300) of it, while the history owner indexes
+  behind, then stops as a drained node does and prints the index's size, how far it lagged and the time to the
+  final cache within `FINAL_CAPTURE_WITHIN_SECS` (120); run it under `nice`
 - House loss trigger dev scenario: `./scripts/dev-loss-trigger.sh` (the same stand-ins, under the dev
   genesis with production's zero threshold and a 30 s cooldown; needs only Cargo, about a minute and a half)
 - CME Group feed dev scenario: `./scripts/dev-cme-feeds.sh` (a loopback stand-in for CME's token

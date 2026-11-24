@@ -750,10 +750,10 @@ Rolling back is then another upgrade, to `A`'s release.
    as the new release. The vault names it in a new generation, so `A` takes the keys afresh from
    `B`. Give `A` a disk with the log alone, as that procedure's step 3 does, never `B`'s
    `/data/snapshots`. A release refuses to start on a recovery cache in a format it does not read,
-   with `signed snapshot payload is malformed`, and an earlier release may not read the caches `B`
-   wrote, such as one that carries unpaid withdrawals. If `A` stops with that error, move
-   `/data/snapshots` aside and start it again: it replays the whole log and rebuilds its history
-   index.
+   with `signed snapshot payload is malformed` or `unsupported paired recovery format`, and an
+   earlier release may not read the caches `B` wrote, such as one that carries unpaid withdrawals.
+   If `A` stops with that error, move `/data/snapshots` aside and start it again: it replays the
+   whole log and rebuilds its history index.
 
 ### A configuration value in `B` is the problem
 
