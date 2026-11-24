@@ -69,7 +69,7 @@ requests are signed and how a client verifies the server's signed answers.
 | Custody and the chain | `custody/`, `checkpoints/`, `log_heads/`, `log_check/`, `exit/`, `carry/`, `seed_relay/` | Deposits and the RPC quorum, checkpoint posting and reconciliation, on-chain log heads, the log check at each turn, exit proofs, the carried genesis at a move to a new vault, and the turn-seed relayer |
 | Operator rotation | `standby/`, `standby_key/`, `liveness/` | Following the operator in effect, standby keys, the liveness rule that promotes a standby, and fixing the fallback seed of a turn that no relay seeded |
 | Prices | `feeds/`, `benchmarks/` | Venue and market-data feeds, and the fetches behind dated benchmark rates |
-| Operations | `metrics/`, `monitor/`, `alerts/`, `episodes`, `throttle`, `admin/`, `ct_watch/` | Prometheus metrics, self-monitoring, alert routing, `engine admin` and `engine ct-watch` |
+| Operations | `metrics/`, `monitor/`, `storage/`, `alerts/`, `episodes`, `throttle`, `admin/`, `ct_watch/` | Prometheus metrics, self-monitoring, disk alerts, alert routing, `engine admin` and `engine ct-watch` |
 
 Each module's own documentation describes how it works. The
 [runbooks](../../ops/runbooks/README.md) hold the operator's procedures, and
@@ -89,7 +89,7 @@ default. Every section refuses keys it does not know.
 | `[liveness]`, `[seed_relay]`, `[standby]` | A rotation member's liveness caller, the turn-seed relayer and standby mode |
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |
 | `[history]`, `[stats]`, `[snapshots]` | The history index and price history cache, dashboard retention, and recovery snapshots |
-| `[metrics]`, `[alerts]` | The metrics listener and alert routing to webhooks |
+| `[metrics]`, `[alerts]` | The metrics listener, alert routing to webhooks and the disk alerts' thresholds (`[alerts.storage]`) |
 | `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters, and in `[genesis.carry]` the log whose MONKEY, stakes and awards it carries |
 
 [`config/dev.toml`](../../config/dev.toml) runs everything against local simulations.

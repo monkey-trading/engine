@@ -10,8 +10,6 @@
 
 mod layout;
 mod reading;
-#[cfg(test)]
-mod tests;
 mod watch;
 
 use std::sync::Arc;
@@ -60,3 +58,6 @@ pub async fn run(layout: Layout, cfg: StorageSection, metrics: Arc<Metrics>) -> 
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

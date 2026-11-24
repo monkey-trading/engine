@@ -30,8 +30,9 @@ pub struct StorageSection {
     /// Critical while the volume is projected to fill within this long (three days outlasts a weekend).
     #[serde(with = "humantime_serde")]
     pub critical_fill_within: Duration,
-    /// The span of growth the projection reads, once a sixth of it is sampled (six hours smooths a period close and
-    /// a rollover, and still shows ten times launch flow within the hour).
+    /// The span of growth the projection reads, made once the whole span is sampled, so a burst in its first hours,
+    /// such as an index catching up after a start, is not read as a steady rate (six hours smooths that and a period
+    /// close, and shows ten times launch flow within the window).
     #[serde(with = "humantime_serde")]
     pub rate_window: Duration,
 }

@@ -39,10 +39,10 @@ pub(super) struct MarksStartup {
 }
 
 /// The hidden file recovery seeds into, before activation moves it to `MARKS_FILE`.
-const SEED_FILE: &str = ".marks-seed";
+pub(crate) const SEED_FILE: &str = ".marks-seed";
 /// Where a deferred start's activation sets the prior cache aside until the marks task takes it:
 /// one a start finds holds everything the cache held, since nothing is written before it is taken.
-const PRIOR_FILE: &str = ".marks-prior";
+pub(crate) const PRIOR_FILE: &str = ".marks-prior";
 
 /// What activation returns: the store for the marks task, the reader the API serves from, the
 /// task's backfill settings, and the prior cache a deferred start leaves the task to take.

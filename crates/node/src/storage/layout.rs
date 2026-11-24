@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::NodeConfig;
 use crate::history::marks::store::MARKS_FILE;
+use crate::node::marks::{PRIOR_FILE, SEED_FILE};
 
 /// The start of the file names of the authenticated history index in `snapshots.dir`.
 pub(super) const AUTHENTICATED_PREFIX: &str = "authenticated-";
@@ -53,27 +54,33 @@ pub struct Layout {
 /// How a store picks its files from a directory: by the file's name, among the entries of the directory itself.
 type Pick = fn(&str) -> bool;
 
+/// Every entry.
 fn all(_: &str) -> bool {
     true
 }
 
+/// The marks cache's files: its database and the hidden files that hold a cache while a start seeds or hands it on.
 fn marks(name: &str) -> bool {
-    name.starts_with(MARKS_FILE)
+    [MARKS_FILE, SEED_FILE, PRIOR_FILE].iter().any(|file| name.starts_with(file))
 }
 
+/// Every entry but the marks cache's.
 fn not_marks(name: &str) -> bool {
     !marks(name)
 }
 
+/// The authenticated history index's files.
 fn authenticated(name: &str) -> bool {
     name.starts_with(AUTHENTICATED_PREFIX)
 }
 
+/// Every entry but the authenticated history index's.
 fn not_authenticated(name: &str) -> bool {
     !authenticated(name)
 }
 
 impl Layout {
+    /// The directories `cfg` names.
     pub fn of(cfg: &NodeConfig) -> Self {
         Self {
             log: cfg.node.log_dir.clone(),

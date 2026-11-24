@@ -24,7 +24,7 @@ pub struct Volume {
 /// What a read found.
 #[derive(Debug, Default)]
 pub struct Reading {
-    /// The bytes the disk allocates to each store's files, in `Store` order.
+    /// The bytes the disk allocates to each store's files, in `Store` order, for the stores whose every directory read.
     pub stores: Vec<(Store, u64)>,
     pub volumes: Vec<Volume>,
     /// Each store that could not be read, with why: its directory's walk or its volume's size.
@@ -32,16 +32,23 @@ pub struct Reading {
 }
 
 impl Layout {
-    /// Reads every store and volume. A store whose directory does not exist yet holds nothing.
+    /// Reads every store and volume. A store whose directory does not exist yet holds nothing. A store with a
+    /// directory that cannot be read has no size in the reading, so its metric keeps the last size read, and a read
+    /// in which any volume cannot be found reports no volumes, since a volume's name is the stores on it.
     pub fn read(&self) -> Reading {
         let mut reading = Reading::default();
         let mut devices: BTreeMap<u64, (Vec<Store>, u64, u64)> = BTreeMap::new();
+        let mut volume_unread = false;
         for (store, dirs) in self.stores() {
             let mut bytes = 0u64;
+            let mut readable = true;
             for (dir, pick) in dirs {
                 match walk(dir, pick, true) {
                     Ok(found) => bytes = bytes.saturating_add(found),
-                    Err(error) => reading.failures.push((store, format!("reading {}: {error}", dir.display()))),
+                    Err(error) => {
+                        readable = false;
+                        reading.failures.push((store, format!("reading {}: {error}", dir.display())));
+                    }
                 }
                 match volume_of(dir) {
                     Ok((device, total, free)) => {
@@ -51,21 +58,26 @@ impl Layout {
                         }
                     }
                     Err(error) => {
-                        reading.failures.push((store, format!("reading the volume of {}: {error}", dir.display())))
+                        volume_unread = true;
+                        reading.failures.push((store, format!("reading the volume of {}: {error}", dir.display())));
                     }
                 }
             }
-            reading.stores.push((store, bytes));
+            if readable {
+                reading.stores.push((store, bytes));
+            }
         }
-        reading.volumes = devices
-            .into_values()
-            .map(|(mut stores, total_bytes, free_bytes)| {
-                stores.sort();
-                let name = stores.iter().map(|store| store.name()).collect::<Vec<_>>().join("+");
-                Volume { name, stores, total_bytes, free_bytes }
-            })
-            .collect();
-        reading.volumes.sort_by(|a, b| a.stores.cmp(&b.stores));
+        if !volume_unread {
+            reading.volumes = devices
+                .into_values()
+                .map(|(mut stores, total_bytes, free_bytes)| {
+                    stores.sort();
+                    let name = stores.iter().map(|store| store.name()).collect::<Vec<_>>().join("+");
+                    Volume { name, stores, total_bytes, free_bytes }
+                })
+                .collect();
+            reading.volumes.sort_by(|a, b| a.stores.cmp(&b.stores));
+        }
         reading
     }
 }
@@ -84,6 +96,7 @@ impl Reading {
     }
 }
 
+/// A byte count as a gauge, which holds a signed integer.
 fn gauge(bytes: u64) -> i64 {
     i64::try_from(bytes).unwrap_or(i64::MAX)
 }

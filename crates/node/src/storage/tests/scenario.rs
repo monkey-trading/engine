@@ -57,6 +57,8 @@ async fn dev_scenario_a_volume_past_its_threshold_alerts_and_an_unreadable_store
     assert!(text.contains(&format!("engine_volume_free_bytes{{volume=\"{volume}\"}} ")), "{text}");
     assert!(text.contains(&format!("engine_volume_total_bytes{{volume=\"{volume}\"}} ")), "{text}");
 
+    // The first read resolved every episode a run before might have left open; those lines are all in by now.
+    while resolved.try_recv().is_ok() {}
     // The daily snapshots directory stops listing: the store pages, and resolves once it lists again.
     fs::remove_dir_all(&dirs.daily).unwrap();
     write(&dirs.daily, 1);

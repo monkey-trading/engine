@@ -128,9 +128,9 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 
 ## Plan each store's capacity
 
-The trading server keeps six stores on disk, and today three of them grow without a bound. This section
-sizes each from the soak's measurements, says what the server alerts on, and says what can and cannot be
-relied on in the figures it reports. **No store is bounded yet, and the history index fills a 1.92 TB drive
+The trading server keeps six stores on disk. This section sizes each from the soak's measurements, says what
+the server alerts on, and says what can and cannot be relied on in the figures it reports. **The log, the
+history index and the daily snapshots grow without a bound, and the history index alone fills a 1.92 TB drive
 within months.** Three changes are being built to bound the stores: the history index's growth (#1301),
 archiving the log to object storage (#1302) and tiering the daily snapshots (#1303). This plan is updated as
 each lands, and until then it is the planning basis for a node that must run for months.
@@ -166,21 +166,21 @@ A drive's usable size is below its label, since the filesystem keeps some of it,
 optimistic. The three guests of the test host share its two drives, so a table for one node does not hold
 for three. For months of operation on this hardware, the history index must be bounded before launch, and
 the data drive needs a plan before then: a shorter `history.retention`, which a release changes and which
-makes the node discard the index and rebuild it from the log, or a larger drive. Setting the retention is
-the owner's decision.
+makes the node discard the index and rebuild it from the log, or a larger drive.
 
 ### What the server alerts on
 
 Each store's bytes and each volume's free space are metrics, read every `alerts.storage.interval` (a
-minute). A volume is named by the stores on it joined with `+`, so on the production layout the volumes are
-`log` and `history_index+marks_cache+recovery_caches+daily_snapshots+alert_outbox`.
+minute). A volume is named by the stores the configuration puts on it, joined with `+`. The production template has
+the volumes `log` and `history_index+marks_cache+daily_snapshots+alert_outbox`, and `recovery_caches` joins
+the second once `[snapshots]` is set.
 
 | Metric | Meaning |
 | --- | --- |
 | `engine_store_bytes{store}` | Bytes the disk allocates to each store's files: `log`, `history_index`, `marks_cache`, `recovery_caches`, `daily_snapshots`, `alert_outbox` |
 | `engine_volume_total_bytes{volume}` | Size of each volume |
 | `engine_volume_free_bytes{volume}` | Bytes available to the server on each volume |
-| `engine_volume_growth_bytes_per_second{volume}` | Growth of used bytes over `alerts.storage.rate_window`, once a sixth of the window is sampled |
+| `engine_volume_growth_bytes_per_second{volume}` | Growth of used bytes over `alerts.storage.rate_window`, once the window is sampled |
 | `engine_volume_fill_seconds{volume}` | Seconds to full at that growth, present only while the volume grows |
 
 The server raises `disk_space_low` (Warning) and `disk_space_critical` (Critical) for a volume, and the
@@ -193,8 +193,8 @@ because a full volume can stall the page about itself on the alert outbox. The p
 | Free share of the volume below | 15% | 5% |
 | Projected to fill within | 14 days | 3 days |
 
-The projection reads the growth over the last six hours, so it follows the day's rhythm: a quiet weekend
-projects a longer time than the Monday that follows. A level clears only once its measure is a tenth past
+The projection reads the growth over the last six hours and makes none until the node has run that long, so
+it follows the day's rhythm: a quiet weekend projects a longer time than the Monday that follows. A level clears only once its measure is a tenth past
 the threshold.
 
 **The figures are the host's.** The host reports the size and free space of its disks, and its clock times

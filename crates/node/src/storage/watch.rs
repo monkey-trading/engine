@@ -26,7 +26,8 @@ enum Level {
 
 #[derive(Default)]
 struct VolumeState {
-    level: Level,
+    /// The level last announced, none before the first judgement.
+    level: Option<Level>,
     /// Used bytes at each sample within the rate window.
     samples: VecDeque<(Instant, u64)>,
 }
@@ -37,16 +38,21 @@ pub struct Watch {
     volumes: BTreeMap<String, VolumeState>,
     /// The stores, or `all`, with an open `storage_unreadable`.
     unreadable: BTreeSet<String>,
+    /// The stores, or `all`, judged readable or not at least once.
+    judged: BTreeSet<String>,
 }
 
 impl Watch {
+    /// A watch with no history: its first judgement of each volume and store announces its state either way, since a
+    /// run before it may have left an episode open.
     pub fn new(cfg: StorageSection) -> Self {
-        Self { cfg, volumes: BTreeMap::new(), unreadable: BTreeSet::new() }
+        Self { cfg, volumes: BTreeMap::new(), unreadable: BTreeSet::new(), judged: BTreeSet::new() }
     }
 
     /// Judges each volume of `reading` at `now` and sets its growth and projected fill as metrics. Raises each
     /// level's alert as a volume reaches it and resolves it as the volume leaves, and does the same for each store
-    /// that could or could not be read.
+    /// that could or could not be read. The first time it judges a volume or store it also resolves each alert the
+    /// volume or store is not at, which pages nothing unless an earlier run left that episode open.
     pub fn observe(&mut self, now: Instant, reading: &Reading, metrics: &Metrics) {
         for volume in &reading.volumes {
             self.judge(now, volume, reading, metrics);
@@ -55,12 +61,14 @@ impl Watch {
         for (store, error) in &reading.failures {
             failed.entry(store.name().to_owned()).or_insert(error.as_str());
         }
-        self.unreadable_now(failed);
+        let known = reading.stores.iter().map(|(store, _)| store.name().to_owned()).chain(["all".to_owned()]).collect();
+        self.settle(&failed, known);
     }
 
-    /// Records that no read finished: every store is unreadable until one does.
+    /// Records that no read finished, as `storage_unreadable` for `all`, which the next read that finishes resolves.
+    /// The stores' own episodes stay as they are, since nothing was read of them.
     pub fn unread(&mut self, why: &str) {
-        self.unreadable_now(BTreeMap::from([("all".to_owned(), why)]));
+        self.settle(&BTreeMap::from([("all".to_owned(), why)]), vec!["all".to_owned()]);
     }
 
     fn judge(&mut self, now: Instant, volume: &Volume, reading: &Reading, metrics: &Metrics) {
@@ -89,36 +97,40 @@ impl Watch {
                 metrics.storage.volume_fill_seconds.remove(&label);
             }
         }
-        let level = level(&self.cfg, volume, fill_secs, state.level);
-        if level != state.level {
+        let level = level(&self.cfg, volume, fill_secs, state.level.unwrap_or_default());
+        if state.level != Some(level) {
             let message = describe(volume, growth, fill_secs, reading);
             announce(&volume.name, state.level, level, &message);
-            state.level = level;
+            state.level = Some(level);
         }
     }
 
-    fn unreadable_now(&mut self, failed: BTreeMap<String, &str>) {
-        for (store, error) in &failed {
+    /// Raises `storage_unreadable` for each of `failed` not yet open, and resolves each of `known` that is not
+    /// failed and was open, or is judged for the first time.
+    fn settle(&mut self, failed: &BTreeMap<String, &str>, known: Vec<String>) {
+        for (store, error) in failed {
+            self.judged.insert(store.clone());
             if self.unreadable.insert(store.clone()) {
                 warn!(alert = "storage_unreadable", store = %store, "cannot read {store}'s size: {error}");
             }
         }
-        self.unreadable.retain(|store| {
-            let still = failed.contains_key(store);
-            if !still {
+        for store in known.into_iter().filter(|store| !failed.contains_key(store)) {
+            let was_open = self.unreadable.remove(&store);
+            if self.judged.insert(store.clone()) || was_open {
                 info!(alert_resolved = "storage_unreadable", store = %store, "{store}'s size reads again");
             }
-            still
-        });
+        }
     }
 }
 
-/// Growth of used bytes a second over the samples in the window, once a sixth of the window is sampled.
+/// Growth of used bytes a second over the samples in the window, once the window is full: a burst written in a
+/// window's first hours, such as an index catching up after a start, is not read as a steady rate. Samples older than
+/// the window are dropped, so the oldest is within one interval of its age when the window is full.
 fn growth(state: &VolumeState, now: Instant, cfg: &StorageSection) -> Option<f64> {
     let (first_at, first) = *state.samples.front()?;
     let (_, last) = *state.samples.back()?;
     let span = now.duration_since(first_at);
-    (span >= cfg.rate_window / 6).then(|| (last as f64 - first as f64) / span.as_secs_f64())
+    (span + cfg.interval >= cfg.rate_window).then(|| (last as f64 - first as f64) / span.as_secs_f64())
 }
 
 /// The level a volume is at, given the level it held: a held level needs its measure past the threshold by a tenth
@@ -169,16 +181,17 @@ fn describe(volume: &Volume, growth: Option<f64>, fill_secs: Option<f64>, readin
 }
 
 /// Raises the alert of each level `to` reaches and resolves that of each it leaves; the Warning stays open while the
-/// volume is Critical.
-fn announce(volume: &str, from: Level, to: Level, message: &str) {
-    match (from >= Level::Warning, to >= Level::Warning) {
-        (false, true) => warn!(alert = "disk_space_low", volume = %volume, "{message}"),
+/// volume is Critical. From no earlier level, it raises each level `to` reaches and resolves the others.
+fn announce(volume: &str, from: Option<Level>, to: Level, message: &str) {
+    let changed = |level| from.map(|from| from >= level) != Some(to >= level);
+    match (changed(Level::Warning), to >= Level::Warning) {
+        (true, true) => warn!(alert = "disk_space_low", volume = %volume, "{message}"),
         (true, false) => info!(alert_resolved = "disk_space_low", volume = %volume, "{message}"),
-        _ => {}
+        (false, _) => {}
     }
-    match (from >= Level::Critical, to >= Level::Critical) {
-        (false, true) => error!(alert = "disk_space_critical", volume = %volume, "{message}"),
+    match (changed(Level::Critical), to >= Level::Critical) {
+        (true, true) => error!(alert = "disk_space_critical", volume = %volume, "{message}"),
         (true, false) => info!(alert_resolved = "disk_space_critical", volume = %volume, "{message}"),
-        _ => {}
+        (false, _) => {}
     }
 }

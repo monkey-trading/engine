@@ -52,7 +52,7 @@ impl StorageMetrics {
         r.register(
             "volume_growth_bytes_per_second",
             "Growth of each volume's used bytes over alerts.storage.rate_window, negative while it shrinks; absent \
-         until a sixth of the window is sampled",
+         until the window is full",
             self.volume_growth_bytes_per_second.clone(),
         );
         r.register(
