@@ -24,11 +24,11 @@ their output call a running trading server a node.
   head over the instructions since the head, replays at most about five minutes of instructions, and
   sequences again; the API answers nothing meanwhile. On a book of 100,000 accounts, a debug build on
   a shared development machine did this in about 20 seconds from a cache five minutes of launch flow
-  old. Outside those instructions, the start reads only the log's newest segments, back to its last
-  checkpoint, so a restart takes no longer on an old log than on a new one. The account history index
-  resumes from the history the cache holds, which trails the cache's checkpoint when the index was
-  behind the log as the cache was taken. The start then also reads the instructions between them,
-  and the index takes them again after the start. History pages wait until it reaches the log's end.
+  old. The account history index resumes from the history the cache holds, which trails the cache's
+  checkpoint when the index was behind the log as the cache was taken: the start then also reads the
+  instructions between them, and the index takes them again after the start, so history pages wait
+  until it reaches the log's end. Outside those instructions, the start reads only the log's newest
+  segments, back to its last checkpoint, so a restart takes no longer on an old log than on a new one.
 - **Some starts replay much more.** A release without `[snapshots]`, as a first release is, replays
   every instruction in the log at each start. The replay checks the instructions' seals on a pool of
   threads, one per core unless `node.replay_workers` sets another number, so it runs faster on more
