@@ -53,11 +53,13 @@ async fn dev_scenario_history_retention() {
         println!("SCENARIO retention={retention} index_bytes={} log_bytes={}", sizes[retention].0, sizes[retention].1);
     }
     // The log grows by the same deposits each retention, while the index, once its first events expire, holds
-    // one retention's of them: between the third retention and the last, the log nearly doubles while the
-    // index's file grows by less than half.
-    let (settled, last) = (sizes[2], sizes[RETENTIONS - 1]);
-    assert!(last.1 > settled.1 * 3 / 2, "the log keeps growing: {sizes:?}");
-    assert!(last.0 < settled.0 * 3 / 2, "the index's file stays bounded by its retention: {sizes:?}");
+    // one retention's of them. Its file rises and falls with collection and the free pages it keeps, so the
+    // largest it reaches in the later retentions is held to the largest of the second and third: from the third
+    // retention to the last the log doubles, while the index's high-water mark grows by under a quarter.
+    let high = |range: std::ops::Range<usize>| sizes[range].iter().map(|(index, _)| *index).max().unwrap();
+    let (settled, later) = (high(1..3), high(3..RETENTIONS));
+    assert!(sizes[RETENTIONS - 1].1 > sizes[2].1 * 3 / 2, "the log keeps growing: {sizes:?}");
+    assert!(later < settled + settled / 4, "the index's file stays bounded by its retention: {sizes:?}");
     let page = page(&node).await;
     let begins = newest_ts(&node.cfg.node.log_dir) - Millis::try_from(RETENTION.as_millis()).unwrap();
     assert_eq!(page.retained_from_ms, Some(begins), "the page states where its history begins");

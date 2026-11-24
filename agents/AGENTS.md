@@ -1454,8 +1454,14 @@ Run from the repo root:
   `HISTORY_SCALE_PASSES` reads the log that many times, each pass's seqs and times moved past the last's,
   `HISTORY_SCALE_RETENTION_MS` sets a new store's retention so expiry runs at that window's size, it pins the
   head as two recovery caches five minutes apart do (`HISTORY_SCALE_CACHE_INTERVAL_MS`,
-  `HISTORY_SCALE_CACHE_RETAIN`), and `HISTORY_SCALE_BREAKDOWN` prints each table's pages and the values and
-  nodes by kind at the end
+  `HISTORY_SCALE_CACHE_RETAIN`), `HISTORY_SCALE_FREE_SHARE` sets the share of pages collection keeps free,
+  `HISTORY_SCALE_GROW_BATCH` the commands an update takes before the probes, `HISTORY_SCALE_ROLLOVER_ROWS` and
+  `HISTORY_SCALE_ROLLOVER_EVERY_MS` synthesise a rollover's financing rows, and `HISTORY_SCALE_BREAKDOWN` prints
+  each table's pages and the values and nodes by kind at the end; and the size of the index without
+  `[snapshots]` on a recorded log: `HISTORY_BENCH_LOG=<log dir> HISTORY_LEGACY_STORE=<new index file>
+  HISTORY_LEGACY_RETENTION_MS=<ms> cargo test -p engine-node --lib history::store::tests::index_size_on_a_recorded_log
+  -- --ignored --nocapture`, reading the log `HISTORY_LEGACY_PASSES` (1) times and printing every
+  `HISTORY_LEGACY_STEP` (204,800) commands its rate, events held, bytes and bytes an event held
 - A drained stop's final capture with the history index lagging at a multi-GB size:
   `FINAL_CAPTURE_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::final_capture::final_capture_bench -- --ignored --nocapture` writes into `<dir>`, new

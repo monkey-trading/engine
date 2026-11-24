@@ -192,10 +192,10 @@ impl Store {
     /// have collected that root's data: the writer kept the root pinned while it wrote them. Every
     /// commit writes nodes at its version, so a store with none after `root` is left untouched;
     /// otherwise the nodes go by a range delete, and each value written after `root` by the leaf node
-    /// its write gave it at its own version (`batch::persist`), which names its key.
+    /// its write gave it at its own version (`batch::persist`), which names its key. A later node that does
+    /// not decode names no key, so the later values then go by a scan of every value.
     /// Error cases:
-    /// - writes are unauthorized, another in-process head exists, a later node is malformed, or storage or
-    ///   durability fails
+    /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {
         root.validate()?;
         let _writer = self.inner.writer.lock().map_err(|_| anyhow::anyhow!("writer poisoned"))?;
@@ -219,16 +219,24 @@ impl Store {
             tx.rollback()?;
             return self.publish(root);
         }
+        let mut undecoded = false;
         {
             let mut leaves = tx.prepare("SELECT data FROM nodes WHERE space = ?1 AND version > ?2")?;
             let mut rows = leaves.query(rusqlite::params![space, after])?;
             let mut delete =
                 tx.prepare_cached("DELETE FROM value_rows WHERE space = ?1 AND key = ?2 AND version > ?3")?;
             while let Some(row) = rows.next()? {
-                if let Some(key) = codec::leaf_key(row.get_ref(0)?.as_blob()?)? {
-                    delete.execute(rusqlite::params![space, &key[..], after])?;
+                match codec::leaf_key(row.get_ref(0)?.as_blob()?) {
+                    Ok(Some(key)) => {
+                        delete.execute(rusqlite::params![space, &key[..], after])?;
+                    }
+                    Ok(None) => {}
+                    Err(_) => undecoded = true,
                 }
             }
+        }
+        if undecoded {
+            tx.execute("DELETE FROM value_rows WHERE space = ?1 AND version > ?2", rusqlite::params![space, after])?;
         }
         tx.execute("DELETE FROM nodes WHERE space = ?1 AND version > ?2", rusqlite::params![space, after])?;
         if let Err(error) = tx.commit().map_err(anyhow::Error::from).and_then(|()| self.sync()) {

@@ -5,7 +5,6 @@
 use std::fs;
 use std::ops::AddAssign;
 use std::path::{Path, PathBuf};
-
 use std::sync::Arc;
 
 use engine_core::Fixed;
@@ -239,12 +238,15 @@ impl Written {
             })
             .expect("dbstat rows");
         rows.for_each(|row| println!("{}", row.expect("a dbstat row")));
-        let kinds = |sql: &str, label: &str| {
+        // Each kind by its stored form: a header (`model::Stored`) or event whole in its leaf after a 0 byte, at
+        // its fixed length or by its JSON's first field; a receipt (`Receipt::encode`) by the namespace it starts
+        // with; the collection queue by its JSON.
+        let kinds = |sql: &str, label: &str, params: &[&dyn rusqlite::ToSql]| {
             let mut statement = self.conn.prepare(sql).expect(label);
             let rows = statement
-                .query_map([], |row| {
+                .query_map(params, |row| {
                     Ok(format!(
-                        "{label} kind={} rows={} bytes={} key_bytes={}",
+                        "{label} kind={} rows={} data_bytes={} key_bytes={}",
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?,
                         row.get::<_, i64>(2)?,
@@ -257,23 +259,25 @@ impl Written {
         kinds(
             r#"SELECT CASE
                  WHEN substr(data, 1, 1) = x'00' THEN CASE
-                     WHEN CAST(substr(data, 2, 7) AS TEXT) = '{"row":' THEN 'queue_item'
-                     WHEN CAST(substr(data, 2, 11) AS TEXT) = '{"account":' THEN 'rank'
-                     WHEN CAST(substr(data, 2, 14) AS TEXT) = '{"generation":' THEN 'list'
+                     WHEN length(data) = 25 THEN 'list'
+                     WHEN length(data) = 54 THEN 'queue_item'
+                     WHEN length(data) = 58 THEN 'rank'
                      WHEN CAST(substr(data, 2, 10) AS TEXT) = '{"format":' THEN 'state'
                      WHEN CAST(substr(data, 2, 8) AS TEXT) = '{"type":' THEN 'event'
                      ELSE 'other_whole' END
-                 WHEN CAST(substr(data, 1, 7) AS TEXT) = '{"old":' THEN 'receipt'
+                 WHEN substr(data, 1, 32) = ?1 THEN 'receipt'
                  WHEN CAST(substr(data, 1, 6) AS TEXT) = '{"lo":' THEN 'collection_queue'
-                 ELSE 'other' END AS kind, count(*), sum(length(data)), count(*) * 72
+                 ELSE 'other' END AS kind, count(*), sum(length(data)), sum(length(key))
              FROM value_rows GROUP BY kind"#,
             "HISTORY_SCALE_VALUES",
+            &[&&self.namespace[..]],
         );
         kinds(
             "SELECT CASE substr(data, 1, 1) WHEN x'01' THEN 'internal' WHEN x'02' THEN 'leaf' WHEN x'00' THEN 'null'
-                 ELSE 'json' END AS kind, count(*), sum(length(data)), sum(length(path)) + count(*) * 40
+                 ELSE 'json' END AS kind, count(*), sum(length(data)), sum(length(path))
              FROM nodes GROUP BY kind",
             "HISTORY_SCALE_NODES",
+            &[],
         );
     }
 }
