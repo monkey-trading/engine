@@ -111,12 +111,14 @@ pub(crate) fn check_source(file: &CarryFile, (seq, root): (u64, B256), expected:
 }
 
 /// Holds until the chain shows the move done and the carry file at `path` reads, raising Warning `carry_waiting`
-/// with what is missing, rechecking every `RECHECK`; returns the state and the file.
+/// with what is missing, rechecking every `RECHECK`; returns the state and the file. Each read of the chain is held
+/// to `check_kept` at once, as waiting for a move that the configured contracts can never complete is no wait.
 /// Error cases:
 /// - the file is there but does not read as a carry file
+/// - a read of the chain shows the configured `registry` or minter are not the ones the move keeps (`check_kept`)
 pub(crate) async fn hold<F, R>(
     read_chain: R,
-    expected: &Expected,
+    (expected, registry): (&Expected, Address),
     path: &Path,
 ) -> anyhow::Result<(MoveState, CarryFile)>
 where
@@ -127,6 +129,7 @@ where
     loop {
         let waiting = match read_chain().await {
             Ok(state) => {
+                check_kept(&state, registry)?;
                 let unmet = unmet(&state, expected);
                 if unmet.is_empty() && path.exists() {
                     let (file, sha256) = read(path)?;
@@ -178,9 +181,8 @@ pub(crate) async fn carried_parts(
     };
     let quorum = ContractQuorum::connect(&cfg.custody, "carry")?;
     let read_chain = || chain::read(quorum.quorum(), contracts, (expected.chain_id, evm.usdc));
-    let (state, file) = hold(read_chain, &expected, &carry.file).await.inspect_err(refused)?;
+    let (state, file) = hold(read_chain, (&expected, contracts.registry), &carry.file).await.inspect_err(refused)?;
     let at = state.source_checkpoint.ok_or_else(|| anyhow!("held until the source vault holds a checkpoint"))?;
-    check_kept(&state, contracts.registry).inspect_err(refused)?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
     let now = clock.now_ms();

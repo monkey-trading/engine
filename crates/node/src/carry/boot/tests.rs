@@ -75,6 +75,21 @@ fn a_registry_the_source_vault_does_not_read_or_a_minter_of_another_token_is_ref
     assert!(format!("{refused:#}").contains("the source vault reads registry"), "{refused:#}");
 }
 
+/// A configured registry the source vault does not read, or a minter of another token, is refused at the first read
+/// of a move that is yet to be done, as no wait would end it, and not held under `carry_waiting`.
+#[tokio::test(start_paused = true)]
+async fn a_start_refuses_the_wrong_registry_or_minter_while_it_holds() {
+    let dir = scratch_dir("carry-hold-wrong");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("carry.json");
+    let waiting = MoveState { source_signer: Address::repeat_byte(1), registry_vault: SOURCE, ..done() };
+    let wrong_registry = hold(|| async { Ok(waiting) }, (&expected(), Address::repeat_byte(0x78)), &path).await;
+    assert!(format!("{:#}", wrong_registry.unwrap_err()).contains("the source vault reads registry"));
+    let other = MoveState { minter_token: Address::repeat_byte(0x66), ..waiting };
+    let wrong_minter = hold(|| async { Ok(other) }, (&expected(), REGISTRY), &path).await;
+    assert!(format!("{:#}", wrong_minter.unwrap_err()).contains("names another minter"));
+}
+
 #[test]
 fn a_file_carries_only_from_the_source_vaults_last_accepted_checkpoint() {
     let accepted = CarrySource { chain_id: 42_161, vault: AccountId(SOURCE.into_array()), seq: 70, root: ROOT };
@@ -108,7 +123,7 @@ async fn a_start_holds_until_the_move_is_done_and_the_file_is_there() {
         async move { if n == 1 { Err(anyhow!("no quorum")) } else { Ok(state) } }
     };
     let started = tokio::time::Instant::now();
-    let (state, read_back) = hold(read_chain, &expected(), &path).await.unwrap();
+    let (state, read_back) = hold(read_chain, (&expected(), REGISTRY), &path).await.unwrap();
     assert_eq!((state, read_back.source), (done(), source));
     assert_eq!(reads.get(), 4);
     assert_eq!(started.elapsed(), 3 * RECHECK);
@@ -120,7 +135,7 @@ async fn a_start_refuses_a_file_that_is_not_a_carry_file() {
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("carry.json");
     fs::write(&path, b"{}").unwrap();
-    let error = hold(|| async { Ok(done()) }, &expected(), &path).await.unwrap_err();
+    let error = hold(|| async { Ok(done()) }, (&expected(), REGISTRY), &path).await.unwrap_err();
     assert!(format!("{error:#}").contains("is not a carry file"), "{error:#}");
 }
 

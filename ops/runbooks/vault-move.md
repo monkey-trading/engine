@@ -431,8 +431,9 @@ providers, and holds under the Warning `carry_waiting` until all of these hold:
 - `MonkeyMinter` follows the launch vault;
 - the carry file is at `[genesis.carry] file`.
 
-It then checks that the configuration's registry is the one the alpha vault reads, whose staking
-contract the alpha mirrored, that the minter mints the token the staking contract holds, that the carry file's
+At every read, before it waits, it checks that the configuration's registry is the one the alpha vault reads, whose staking
+contract the alpha mirrored, and that the minter mints the token the staking contract holds, so a wrong address
+refuses at once instead of waiting. Once every condition holds it checks that the carry file's
 source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
 in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
 is claimable from that checkpoint.
