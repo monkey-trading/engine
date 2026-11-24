@@ -68,11 +68,14 @@ async fn dev_scenario_a_volume_past_its_threshold_alerts_and_an_unreadable_store
     assert_eq!((unreadable["alert"].as_str(), unreadable["store"].as_str()), ("storage_unreadable", "daily_snapshots"));
     fs::remove_file(&dirs.daily).unwrap();
     fs::create_dir(&dirs.daily).unwrap();
-    let resolution = next(&mut resolved).await;
-    assert_eq!(
-        (resolution["alert_resolved"].as_str(), resolution["store"].as_str()),
-        ("storage_unreadable", "daily_snapshots")
-    );
+    // The window is a few ticks, so the volume's own alerts the first growth reading resolves may come first.
+    let resolution = loop {
+        let line = next(&mut resolved).await;
+        if line["alert_resolved"] == "storage_unreadable" {
+            break line;
+        }
+    };
+    assert_eq!(resolution["store"], "daily_snapshots");
     watcher.abort();
 }
 

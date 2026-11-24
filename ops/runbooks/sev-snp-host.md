@@ -771,8 +771,8 @@ trading server from outside the guest needs the load test to target a trading se
 which it does not do yet.
 
 The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. Give it a
-list with this one line, and make its data disk 100G, since a run writes about 23 GB of history index
-and 6 GB of log, as [Plan each store's capacity](#plan-each-stores-capacity) gives:
+list with this one line, and make its data disk 600G, since its caches and history index can grow
+by about 400 GB in a run:
 
 ```text
 soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak

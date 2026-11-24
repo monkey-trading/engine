@@ -60,7 +60,7 @@ impl Watch {
     /// left that episode open.
     pub fn observe(&mut self, now: Instant, reading: &Reading, metrics: &Metrics) {
         for volume in &reading.volumes {
-            self.judge(now, volume, reading, metrics);
+            self.judge(now, volume, metrics);
         }
         let mut failed = BTreeMap::new();
         for (store, error) in &reading.failures {
@@ -78,7 +78,7 @@ impl Watch {
 
     /// Records `volume`'s used bytes at `now`, sets its growth and projected fill as metrics, and announces its level
     /// when it changed.
-    fn judge(&mut self, now: Instant, volume: &Volume, reading: &Reading, metrics: &Metrics) {
+    fn judge(&mut self, now: Instant, volume: &Volume, metrics: &Metrics) {
         let label = VolumeLabel { volume: volume.name.clone() };
         let state = self.volumes.entry(volume.name.clone()).or_default();
         let used = volume.total_bytes.saturating_sub(volume.free_bytes);
@@ -109,7 +109,7 @@ impl Watch {
         let level = level(&self.cfg, volume, fill_secs, state.level);
         let reconcile = !state.reconciled && growth.is_some();
         if level != state.level || reconcile {
-            let message = describe(volume, growth, fill_secs, reading);
+            let message = describe(volume, growth, fill_secs);
             announce(&volume.name, state.level, level, &message);
             if reconcile {
                 resolve_above(&volume.name, level, &message);
@@ -167,7 +167,7 @@ fn level(cfg: &StorageSection, volume: &Volume, fill_secs: Option<f64>, held: Le
 }
 
 /// The alert line's text: where the volume stands, what it is growing at, and what is on it.
-fn describe(volume: &Volume, growth: Option<f64>, fill_secs: Option<f64>, reading: &Reading) -> String {
+fn describe(volume: &Volume, growth: Option<f64>, fill_secs: Option<f64>) -> String {
     let share = 100.0 * volume.free_bytes as f64 / volume.total_bytes as f64;
     let trend = match (growth, fill_secs) {
         (_, Some(secs)) => format!(
@@ -178,10 +178,9 @@ fn describe(volume: &Volume, growth: Option<f64>, fill_secs: Option<f64>, readin
         (Some(_), None) => "not growing over the sampled window".to_owned(),
         (None, _) => "growth not yet sampled".to_owned(),
     };
-    let stores = reading
-        .stores
+    let stores = volume
+        .holds
         .iter()
-        .filter(|(store, _)| volume.stores.contains(store))
         .map(|(store, bytes): &(Store, u64)| format!("{} {:.1} GiB", store.name(), *bytes as f64 / GIB))
         .collect::<Vec<_>>()
         .join(", ");

@@ -1546,8 +1546,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (store) (engine_store_bytes{instance=~\"$instance\"})",
-          "legendFormat": "{{store}}",
+          "expr": "max by (instance, store) (engine_store_bytes{instance=~\"$instance\"})",
+          "legendFormat": "{{instance}} {{store}}",
           "refId": "A"
         }
       ],
@@ -1600,8 +1600,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (volume) (engine_volume_free_bytes{instance=~\"$instance\"})",
-          "legendFormat": "{{volume}} free",
+          "expr": "max by (instance, volume) (engine_volume_free_bytes{instance=~\"$instance\"})",
+          "legendFormat": "{{instance}} {{volume}} free",
           "refId": "A"
         },
         {
@@ -1609,8 +1609,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (volume) (engine_volume_total_bytes{instance=~\"$instance\"})",
-          "legendFormat": "{{volume}} total",
+          "expr": "max by (instance, volume) (engine_volume_total_bytes{instance=~\"$instance\"})",
+          "legendFormat": "{{instance}} {{volume}} total",
           "refId": "B"
         }
       ],
@@ -1663,8 +1663,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "max by (volume) (engine_volume_growth_bytes_per_second{instance=~\"$instance\"})",
-          "legendFormat": "{{volume}}",
+          "expr": "max by (instance, volume) (engine_volume_growth_bytes_per_second{instance=~\"$instance\"})",
+          "legendFormat": "{{instance}} {{volume}}",
           "refId": "A"
         }
       ],
@@ -1717,8 +1717,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "min by (volume) (engine_volume_fill_seconds{instance=~\"$instance\"}) / 86400",
-          "legendFormat": "{{volume}}",
+          "expr": "min by (instance, volume) (engine_volume_fill_seconds{instance=~\"$instance\"}) / 86400",
+          "legendFormat": "{{instance}} {{volume}}",
           "refId": "A"
         }
       ],

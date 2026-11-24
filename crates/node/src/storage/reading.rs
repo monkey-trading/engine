@@ -18,7 +18,10 @@ use crate::storage::layout::{Layout, Store};
 #[derive(Debug, PartialEq, Eq)]
 pub struct Volume {
     pub name: String,
+    /// The stores whose first directory is on it, which name it.
     pub stores: Vec<Store>,
+    /// The bytes each store's files on it take, a store's other directories included.
+    pub holds: Vec<(Store, u64)>,
     pub total_bytes: u64,
     /// What the node may still write: the host's available blocks, which leave out the filesystem's own reserve.
     pub free_bytes: u64,
@@ -34,40 +37,61 @@ pub struct Reading {
     pub failures: Vec<(Store, String)>,
 }
 
+/// What a read has found of one device: the stores whose first directory is on it, the bytes of each store's files on
+/// it, and its size and available bytes, none when they could not be read.
+#[derive(Default)]
+pub(super) struct Device {
+    pub(super) stores: Vec<Store>,
+    pub(super) holds: Vec<(Store, u64)>,
+    pub(super) space: Option<(u64, u64)>,
+}
+
 impl Layout {
     /// Reads every store and volume. A store whose directory does not exist yet holds nothing. A store with a
-    /// directory that cannot be read has no size in the reading, so its metric keeps the last size read, and a read
-    /// in which any volume cannot be found reports no volumes, since a volume's name is the stores on it.
+    /// directory that cannot be read has no size in the reading, so its metric keeps the last size read. A volume
+    /// whose size cannot be read is left out, and a directory whose device cannot be found leaves out every volume,
+    /// since its store might name one.
     pub fn read(&self) -> Reading {
         let mut reading = Reading::default();
-        let mut devices: BTreeMap<u64, (Vec<Store>, u64, u64)> = BTreeMap::new();
-        let mut volume_unread = false;
+        let mut devices: BTreeMap<u64, Device> = BTreeMap::new();
+        let mut device_unread = false;
         for (store, dirs) in self.stores() {
             let mut bytes = 0u64;
             let mut readable = true;
-            // A store sits on the volume of its first directory; the others only add to its bytes.
+            // A store sits on the volume of its first directory; its others only add their bytes to the volume
+            // they are on.
             for (index, (dir, pick)) in dirs.into_iter().enumerate() {
                 let walked = if store == Store::Log { self.walk_log(dir) } else { walk(dir, pick, true) };
-                match walked {
-                    Ok(found) => bytes = bytes.saturating_add(found),
+                let found = match walked {
+                    Ok(found) => found,
                     Err(error) => {
                         readable = false;
                         reading.failures.push((store, format!("reading {}: {error}", dir.display())));
+                        continue;
                     }
-                }
-                if index > 0 {
-                    continue;
-                }
-                match volume_of(dir) {
-                    Ok((device, total, free)) => {
-                        let (stores, ..) = devices.entry(device).or_insert((Vec::new(), total, free));
-                        if !stores.contains(&store) {
-                            stores.push(store);
-                        }
-                    }
+                };
+                bytes = bytes.saturating_add(found);
+                let device = match device_of(dir) {
+                    Ok(device) => devices.entry(device).or_default(),
                     Err(error) => {
-                        volume_unread = true;
+                        device_unread = true;
                         reading.failures.push((store, format!("reading the volume of {}: {error}", dir.display())));
+                        continue;
+                    }
+                };
+                match device.holds.iter_mut().find(|(held, _)| *held == store) {
+                    Some((_, held)) => *held = held.saturating_add(found),
+                    None => device.holds.push((store, found)),
+                }
+                if index == 0 {
+                    device.stores.push(store);
+                }
+                if device.space.is_none() {
+                    match space_of(dir) {
+                        Ok(space) => device.space = Some(space),
+                        Err(error) => reading
+                            .failures
+                            .push((store, format!("reading the space of the volume of {}: {error}", dir.display()))),
                     }
                 }
             }
@@ -75,7 +99,7 @@ impl Layout {
                 reading.stores.push((store, bytes));
             }
         }
-        if !volume_unread {
+        if !device_unread {
             reading.volumes = name_volumes(devices);
         }
         reading
@@ -148,14 +172,16 @@ fn gauge(bytes: u64) -> i64 {
     i64::try_from(bytes).unwrap_or(i64::MAX)
 }
 
-/// The volumes of the devices the stores' first directories are on, each named by its first store, in `Store` order, so
-/// no two volumes share a name.
-pub(super) fn name_volumes(devices: BTreeMap<u64, (Vec<Store>, u64, u64)>) -> Vec<Volume> {
+/// The volumes of the devices whose size was read and that a store's first directory is on, each named by its first
+/// store, in `Store` order, so no two volumes share a name.
+pub(super) fn name_volumes(devices: BTreeMap<u64, Device>) -> Vec<Volume> {
     let mut volumes: Vec<Volume> = devices
         .into_values()
-        .map(|(mut stores, total_bytes, free_bytes)| {
+        .filter(|device| !device.stores.is_empty())
+        .filter_map(|Device { mut stores, holds, space }| {
+            let (total_bytes, free_bytes) = space?;
             stores.sort();
-            Volume { name: stores[0].name().to_owned(), stores, total_bytes, free_bytes }
+            Some(Volume { name: stores[0].name().to_owned(), stores, holds, total_bytes, free_bytes })
         })
         .collect();
     volumes.sort_by(|a, b| a.stores.cmp(&b.stores));
@@ -202,13 +228,18 @@ fn entry_bytes(path: &Path) -> std::io::Result<u64> {
     }
 }
 
-/// The device, size and available bytes of the volume a write to `dir` lands on: its nearest existing ancestor's.
+/// The device a write to `dir` lands on: its nearest existing ancestor's.
 /// Error cases:
-/// - the volume's metadata or statistics cannot be read
-fn volume_of(dir: &Path) -> std::io::Result<(u64, u64, u64)> {
-    let existing = dir.ancestors().find(|ancestor| ancestor.exists()).unwrap_or(dir);
-    let device = fs::metadata(existing)?.dev();
-    let stats = statvfs(existing).map_err(std::io::Error::from)?;
+/// - the metadata cannot be read
+fn device_of(dir: &Path) -> std::io::Result<u64> {
+    Ok(fs::metadata(existing(dir))?.dev())
+}
+
+/// The size and available bytes of the volume a write to `dir` lands on.
+/// Error cases:
+/// - the volume's statistics cannot be read, or it reports no size
+fn space_of(dir: &Path) -> std::io::Result<(u64, u64)> {
+    let stats = statvfs(existing(dir)).map_err(std::io::Error::from)?;
     // The counts' widths differ by platform; `as` widens them all to u64.
     let block = stats.fragment_size() as u64;
     let bytes = |count: u64| count.saturating_mul(block);
@@ -216,5 +247,10 @@ fn volume_of(dir: &Path) -> std::io::Result<(u64, u64, u64)> {
     if total == 0 {
         return Err(std::io::Error::other("the filesystem reports no size"));
     }
-    Ok((device, total, bytes(stats.blocks_available() as u64)))
+    Ok((total, bytes(stats.blocks_available() as u64)))
+}
+
+/// `dir`, or its nearest existing ancestor.
+fn existing(dir: &Path) -> &Path {
+    dir.ancestors().find(|ancestor| ancestor.exists()).unwrap_or(dir)
 }
