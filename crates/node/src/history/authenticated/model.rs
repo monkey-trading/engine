@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail, ensure};
 use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
 
+use crate::authenticated::Fields;
 use crate::history::authenticated::state::State;
 use crate::history::{HistoryEvent, KINDS};
 use crate::log::Offset;
@@ -66,9 +67,6 @@ pub(super) struct Queued {
     pub by_kind: Position,
 }
 
-/// Reads a stored value's fixed-width fields in order.
-struct Fields<'a>(&'a [u8]);
-
 impl Stored for Metadata {
     /// Its generation, lo and hi.
     fn encode(&self) -> Vec<u8> {
@@ -78,7 +76,7 @@ impl Stored for Metadata {
     /// Error cases:
     /// - the bytes are not exactly three counters
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut fields = Fields(bytes);
+        let mut fields = Fields::new(bytes);
         let metadata = Self { generation: fields.u64()?, lo: fields.u64()?, hi: fields.u64()? };
         fields.end()?;
         Ok(metadata)
@@ -102,10 +100,10 @@ impl Stored for Row {
     /// Error cases:
     /// - the bytes are not exactly one row's fields
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut fields = Fields(bytes);
+        let mut fields = Fields::new(bytes);
         let row = Self {
             account: AccountId(fields.take()?),
-            kind: fields.take::<1>()?[0],
+            kind: fields.byte()?,
             cursor: Offset { seq: fields.u64()?, index: u32::from_be_bytes(fields.take()?) },
             ts: i64::from_be_bytes(fields.take()?),
             payload: Payload { length: fields.u64()?, chunks: fields.u64()? },
@@ -131,10 +129,10 @@ impl Stored for Queued {
     /// Error cases:
     /// - the bytes are not exactly one queue item's fields
     fn decode(bytes: &[u8]) -> Result<Self> {
-        let mut fields = Fields(bytes);
+        let mut fields = Fields::new(bytes);
         let queued = Self {
             account: AccountId(fields.take()?),
-            kind: fields.take::<1>()?[0],
+            kind: fields.byte()?,
             all: Position { generation: fields.u64()?, rank: fields.u64()? },
             by_kind: Position { generation: fields.u64()?, rank: fields.u64()? },
         };
@@ -214,33 +212,6 @@ impl Queued {
     /// Identifies the individual-kind list.
     pub fn kind_list(&self) -> ListId {
         ListId { account: self.account, kind: Some(self.kind) }
-    }
-}
-
-impl Fields<'_> {
-    /// The next `N` bytes.
-    /// Error cases:
-    /// - fewer are left
-    fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
-        ensure!(self.0.len() >= N, "short stored history value");
-        let (taken, rest) = self.0.split_at(N);
-        self.0 = rest;
-        Ok(taken.try_into()?)
-    }
-
-    /// The next big-endian `u64`.
-    /// Error cases:
-    /// - fewer than eight bytes are left
-    fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_be_bytes(self.take()?))
-    }
-
-    /// Checks no byte is left.
-    /// Error cases:
-    /// - a byte is left
-    fn end(&self) -> Result<()> {
-        ensure!(self.0.is_empty(), "bytes past a stored history value");
-        Ok(())
     }
 }
 

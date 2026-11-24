@@ -129,6 +129,29 @@ fn discarding_unsigned_versions_survives_a_damaged_later_node() -> Result<()> {
     Ok(())
 }
 
+/// A host that rewrites the later nodes into ones that decode, here empty ones, hides the later values from the
+/// discard. None of them is served, and the next write at their version fails rather than build on them.
+#[test]
+fn a_value_hidden_from_the_discard_fails_the_next_write_and_is_never_served() -> Result<()> {
+    let (dir, store) = fresh()?;
+    let signed = store.update(&Root::empty([24; 32]), vec![put(b"a", b"signed")])?;
+    store.update(&signed, vec![put(b"a", b"unsigned"), put(b"b", b"unsigned")])?;
+    drop(store);
+    let after = signed.version.map_or(-1, |v| v as i64);
+    raw(&dir)?.execute("UPDATE nodes SET data = x'00' WHERE version > ?1", [after])?;
+    let reopened = Store::open_existing(dir.path.join("store.sqlite"))?;
+    reopened.enable_writes()?;
+    reopened.discard_after(&signed)?;
+    let hidden: i64 =
+        raw(&dir)?.query_row("SELECT COUNT(*) FROM value_rows WHERE version > ?1", [after], |row| row.get(0))?;
+    assert!(hidden > 0, "the rewritten nodes hid the later values");
+    assert_eq!(reopened.read(&signed, b"a")?, Some(b"signed".to_vec()), "the signed root reads as signed");
+    assert_eq!(reopened.read(&signed, b"b")?, None);
+    assert!(reopened.update(&signed, vec![put(b"b", b"resumed")]).is_err(), "the next write meets a hidden value");
+    assert_eq!(reopened.read(&signed, b"a")?, Some(b"signed".to_vec()), "the failed write changed nothing");
+    Ok(())
+}
+
 /// Restart readiness must not grow with retained values: a clean restart leaves the store
 /// untouched, and a crash restart reads only the later versions' nodes, by range on their key, and
 /// deletes each later value by its own key.

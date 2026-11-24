@@ -16,6 +16,8 @@ mod batch;
 mod blobs;
 mod codec;
 mod db;
+mod fields;
+pub(crate) use fields::Fields;
 mod geometry;
 mod reader;
 mod receipts;
@@ -26,13 +28,15 @@ pub use versions::{Lease, Session};
 mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
-/// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
-/// 3 stores each node as its JSON or as upstream's compact borsh form under its compact path key, each
-/// retirement receipt in its fixed-width form, and every row under its namespace's small space number (`db`);
-/// logical format 2 stores each value as a descriptor and chunks or, up to one chunk, whole in its own leaf. A
-/// first byte tells each pair of forms apart, and this release reads all four. A release before packed format 3
-/// refuses this store's schema at open, as this one refuses an earlier store's, and its recovery falls back as
-/// for any unreadable cache, rebuilding from the log.
+/// The packed representation and upstream proof interpretation bound by cache signatures. Packed format 2
+/// stores each node as its JSON or as upstream's compact borsh form, and logical format 2 each value as a
+/// descriptor and chunks or, up to one chunk, whole in its own leaf; a first byte tells each pair apart, and
+/// this release reads all four. How a file keys its rows and encodes its retirement receipts is its schema
+/// version (`db`), which every open checks: a release refuses a file of another schema version, or a node or
+/// value form it does not read at the first one it meets, and its recovery falls back as for any unreadable
+/// cache, rebuilding from the log. A schema version leaves the codec as it is, so a cache signed by a release
+/// of another schema version still names the stores it keeps, and either release starts over the other's
+/// cache directory and retires those stores as it prunes the caches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -48,7 +52,7 @@ pub enum Proof {
     Jmt012Sha256,
 }
 
-pub const CODEC: Codec = Codec { packed_format: 3, logical_format: 2, proof: Proof::Jmt012Sha256 };
+pub const CODEC: Codec = Codec { packed_format: 2, logical_format: 2, proof: Proof::Jmt012Sha256 };
 
 // Physical representation bounds; logical keys, values, changes and lease counts have no such cap.
 pub const CHUNK_BYTES: usize = 64 * 1024;

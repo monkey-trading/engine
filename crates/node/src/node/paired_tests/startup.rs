@@ -218,6 +218,57 @@ async fn history_retirement_keeps_pace_while_every_checkpoint_is_captured() {
     node.stop().await;
 }
 
+/// A cache directory a release of the previous store schema version (3) wrote: its caches and heads still verify, but
+/// no store they name opens, so the node rebuilds from the log, serves complete history, publishes caches of its own
+/// that the next start resumes from, and deletes the earlier stores once it has pruned every cache naming them.
+#[tokio::test]
+async fn caches_of_another_store_schema_version_rebuild_from_the_log_and_retire() {
+    let node = Node::start(configuration("paired-other-schema")).await.unwrap();
+    for n in 0..10 {
+        node.submit(deposit(2, &format!("schema-{n}"))).await;
+        node.history_caught_up().await;
+    }
+    let (cfg, reader) = node.stop().await;
+    drop(reader);
+    let dir = cfg.snapshots.as_ref().unwrap().dir.clone();
+    let earlier = generation_files(&dir);
+    assert!(!earlier.is_empty(), "the node kept its stores");
+    for path in &earlier {
+        rusqlite::Connection::open(path).unwrap().pragma_update(None, "user_version", 3).unwrap();
+    }
+
+    let node = Node::start(cfg).await.unwrap();
+    assert_eq!(node.snapshot_seq, None, "no cache's stores open, so recovery replays the whole log");
+    // Every capture is a checkpoint after the rebuild; `retain` of them prunes every earlier cache.
+    for n in 0..20 {
+        node.submit(deposit(2, &format!("rebuilt-{n}"))).await;
+        node.history_caught_up().await;
+    }
+    let (cfg, reader) = node.stop_after_signing("after-other-schema").await;
+    let query = || PageQuery { account: TRADER, kind: None, before: None, after: None, limit: 200 };
+    assert_eq!(reader.page(query()).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
+    drop(reader);
+    assert!(earlier.iter().all(|path| !path.exists()), "the earlier stores are deleted with their caches");
+
+    let node = Node::start(cfg).await.unwrap();
+    assert!(node.snapshot_seq.is_some(), "the next start resumes from a cache of its own");
+    let (cfg, reader) = node.stop().await;
+    assert_eq!(reader.page(query()).await.unwrap().unwrap().events, logged_history(&cfg.node.log_dir, TRADER));
+}
+
+/// The cache directory's store files.
+fn generation_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("authenticated-") && name.ends_with(".sqlite"))
+        })
+        .collect()
+}
+
 /// The store and root named by the newest history head that verifies.
 fn newest_history_head(
     cfg: &crate::config::NodeConfig,

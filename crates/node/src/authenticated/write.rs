@@ -193,7 +193,10 @@ impl Store {
     /// commit writes nodes at its version, so a store with none after `root` is left untouched;
     /// otherwise the nodes go by a range delete, and each value written after `root` by the leaf node
     /// its write gave it at its own version (`batch::persist`), which names its key. A later node that does
-    /// not decode names no key, so the later values then go by a scan of every value.
+    /// not decode names no key, so the later values then go by a scan of every value. A host that rewrites a
+    /// later node into another that decodes can hide a value from the discard; the value is never served, as
+    /// every read proves what it finds against its root, and the next write at its version fails on it, every
+    /// commit writing its receipt there, which a history owner answers by rebuilding from the log.
     /// Error cases:
     /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {

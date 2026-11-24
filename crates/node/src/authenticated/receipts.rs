@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::authenticated::reader::{Checked, Reader};
-use crate::authenticated::{INTERNAL, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, Root, codec, key_hash};
+use crate::authenticated::{Fields, INTERNAL, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, Root, codec, key_hash};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -34,9 +34,6 @@ pub(super) enum RetiredRow {
     Node(NodeKey),
     Value { key: KeyHash, version: u64 },
 }
-
-/// A stored receipt's fields, read in order.
-struct Fields<'a>(&'a [u8]);
 
 /// Computes the reserved queue key with the same upstream key hashing as user leaves.
 /// Error cases:
@@ -145,7 +142,7 @@ impl Receipt {
     /// Error cases:
     /// - an unknown tag, a malformed path key, a count past the bytes, or a byte past the receipt
     pub(super) fn decode(raw: &[u8]) -> Result<Self> {
-        let mut fields = Fields(raw);
+        let mut fields = Fields::new(raw);
         let namespace = fields.take::<32>()?;
         let old_version = match fields.byte()? {
             0 => None,
@@ -173,7 +170,7 @@ impl Receipt {
                 _ => anyhow::bail!("invalid retired row tag"),
             })
             .collect::<Result<Vec<_>>>()?;
-        ensure!(fields.0.is_empty(), "bytes past a receipt");
+        fields.end()?;
         Ok(Self { old, version, maintenance, rows })
     }
 
@@ -205,38 +202,5 @@ impl Receipt {
         let unique: BTreeSet<_> = self.rows.iter().collect();
         ensure!(unique.len() == self.rows.len(), "duplicate retirement targets");
         Ok(())
-    }
-}
-
-impl<'a> Fields<'a> {
-    /// The next `n` bytes.
-    /// Error cases:
-    /// - fewer are left
-    fn slice(&mut self, n: usize) -> Result<&'a [u8]> {
-        ensure!(self.0.len() >= n, "short receipt");
-        let (taken, rest) = self.0.split_at(n);
-        self.0 = rest;
-        Ok(taken)
-    }
-
-    /// The next `N` bytes.
-    /// Error cases:
-    /// - fewer are left
-    fn take<const N: usize>(&mut self) -> Result<[u8; N]> {
-        Ok(self.slice(N)?.try_into()?)
-    }
-
-    /// The next byte.
-    /// Error cases:
-    /// - none is left
-    fn byte(&mut self) -> Result<u8> {
-        Ok(self.take::<1>()?[0])
-    }
-
-    /// The next big-endian `u64`.
-    /// Error cases:
-    /// - fewer than eight bytes are left
-    fn u64(&mut self) -> Result<u64> {
-        Ok(u64::from_be_bytes(self.take()?))
     }
 }
