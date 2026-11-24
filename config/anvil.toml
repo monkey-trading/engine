@@ -156,6 +156,11 @@ episode_quiet = "15m"
 [alerts.critical]
 url_env = "ENGINE_ALERTS_CRITICAL_URL"
 
+# A dev machine's disk is often fuller than a production volume, and the scenarios audit every alert a node raises.
+[alerts.storage]
+warn_free_percent = 2
+critical_free_percent = 1
+
 [genesis]
 house_capital = "0"
 benchmarks = [

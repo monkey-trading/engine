@@ -102,6 +102,14 @@ pub async fn run(mut cfg: NodeConfig, mut telemetry: Telemetry, start: crate::Ke
             None => serve(&cfg, &standby).await,
         }
     };
+    // The copy fills the disk while it follows.
+    let storage = crate::storage::run(crate::storage::Layout::of(&cfg), cfg.alerts.storage.clone(), metrics.clone());
+    let following = async {
+        tokio::select! {
+            outcome = following => outcome,
+            outcome = storage => outcome.and_then(|()| bail!("the disk watcher stopped")),
+        }
+    };
     let following = async {
         match seed_relay {
             Some(seed_relay) => tokio::select! {

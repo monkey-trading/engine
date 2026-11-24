@@ -61,6 +61,8 @@ pub(crate) use checkpoints::default_liveness_read_interval;
 pub use checkpoints::{LivenessSection, LogHeadsSection};
 mod seed_relay;
 pub use seed_relay::SeedRelaySection;
+mod storage;
+pub use storage::StorageSection;
 mod telemetry;
 pub use crate::config::telemetry::*;
 mod proxy;

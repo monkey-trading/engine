@@ -333,6 +333,7 @@ fn routes(critical: Option<&str>, warning: Option<&str>) -> Routes {
         episode_quiet: Duration::from_secs(60),
         critical: critical.map(|_| WebhookRoute::from_env("CRITICAL")),
         warning: warning.map(|_| WebhookRoute::from_env("WARNING")),
+        storage: Default::default(),
     };
     let env = |var: &str| match var {
         "CRITICAL" => critical.map(str::to_owned),

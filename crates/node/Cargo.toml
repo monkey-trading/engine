@@ -75,8 +75,11 @@ webpki-root-certs.workspace = true
 webpki-roots.workspace = true
 x509-parser.workspace = true
 
+# `statvfs` reads each data volume's free space; the `sched` feature the workspace sets is Linux's.
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true, features = ["fs"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
-nix.workspace = true
 sev.workspace = true
 
 [dev-dependencies]

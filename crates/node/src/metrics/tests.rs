@@ -262,6 +262,13 @@ fn ops_queries_read_only_this_nodes_metrics_and_the_engine_jobs_up() {
     let _ = metrics.quote_timestamp_seconds.get_or_create(&QuoteLabels { market: 1, venue: "venue-a".into() });
     // And this one when alert routing starts.
     let _ = metrics.alert_route_off.get_or_create(&SeverityLabel { severity: "critical" });
+    // These when the storage watcher reads its first volume.
+    let volume = crate::metrics::VolumeLabel { volume: "log".into() };
+    let _ = metrics.storage.volume_total_bytes.get_or_create(&volume);
+    let _ = metrics.storage.volume_free_bytes.get_or_create(&volume);
+    let _ = metrics.storage.store_bytes.get_or_create(&crate::metrics::StoreLabel { store: "log" });
+    let _ = metrics.storage.volume_growth_bytes_per_second.get_or_create(&volume);
+    let _ = metrics.storage.volume_fill_seconds.get_or_create(&volume);
     let exported = metrics.encode();
     let ops = [
         ("dashboard", include_str!("../../../../ops/grafana/engine-node.json")),

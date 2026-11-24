@@ -85,7 +85,8 @@ case_ pull_request "rust attestation_verifier wasm_verifier signed_api dashboard
   crates/node/src/verify/mod.rs
 case_ pull_request "rust image attestation_verifier wasm_verifier signed_api ct_watch engine_build" crates/verify/src/lib.rs
 case_ pull_request "rust scenario_tests dashboard_data metrics_alerts snapshot_restart node_load soak recovery_scale engine_build" \
-  crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs crates/node/src/metrics/latency.rs
+  crates/node/src/stats/mod.rs crates/node/src/monitor/mod.rs crates/node/src/metrics/latency.rs \
+  crates/node/src/storage/watch.rs
 case_ pull_request "rust metrics_alerts alert_outbox ct_watch production_secrets engine_build" crates/node/src/alerts/mod.rs
 case_ pull_request "rust scenario_tests dashboard_data production_secrets vault_deposits ct_watch signed_api engine_build" \
   crates/node/src/admin/mod.rs

@@ -475,7 +475,7 @@ pub(super) fn listing_line(listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
 }
 
 /// The file name of the segment whose first command is `first_seq`.
-pub(super) fn segment_name(first_seq: u64) -> String {
+pub(crate) fn segment_name(first_seq: u64) -> String {
     format!("{first_seq:020}.jsonl")
 }
 

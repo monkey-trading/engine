@@ -512,6 +512,16 @@ url_secret = "alerts_critical_url"
 [alerts.warning]
 url_secret = "alerts_warning_url"
 
+# Disk alerts. The figures are the host's disk and clock's own, so these are operator alerts and never protocol
+# inputs. A volume is Warning or Critical on its free share, or on the time it has to fill at its recent growth.
+[alerts.storage]
+interval = "60s" # one walk of each store's directory a minute
+warn_free_percent = 15 # about 290 GB of a 1.92 TB drive: days of the history index at ten times launch flow
+critical_free_percent = 5 # about 96 GB: a day or more at ten times launch flow, and room for syncs and the outbox
+warn_fill_within = "14d" # a fortnight to order a drive or move a store
+critical_fill_within = "3d" # outlasts a weekend
+rate_window = "6h" # smooths an index catching up after a start and a period close, and shows ten times launch flow within it
+
 # The signed screening source. Its signing authority and freshness bound are recorded once in the
 # log. Without this section the actions it screens are refused. See config/access-source.md.
 [access]

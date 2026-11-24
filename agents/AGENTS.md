@@ -526,7 +526,11 @@ an index: load only the rule whose hint matches the current action.
   listener (with, in `metrics/latency.rs`, a venue quote's receipt to its stamp, a signed request's
   admission to its reply in `limits/`, a command's stamp to its send to each live stream subscriber in
   `api/stream/`, and the
-  sequencer's busy time), and alert routing to webhooks with a bounded durable outbox outside the public log. Its
+  sequencer's busy time), the disk watcher (`storage/`: every `[alerts.storage] interval` each store's allocated bytes
+  and each volume's size and free space as metrics, `disk_space_low` and `disk_space_critical` for a volume whose free
+  share or projected time to fill, from its growth over `rate_window`, passes a threshold, and `storage_unreadable`;
+  the host's own figures, an operator's alert and no protocol input), and alert routing to webhooks with a bounded
+  durable outbox outside the public log. Its
   `production` cargo feature refuses mock TEE, custody, and feed providers, an API without
   `[api.tls.acme]`, a genesis market fewer venues quote than its `min_sources`, and a secret read
   from the environment, at config load, and does not compile with the development-only `short-turns`
@@ -694,6 +698,8 @@ an index: load only the rule whose hint matches the current action.
   log recording another is refused.
   `api.stats_interval` (default 60 s) spaces the full account scans behind the dashboard figures and
   `api.stats_light_interval` (default 5 s) the light ones between them, and
+  `[alerts.storage]` sets the disk alerts' interval, free-share and fill-time thresholds and growth window, all with
+  defaults, and the production template's values carry their reasons.
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
   activity length, the closed epochs it keeps (`distribution_limit`) and its close-out and profit buckets;
   unknown keys are refused. `api.operators_interval` (default 60 s) spaces the operator list's reads.
@@ -874,6 +880,9 @@ an index: load only the rule whose hint matches the current action.
   tier falling thirty days on with the short left open, a withdrawal stopped at the initial
   requirement, the close-out at BTC's own bands, the account read's requirements, withdrawable cash
   and leverage, restart and replay;
+  `dev-storage-alerts.sh`, the disk alerts on real files in a temporary directory: `disk_space_low` for a volume
+  past a free-share threshold above its free space, the stores' bytes and the volume's space as metrics, and
+  `storage_unreadable` for a store whose directory stops listing, then resolved;
   `dev-tier-limits.sh`, the V66 request and order limits on a dev node: a fresh wallet resting 25 orders and
   refused the 26th naming tier 0, its next requests refused with 429 naming tier 0's rate, a wallet at tier 2
   resting 30 orders under its own rate, its tier falling thirty days on with the 30 orders left resting and a
@@ -1114,7 +1123,7 @@ an index: load only the rule whose hint matches the current action.
   `snp-host-check-test.sh` and `snp-launch-test.sh` testing the first two on fixtures.
 - **ops/** — operator assets: `grafana/engine-node.json`, the node's Grafana dashboard, and
   `prometheus/engine-node-rules.yml`, the alerting rules for a down node, failing alert pages, a webhook
-  left off for want of its delivered URL, a log sync held past 5 s, or a
+  left off for want of its delivered URL, a log sync held past 5 s, a data volume nearly full or filling, or a
   missing or expiring API certificate. `runbooks/` holds the operator's procedures (`README.md`
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and
@@ -1150,7 +1159,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots and member snapshot start), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start and disk alerts), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1323,6 +1332,10 @@ Run from the repo root:
   over with Warning `snapshot_start_refused`); the member's start from a snapshot
   against a whole replay on a kept log of launch flow: `REPLAY_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::bench::member_start_bench -- --ignored --nocapture`
+- Disk alerts dev scenario: `./scripts/dev-storage-alerts.sh` (needs only Cargo; real files in a temporary directory,
+  the watcher against a free-share threshold above the volume's free space: `disk_space_low` naming the volume, the
+  stores' bytes and the volume's space as metrics, and `storage_unreadable` raised and resolved for a store whose
+  directory stops listing)
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
   flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
   it replays to whole, under a pinned and an attested signer, a snapshot past the log's last checkpoint, or of a

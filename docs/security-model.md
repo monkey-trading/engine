@@ -616,6 +616,11 @@ Known limits:
   whole disk delays it, and a kill during the hold loses it. Meanwhile the `engine_log_sync_held`
   gauge, served from memory on the metrics listener, reports the hold (`EngineLogSyncHeld`),
   although a host that holds the disk can also answer for that listener.
+- **Disk space.** The trading server reports each store's bytes and each data volume's free space, and
+  raises `disk_space_low`, `disk_space_critical` and `storage_unreadable` from them. The host reports the
+  sizes and its clock times the growth, so a host can show a volume as empty or full. The figures are for
+  the operator, who runs the host; no engine rule, checkpoint, client answer or signature depends on them.
+  A host that fills or stalls the log's disk is caught by `log_sync_held`, not by these figures.
 - The snapshot capture's sync, the checkpoint's catalog maintenance, a rotation's catalog fold and a
   handover's segment seal are written on the thread that processes instructions, outside the
   5-second bound. A hold there also stops sequencing, and raises `sequencer_stalled`.
