@@ -483,7 +483,8 @@ public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 
 # No [snapshots]: a first release creates the enclave key, which [snapshots] trusted_signers must pin, so
 # every start of this release replays the whole log. A later release adds the section from the
-# template, pinning the enclave address the running release attests (deploy-and-rollback.md).
+# template, pinning the enclave address the running release attests (deploy-and-rollback.md), only while
+# rotation is off: a configuration with operator.rotation_enabled = true leaves it out.
 
 # The engine's state at the first checkpoint the node writes on each UTC day, served beside the archive at
 # /v1/archive/snapshots/, from which `engine replay --snapshots` replays the log's days in parallel.

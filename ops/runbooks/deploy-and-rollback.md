@@ -87,12 +87,16 @@ touches a live system, but a tag and a published release need the owner's approv
 
    The release configurations leave `[snapshots]` out, because its `trusted_signers` names the
    enclave address, which does not exist until a first release starts. Unpinned, every start would
-   replay the whole log and also rebuild the history index from it. In each later release, add the
-   section from [production-node.toml](production-node.toml) to each configuration, with
+   replay the whole log and also rebuild the history index from it. In each later release while rotation is off
+   (`operator.rotation_enabled = false`), add the section from [production-node.toml](production-node.toml) to each configuration, with
    `trusted_signers` set to `$SIGNER`, the enclave address that configuration's own running release
    attests and the upgrade carries over, so that the new release restarts from its caches. Staging's
    address differs from production's. A key that changes, by a promotion or new keys, needs a
    release that pins the new address.
+
+   A configuration with `operator.rotation_enabled = true` leaves `[snapshots]` out: a rotation-set member
+   with it recovers from disk at its turn instead of starting from its replica
+   ([operator-candidate.md](operator-candidate.md)).
 
 2. **Soak the commit.** Choose the `main` commit you intend to release. Its CI run must have passed,
    and that run must be a push to `main`, the nightly run or a manual run, because only those run
