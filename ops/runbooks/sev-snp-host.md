@@ -131,9 +131,7 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 The trading server keeps six stores on disk. This section sizes each from the soak's measurements, says what
 the server alerts on, and says what can and cannot be relied on in the figures it reports. **The log, the
 history index and the daily snapshots grow without a bound, and the history index alone fills a 1.92 TB drive
-within months.** Three changes are being built to bound the stores: the history index's growth (#1301),
-archiving the log to object storage (#1302) and tiering the daily snapshots (#1303). This plan is updated as
-each lands, and until then it is the planning basis for a node that must run for months.
+within months.** Until each store has a bound, plan a node that must run for months on these figures.
 
 ### What each store grows by
 
