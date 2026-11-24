@@ -312,31 +312,50 @@ the checkpoint at `$S` would pass. Otherwise it exits non-zero and names the fir
 - **The alpha is before V90.** Step 2 is not done. Stop, and finish step 2.
 
 **If it fails:** restart the alpha's trading server without the `frozen` file. Nothing on chain has
-changed. If the drawn turns run out before the alpha freezes, name the alpha's release again with
-the timelock's fallback, as [Rotation off and failed operators](operator-candidate.md#rotation-off-and-failed-operators)
+changed. If the drawn turns run out before the alpha freezes, install the alpha's operator again
+with a release whose configuration sets `operator.rotation_enabled = false`, with the timelock's
+fallback, as [Rotation off and failed operators](operator-candidate.md#rotation-off-and-failed-operators)
 describes.
 
 ### 8. Retire the alpha's signer
 
-Once the check in step 7 passes at the alpha vault's `latestSeq`, stop the virtual machine of the
-alpha's trading server, and of every member, so that no checkpoint past the one checked can reach the
-vault while the guardian collects its signatures. The guardian then retires the alpha's signer.
+Once the check in step 7 passes, stop the virtual machine of the alpha's trading server, and of
+every member, so that no checkpoint past the one checked can reach the vault. A checkpoint posted
+just before the stop can still land, so wait until the alpha's checkpoint relayer,
+`checkpoints.relayer` in its configuration, has nothing pending, and the vault's latest checkpoint
+is `finalized`:
+
+```shell
+cast nonce <relayer> --block pending --rpc-url $RPC
+cast nonce <relayer> --block latest --rpc-url $RPC
+S=$(cast call $ALPHA_VAULT 'latestSeq()(uint64)' --block finalized --rpc-url $RPC)
+cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC
+$ENGINE carry --log <alpha log copy> --seq $S --check
+```
+
+The first two commands print the same number, and the next two the same sequence number, `$S`. The
+check runs at `$S` as step 7's does, on a copy that holds that checkpoint, such as the stopped trading
+server's log. If it fails, start the alpha's trading servers again, frozen, and check again after the
+next accepted checkpoint, as step 7 describes. Nothing on chain has changed. Once the alpha's drawn
+turns have ended, its trading servers start again only as [Restore the alpha](#restore-the-alpha)
+describes, so leave time for this within the last turn.
+
+Once the check passes at `$S`, the guardian retires the alpha's signer.
 
 **Changes the live system.** The owner and the guardian multisig approve the retirement.
 
 ```shell
 cast send $ALPHA_VAULT 'retireSigner()' --rpc-url $RPC --account <guardian>
 cast call $ALPHA_VAULT 'checkpointSigner()(address)' --rpc-url $RPC
-S=$(cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC)
+cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC
 ```
 
-The second command prints the zero address. `$S` is the alpha's final checkpoint, from which the
-launch log carries. If `$S` is past the sequence number that step 7 checked, run the check again at
-`$S`. The alpha vault now refuses checkpoints, withdrawals and claims, and MONKEY claims pause until
-step 11.
+The second command prints the zero address, and the third prints `$S`, the alpha's final checkpoint,
+from which the launch log carries. The alpha vault now refuses checkpoints, withdrawals and claims,
+and MONKEY claims pause until step 11.
 
 **If it fails:** if the guardian has not retired the signer, start the alpha's trading servers
-again, which undoes step 7. If the move is abandoned once the signer is retired, follow
+again without the `frozen` file, which undoes step 7. If the move is abandoned once the signer is retired, follow
 [Restore the alpha](#restore-the-alpha). If the retirement is delayed past the
 `[genesis.staking]` start's margin that step 4 set, the launch release must be prepared again with a
 later start, or its genesis is refused.
@@ -412,7 +431,8 @@ providers, and holds under the Warning `carry_waiting` until all of these hold:
 - `MonkeyMinter` follows the launch vault;
 - the carry file is at `[genesis.carry] file`.
 
-It then checks that the minter mints the token the staking contract holds, that the carry file's
+It then checks that the configuration's registry is the one the alpha vault reads, whose staking
+contract the alpha mirrored, that the minter mints the token the staking contract holds, that the carry file's
 source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
 in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
 is claimable from that checkpoint.
@@ -449,6 +469,16 @@ These checks only read.
    and staking frontier, and its awards with nothing paid, to equal the alpha's state there, and the
    replay to have applied every part. It passes only when it exits with status 0 and its last line
    begins `carried from:`; any other exit is a failure, whatever it printed before.
+
+   The replay ties the carried root to the alpha's signed checkpoint, not to the chain. Compare it
+   with the alpha vault's final checkpoint, `<seq>` being the sequence number that line names:
+
+   ```shell
+   cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC
+   cast call $ALPHA_VAULT 'checkpointRoots(uint64)(bytes32)' <seq> --rpc-url $RPC
+   ```
+
+   The first command prints `<seq>`, and the second prints the root that the line names.
 
 2. Check a carried account's claim. When a carried account claims, read what the minter has minted
    to it:
@@ -493,8 +523,10 @@ Members register standby keys with the launch schedule, as
 [Register your standby key](operator-candidate.md#register-your-standby-key) describes, and the
 timelock approves each member's launch release. Each member's configuration names the launch
 operator's `[genesis.carry]` `vault`, as [The candidate's configuration](operator-candidate.md#the-candidates-configuration)
-requires: a member whose configuration does not raises `carry_refused` at its turn and stops before
-it takes the keys. A member needs no carry file. Each member's data disk holds a `frozen` file, as
+requires, and so does every later release of the launch log, an upgrade's included: a member whose
+configuration does not raises `carry_refused`, registers no standby key, and stops at its turn
+before it takes the keys, and an upgrade's release stops before the handover completes. A member
+needs no carry file. Each member's data disk holds a `frozen` file, as
 the operator's does, so that a member promoted or taking a turn before step 15 serves frozen too. Check the release condition in
 [Register the incumbent before rotation is turned on](operator-candidate.md#register-the-incumbent-before-rotation-is-turned-on),
 and then the timelock calls `setRotation(true)` on the registry. The next election close adopts a
@@ -532,8 +564,8 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   names each condition from step 11 that does not yet hold. Nothing is written. A condition that
   waits on batch B, on the retirement of the alpha's signer or on the carry file resolves when you
   finish the step that it names. The alert resolves by itself once every condition holds.
-- **`carry_refused`** is Critical. The configured minter mints another token than the staking
-  contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
+- **`carry_refused`** is Critical. The configured registry is not the one the alpha vault reads,
+  the configured minter mints another token than the staking contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
   not parse or its totals are not what its parts carry, the genesis with the carry does not apply in
   full at the start's time or at the stamp it takes, or the carried emission budget differs from the
   minter's cap. Nothing is written, and the trading server stops. A refusal at the stamp, such as a
@@ -550,16 +582,22 @@ describes.
 
 ## Restore the alpha
 
-Use this section when the move is abandoned after the guardian has retired the alpha's signer in
-step 8, and before the launch log's genesis in step 11. It gives the alpha back its operator, its
-release and a signer, and takes the timelock's delay twice. Start at once: anyone may start the alpha
+Use this section, before the launch log's genesis in step 11, when the alpha must start again once
+the guardian has retired its signer in step 8, or once its drawn turns have ended. It gives the
+alpha back its operator, its release and a signer, and takes the timelock's delay twice. Start at once: anyone may start the alpha
 vault's exit fourteen days after its last checkpoint.
 
 Once the alpha's drawn turns end, the alpha vault names no release, and the last turn's member stays
 named, until the timelock installs an operator and names a release, as
 [When no standby qualifies](standby.md#when-no-standby-qualifies) describes. Its trading servers can
-open no keys until then. The alpha's candidate, admin key, launch measurement and configuration hash
-are those of the release that the alpha ran in step 7.
+open no keys until then. `<alpha candidate>` and `<alpha admin key>` are the candidate and admin key
+of the release that the alpha ran in step 7.
+
+The restored alpha runs a release of its own configuration with `operator.rotation_enabled = false`,
+prepared as [Prepare a release](deploy-and-rollback.md#prepare-a-release) describes: once the
+installation has ended the drawn turns, a trading server whose configuration turns rotation on
+refuses to start. `<alpha digest>` is that release's launch measurement, and `<alpha config hash>`
+its configuration hash.
 
 1. If batch B ran, the guardian retires the launch vault's placeholder signer, which `setCustody`
    and `setVault` require before they leave the launch vault:
@@ -597,7 +635,7 @@ are those of the release that the alpha ran in step 7.
    The first command names `<alpha admin key>`, and its third field equals the second command's
    output. The third command prints `$ALPHA_VAULT`.
 
-3. The alpha's release now runs in a new generation. Boot the alpha's trading server with `new-key`,
+3. The alpha's restored release runs in a new generation. Boot its trading server with `new-key`,
    verify its attestation, and have the timelock call `setSigner` on the alpha vault with its new
    signer, as step 4 of [When no standby qualifies](standby.md#when-no-standby-qualifies) describes.
    Its trading servers start without the `frozen` file, which undoes step 7. Checkpoints, withdrawals

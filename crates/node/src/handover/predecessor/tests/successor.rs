@@ -1,6 +1,7 @@
 //! The successor's side over loopback: the final log segment rides with the keys into the
-//! successor's log, a segment that differs from its listing is refused before the confirmation goes
-//! out, and without the signed acknowledgement the keys stay sealed but the start fails.
+//! successor's log, a segment that differs from its listing, and a log whose carried genesis the
+//! config does not name, are refused before the confirmation goes out, and without the signed
+//! acknowledgement the keys stay sealed but the start fails.
 
 use super::*;
 
@@ -24,6 +25,23 @@ async fn the_final_segment_rides_with_the_keys_into_an_empty_log() {
     assert_eq!(log.last_seq(), Some(head.seq));
     assert_eq!(log.last_listed_segment().map(|listed| listed.last_seq), Some(head.seq));
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+}
+
+/// A whole log whose genesis carried nothing, taken under a config naming `[genesis.carry]`, is refused
+/// before the keys are sealed or the confirmation goes out, so the predecessor goes on serving: the
+/// start would refuse to serve it.
+#[tokio::test]
+async fn a_whole_log_whose_carry_the_config_does_not_name_is_refused_before_confirming() {
+    let mut exchange = Exchange::start("handover-carry").await;
+    exchange.make_upgrade_current();
+    let carry = crate::config::CarrySection { vault: AccountId([0xa1; 20]), file: "carry.json".into() };
+    exchange.successor.genesis.carry = Some(carry);
+    let head = write_log_tail(&exchange.predecessor_log, 3, &exchange.old.enclave_key().unwrap());
+    let _answer = exchange.answer_drain(Ok(head));
+    let refused = exchange.take().await.err().expect("the successor confirmed");
+    assert!(format!("{refused:#}").contains("carried nothing"), "{refused:#}");
+    assert!(!file_for(&exchange.successor_dir, &exchange.upgrade(), GENERATION).exists(), "the keys were sealed");
+    assert!(!exchange.run.is_finished(), "the predecessor ended without a confirmation");
 }
 
 /// A segment whose bytes differ from the listing inside the quote-bound message is refused before

@@ -1,6 +1,7 @@
 //! What the chain says of a move to this node's vault, read at one finalized block through the custody quorum:
-//! the source vault's signer and last accepted checkpoint, the registry's vault, rotation switch and operator in
-//! effect, the vault MONKEY's minter follows, and the tokens the minter mints and the staking contract holds.
+//! the source vault's signer, last accepted checkpoint and registry, the registry's vault, rotation switch and
+//! operator in effect, the vault MONKEY's minter follows, and the tokens the minter mints and the staking contract
+//! holds.
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
@@ -17,6 +18,7 @@ sol! {
     function latestSeq() external view returns (uint64);
     function checkpointRoots(uint64 seq) external view returns (bytes32);
     function vault() external view returns (address);
+    function registry() external view returns (address);
     function monkey() external view returns (address);
     function rotationSwitch() external view returns (bool);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
@@ -41,6 +43,8 @@ pub(crate) struct MoveState {
     pub source_signer: Address,
     /// The source vault's last accepted checkpoint and its root, if it holds one.
     pub source_checkpoint: Option<(u64, B256)>,
+    /// The registry the source vault reads, whose staking contract the source log mirrored.
+    pub source_registry: Address,
     pub registry_vault: Address,
     pub rotation_switch: bool,
     /// The admin key of the registry's operator in effect.
@@ -92,6 +96,9 @@ pub(crate) async fn read<R: VaultReader + Sync>(
     } else {
         None
     };
+    let source_registry =
+        registryCall::abi_decode_returns(&call("carry_source_registry", source, registryCall {}.abi_encode()).await?)
+            .context("the source vault's registry")?;
     let registry_vault =
         vaultCall::abi_decode_returns(&call("carry_registry_vault", registry, vaultCall {}.abi_encode()).await?)
             .context("the registry's vault")?;
@@ -116,6 +123,7 @@ pub(crate) async fn read<R: VaultReader + Sync>(
         block: at.number,
         source_signer,
         source_checkpoint,
+        source_registry,
         registry_vault,
         rotation_switch,
         admin_key: operator.adminKey,

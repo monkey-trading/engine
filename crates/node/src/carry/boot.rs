@@ -1,12 +1,13 @@
 //! A start's checks of a carried genesis. Before a fresh log's genesis carries state, the node holds under Warning
 //! `carry_waiting` until the chain shows the move done: the source vault's signer retired, with a checkpoint
 //! accepted; the registry following this node's vault with rotation's switch off and the config's operator key in
-//! effect; and MONKEY's minter following this node's vault; and the carry file in place. The minter must then mint
-//! the token the staking contract holds, the file must name the source vault's last accepted checkpoint, and the
-//! genesis it carries must apply in full on a scratch engine at the minter's emission budget, or the start stops
-//! with Critical `carry_refused` before anything is written.
+//! effect; and MONKEY's minter following this node's vault; and the carry file in place. The configured registry
+//! must then be the one the source vault reads, the minter must mint the token the staking contract holds, the file
+//! must name the source vault's last accepted checkpoint, and the genesis it carries must apply in full on a scratch
+//! engine at the minter's emission budget, or the start stops with Critical `carry_refused` before anything is
+//! written.
 //! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
-//! turn's keys.
+//! turn's keys or registers its standby key, as a whole-log take does before it confirms the handover.
 
 use std::future::Future;
 use std::path::Path;
@@ -14,7 +15,9 @@ use std::time::Duration;
 
 use alloy::primitives::{Address, B256};
 use anyhow::{Context, anyhow, bail};
+use engine_core::Engine;
 use engine_core::carry::{CarryPart, CarrySource};
+use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
 use engine_core::types::AccountId;
 use tracing::{error, info, warn};
@@ -70,10 +73,18 @@ pub(crate) fn unmet(state: &MoveState, expected: &Expected) -> Vec<String> {
     unmet
 }
 
-/// Checks that the configured minter mints the token the staking contract holds, which no move changes.
+/// Checks that the configured contracts are the ones the move keeps: the registry is the one the source vault reads,
+/// whose staking contract the source log mirrored, and the minter mints the token the staking contract holds.
 /// Error cases:
-/// - the tokens differ
-pub(crate) fn check_tokens(state: &MoveState) -> anyhow::Result<()> {
+/// - the configured registry is not the source vault's, or the tokens differ
+pub(crate) fn check_kept(state: &MoveState, registry: Address) -> anyhow::Result<()> {
+    if state.source_registry != registry {
+        bail!(
+            "custody.evm.staking.registry is {registry}, but the source vault reads registry {}: the carried stakes \
+             mirror that registry's staking contract",
+            state.source_registry
+        );
+    }
     if state.minter_token != state.staking_token {
         bail!(
             "custody.evm.minter mints {}, but the staking contract holds {}: the config names another minter",
@@ -169,7 +180,7 @@ pub(crate) async fn carried_parts(
     let read_chain = || chain::read(quorum.quorum(), contracts, (expected.chain_id, evm.usdc));
     let (state, file) = hold(read_chain, &expected, &carry.file).await.inspect_err(refused)?;
     let at = state.source_checkpoint.ok_or_else(|| anyhow!("held until the source vault holds a checkpoint"))?;
-    check_tokens(&state).inspect_err(refused)?;
+    check_kept(&state, contracts.registry).inspect_err(refused)?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
     let now = clock.now_ms();
@@ -194,7 +205,7 @@ pub(crate) async fn carried_parts(
 /// (`check_carried_genesis_at`), carried from `file`'s source.
 /// Error cases:
 /// - the engine records another source
-pub(crate) fn check_finished(engine: &engine_core::Engine, file: &CarryFile) -> anyhow::Result<()> {
+pub(crate) fn check_finished(engine: &Engine, file: &CarryFile) -> anyhow::Result<()> {
     if engine.carried_from() != Some(file.source) {
         bail!("the carry file names {:?}, but its parts carried from {:?}", file.source, engine.carried_from());
     }
@@ -233,15 +244,41 @@ pub(crate) fn check_recovered(cfg: &NodeConfig, seq: &Sequencer) -> anyhow::Resu
     check_carried_source(seq.carried_from(), configured(cfg), seq.needs_genesis())
 }
 
-/// Refuses, before a member takes a turn's keys, a copy whose genesis carried from another source than the
-/// config's `[genesis.carry]`, from any when the config names none, or from none when it names one: the start
-/// would refuse to serve it (`check_recovered`) once the incumbent had handed over. A copy at a turn holds a
-/// closed genesis. Pages Critical `carry_refused`.
+/// Refuses a member's copy whose genesis carried from another source than the config's `[genesis.carry]`, or from
+/// any when the config names none, and, unless `open`, from none when it names one: the start would refuse to serve
+/// it (`check_recovered`) once the member held the keys. A member checks before it takes a turn's keys, when its
+/// copy holds a closed genesis, and before it registers its standby key, while its copy may still be before it
+/// (`open`). Pages Critical `carry_refused`.
 /// Error cases:
 /// - see `check_carried_source`
-pub(crate) fn check_copy(cfg: &NodeConfig, copy: &engine_core::Engine) -> anyhow::Result<()> {
-    check_carried_source(copy.carried_from(), configured(cfg), false)
-        .inspect_err(|e| error!(alert = "carry_refused", "refusing to take the turn: {e:#}"))
+pub(crate) fn check_copy(cfg: &NodeConfig, copy: &Engine, open: bool) -> anyhow::Result<()> {
+    check_carried_source(copy.carried_from(), configured(cfg), open)
+        .inspect_err(|e| error!(alert = "carry_refused", "refusing to hold this log's keys: {e:#}"))
+}
+
+/// Refuses, before a whole-log take seals the keys and confirms the handover, the log it took into `dir` when its
+/// genesis carried from another source than the config's `[genesis.carry]`, from any when the config names none, or
+/// from none when it names one, as its first segment's `Begin` part names it: the start would refuse to serve it
+/// (`check_recovered`) once the predecessor had stopped. A taken log holds a closed genesis. Pages Critical
+/// `carry_refused`.
+/// Error cases:
+/// - the log's manifest or first segment cannot be read
+/// - see `check_carried_source`
+pub(crate) fn check_taken(cfg: &NodeConfig, dir: &Path) -> anyhow::Result<()> {
+    let manifest = crate::log::Manifest::load(dir)?;
+    let mut begun = None;
+    if let Some(first) = manifest.segments.first() {
+        crate::log::read_file(&dir.join(&first.file), |entry| {
+            if let crate::log::LogEntry::Command(command) = entry
+                && let Command::Admin(AdminCommand::CarryState(CarryPart::Begin { source, .. })) = command.sequenced.cmd
+            {
+                begun.get_or_insert(source);
+            }
+            Ok(())
+        })?;
+    }
+    check_carried_source(begun, configured(cfg), false)
+        .inspect_err(|e| error!(alert = "carry_refused", "refusing the handover: {e:#}"))
 }
 
 /// The chain and source vault the config's `[genesis.carry]` names.

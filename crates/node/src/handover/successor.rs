@@ -66,6 +66,7 @@ pub(crate) async fn take(
 ///   vault's current release is another one
 /// - a segment differs from its listing, breaks the chain from the tip, or the log does not reach
 ///   the handed-over checkpoint
+/// - the log's genesis carried from another source than the config's `[genesis.carry]` (`carry::boot::check_taken`)
 /// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
 /// - the latest assignment cannot be read, or moved before the keys were sealed
 pub(crate) async fn take_with(
@@ -111,6 +112,8 @@ pub(crate) async fn take_with(
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     take_segments(&mut stream, dir, (domain, cfg.node.replay_workers), &tails, log_tip, &head, signers, metrics)
         .await?;
+    // A log the start would refuse under this config is refused while the predecessor still holds the keys.
+    crate::carry::boot::check_taken(cfg, dir)?;
     let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),

@@ -233,11 +233,11 @@ an index: load only the rule whose hint matches the current action.
   lose state of), a carried genesis's start (`carry/boot.rs`: with `[genesis.carry]`, held under Warning
   `carry_waiting` until the custody quorum reads, at a finalized block, the source vault's signer retired, the
   registry following this vault with rotation's switch off and the config's operator in effect, and MONKEY's minter
-  following this vault, then Critical `carry_refused`, nothing written, unless the minter mints the staking contract's
-  token, the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
+  following this vault, then Critical `carry_refused`, nothing written, unless the registry is the one the source
+  vault reads, the minter mints the staking contract's token, the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
   genesis applies in full at the minter's emission budget, at the start's time and again at the stamp it takes; every
-  start refuses a log whose carried source is not the config's, and a member refuses such a copy before it takes a
-  turn's keys), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
+  start refuses a log whose carried source is not the config's, a member refuses such a copy before it takes a
+  turn's keys or registers its standby key, and a whole-log take before it confirms the handover), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed
   checkpoint at the carried seq holds the carried root, and the carried values are its state there), `run --frozen`
   (`api/frozen.rs`: every client POST and DELETE refused with 503, for a source's last starts and the new log's
   until its public opening; `image/init` passes it while `/data/frozen` exists),

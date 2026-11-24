@@ -1,6 +1,6 @@
 //! The parts of a carried genesis, built from a source engine at the root of its last command (`engine carry`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::B256;
 
@@ -55,7 +55,7 @@ impl Engine {
         }
         let siblings = |key: B256| proven(tree, version, key);
         let mut parts = vec![CarryPart::Begin { source, globals, siblings: siblings(globals_key())? }];
-        let balances = |map: &std::collections::BTreeMap<AccountId, TokenUnits>, key: fn(AccountId) -> B256| {
+        let balances = |map: &BTreeMap<AccountId, TokenUnits>, key: fn(AccountId) -> B256| {
             map.iter()
                 .map(|(&account, &amount)| Ok(CarriedBalance { account, amount, siblings: siblings(key(account))? }))
                 .collect::<Result<Vec<_>, String>>()

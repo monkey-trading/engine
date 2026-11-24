@@ -14,6 +14,7 @@ const SOURCE: Address = Address::repeat_byte(0x22);
 const OPERATOR: Address = Address::repeat_byte(0x33);
 const ROOT: B256 = B256::repeat_byte(0x44);
 const TOKEN: Address = Address::repeat_byte(0x55);
+const REGISTRY: Address = Address::repeat_byte(0x77);
 
 /// A condition a test unmeets, named by the text its sentence holds.
 type Unmet = (&'static str, fn(&mut MoveState));
@@ -28,6 +29,7 @@ fn done() -> MoveState {
         block: 9,
         source_signer: Address::ZERO,
         source_checkpoint: Some((70, ROOT)),
+        source_registry: REGISTRY,
         registry_vault: VAULT,
         rotation_switch: false,
         admin_key: OPERATOR,
@@ -65,10 +67,12 @@ fn every_unmet_condition_of_a_done_move_is_named() {
 }
 
 #[test]
-fn a_minter_of_another_token_than_the_staking_contracts_is_refused() {
-    assert!(check_tokens(&done()).is_ok());
+fn a_registry_the_source_vault_does_not_read_or_a_minter_of_another_token_is_refused() {
+    assert!(check_kept(&done(), REGISTRY).is_ok());
     let other = MoveState { minter_token: Address::repeat_byte(0x66), ..done() };
-    assert!(format!("{:#}", check_tokens(&other).unwrap_err()).contains("names another minter"));
+    assert!(format!("{:#}", check_kept(&other, REGISTRY).unwrap_err()).contains("names another minter"));
+    let refused = check_kept(&done(), Address::repeat_byte(0x78)).unwrap_err();
+    assert!(format!("{refused:#}").contains("the source vault reads registry"), "{refused:#}");
 }
 
 #[test]
@@ -135,4 +139,31 @@ fn a_log_carries_only_from_the_source_its_config_names() {
     ] {
         assert!(check_carried_source(carried, configured, fresh).is_err(), "{carried:?} {configured:?}");
     }
+}
+
+/// A member's copy is held to its config's carry: one carried from a source the config does not name is refused
+/// whenever the member checks, and one that carried nothing, under a config naming a carry, only before a turn,
+/// when its genesis has closed, not while the member follows a copy that may be before it.
+#[test]
+fn a_members_copy_is_held_to_the_carry_its_config_names() {
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90-carried.jsonl"));
+    let seq = crate::carry::build(path, None).unwrap().source.seq;
+    let carried = crate::exit::engine_at_checkpoint(path, seq).unwrap();
+    let source = carried.carried_from().expect("the reference log carried");
+    let config = |carry: Option<AccountId>| {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.custody.chain_id = source.chain_id;
+        cfg.genesis.carry = carry.map(|vault| crate::config::CarrySection { vault, file: "carry.json".into() });
+        cfg
+    };
+    let (named, other, none) = (config(Some(source.vault)), config(Some(AccountId([0xa1; 20]))), config(None));
+    let nothing = Engine::new();
+    for open in [false, true] {
+        assert!(check_copy(&named, &carried, open).is_ok(), "{open}");
+        assert!(check_copy(&other, &carried, open).is_err(), "{open}");
+        assert!(check_copy(&none, &carried, open).is_err(), "{open}");
+        assert!(check_copy(&none, &nothing, open).is_ok(), "{open}");
+    }
+    assert!(check_copy(&named, &nothing, false).is_err(), "a closed genesis that carried nothing");
+    assert!(check_copy(&named, &nothing, true).is_ok(), "a copy that may be before its genesis");
 }

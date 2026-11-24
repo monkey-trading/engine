@@ -191,3 +191,29 @@ fn an_epoch_the_mirror_has_not_passed_is_reported_open() {
     assert_eq!(view["distribution"]["last_closed_ms"], end);
     assert_eq!(view["distribution"]["next_close_ms"], end + 86_400_000);
 }
+
+/// A carried genesis's stakes move no stake event, so its last part refreshes the staking totals: the carried
+/// reference log's dashboard shows every carried stake from then on.
+#[test]
+fn a_carried_genesis_shows_the_stakes_it_carried() {
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90-carried.jsonl"));
+    let (mut engine, stats) = (Engine::new(), stats());
+    let mut carried = false;
+    crate::log::read_file(path, |entry| {
+        let crate::log::LogEntry::Command(command) = entry else { return Ok(()) };
+        let events = engine.apply(&command.sequenced)?;
+        stats.follow(&command.sequenced);
+        stats.observe(&engine, command.sequenced.ts, &events);
+        if events.iter().any(|event| matches!(event, Event::StateCarried(_))) {
+            carried = true;
+            let staked: u128 = engine.staked_balances().values().map(|units| units.0).sum();
+            let staking = &json(stats.monkey(&engine))["staking"];
+            assert_eq!(staking["total_staked"], staked.to_string(), "{staking}");
+            assert_eq!(staking["stakers"], engine.staked_balances().len(), "{staking}");
+            assert!(staked > 0, "the reference log carries stakes");
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert!(carried, "the reference log's genesis carried nothing");
+}

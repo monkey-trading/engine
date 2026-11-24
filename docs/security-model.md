@@ -1050,8 +1050,11 @@ At its first start, before its genesis, the trading server reads the chain at a 
 through the custody providers. It carries only from the old vault's latest checkpoint, and only once
 that vault's signer is retired, the registry follows the new vault, rotation's switch is off, the
 registry's operator in effect has the configured operator key, and `MonkeyMinter` follows the new
-vault. A configuration author therefore cannot carry from an older root of the old vault. The
-carried emission budget must match the cap that `MonkeyMinter`'s token holds.
+vault. The configured registry must be the one the old vault reads, whose staking contract the old
+log mirrored, and `MonkeyMinter` must mint the token that contract holds. A configuration author
+therefore cannot carry from an older root of the old vault, nor continue the carried stakes on
+another staking contract. The carried emission budget must match the cap that `MonkeyMinter`'s token
+holds.
 
 `MonkeyMinter` keeps one count of the MONKEY each account has claimed across every vault it has
 followed, so an account can claim from the new vault only what its carried entitlement adds to what
@@ -1067,9 +1070,10 @@ and requires the carried state to equal the old log's state there.
 
 Known limits:
 
-- A replay of the new log without `--carry-source` cannot tell that the carried root is the old
-  vault's final accepted checkpoint. That is a fact about the chain, which the trading server reads
-  at its first start and which `--carry-source` checks against the old log's signed checkpoints.
+- A replay cannot tell that the carried root is the old vault's final accepted checkpoint. That is a
+  fact about the chain, which the trading server reads at its first start. `--carry-source` ties the
+  root to the old log's signed checkpoint at the carried sequence number, and a verifier compares it
+  with the old vault's `checkpointRoots` there and its `latestSeq`.
 - The old log must stay published for good. Without it, a replayer can check the carried values
   against the logged root, but cannot tie that root to the old log's history.
 - A carry loses the old log's open emission period. The tooling refuses an old log whose open period

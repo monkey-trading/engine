@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, ensure};
 use clap::Args;
+use engine_core::Engine;
 use engine_core::carry::{CarryPart, CarrySource, StateCarried};
 use engine_core::emissions::TokenUnits;
 use serde::{Deserialize, Serialize};
@@ -77,12 +78,25 @@ pub fn run(args: CarryArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `engine replay`'s carry checks of the log at `path`, whose replay left `engine`: a carry its genesis began has
+/// ended, and with `source`, `--carry-source`'s check of the log against the source log there (`report_carried`).
+/// Error cases:
+/// - the replay ends with a carry in progress
+/// - see `report_carried`
+pub fn check_replayed(engine: &Engine, path: &Path, source: Option<&Path>) -> anyhow::Result<()> {
+    ensure!(
+        engine.carry_progress().is_none(),
+        "the log's genesis began carrying another log's state and did not finish"
+    );
+    source.map_or(Ok(()), |source| report_carried(path, engine.carried_from(), source))
+}
+
 /// Runs `engine replay --carry-source`'s check of the carried log at `carried`, whose replay recorded
 /// `replayed` as its carried source, against `source`, printing it.
 /// Error cases:
 /// - the replay recorded no carried source, or another than its parts name: a part was refused
 /// - see `check_carried`
-pub fn report_carried(carried: &Path, replayed: Option<CarrySource>, source: &Path) -> anyhow::Result<()> {
+fn report_carried(carried: &Path, replayed: Option<CarrySource>, source: &Path) -> anyhow::Result<()> {
     let from = check_carried(carried, source)?;
     ensure!(
         replayed == Some(from.source),

@@ -155,6 +155,35 @@ fn a_file_whose_totals_are_not_what_its_parts_carry_is_refused() {
     }
 }
 
+/// `engine replay` refuses a log whose replay ended with its carry in progress, and, with `--carry-source`, one whose
+/// replay carried from nowhere, as when the engine refused a part, though its parts tie to the signed source.
+#[test]
+fn the_replay_refuses_an_unfinished_carry_and_one_its_engine_refused() {
+    let source = write_entries("carry-replayed-source", &signed_fixture(Path::new(CARRIED)));
+    let file = build(&source, None).unwrap();
+    let carried = write_entries("carry-replayed-carried", &engine_core_parts(&file.parts));
+    assert!(check_replayed(&pre_run(&file.parts), &carried, Some(&source)).is_ok());
+    let nothing = engine_core::Engine::new();
+    assert!(check_replayed(&nothing, &carried, None).is_ok());
+    let refused = check_replayed(&nothing, &carried, Some(&source)).unwrap_err();
+    assert!(format!("{refused:#}").contains("a part was refused"), "{refused:#}");
+    let mut parts = file.parts;
+    parts.pop();
+    let mut cfg = crate::test_support::dev_config();
+    cfg.genesis.staking = Some(engine_core::staking::StakingConfig {
+        liquidity_floor: engine_core::Fixed::from_int(1),
+        epoch_ms: 86_400_000,
+        start_ms: 86_400_000,
+        cooldown_ms: 3 * 86_400_000,
+    });
+    let cmds = crate::sequencer::carried_genesis_commands(&cfg.genesis, &parts);
+    let (auth, operator) = (cfg.client_auth().unwrap(), cfg.operator().unwrap());
+    let unfinished = crate::sequencer::genesis::check_genesis_commands_at(&auth, operator, cmds, 0).unwrap();
+    assert!(unfinished.carry_progress().is_some());
+    let refused = check_replayed(&unfinished, &carried, None).unwrap_err();
+    assert!(format!("{refused:#}").contains("did not finish"), "{refused:#}");
+}
+
 #[test]
 fn the_replay_check_ties_a_carried_log_to_its_signed_source() {
     let source = write_entries("carry-replay-source", &signed_fixture(Path::new(CARRIED)));
