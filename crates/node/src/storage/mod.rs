@@ -15,8 +15,8 @@ mod watch;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Context;
-use tokio::task::JoinHandle;
+use anyhow::{Context, bail};
+use tokio::sync::oneshot;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
 pub use layout::Layout;
@@ -30,33 +30,49 @@ use crate::metrics::Metrics;
 /// holds the read, and one read in flight is all the node keeps.
 const READ_BOUND: Duration = Duration::from_secs(30);
 
-/// Reads and judges the stores every `cfg.interval` until a read's thread panics.
+/// Reads and judges the stores every `cfg.interval` until a read's thread panics. A read runs on a thread of its own
+/// that nothing waits for, so a host that stalls the disk cannot hold the runtime's shutdown.
 /// Error cases:
-/// - the thread reading the disks panicked
+/// - the thread reading the disks cannot start or panicked
 pub async fn run(layout: Layout, cfg: StorageSection, metrics: Arc<Metrics>) -> anyhow::Result<()> {
     let mut every = interval(cfg.interval);
     every.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut watch = Watch::new(cfg);
     let layout = Arc::new(layout);
-    let mut reading: Option<JoinHandle<Reading>> = None;
+    let mut reading: Option<oneshot::Receiver<Reading>> = None;
     loop {
         every.tick().await;
-        let mut handle = reading.take().unwrap_or_else(|| {
-            let layout = layout.clone();
-            tokio::task::spawn_blocking(move || layout.read())
-        });
-        match timeout(READ_BOUND, &mut handle).await {
-            Ok(done) => {
-                let done = done.context("the storage read panicked")?;
+        let mut read = match reading.take() {
+            Some(read) => read,
+            None => start_read(&layout)?,
+        };
+        match timeout(READ_BOUND, &mut read).await {
+            Ok(Ok(done)) => {
                 done.record(&metrics);
                 watch.observe(std::time::Instant::now(), &done, &metrics);
             }
+            Ok(Err(_)) => bail!("the storage read stopped without a result"),
             Err(_) => {
-                reading = Some(handle);
+                reading = Some(read);
                 watch.unread(&format!("the read has not finished in {READ_BOUND:?}"));
             }
         }
     }
+}
+
+/// Starts a read of every store on a thread of its own.
+/// Error cases:
+/// - the thread cannot be started
+fn start_read(layout: &Arc<Layout>) -> anyhow::Result<oneshot::Receiver<Reading>> {
+    let (done, read) = oneshot::channel();
+    let layout = layout.clone();
+    std::thread::Builder::new()
+        .name("storage-read".to_owned())
+        .spawn(move || {
+            let _ = done.send(layout.read());
+        })
+        .context("starting the storage read thread")?;
+    Ok(read)
 }
 
 #[cfg(test)]

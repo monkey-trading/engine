@@ -5,10 +5,10 @@ use std::time::Instant;
 
 use tracing::{error, info, warn};
 
-use super::layout::Store;
-use super::reading::{Reading, Volume};
 use crate::config::StorageSection;
 use crate::metrics::{Metrics, VolumeLabel};
+use crate::storage::layout::Store;
+use crate::storage::reading::{Reading, Volume};
 
 /// A level holds until the measure clears its threshold by a tenth, so a volume at the edge does not page and
 /// resolve in turn.
@@ -71,12 +71,16 @@ impl Watch {
         self.settle(&BTreeMap::from([("all".to_owned(), why)]), vec!["all".to_owned()]);
     }
 
+    /// Records `volume`'s used bytes at `now`, sets its growth and projected fill as metrics, and announces its level
+    /// when it changed.
     fn judge(&mut self, now: Instant, volume: &Volume, reading: &Reading, metrics: &Metrics) {
         let label = VolumeLabel { volume: volume.name.clone() };
         let state = self.volumes.entry(volume.name.clone()).or_default();
         let used = volume.total_bytes.saturating_sub(volume.free_bytes);
         state.samples.push_back((now, used));
-        while state.samples.front().is_some_and(|(at, _)| now.duration_since(*at) > self.cfg.rate_window) {
+        // The oldest sample kept is the newest one at least a window old, so jitter in when reads finish never
+        // leaves the window short.
+        while state.samples.get(1).is_some_and(|(at, _)| now.duration_since(*at) >= self.cfg.rate_window) {
             state.samples.pop_front();
         }
         let growth = growth(state, now, &self.cfg);
@@ -124,13 +128,12 @@ impl Watch {
 }
 
 /// Growth of used bytes a second over the samples in the window, once the window is full: a burst written in a
-/// window's first hours, such as an index catching up after a start, is not read as a steady rate. Samples older than
-/// the window are dropped, so the oldest is within one interval of its age when the window is full.
+/// window's first hours, such as an index catching up after a start, is not read as a steady rate.
 fn growth(state: &VolumeState, now: Instant, cfg: &StorageSection) -> Option<f64> {
     let (first_at, first) = *state.samples.front()?;
     let (_, last) = *state.samples.back()?;
     let span = now.duration_since(first_at);
-    (span + cfg.interval >= cfg.rate_window).then(|| (last as f64 - first as f64) / span.as_secs_f64())
+    (span >= cfg.rate_window).then(|| (last as f64 - first as f64) / span.as_secs_f64())
 }
 
 /// The level a volume is at, given the level it held: a held level needs its measure past the threshold by a tenth

@@ -1583,7 +1583,7 @@
       "type": "timeseries",
       "id": 30,
       "title": "Volume free space",
-      "description": "Bytes available on each data volume, named by the stores on it. The node warns below 15% free and pages Critical below 5%.",
+      "description": "Bytes available on each data volume, named by its first store (the log's is `log`). The node warns below 15% free and pages Critical below 5%.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

@@ -12,7 +12,7 @@ pub struct StoreLabel {
     pub store: &'static str,
 }
 
-/// A data volume, named by the stores on it joined with `+`.
+/// A data volume, named by the first store on it.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct VolumeLabel {
     pub volume: String,
@@ -40,7 +40,7 @@ impl StorageMetrics {
         );
         r.register(
             "volume_total_bytes",
-            "Size of each data volume the stores sit on, named by its stores joined with +, as the host reports it",
+            "Size of each data volume the stores sit on, named by its first store, as the host reports it",
             self.volume_total_bytes.clone(),
         );
         r.register(

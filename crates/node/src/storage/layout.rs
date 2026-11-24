@@ -1,6 +1,8 @@
 //! Which directories hold which store.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::config::NodeConfig;
 use crate::history::marks::store::MARKS_FILE;
@@ -42,13 +44,15 @@ impl Store {
 }
 
 /// The directories of the configured stores.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Layout {
     log: PathBuf,
     history: PathBuf,
     snapshots: Option<PathBuf>,
     daily_snapshots: Option<PathBuf>,
     outbox: PathBuf,
+    /// The allocated bytes of each sealed log segment, by its first seq, which `walk_log` reads once.
+    pub(super) sealed: Mutex<BTreeMap<u64, u64>>,
 }
 
 /// How a store picks its files from a directory: by the file's name, among the entries of the directory itself.
@@ -88,6 +92,7 @@ impl Layout {
             snapshots: cfg.snapshots.as_ref().map(|snapshots| snapshots.dir.clone()),
             daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone()),
             outbox: cfg.alerts.outbox.dir.clone(),
+            sealed: Mutex::default(),
         }
     }
 
@@ -118,6 +123,6 @@ impl Layout {
         daily_snapshots: Option<PathBuf>,
         outbox: PathBuf,
     ) -> Self {
-        Self { log, history, snapshots, daily_snapshots, outbox }
+        Self { log, history, snapshots, daily_snapshots, outbox, sealed: Mutex::default() }
     }
 }

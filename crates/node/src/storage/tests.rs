@@ -51,6 +51,39 @@ fn each_store_counts_its_own_files() {
     holds(Store::RecoveryCaches, 11 << 20);
     holds(Store::DailySnapshots, 13 << 20);
     holds(Store::AlertOutbox, 1 << 18);
+    // Named by its first store, so adding or removing an optional one on it leaves its name as it was.
+    let [volume] = reading.volumes.as_slice() else { panic!("{:?}", reading.volumes) };
+    assert_eq!(volume.name, "log");
+    assert_eq!(volume.stores.len(), 6);
+}
+
+#[test]
+fn a_sealed_segment_is_statted_once_and_the_two_newest_each_read() {
+    let root = scratch_dir("storage-segments");
+    let dirs = Dirs::new(&root);
+    let layout = dirs.layout();
+    let segment = |seq: u64| dirs.log.join(format!("{seq:020}.jsonl"));
+    let log_bytes = |layout: &Layout| layout.read().stores.iter().find(|(store, _)| *store == Store::Log).unwrap().1;
+    for seq in [0, 1000, 2000, 3000] {
+        write(&segment(seq), 1 << 20);
+    }
+    write(&dirs.log.join("manifest.jsonl"), 1 << 16);
+    let first = log_bytes(&layout);
+    assert!(first >= (4 << 20) + (1 << 16), "{first}");
+    // The sealed first segment grows behind the cache's back: not counted again while it is listed.
+    write(&segment(0), 3 << 20);
+    assert_eq!(log_bytes(&layout), first);
+    // The two newest, and every other file, are read each time.
+    write(&segment(3000), 2 << 20);
+    write(&dirs.log.join("manifest.jsonl"), 1 << 17);
+    let grown = log_bytes(&layout);
+    assert!(grown >= first + (1 << 20) + (1 << 16), "{grown} against {first}");
+    // A segment gone from the listing leaves the total, and a new one joins it.
+    fs::remove_file(segment(1000)).unwrap();
+    let removed = log_bytes(&layout);
+    assert!(removed + (1 << 20) <= grown + (1 << 16), "{removed} against {grown}");
+    write(&segment(4000), 1 << 20);
+    assert!(log_bytes(&layout) >= removed + (1 << 20));
 }
 
 #[test]
@@ -70,7 +103,8 @@ fn a_store_that_does_not_exist_yet_holds_nothing_and_is_no_failure() {
     assert!(reading.stores.iter().all(|(_, bytes)| *bytes == 0), "{:?}", reading.stores);
     // The volume of the nearest existing ancestor, the scratch directory's parent.
     let [volume] = reading.volumes.as_slice() else { panic!("{:?}", reading.volumes) };
-    assert_eq!(volume.name, "log+history_index+marks_cache+alert_outbox");
+    assert_eq!(volume.name, "log");
+    assert_eq!(volume.stores, [Store::Log, Store::HistoryIndex, Store::MarksCache, Store::AlertOutbox]);
     assert!(0 < volume.total_bytes && volume.free_bytes <= volume.total_bytes);
 }
 
@@ -100,7 +134,7 @@ fn a_directory_that_cannot_be_listed_is_a_failure_and_its_store_keeps_its_last_s
 }
 
 #[test]
-fn the_volumes_are_named_by_the_stores_on_them() {
+fn a_volumes_space_is_exported_under_its_name() {
     let reading = Reading { volumes: vec![volume(&[Store::Log], 100 * GIB, 50 * GIB)], ..Reading::default() };
     metrics_text(&reading, |text| {
         assert!(text.contains("engine_volume_free_bytes{volume=\"log\"} 53687091200\n"), "{text}");
@@ -222,6 +256,31 @@ fn a_volume_filling_within_the_critical_time_raises_critical_and_exports_its_pro
         assert!(!text.contains("engine_volume_fill_seconds{"), "{text}");
         assert_eq!(value(text, "engine_volume_growth_bytes_per_second{volume=\"log\"}"), 0.0);
     });
+}
+
+#[test]
+fn a_steady_growth_keeps_its_projection_through_a_window_of_uneven_reads() {
+    let (mut watch, metrics) = (primed_watch(), Metrics::new());
+    let t0 = Instant::now();
+    let (mut seconds, mut raised, mut resolved) = (0u64, 0, 0);
+    // Reads land 55 to 65 seconds apart, as a read's own time moves each one, for seven hours of 3 GiB an hour.
+    for step in 0..450u64 {
+        let used = 100 * GIB + 3 * GIB * seconds / 3600;
+        let reading =
+            Reading { volumes: vec![volume(&[Store::Log], 1000 * GIB, 1000 * GIB - used)], ..Reading::default() };
+        let lines = capture(|| watch.observe(t0 + Duration::from_secs(seconds), &reading, &metrics));
+        let lines = if step == 0 { only_alerts(lines) } else { lines };
+        raised += lines.iter().filter(|line| line.severity.is_some()).count();
+        resolved += lines.iter().filter(|line| line.severity.is_none()).count();
+        if seconds >= 6 * 3600 {
+            let projected = metrics_of(&metrics, |text| text.contains("engine_volume_fill_seconds{"));
+            assert!(projected, "no projection at {seconds} s");
+        }
+        seconds += 55 + step * 7 % 11;
+    }
+    assert!(seconds > 6 * 3600 + 3600, "the loop ran only {seconds} s");
+    // The 12-day projection raises the Warning once, when the window fills, and never flaps.
+    assert_eq!((raised, resolved), (1, 0));
 }
 
 #[test]

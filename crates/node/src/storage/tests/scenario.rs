@@ -41,9 +41,11 @@ async fn dev_scenario_a_volume_past_its_threshold_alerts_and_an_unreadable_store
     let low = next(&mut alerts).await;
     assert_eq!(low["alert"], "disk_space_low");
     assert_eq!(low["level"], "WARN");
-    let volume = "log+history_index+marks_cache+recovery_caches+daily_snapshots+alert_outbox";
+    // Every store is on the one volume, which the first of them names.
+    let volume = "log";
     assert_eq!(low["volume"], volume);
-    assert!(low["message"].contains("free of"), "{low:?}");
+    assert!(low["message"].contains("free of") && low["message"].contains("holds log "), "{low:?}");
+    assert!(low["message"].contains("alert_outbox"), "{low:?}");
     // The stores' bytes and the volume's space, as the operator's Prometheus reads them.
     let text = metrics.encode();
     for (store, written) in

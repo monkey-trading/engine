@@ -5,13 +5,16 @@ use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::sync::PoisonError;
 
 use nix::sys::statvfs::statvfs;
 
-use super::layout::{Layout, Store};
+use crate::log::segment_seq;
 use crate::metrics::{Metrics, StoreLabel, VolumeLabel};
+use crate::storage::layout::{Layout, Store};
 
-/// A data volume, named by the stores on it joined with `+`.
+/// A data volume, named by the first store on it, in `Store` order: `log` for the log's, and `history_index` for the
+/// one the history directory is on, whichever optional stores share them.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Volume {
     pub name: String,
@@ -43,7 +46,8 @@ impl Layout {
             let mut bytes = 0u64;
             let mut readable = true;
             for (dir, pick) in dirs {
-                match walk(dir, pick, true) {
+                let walked = if store == Store::Log { self.walk_log(dir) } else { walk(dir, pick, true) };
+                match walked {
                     Ok(found) => bytes = bytes.saturating_add(found),
                     Err(error) => {
                         readable = false;
@@ -72,7 +76,7 @@ impl Layout {
                 .into_values()
                 .map(|(mut stores, total_bytes, free_bytes)| {
                     stores.sort();
-                    let name = stores.iter().map(|store| store.name()).collect::<Vec<_>>().join("+");
+                    let name = stores[0].name().to_owned();
                     Volume { name, stores, total_bytes, free_bytes }
                 })
                 .collect();
@@ -101,6 +105,54 @@ fn gauge(bytes: u64) -> i64 {
     i64::try_from(bytes).unwrap_or(i64::MAX)
 }
 
+impl Layout {
+    /// The bytes allocated to the log directory's files. Segments are append-only and a new one starts every
+    /// `node.segment_commands` commands, so a log has as many files as it has had thousands of commands, and statting
+    /// each every read would grow without a bound: each segment but the two newest is statted once and its size kept.
+    /// A segment's size is not read again while its file is listed, so a log cut back and regrown under the same
+    /// names between two reads is miscounted by up to a segment, until a later read finds the name gone.
+    /// Error cases:
+    /// - the directory cannot be listed, or a file's metadata cannot be read, for a reason other than being absent
+    fn walk_log(&self, dir: &Path) -> std::io::Result<u64> {
+        let mut sealed = self.sealed.lock().unwrap_or_else(PoisonError::into_inner);
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                sealed.clear();
+                return Ok(0);
+            }
+            Err(error) => return Err(error),
+        };
+        let (mut bytes, mut segments) = (0u64, Vec::new());
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            match entry.file_name().to_str().and_then(segment_seq) {
+                Some(seq) => segments.push((seq, entry.path())),
+                None => bytes = bytes.saturating_add(entry_bytes(&entry.path())?),
+            }
+        }
+        segments.sort_unstable_by_key(|(seq, _)| *seq);
+        let sealed_count = segments.len().saturating_sub(2);
+        let mut kept = BTreeMap::new();
+        for (index, (seq, path)) in segments.iter().enumerate() {
+            let size = match sealed.get(seq) {
+                Some(size) if index < sealed_count => *size,
+                _ => entry_bytes(path)?,
+            };
+            if index < sealed_count {
+                kept.insert(*seq, size);
+            }
+            bytes = bytes.saturating_add(size);
+        }
+        *sealed = kept;
+        Ok(bytes)
+    }
+}
+
 /// The bytes the disk allocates to the files under `dir`, among its own entries those `pick` names when `top`; a
 /// symlink counts as itself and is not followed. A directory that does not exist, or a file removed during the
 /// walk, holds nothing.
@@ -122,19 +174,23 @@ fn walk(dir: &Path, pick: fn(&str) -> bool, top: bool) -> std::io::Result<u64> {
         if top && !entry.file_name().to_str().is_some_and(pick) {
             continue;
         }
-        let metadata = match fs::symlink_metadata(entry.path()) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        bytes = bytes.saturating_add(if metadata.is_dir() {
-            walk(&entry.path(), pick, false)?
-        } else {
-            // 512-byte blocks, as `du` counts them: a sparse or preallocated file is what the disk holds.
-            metadata.blocks().saturating_mul(512)
-        });
+        bytes = bytes.saturating_add(entry_bytes(&entry.path())?);
     }
     Ok(bytes)
+}
+
+/// The bytes the disk allocates to the file at `path`, or to everything under it for a directory; none for a file
+/// removed meanwhile. A symlink counts as itself.
+/// Error cases:
+/// - the metadata or a directory under `path` cannot be read, for a reason other than being absent
+fn entry_bytes(path: &Path) -> std::io::Result<u64> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => walk(path, |_| true, false),
+        // 512-byte blocks, as `du` counts them: a sparse or preallocated file is what the disk holds.
+        Ok(metadata) => Ok(metadata.blocks().saturating_mul(512)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error),
+    }
 }
 
 /// The device, size and available bytes of the volume a write to `dir` lands on: its nearest existing ancestor's.

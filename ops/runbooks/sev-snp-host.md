@@ -137,8 +137,8 @@ each lands, and until then it is the planning basis for a node that must run for
 
 ### What each store grows by
 
-The figures come from the soak at ten times launch flow, at 10,000 accounts and about 263 commands a second,
-run on 23 and 24 November. Launch flow's daily log of 5.7 GB, which the sizing above gives, is about 7.5
+The figures come from the soak at ten times launch flow, at 10,000 accounts and about 263 commands a second.
+Launch flow's daily log of 5.7 GB, which the sizing above gives, is about 7.5
 million commands a day at the soak's 715 to 800 bytes a command, or about 87 a second: the price commands
 are the same at every multiple, so ten times launch flow's trading is about three times its commands. The
 launch-flow rows assume the soak's bytes a command hold at the launch mix.
@@ -171,9 +171,10 @@ makes the node discard the index and rebuild it from the log, or a larger drive.
 ### What the server alerts on
 
 Each store's bytes and each volume's free space are metrics, read every `alerts.storage.interval` (a
-minute). A volume is named by the stores the configuration puts on it, joined with `+`. The production template has
-the volumes `log` and `history_index+marks_cache+daily_snapshots+alert_outbox`, and `recovery_caches` joins
-the second once `[snapshots]` is set.
+minute). A volume is named by the first store on it, in the order of the list below, so adding or removing an
+optional store never renames it. The production layout has the volumes `log` and `history_index`, and an
+alert's message lists every store on its volume with its size. Each read lists the log's directory and reads
+each file but its two newest segments once, since a sealed segment never changes.
 
 | Metric | Meaning |
 | --- | --- |
@@ -193,9 +194,9 @@ because a full volume can stall the page about itself on the alert outbox. The p
 | Free share of the volume below | 15% | 5% |
 | Projected to fill within | 14 days | 3 days |
 
-The projection reads the growth over the last six hours and makes none until the node has run that long, so
-it follows the day's rhythm: a quiet weekend projects a longer time than the Monday that follows. A level clears only once its measure is a tenth past
-the threshold.
+The projection reads the growth over the last six hours and makes none until the node has run that long.
+It follows the day's rhythm, so a quiet weekend projects a longer time than the Monday that follows. A level
+clears only once its measure is a tenth past the threshold.
 
 **The figures are the host's.** The host reports the size and free space of its disks, and its clock times
 the growth, so a host can make a volume look empty or full. The alerts are for the operator, who runs the
