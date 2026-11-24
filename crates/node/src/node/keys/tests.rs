@@ -428,7 +428,7 @@ fn sealed_store(name: &str, release: Release, generation: u64) -> Arc<KeyStore> 
 
 /// A start with the stand-in measurement, asking for new keys when `new_key`.
 fn start(new_key: bool) -> KeyStart {
-    KeyStart { new_key, predecessor: None, mock_launch_digest: Some(DIGEST) }
+    KeyStart { new_key, predecessor: None, mock_launch_digest: Some(DIGEST), frozen: false }
 }
 
 /// The release `cfg` runs under the stand-in measurement.

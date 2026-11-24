@@ -534,4 +534,9 @@ pub enum ProtocolVersion {
     /// the cap; each epoch close that distributes pays the queue first, oldest first, up to the cap in force,
     /// crediting each recipient's distribution, before the operator's share and the stakers' (`awards`).
     V89,
+    /// A carried genesis (`carry`): a new log's genesis may carry, by the node's `CarryState` parts, each account's
+    /// MONKEY entitlement and staked MONKEY, the staking mirror's frontier, the emission schedule and every bug bounty
+    /// award, unpaid, from another log's checkpoint root, each proven against it and the sets checked complete. The
+    /// staking state holds the total staked, set at activation and kept by every mirrored stake and unstake.
+    V90,
 }

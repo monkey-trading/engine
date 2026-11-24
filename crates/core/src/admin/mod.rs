@@ -90,6 +90,7 @@ impl Engine {
     ///   loosening a listed market's price rules without a notice or past its launch rules
     /// - `SetNotice` and `ClearNotice` with any error case of `Engine::set_notice` and `Engine::clear_notice`
     /// - `ApproveAward` and `SetAwardCap`, which only a passed vote applies (`Engine::apply_proposal`)
+    /// - from `V90`, `CarryState` with any error case of `Engine::carry_state`
     /// - from `V79`, `UpsertMarket` naming no minimum level distance, or moving one past its bounds
     /// - `SetParams` naming a portfolio grid that does not fit the markets listed, and `UpsertMarket` that
     ///   would leave a group's listed members on different asset classes or schedules, or one quoted outside
@@ -253,6 +254,15 @@ impl Engine {
                     } else {
                         None
                     };
+                // From `V90` staking keeps the total staked, which starts as the sum of the balances.
+                let staked_total = if self.protocol_version < ProtocolVersion::V90 && *version >= ProtocolVersion::V90 {
+                    self.staking
+                        .as_ref()
+                        .map(|_| self.staked_sum().ok_or("the staked balances overflow a total"))
+                        .transpose()?
+                } else {
+                    None
+                };
                 if let AdminCommand::ActivateCustodyFinality { legacy_deposits, .. } = cmd {
                     self.lock_legacy_deposits(legacy_deposits)?;
                 }
@@ -305,6 +315,9 @@ impl Engine {
                 }
                 if let Some(cash) = distribution_cash {
                     self.withdrawal_cash = Some(cash);
+                }
+                if let (Some(total), Some(staking)) = (staked_total, self.staking.as_mut()) {
+                    staking.staked_total = Some(total);
                 }
                 // The exit refunds pending deposits by id, which two live receipts at one id would
                 // alias: every duplicate above the finalised frontier resolves to its earliest live
@@ -359,6 +372,7 @@ impl Engine {
             AdminCommand::SetFaultProof(config) => self.set_fault_proof(config)?,
             AdminCommand::SetNotice { text } => self.set_notice(text)?,
             AdminCommand::ClearNotice => self.clear_notice()?,
+            AdminCommand::CarryState(part) => self.carry_state(part, voted, events)?,
             // A passed vote applies these through `Engine::apply_proposal` alone, so every other path is refused.
             AdminCommand::ApproveAward(_) | AdminCommand::SetAwardCap(_) => {
                 return Err("only a passed vote approves an award or moves the award cap".into());

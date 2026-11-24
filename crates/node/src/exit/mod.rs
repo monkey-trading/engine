@@ -17,7 +17,7 @@ use engine_core::types::AccountId;
 use engine_core::{Engine, Fixed};
 use serde::Serialize;
 
-use crate::log::{self, LogEntry, SegmentedLog};
+use crate::log::{self, Checkpoint, LogEntry, SegmentedLog};
 
 /// How many unfinalised credits one `registerExitCredits` call carries, so each call stays well
 /// within a transaction's size however many credits an account holds.
@@ -152,10 +152,17 @@ pub fn exit_bundle(path: &Path, seq: u64, subject: ExitSubject) -> anyhow::Resul
 /// - nothing is at `path`, or it cannot be read or fails its manifest check
 /// - a command fails to apply, or the commands do not reproduce the checkpoint's root
 /// - the log holds no checkpoint at `seq`
-fn engine_at_checkpoint(path: &Path, seq: u64) -> anyhow::Result<Engine> {
+pub(crate) fn engine_at_checkpoint(path: &Path, seq: u64) -> anyhow::Result<Engine> {
+    engine_and_checkpoint(path, seq).map(|(engine, _)| engine)
+}
+
+/// `engine_at_checkpoint`, with the checkpoint entry.
+/// Error cases:
+/// - see `engine_at_checkpoint`
+pub(crate) fn engine_and_checkpoint(path: &Path, seq: u64) -> anyhow::Result<(Engine, Checkpoint)> {
     let found = fs::metadata(path).with_context(|| format!("no readable log at {}", path.display()))?;
     let mut engine = Engine::new();
-    let mut reached = false;
+    let mut reached = None;
     let mut visit = |entry: LogEntry| {
         match entry {
             LogEntry::Command(command) => {
@@ -168,7 +175,7 @@ fn engine_at_checkpoint(path: &Path, seq: u64) -> anyhow::Result<Engine> {
                 if root != cp.root {
                     bail!("the log's root at seq {seq} is {}, its commands give {root}", cp.root);
                 }
-                reached = true;
+                reached = Some(cp);
                 // The suffix past the requested checkpoint cannot change its root; stop before a
                 // torn write there blocks proofs the complete prefix supports.
                 return Err(log::Stop.into());
@@ -187,8 +194,8 @@ fn engine_at_checkpoint(path: &Path, seq: u64) -> anyhow::Result<Engine> {
         Err(error) if stopped(&error) => {}
         Err(error) => return Err(error),
     }
-    ensure!(reached, "{} holds no checkpoint at seq {seq}", path.display());
-    Ok(engine)
+    let checkpoint = reached.with_context(|| format!("{} holds no checkpoint at seq {seq}", path.display()))?;
+    Ok((engine, checkpoint))
 }
 
 /// The calls that exit `account`: start the exit, register its equity, approvals, queued requests

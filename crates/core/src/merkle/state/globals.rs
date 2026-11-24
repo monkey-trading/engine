@@ -9,6 +9,7 @@ use crate::access::AccessPolicy;
 use crate::auth::{ClientAuth, Operator};
 use crate::awards::AwardCap;
 use crate::benchmark::BenchmarkHistory;
+use crate::carry::{CarryProgress, CarrySource};
 use crate::close_spread::PendingCeiling;
 use crate::deposits::CustodyCheckpoint;
 use crate::election::OperatorElection;
@@ -87,9 +88,20 @@ pub(super) struct Globals<'a> {
     /// From `V89`; omitted until a vote moves the award cap, so earlier roots stand.
     #[serde(skip_serializing_if = "Option::is_none")]
     award_cap: &'a Option<AwardCap>,
+    /// From `V90`; omitted but in a carried genesis, so earlier roots stand.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carried_from: &'a Option<CarrySource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    carry: &'a Option<CarryProgress>,
 }
 
 impl Engine {
+    /// The remaining-state leaf as the JSON its value hashes.
+    pub(crate) fn globals_json(&self) -> String {
+        // Engine state is maps, lists, strings and integers, all of which serde_json encodes.
+        serde_json::to_string(&self.globals()).expect("engine state serialises")
+    }
+
     /// The fields the remaining-state leaf holds.
     pub(super) fn globals(&self) -> Globals<'_> {
         // Every field is named, so a field added to `Engine` fails to compile until a leaf holds it.
@@ -143,6 +155,8 @@ impl Engine {
             // Each award has a leaf of its own (`merkle::award_key`).
             awards: _,
             award_cap,
+            carried_from,
+            carry,
             close_spread_ceilings,
             pending_ceiling,
             session_keys: _,
@@ -194,6 +208,8 @@ impl Engine {
             operator_faults,
             notice,
             award_cap,
+            carried_from,
+            carry,
         }
     }
 }

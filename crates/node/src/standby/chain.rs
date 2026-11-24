@@ -302,7 +302,7 @@ fn spelt(entry: &LogEntry) -> LogEntry {
 /// Error cases:
 /// - the root is spelt otherwise, the named signer does not parse, the root or signature is
 ///   malformed, the signature recovers to no key, or it recovers to another enclave than the entry names
-fn admit_checkpoint(checkpoint: &Checkpoint, domain: &CheckpointDomain) -> anyhow::Result<AccountId> {
+pub(crate) fn admit_checkpoint(checkpoint: &Checkpoint, domain: &CheckpointDomain) -> anyhow::Result<AccountId> {
     let written = checkpoint.root.strip_prefix("0x").is_some_and(|digits| {
         digits.len() == 64 && digits.bytes().all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f'))
     });

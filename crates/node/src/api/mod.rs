@@ -21,6 +21,7 @@ mod benchmark_schedule;
 mod distributions;
 mod exit;
 pub(crate) mod financing;
+mod frozen;
 mod history;
 mod house_state;
 mod marks;
@@ -271,7 +272,7 @@ fn retry_after(wait: Duration, body: Value) -> Response {
 }
 
 /// Every route, with the request span outermost, then the browser origin check, the per-client rate,
-/// the body read, and the response signature.
+/// the body read, the response signature, and a frozen node's refusal of client requests.
 pub fn router(state: ApiState) -> Router {
     let limits = state.limits.clone();
     Router::new()
@@ -324,6 +325,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/v1/archive/{file}", get(archive::archive))
         .route("/v1/archive/snapshots/{file}", get(archive::snapshot))
         .with_state(state.clone())
+        .layer(from_fn_with_state(limits.clone(), frozen::refuse_when_frozen))
         .layer(DefaultBodyLimit::max(limits.max_body_bytes))
         .layer(from_fn_with_state(state, signing::sign_responses))
         .layer(from_fn_with_state(limits.clone(), read_body))

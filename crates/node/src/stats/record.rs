@@ -154,8 +154,10 @@ impl Inner {
                 _ => {}
             }
         }
-        // The first command seeds the totals from the state it left, whatever its events moved.
-        if first {
+        // The first command seeds the totals from the state it left, whatever its events moved, and so does a
+        // carried genesis's last part, whose stakes no stake event moved.
+        let carried = events.iter().any(|event| matches!(event, Event::StateCarried(_)));
+        if first || carried {
             self.refresh_queue(engine);
             self.refresh_stakers(engine);
         } else if stake_moved {

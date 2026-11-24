@@ -56,9 +56,9 @@ const BEACON_GENESIS: u64 = 1_606_824_023;
 const STAKES: [u64; 3] = [40_000, 30_000, 30_000];
 const BOND: u64 = 2_000;
 /// The vote contract's windows and the restriction lifetime the node records: development values.
-const NORMAL_WINDOW_SECS: u64 = DAY_SECS;
-const FAST_WINDOW_SECS: u64 = 3_600;
-const TTL_MS: Millis = DAY_SECS as Millis * 1000;
+pub(super) const NORMAL_WINDOW_SECS: u64 = DAY_SECS;
+pub(super) const FAST_WINDOW_SECS: u64 = 3_600;
+pub(super) const TTL_MS: Millis = DAY_SECS as Millis * 1000;
 /// The close that adopts the set, at the end of the registry's first one-day epoch, and when the set
 /// takes effect.
 const SET_CLOSE_SECS: u64 = T0_SECS + DAY_SECS + 3 * 3_600;

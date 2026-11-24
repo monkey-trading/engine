@@ -19,8 +19,9 @@ operator's signing tools.
 
 | Command | Purpose |
 | --- | --- |
-| `engine run` | Runs the trading server. `--new-key` seals new keys for a release that has none, `--predecessor <host:port>` takes the keys from the running release once the vault makes this release current, and `--standby` follows the operator in effect as a standby copy. |
-| `engine replay` | Replays a log directory, a downloaded archive or a single log file, and checks every state root and checkpoint signature. With `--attestation`, it also requires every checkpoint signer to be a verified enclave. It checks every instruction's chained digest and every seal's form, and in full the first and last seal of each run of one signer's seals, the last authenticating every instruction in the run. `--every-seal` checks every seal in full, on one thread per core or on the number `--replay-workers` names. `--snapshots <dir>` replays a log directory in ranges, several at once, from a directory of the daily snapshots a trading server with `[daily_snapshots]` serves at `/v1/archive/snapshots/`, each checked against its checkpoint's signed root. |
+| `engine run` | Runs the trading server. `--new-key` seals new keys for a release that has none, `--predecessor <host:port>` takes the keys from the running release once the vault makes this release current, `--standby` follows the operator in effect as a standby copy, and `--frozen` refuses every client request, for a log's last starts before a new log carries its state, and the new log's starts before its public opening. |
+| `engine replay` | Replays a log directory, a downloaded archive or a single log file, and checks every state root and checkpoint signature. With `--attestation`, it also requires every checkpoint signer to be a verified enclave. It checks every instruction's chained digest and every seal's form, and in full the first and last seal of each run of one signer's seals, the last authenticating every instruction in the run. `--every-seal` checks every seal in full, on one thread per core or on the number `--replay-workers` names. `--snapshots <dir>` replays a log directory in ranges, several at once, from a directory of the daily snapshots a trading server with `[daily_snapshots]` serves at `/v1/archive/snapshots/`, each checked against its checkpoint's signed root. `--carry-source <log>` also checks a log whose genesis carried another log's state against that log's signed checkpoint. |
+| `engine carry` | Builds, from a published log's checkpoint, the carry file a new log's genesis takes each account's MONKEY entitlement and stake and every bug bounty award from, and prints what it carries. |
 | `engine exit-proof` | Builds, from a published log alone, the proofs and vault calls with which an account recovers its funds through the vault's exit. |
 | `engine verify-attestation` | Checks an enclave's attestation against a release manifest. |
 | `engine verify-response`, `engine verify-frames` | Check a saved signed answer, or a saved signed stream connection, against the attested key. |
@@ -65,7 +66,7 @@ requests are signed and how a client verifies the server's signed answers.
 | API | `api/`, `tls/`, `limits/`, `access/`, `withdrawals/` | The REST API and stream, TLS with a certificate from an ACME authority, rate limits, account screening and withdrawal authorisations |
 | Reads | `history/`, `stats/`, `status` | The account history index, the price history cache, the dashboard statistics and the operating status |
 | Enclave and time | `tee/`, `secrets/`, `handover/`, `clock`, `trusted_time/`, `roughtime/`, `verify/` | Attestation, sealed keys, delivered secrets, handing the keys to the next release, trusted time and attestation checks |
-| Custody and the chain | `custody/`, `checkpoints/`, `log_heads/`, `log_check/`, `exit/`, `seed_relay/` | Deposits and the RPC quorum, checkpoint posting and reconciliation, on-chain log heads, the log check at each turn, exit proofs and the turn-seed relayer |
+| Custody and the chain | `custody/`, `checkpoints/`, `log_heads/`, `log_check/`, `exit/`, `carry/`, `seed_relay/` | Deposits and the RPC quorum, checkpoint posting and reconciliation, on-chain log heads, the log check at each turn, exit proofs, the carried genesis at a move to a new vault, and the turn-seed relayer |
 | Operator rotation | `standby/`, `standby_key/`, `liveness/` | Following the operator in effect, standby keys, the liveness rule that promotes a standby, and fixing the fallback seed of a turn that no relay seeded |
 | Prices | `feeds/`, `benchmarks/` | Venue and market-data feeds, and the fetches behind dated benchmark rates |
 | Operations | `metrics/`, `monitor/`, `alerts/`, `episodes`, `throttle`, `admin/`, `ct_watch/` | Prometheus metrics, self-monitoring, alert routing, `engine admin` and `engine ct-watch` |
@@ -89,7 +90,7 @@ default. Every section refuses keys it does not know.
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |
 | `[history]`, `[stats]`, `[snapshots]` | The history index and price history cache, dashboard retention, and recovery snapshots |
 | `[metrics]`, `[alerts]` | The metrics listener and alert routing to webhooks |
-| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters |
+| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters, and in `[genesis.carry]` the log whose MONKEY, stakes and awards it carries |
 
 [`config/dev.toml`](../../config/dev.toml) runs everything against local simulations.
 [`config/anvil.toml`](../../config/anvil.toml) runs custody against the vault on a local Anvil

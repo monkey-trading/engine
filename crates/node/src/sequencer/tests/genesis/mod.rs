@@ -13,6 +13,8 @@ use crate::sequencer::fixture_tests::{geneses_no_config_can_name, old_genesis_lo
 use crate::sequencer::genesis::rejection;
 use crate::test_support::ANVIL_CONFIG;
 
+mod carry;
+
 #[test]
 fn a_benchmark_the_engine_rejects_writes_no_genesis_and_the_fixed_config_then_lists_every_market() {
     let dir = scratch_dir("genesis-rejected-benchmark");

@@ -31,8 +31,10 @@ use sha2::{Digest, Sha256};
 use crate::log::ReplayWorkers;
 
 mod benchmarks;
+mod carry;
 mod tee;
 pub use benchmarks::{BenchmarkSection, BenchmarkSource, Publisher};
+pub use carry::CarrySection;
 pub use tee::TeeSection;
 mod access;
 pub use access::AccessSection;
@@ -312,6 +314,10 @@ pub struct Genesis {
     /// Anvil values are labelled test fixtures; production's come from #147's calibration.
     #[serde(default)]
     pub close_spread_ceilings: Vec<CloseSpreadCeiling>,
+    /// The log whose final checkpoint this genesis carries MONKEY, stakes and awards from, right after staking
+    /// is initialised; absent carries nothing.
+    #[serde(default)]
+    pub carry: Option<CarrySection>,
 }
 
 #[derive(Debug, Deserialize)]

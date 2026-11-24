@@ -12,7 +12,8 @@ finding.
 - **The log and custody:** [the published log](#the-published-log), [deposits](#deposits),
   [withdrawals and the exit](#withdrawals-and-the-exit),
   [the vault's governance](#the-vaults-governance),
-  [MONKEY staking and distributions](#monkey-staking-and-distributions)
+  [MONKEY staking and distributions](#monkey-staking-and-distributions),
+  [the move to a new vault](#the-move-to-a-new-vault)
 - **The enclave:** [the enclave and its keys](#the-enclave-and-its-keys),
   [the enclave's clock](#the-enclaves-clock), [public certificates](#public-certificates)
 - **Operator rotation:** [elections and daily turns](#elections-and-daily-turns),
@@ -1024,6 +1025,68 @@ Known limits:
   end, and all return the same range without some block's every event, the mirror passes that block.
   Reading every block's header, whose logs bloom flags any mirrored event, would catch this, at one
   header read per Arbitrum block.
+
+## The move to a new vault
+
+A deployment can move to a new vault and start a new log whose genesis carries, from the old log's
+final checkpoint, each account's MONKEY entitlement and staked MONKEY, the point to which the old log
+had mirrored the staking contract, the emission schedule with its totals, and every bug bounty award.
+Only the trading server sequences a carried genesis, in its genesis, after staking is initialised
+and before anything is credited, staked, entitled or awarded. Distributions, balances, positions,
+orders, approvals and deposits are not carried, and each carried award owes its whole amount.
+
+The engine proves every carried value against the old log's checkpoint root, which the genesis
+names, so a host or a configuration author cannot alter a value. The old log's remaining state,
+proven against the same root, must record the old vault and its chain as its client
+authentication, the carried sequence number as its last instruction, protocol V90 or later, and
+rotation's switch off. The engine checks that the carried sets are complete. The entitlements must
+sum to the old log's total entitled, the stakes must sum to its total staked, and the awards must
+run from id 0 to an id at which the root proves no award. Because every value is at least zero and
+every account is carried at most once, no account with a positive entitlement or stake can be left
+out. A part that fails any check is refused, and the trading server refuses to serve a log whose
+genesis holds a refused part.
+
+At its first start, before its genesis, the trading server reads the chain at a `finalized` block
+through the custody providers. It carries only from the old vault's latest checkpoint, and only once
+that vault's signer is retired, the registry follows the new vault, rotation's switch is off, the
+registry's operator in effect has the configured operator key, and `MonkeyMinter` follows the new
+vault. The configured registry must be the one the old vault reads, whose staking contract the old
+log mirrored, and `MonkeyMinter` must mint the token that contract holds. A configuration author
+therefore cannot carry from an older root of the old vault, nor continue the carried stakes on
+another staking contract. The carried emission budget must match the cap that `MonkeyMinter`'s token
+holds.
+
+`MonkeyMinter` keeps one count of the MONKEY each account has claimed across every vault it has
+followed, so an account can claim from the new vault only what its carried entitlement adds to what
+it has claimed already. No emission period before the new log's first instruction after its genesis
+allocates MONKEY. The first instruction past the carried period closes that period with no weight,
+and cancels every later period up to its own.
+
+Replaying the new log alone verifies that every carried value is in the logged root, that the root
+is the state after the logged sequence number of a log whose custody was the logged vault, and that
+the carried sets are complete. `engine replay --carry-source` also replays the old log to the
+carried sequence number, requires the old log's signed checkpoint there to hold the carried root,
+and requires the carried state to equal the old log's state there.
+
+Known limits:
+
+- A replay cannot tell that the carried root is the old vault's final accepted checkpoint. That is a
+  fact about the chain, which the trading server reads at its first start. `--carry-source` ties the
+  root to the old log's signed checkpoint at the carried sequence number, and a verifier compares it
+  with the old vault's `checkpointRoots` there and its `latestSeq`.
+- The old log must stay published for good. Without it, a replayer can check the carried values
+  against the logged root, but cannot tie that root to the old log's history.
+- A carry loses the old log's open emission period. The tooling refuses an old log whose open period
+  has results, and the old log is frozen before its final checkpoint, but the engine cannot check
+  that the period was empty, because the period's results are not carried.
+- A carry loses any award vote that passed in the old log and has not applied, any distribution the
+  old vault has not paid, and the old log's cap on award payments. The old vault's exit pays its
+  unpaid distributions in its own currency.
+- From the old log's last drawn turn until a rotation set adopted after the move has waited out its
+  seven-day notice in the new log, no standby can be promoted. Only the timelock's install fallback
+  can replace a failed operator in that time.
+- The old log's schedule and vote contract stay on chain. Once rotation is on, anyone can draw turns
+  on that schedule, and its rotation set can vote there. The new log mirrors neither.
 
 ## The enclave and its keys
 

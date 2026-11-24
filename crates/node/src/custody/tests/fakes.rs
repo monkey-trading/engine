@@ -279,8 +279,8 @@ impl VaultReader for FakeChain {
         Ok(chain.balance)
     }
 
-    async fn registry_schedule(&self, _at: BlockRef) -> anyhow::Result<Address> {
-        self.0.lock().unwrap().schedule.named_or_refuse()
+    async fn registry_schedule(&self, at: BlockRef) -> anyhow::Result<Address> {
+        self.0.lock().unwrap().schedule.named_or_refuse(at.number)
     }
 
     async fn schedule_registry(&self, _at: BlockRef) -> anyhow::Result<Option<Address>> {

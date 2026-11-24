@@ -26,13 +26,13 @@ pub(in crate::custody::tests) enum TurnsRunUntilFault {
 }
 
 impl Schedule {
-    /// The schedule the registry names, unless that read is set to fail.
+    /// The schedule the registry names at block `at`, unless that read is set to fail.
     /// Error cases:
     /// - more reads than `named_reads_answered`
-    pub(in crate::custody::tests) fn named_or_refuse(&mut self) -> anyhow::Result<Address> {
+    pub(in crate::custody::tests) fn named_or_refuse(&mut self, at: u64) -> anyhow::Result<Address> {
         self.named_reads += 1;
         anyhow::ensure!(self.named_reads <= self.named_reads_answered.unwrap_or(usize::MAX), "connection refused");
-        Ok(self.named)
+        Ok(self.moved.filter(|(from, _)| at >= *from).map_or(self.named, |(_, schedule)| schedule))
     }
 }
 
@@ -42,6 +42,8 @@ pub(in crate::custody::tests) struct Schedule {
     /// The schedule `registry_schedule` answers: the zero address, the default, while the registry
     /// names none.
     pub(in crate::custody::tests) named: Address,
+    /// The block from which the registry names another schedule, as after a move of custody, and that one.
+    pub(in crate::custody::tests) moved: Option<(u64, Address)>,
     /// The registry `schedule_registry` answers: `None`, the default, where the schedule has no code.
     pub(in crate::custody::tests) registry: Option<Address>,
     /// A vote contract and the schedule its `schedule()` answers, `None` where it has no code.
@@ -91,7 +93,9 @@ impl ChainState {
                 };
                 Ok(rotationStateCall::abi_encode_returns(&state).into())
             }
-            _ if to == self.schedule.named && data == turnsRunUntilCall {}.abi_encode() => {
+            _ if (to == self.schedule.named || self.schedule.moved.is_some_and(|(_, moved)| moved == to))
+                && data == turnsRunUntilCall {}.abi_encode() =>
+            {
                 anyhow::ensure!(self.hash_at(at.number) == at.hash, "block {} is not canonical", at.hash);
                 match self.schedule.turns_run_until_fault {
                     Some(TurnsRunUntilFault::Refused) => anyhow::bail!("connection refused"),

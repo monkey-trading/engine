@@ -18,6 +18,7 @@ variables and the checks that the other runbooks use.
 | Deploy the contracts, and initialise emissions and staking | [Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
 | Deploy the contracts that daily operator turns need | [Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts), with the values in [production-deployment.toml](production-deployment.toml) |
 | Set the configurations a release ships | [config/release/](../../config/release), which start from [production-node.toml](production-node.toml) |
+| Move from the alpha's vault to the launch vault, carrying MONKEY, its stakes and the awards into the launch log | [Move to a new vault](vault-move.md) |
 | Stop new positions in one market or in all of them | [Make markets reduce-only](reduce-only.md) |
 | Bring a stopped or crashed trading server back | [Restart and recovery](restart-and-recovery.md) |
 | Act when `daily_snapshot_failed` or `daily_snapshot_unreadable` fires | [Daily snapshots](restart-and-recovery.md#daily-snapshots) |

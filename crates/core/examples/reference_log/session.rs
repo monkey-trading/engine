@@ -3,7 +3,7 @@
 
 use chrono::NaiveDate;
 use engine_core::auth::MAX_EXPIRY_AHEAD_MS;
-use engine_core::command::{AdminCommand, Command, OrderKind, Sequenced};
+use engine_core::command::{AdminCommand, Command, OrderKind};
 use engine_core::market::{MarketSpec, QuoteCurrency, Tier};
 use engine_core::params::{ProtocolParams, ToxicityParams};
 use engine_core::price::{MAX_QUOTE_LEAD_MS, SourceQuote};
@@ -22,7 +22,7 @@ use crate::{stress, v10, v11, v12, v14, v15, v16, v17, v18, v19, v20, v21, v22, 
 use crate::{
     v29, v30, v31, v32, v33, v34, v35, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52,
     v53, v54, v55, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v75,
-    v76, v77, v78, v79, v80, v81, v82, v83, v84, v85, v86, v87, v88, v89,
+    v76, v77, v78, v79, v80, v81, v82, v83, v84, v85, v86, v87, v88, v89, v90,
 };
 
 /// The scripted session: client auth and activation, genesis, funding, prices, every order kind, signed requests
@@ -50,8 +50,8 @@ use crate::{
 /// corporate actions held to the operator's bounds, the operator's status notice, levels on a position, close-outs
 /// under portfolio margin, a voted change to a futures market's contracts and its roll from its mark, and refused: a
 /// receipt at a vault id the frontier counts, a relisting leaving a held market unpriced, the office key's own order;
-/// and a bug bounty award voted in and paid in part by a close, with refused awards beside it.
-pub(crate) fn session() -> Vec<Sequenced> {
+/// a bug bounty award voted in and paid in part by a close, with refused awards beside it; and the total staked.
+pub(crate) fn session() -> Harness {
     let mut h = Harness::signed();
     let (a, b, c, d, t, e) = (h.signer(1), h.signer(2), h.signer(3), h.signer(4), h.signer(5), h.signer(6));
     let stranger = h.signer(9);
@@ -493,8 +493,8 @@ pub(crate) fn session() -> Vec<Sequenced> {
     for session in [v82::session, v83::session, v84::session, v85::session] {
         session(&mut h);
     }
-    for session in [v86::session, v87::session, v88::session, v89::session] {
+    for session in [v86::session, v87::session, v88::session, v89::session, v90::session] {
         session(&mut h);
     }
-    h.log
+    h
 }

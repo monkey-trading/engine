@@ -38,7 +38,9 @@ running trading server a node, as the first one below does.
 
 Two files on the data disk are the operator's one-off choices, and [init](../image/init) removes
 both before the engine starts. `/data/new-key` seals new keys for a release that has none, and
-`/data/predecessor` holds the `host:port` of the running release from which to take them.
+`/data/predecessor` holds the `host:port` of the running release from which to take them. A third,
+`/data/frozen`, stays until the operator removes it: while it is there the engine starts with
+`--frozen` and admits no client request, as a log's last starts before a move to a new vault need.
 
 The kernel also reads input that the launch measurement does not cover, and nothing yet bounds what
 a crafted input can do to it: the ext4 filesystem that the host builds, the ACPI tables that QEMU

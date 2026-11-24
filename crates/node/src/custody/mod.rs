@@ -132,6 +132,11 @@ impl ContractQuorum {
         Ok(Self(Quorum::connect(evm, cfg.vault.parse().context("custody.vault")?)?.named(name, false)))
     }
 
+    /// The quorum, for reads of several contracts at one block.
+    pub(crate) fn quorum(&self) -> &Quorum<VaultRpc> {
+        &self.0
+    }
+
     /// The credit tag's block's time, in seconds, and each of the calls to `to` that `calls` names for
     /// that time, made there under its operation name.
     /// Error cases:

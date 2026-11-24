@@ -11,8 +11,8 @@ use crate::merkle::tree::{StateTree, Version};
 use crate::merkle::{
     AccountProof, DistributionProof, EntitlementProof, ExitProof, ExitTermsProof, LevelsProof, MarketProof,
     NoLevelsProof, PendingDepositProof, PendingReceipt, PositionProof, QueuedWithdrawalProof, ReceiptKind,
-    ReceiptProof, UnfinalisedCreditProof, WithdrawalApprovalProof, account_key, distribution_key, entitlement_key,
-    exit_terms_key, held_deposit_key, levels_key, market_key, pending_deposit_key, position_key,
+    ReceiptProof, UnfinalisedCreditProof, WithdrawalApprovalProof, Witness, account_key, distribution_key,
+    entitlement_key, exit_terms_key, held_deposit_key, levels_key, market_key, pending_deposit_key, position_key,
     withdrawal_approval_key, withdrawal_queue_key,
 };
 use crate::protocol::ProtocolVersion;
@@ -78,6 +78,17 @@ impl StateTree {
         }
         let (seq, root, leaf) = (version.seq, version.hash, leaf.clone());
         Some(AccountProof { seq, root, account, leaf, siblings, positions, markets, levels: held, no_levels })
+    }
+
+    /// The siblings of the leaf at `key` in `version`, from the root down, or `None` when it holds none there.
+    pub(crate) fn siblings(&self, version: &Version, key: &B256) -> Option<Vec<B256>> {
+        self.arena.proven(version.root, key).map(|(_, siblings)| siblings)
+    }
+
+    /// The siblings proving `version` holds no leaf at `key`, from the root down, with the leaf of another key
+    /// in its place if any, or `None` when it holds one there.
+    pub(crate) fn absence(&self, version: &Version, key: &B256) -> Option<(Vec<B256>, Option<Witness>)> {
+        self.arena.absence(version.root, key)
     }
 
     /// The proof of `account`'s cumulative MONKEY entitlement against `version`, or `None` when the

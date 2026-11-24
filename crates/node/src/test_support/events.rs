@@ -4,6 +4,7 @@ use alloy::primitives::B256;
 use engine_core::Fixed;
 use engine_core::access::{AccessReject, EligibilityClass};
 use engine_core::awards::{AwardApproved, AwardPaid, Severity};
+use engine_core::carry::{CarrySource, StateCarried};
 use engine_core::corporate::{Adjustment, CorporateAction};
 use engine_core::deposits::{DepositBeneficiary, DepositReceipt, DepositReject, DepositStatus};
 use engine_core::emissions::TokenUnits;
@@ -256,6 +257,13 @@ pub fn every_event() -> Vec<Event> {
             owed: engine_core::UsdcUnits(49_999_999_800),
         }),
         Event::DistributionEpochsSkipped { first: 4, last: 9 },
+        Event::StateCarried(StateCarried {
+            source: CarrySource { chain_id: 42_161, vault: account, seq: 70, root: B256::repeat_byte(7) },
+            accounts: 3,
+            entitled: TokenUnits(9_000),
+            staked: TokenUnits(4_000),
+            awards: 1,
+        }),
         Event::RotationSwitched { enabled: true, election_cancelled: false },
         Event::OperatorElected { epoch: 3, candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
         Event::OperatorInstalled { candidate: account, admin_key: account, effective_at: 1_793_000_000_000 },
@@ -369,6 +377,7 @@ pub fn every_event() -> Vec<Event> {
             | Event::DistributionEpochsSkipped { .. }
             | Event::AwardApproved(_)
             | Event::AwardPaid(_)
+            | Event::StateCarried(_)
             | Event::RotationSwitched { .. }
             | Event::OperatorElected { .. }
             | Event::OperatorInstalled { .. }

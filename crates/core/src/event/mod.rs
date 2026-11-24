@@ -343,6 +343,8 @@ pub enum Event {
     /// From `V89`, what an epoch close paid an award, credited to its recipient's distribution, before the
     /// operator's share and the stakers'.
     AwardPaid(AwardPaid),
+    /// From `V90`, a carried genesis applied in full (`carry`).
+    StateCarried(crate::carry::StateCarried),
     /// From `V25`, a closed distribution epoch: the NAV and floor it measured, the excess above the floor in whole
     /// USDC base units, and what was allocated of it: from `V89` to awards first (`awarded`, left out at zero), to
     /// stakers, and from `V47` to the operator. House cash fell by the allocated total; the dust is the house's.
@@ -391,15 +393,13 @@ pub enum Event {
         chain_ref: String,
         reason: String,
     },
-    /// From `V51`, a rotation set the operator schedule adopted, mirrored; it takes effect on chain at
-    /// `effective_at`.
+    /// From `V51`, a rotation set the operator schedule adopted, mirrored; it takes effect on chain at `effective_at`.
     RotationSetAdopted {
         set: u32,
         epoch: u64,
         effective_at: Millis,
     },
-    /// From `V51`, a turn the operator schedule assigned, mirrored: `admin_key` signs admin commands
-    /// from `applies_at`.
+    /// From `V51`, a turn the operator schedule assigned, mirrored: `admin_key` signs admin commands from `applies_at`.
     TurnAssigned {
         turn: u64,
         position: u16,

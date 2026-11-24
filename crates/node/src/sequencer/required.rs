@@ -1,19 +1,22 @@
 //! Commands the engine must accept before anything else: the client auth, the operator, protocol
 //! activation, and genesis. Like any command, they wait for a stamp trusted time admits.
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use engine_core::Engine;
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::carry::CarryPart;
 use engine_core::command::{AdminCommand, Command};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::params::NotionalWeighting;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::Millis;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::config::Genesis;
 use crate::sequencer::Sequencer;
-use crate::sequencer::genesis::{GENESIS_REF, check_genesis, genesis_commands, rejection};
+use crate::sequencer::genesis::{
+    GENESIS_REF, carried_genesis_commands, check_carried_genesis_at, is_carry_part, rejection,
+};
 use crate::trusted_time::Sample;
 
 impl Sequencer {
@@ -114,6 +117,11 @@ impl Sequencer {
     /// more than protocol activation.
     pub fn needs_genesis(&self) -> bool {
         !self.engine.is_credited(GENESIS_REF)
+    }
+
+    /// The checkpoint the log's carried genesis took its state from, once it applied in full.
+    pub(crate) fn carried_from(&self) -> Option<engine_core::carry::CarrySource> {
+        self.engine.carried_from()
     }
 
     /// Records the config's client auth and operator and activates the latest protocol version,
@@ -256,8 +264,18 @@ impl Sequencer {
     /// - the engine rejects one when it is sequenced
     /// - the log cannot be written
     pub fn genesis(&mut self, genesis: &Genesis) -> anyhow::Result<()> {
-        check_genesis(&self.client_auth, self.operator, genesis)?;
-        self.sequence_required("genesis", genesis_commands(genesis))
+        self.carried_genesis(genesis, &[])
+    }
+
+    /// `genesis`, carrying `carry`'s parts right after staking is initialised (`[genesis.carry]`).
+    /// Error cases:
+    /// - see `genesis`
+    /// - parts that apply but leave the carry unfinished; at the stamp it takes, a carried genesis the engine
+    ///   would refuse there, before any of it is written
+    pub fn carried_genesis(&mut self, genesis: &Genesis, carry: &[CarryPart]) -> anyhow::Result<()> {
+        let cmds = carried_genesis_commands(genesis, carry);
+        check_carried_genesis_at(&self.client_auth, self.operator, cmds.clone(), 0)?;
+        self.sequence_required("genesis", cmds)
     }
 
     /// Queues commands the engine must accept, `what` they are for, and sequences everything queued
@@ -298,6 +316,13 @@ impl Sequencer {
         let mut queued = std::mem::take(&mut self.required).into_iter();
         while let Some((what, cmds)) = queued.next() {
             info!(what, commands = cmds.len(), "sequencing required commands");
+            // A carried genesis runs again at the stamp it takes, before any of it is written: a hold may have run
+            // past a value the stamp refuses, such as the staking start.
+            if cmds.iter().any(is_carry_part) {
+                check_carried_genesis_at(&self.client_auth, self.operator, cmds.clone(), ts)
+                    .context("the carried genesis at its stamp")
+                    .inspect_err(|e| error!(alert = "carry_refused", "refusing to sequence genesis: {e:#}"))?;
+            }
             let mut stamped = false;
             let mut cmds = cmds.into_iter();
             while let Some(cmd) = cmds.next() {
