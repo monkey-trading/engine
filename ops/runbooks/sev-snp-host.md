@@ -16,6 +16,7 @@ says, and change the step once the server has answered it.
 
 - [Know before you start](#know-before-you-start)
 - [Order the server](#order-the-server)
+- [Plan each store's capacity](#plan-each-stores-capacity)
 - [Set up the host](#set-up-the-host)
 - [Build the image](#build-the-image)
 - [Boot the three guests](#boot-the-three-guests)
@@ -117,14 +118,102 @@ a development machine at 100,000 accounts on the launch book.
 | --- | --- | --- | --- |
 | vCPUs | 4 | 12 of the host's 48 threads | The guest shape that `measurement.json` measures. Under ten times launch flow the load test's process, which also holds the price stand-ins and the screening source, peaked at 4.6 cores. |
 | Memory | 16 GiB (proposed) | 48 GiB | The launch bar asks for four times the trading server's resident memory. That memory is 1.2 GiB for the trading server and its stats worker's copy, and 2.6 GB to 3.6 GB for the load test's whole process. |
-| Disk for 90 days of launch flow | About 560 GB, before the history index | About 1.7 TB | A day of launch flow writes 5.7 GB of log. Daily snapshots add about 420 MB a day, and the two recovery caches up to 4 GiB in all. |
-| Disk for one 8-hour soak at ten times launch flow | About 400 GB | | In the soak, at 10,000 accounts, the recovery caches and the history index grew about 12 KB for each command. |
+| Disk | See [Plan each store's capacity](#plan-each-stores-capacity) | | The soak's measured growth of each store. The history index alone fills a 1.92 TB drive in about 85 days at launch flow. |
 
 The memory figure is not covered by the launch measurement, so a guest's memory can change without a
 new release. The vCPU count is covered by it, so a different count is a new image. The 192 GB
 covers three 16 GiB guests, a 32 GiB benchmark guest, the same benchmarks run on the host, and the
 64 GB that a full 30-day replay at 100,000 accounts is projected to need. The memory of an
 SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must fit in the host's.
+
+## Plan each store's capacity
+
+The trading server keeps six stores on disk, and today three of them grow without a bound. This section
+sizes each from the soak's measurements, says what the server alerts on, and says what can and cannot be
+relied on in the figures it reports. **No store is bounded yet, and the history index fills a 1.92 TB drive
+within months.** Three changes are being built to bound the stores: the history index's growth (#1301),
+archiving the log to object storage (#1302) and tiering the daily snapshots (#1303). This plan is updated as
+each lands, and until then it is the planning basis for a node that must run for months.
+
+### What each store grows by
+
+The figures come from the soak at ten times launch flow, at 10,000 accounts and about 263 commands a second,
+run on 23 and 24 November. Launch flow's daily log of 5.7 GB, which the sizing above gives, is about 7.5
+million commands a day at the soak's 715 to 800 bytes a command, or about 87 a second: the price commands
+are the same at every multiple, so ten times launch flow's trading is about three times its commands. The
+launch-flow rows assume the soak's bytes a command hold at the launch mix.
+
+| Store | Per command | Launch flow, a day | Ten times launch flow, a day | Bounded |
+| --- | --- | --- | --- | --- |
+| Log | 715 to 800 bytes | 5.7 GB | 18 GB | No: every segment is kept, since recovery replays from genesis |
+| History index | about 3.0 KB | about 23 GB | about 68 GB | Only by `history.retention`, which is 365 days in production |
+| Recovery caches | none | flat | flat | Yes: `snapshots.retain` of them; two were about 38 MB each at 10,000 accounts, and the sizing above allows up to 4 GiB in all at 100,000 |
+| Daily snapshots | none | about 0.4 GB, estimated | about 0.4 GB, estimated | No: every day's is kept. The 420 MB is an estimate at 100,000 accounts and **has not been measured** |
+| Marks cache | none | small, not measured | small, not measured | By the retentions in `[history.marks]` |
+| Alert outbox | none | none | none | Yes: `alerts.outbox.max_bytes` and `max_pages` |
+
+On the two drives, the log's own and the data drive that holds everything else:
+
+| One 1.92 TB drive | Launch flow | Ten times launch flow |
+| --- | --- | --- |
+| Log drive full in | about 337 days | about 107 days |
+| Data drive full in (history index and snapshots) | about 83 days | about 28 days |
+| Data drive's Warning (15% free) in | about 71 days | about 24 days |
+| Log drive's Warning (15% free) in | about 286 days | about 91 days |
+| History index after 365 days, were it not bounded | about 8.2 TB | about 24.9 TB |
+
+A drive's usable size is below its label, since the filesystem keeps some of it, so each figure is a little
+optimistic. The three guests of the test host share its two drives, so a table for one node does not hold
+for three. For months of operation on this hardware, the history index must be bounded before launch, and
+the data drive needs a plan before then: a shorter `history.retention`, which a release changes and which
+makes the node discard the index and rebuild it from the log, or a larger drive. Setting the retention is
+the owner's decision.
+
+### What the server alerts on
+
+Each store's bytes and each volume's free space are metrics, read every `alerts.storage.interval` (a
+minute). A volume is named by the stores on it joined with `+`, so on the production layout the volumes are
+`log` and `history_index+marks_cache+recovery_caches+daily_snapshots+alert_outbox`.
+
+| Metric | Meaning |
+| --- | --- |
+| `engine_store_bytes{store}` | Bytes the disk allocates to each store's files: `log`, `history_index`, `marks_cache`, `recovery_caches`, `daily_snapshots`, `alert_outbox` |
+| `engine_volume_total_bytes{volume}` | Size of each volume |
+| `engine_volume_free_bytes{volume}` | Bytes available to the server on each volume |
+| `engine_volume_growth_bytes_per_second{volume}` | Growth of used bytes over `alerts.storage.rate_window`, once a sixth of the window is sampled |
+| `engine_volume_fill_seconds{volume}` | Seconds to full at that growth, present only while the volume grows |
+
+The server raises `disk_space_low` (Warning) and `disk_space_critical` (Critical) for a volume, and the
+operator's Prometheus rules `EngineVolumeNearlyFull` and `EngineVolumeFillingSoon` repeat them from outside,
+because a full volume can stall the page about itself on the alert outbox. The production defaults are in
+`[alerts.storage]`, with the reasoning beside each:
+
+| Setting | Warning | Critical |
+| --- | --- | --- |
+| Free share of the volume below | 15% | 5% |
+| Projected to fill within | 14 days | 3 days |
+
+The projection reads the growth over the last six hours, so it follows the day's rhythm: a quiet weekend
+projects a longer time than the Monday that follows. A level clears only once its measure is a tenth past
+the threshold.
+
+**The figures are the host's.** The host reports the size and free space of its disks, and its clock times
+the growth, so a host can make a volume look empty or full. The alerts are for the operator, who runs the
+host; the engine reads none of them, and no protocol rule, checkpoint or client answer depends on them. They
+do not replace the log's own checks: a host that stalls or fills the disk is also caught by `log_sync_held`.
+
+### When a disk alert fires
+
+1. Name the volume from the alert, and read `engine_store_bytes` for the stores on it. The largest is the
+   one that grows.
+2. For the history index, the lever is `history.retention`, which a new release sets. For the daily
+   snapshots, copy old ones off the host and remove them as [Daily
+   snapshots](restart-and-recovery.md#daily-snapshots) step 4 describes. For the log, nothing removes
+   segments: add disk, or move the data to a larger drive during a planned stop.
+3. Do not delete the log's segments or a recovery cache by hand to make room. A segment missing from the log
+   fails recovery, as [The trading server will not start](restart-and-recovery.md#the-trading-server-will-not-start)
+   describes.
+4. Tell the owner for any `disk_space_critical`, with the volume, the free space and the largest store.
 
 ## Set up the host
 
@@ -680,8 +769,8 @@ trading server from outside the guest needs the load test to target a trading se
 which it does not do yet.
 
 The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. Give it a
-list with this one line, and make its data disk 600G, since its caches and history index can grow
-by about 400 GB in a run:
+list with this one line, and make its data disk 100G, since a run writes about 23 GB of history index
+and 6 GB of log, as [Plan each store's capacity](#plan-each-stores-capacity) gives:
 
 ```text
 soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak

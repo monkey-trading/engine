@@ -238,7 +238,7 @@ jobs:
                   areas+=" rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch" ;;
                 # Stats, history and metrics, and the node watching itself.
                 crates/node/src/stats/* | crates/node/src/history/* | crates/node/src/metrics/* \
-                  | crates/node/src/monitor/* | crates/node/src/node/marks.rs)
+                  | crates/node/src/monitor/* | crates/node/src/storage/* | crates/node/src/node/marks.rs)
                   areas+=" rust scenario_tests dashboard_data metrics_alerts snapshot_restart node_load soak recovery_scale" ;;
                 # Alert routing.
                 crates/node/src/alerts/* | crates/node/src/throttle.rs | crates/node/src/episodes.rs)
@@ -323,7 +323,7 @@ jobs:
                   | scripts/dev-holding-fee.sh | scripts/dev-volume-tiers.sh | scripts/dev-weekend-margin.sh \
                   | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
                   | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh \
-                  | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh)
+                  | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh | scripts/dev-storage-alerts.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -889,6 +889,8 @@ jobs:
         run: ./scripts/dev-daily-snapshots.sh
       - name: Run the member snapshot start dev scenario
         run: ./scripts/dev-member-snapshot-start.sh
+      - name: Run the disk alerts dev scenario
+        run: ./scripts/dev-storage-alerts.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Check the same wait over 100k accounts each holding a hedged pair under portfolio margin

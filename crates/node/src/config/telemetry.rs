@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail};
 use reqwest::Url;
 use serde::Deserialize;
 
-use crate::config::SecretName;
+use crate::config::{SecretName, StorageSection};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +36,9 @@ pub struct AlertsSection {
     pub critical: Option<WebhookRoute>,
     /// Where Warning alerts are posted. Without it they are only logged.
     pub warning: Option<WebhookRoute>,
+    /// The disk alerts' thresholds; the defaults when the section is absent.
+    #[serde(default)]
+    pub storage: StorageSection,
 }
 
 /// Durable private pages; this directory must be beside, never inside, the public log.

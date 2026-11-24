@@ -407,6 +407,8 @@ async fn serve_node(
 
     let monitoring = monitor::run(tx.clone(), metrics.clone(), cfg.alerts.no_price_after, sources, samples_rx.clone());
     tasks.spawn(async move { ("monitor", monitoring.await) });
+    let storage = crate::storage::run(crate::storage::Layout::of(cfg), cfg.alerts.storage.clone(), metrics.clone());
+    tasks.spawn(async move { ("storage", storage.await) });
 
     let certificates = CertificateTask::configured(&cfg.api, tls.key, &metrics, sealed)?;
     let listener = TcpListener::bind(cfg.node.listen).await.with_context(|| format!("binding {}", cfg.node.listen))?;

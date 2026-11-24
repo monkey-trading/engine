@@ -8,11 +8,15 @@ use std::sync::atomic::AtomicU64;
 
 pub(crate) mod latency;
 mod listener;
+mod reasons;
 mod roots;
+mod storage;
 pub use latency::{LATENCY_BUCKETS, LatencyMetrics};
 pub use listener::router;
 pub(crate) use listener::{alongside, bind};
+use reasons::prices_reject_reason;
 pub use roots::RootMetrics;
+pub use storage::{StorageMetrics, StoreLabel, VolumeLabel};
 
 use engine_core::Fixed;
 use engine_core::deposits::DepositReject;
@@ -147,6 +151,7 @@ pub struct Metrics {
     pub alert_route_off: Family<SeverityLabel, Gauge>,
     pub tls_certificate_not_after: FloatGauge,
     pub tls_certificate_pending: Gauge,
+    pub storage: StorageMetrics,
 }
 
 impl Metrics {
@@ -189,6 +194,7 @@ impl Metrics {
             alert_pages_pending: Family::default(),
             tls_certificate_not_after: FloatGauge::default(),
             tls_certificate_pending: Gauge::default(),
+            storage: StorageMetrics::default(),
         };
         let r = &mut metrics.registry;
         r.register(
@@ -325,6 +331,7 @@ impl Metrics {
             "1 while [api.tls.acme] is set and the CA has issued no certificate yet; 0 otherwise",
             metrics.tls_certificate_pending.clone(),
         );
+        metrics.storage.register(r);
         let typed = ["order_rejected", "withdrawal_rejected", "deposit_rejected", "staking_rejected"];
         let rejections = typed
             .iter()
@@ -469,24 +476,6 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::InsufficientStake => "insufficient_stake",
         Reject::LevelTooClose { .. } => "level_too_close",
         Reject::LevelsUnsupported => "levels_unsupported",
-    }
-}
-
-/// A price rejection's reason, read from the engine's text. Tests sequence each rejection through
-/// the engine, so a changed text fails them rather than falling into `other`.
-fn prices_reject_reason(reason: &str) -> &'static str {
-    if reason == "unknown market" {
-        "unknown_market"
-    } else if reason.starts_with("malformed quote") {
-        "malformed_quote"
-    } else if reason.ends_with("ahead of the sequenced time") {
-        "quote_ahead"
-    } else if reason.ends_with("outside one open session") {
-        "market_closed"
-    } else if reason.ends_with("which the market does not take") {
-        "contract_not_taken"
-    } else {
-        "other"
     }
 }
 

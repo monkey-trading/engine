@@ -1,7 +1,7 @@
 # Alerting rules for the operator's Prometheus, which runs outside the enclave. They page on what
 # the node cannot page itself: a node whose metrics stop answering, alert pages that its webhook
 # keeps failing or refuses, or that the node drops, and a log sync held on a disk that also holds
-# the alert outbox. They also escalate an API certificate
+# the alert outbox, and a data volume that is nearly full or filling. They also escalate an API certificate
 # that is missing or about to expire, past the node's own Warnings. Route them through Alertmanager
 # to a receiver other than the node's own webhook. The rules assume the scrape job is named `engine`;
 # scrape a Certificate Transparency watcher (`engine ct-watch`, which serves the same alert metrics)
@@ -90,3 +90,24 @@ groups:
           severity: critical
         annotations:
           summary: "Engine node {{ $labels.instance }}'s TLS certificate expires within 7 days and has not been renewed"
+
+      # The node's own disk_space_critical page commits to the alert outbox, which sits on a data volume,
+      # so a volume that fills can stall the page it raises; the gauges are read from memory. The share
+      # is alerts.storage.critical_free_percent's default: change them together.
+      - alert: EngineVolumeNearlyFull
+        expr: engine_volume_free_bytes / engine_volume_total_bytes < 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine node {{ $labels.instance }}'s volume {{ $labels.volume }} has under 5% free"
+
+      # The projection reads the last six hours' growth, which a burst can overstate, so it holds for half an
+      # hour. The window is alerts.storage.critical_fill_within's default: change them together.
+      - alert: EngineVolumeFillingSoon
+        expr: engine_volume_fill_seconds < 3 * 86400
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Engine node {{ $labels.instance }}'s volume {{ $labels.volume }} fills within 3 days at its recent growth"

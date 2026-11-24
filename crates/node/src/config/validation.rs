@@ -253,6 +253,7 @@ impl NodeConfig {
         }
         self.alerts.outbox.validate()?;
         self.alerts.outbox.validate_location(&self.node.log_dir)?;
+        self.alerts.storage.validate()?;
         self.history.retention_ms().context("history.retention")?;
         if let Some(marks) = &self.history.marks {
             marks.validate(PRODUCTION_BUILD).context("history.marks")?;
