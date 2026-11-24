@@ -17,7 +17,6 @@ use alloy::primitives::{Address, B256};
 use anyhow::{Context, anyhow, bail};
 use engine_core::Engine;
 use engine_core::carry::{CarryPart, CarrySource};
-use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
 use engine_core::types::AccountId;
 use tracing::{error, info, warn};
@@ -244,11 +243,12 @@ pub(crate) fn check_recovered(cfg: &NodeConfig, seq: &Sequencer) -> anyhow::Resu
     check_carried_source(seq.carried_from(), configured(cfg), seq.needs_genesis())
 }
 
-/// Refuses a member's copy whose genesis carried from another source than the config's `[genesis.carry]`, or from
-/// any when the config names none, and, unless `open`, from none when it names one: the start would refuse to serve
-/// it (`check_recovered`) once the member held the keys. A member checks before it takes a turn's keys, when its
-/// copy holds a closed genesis, and before it registers its standby key, while its copy may still be before it
-/// (`open`). Pages Critical `carry_refused`.
+/// Refuses a copy whose genesis carried from another source than the config's `[genesis.carry]`, or from any when
+/// the config names none, and, unless `open`, from none when it names one: the start would refuse to serve it
+/// (`check_recovered`) once this node held the keys. A member checks before it takes a turn's keys, and a whole-log
+/// take before it seals the keys or confirms, each over a copy that holds a closed genesis; a member checks before
+/// it registers its standby key too, while its copy may still be before its genesis (`open`). Pages Critical
+/// `carry_refused`.
 /// Error cases:
 /// - see `check_carried_source`
 pub(crate) fn check_copy(cfg: &NodeConfig, copy: &Engine, open: bool) -> anyhow::Result<()> {
@@ -256,33 +256,8 @@ pub(crate) fn check_copy(cfg: &NodeConfig, copy: &Engine, open: bool) -> anyhow:
         .inspect_err(|e| error!(alert = "carry_refused", "refusing to hold this log's keys: {e:#}"))
 }
 
-/// Refuses, before a whole-log take seals the keys and confirms the handover, the log it took into `dir` when its
-/// genesis carried from another source than the config's `[genesis.carry]`, from any when the config names none, or
-/// from none when it names one, as its first segment's `Begin` part names it: the start would refuse to serve it
-/// (`check_recovered`) once the predecessor had stopped. A taken log holds a closed genesis. Pages Critical
-/// `carry_refused`.
-/// Error cases:
-/// - the log's manifest or first segment cannot be read
-/// - see `check_carried_source`
-pub(crate) fn check_taken(cfg: &NodeConfig, dir: &Path) -> anyhow::Result<()> {
-    let manifest = crate::log::Manifest::load(dir)?;
-    let mut begun = None;
-    if let Some(first) = manifest.segments.first() {
-        crate::log::read_file(&dir.join(&first.file), |entry| {
-            if let crate::log::LogEntry::Command(command) = entry
-                && let Command::Admin(AdminCommand::CarryState(CarryPart::Begin { source, .. })) = command.sequenced.cmd
-            {
-                begun.get_or_insert(source);
-            }
-            Ok(())
-        })?;
-    }
-    check_carried_source(begun, configured(cfg), false)
-        .inspect_err(|e| error!(alert = "carry_refused", "refusing the handover: {e:#}"))
-}
-
 /// The chain and source vault the config's `[genesis.carry]` names.
-fn configured(cfg: &NodeConfig) -> Option<(u64, AccountId)> {
+pub(super) fn configured(cfg: &NodeConfig) -> Option<(u64, AccountId)> {
     cfg.genesis.carry.as_ref().map(|carry| (cfg.custody.chain_id, carry.vault))
 }
 
