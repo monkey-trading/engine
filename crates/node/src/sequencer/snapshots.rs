@@ -19,8 +19,8 @@ use crate::snapshot::sealing::Encoding;
 use crate::snapshot::{self, RecoveryContext, Snapshot};
 use crate::stats::background::Job;
 
-/// The least sequenced time a capture in flight waits for the history index before a capture behind it
-/// alerts. Outside shutdown, cadence also keeps the interval between the two.
+/// The least sequenced time a capture stays in flight, waiting for the history owner to take and store it,
+/// before a capture behind it alerts. Outside shutdown, cadence also keeps the interval between the two.
 const CAPTURE_LATE: Millis = 60_000;
 
 /// A checkpoint whose capture waits, with its progress and recovery facts as they stood then.
@@ -175,16 +175,16 @@ impl Sequencer {
 
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
     /// status may have moved on since; with a capture in flight, the history owner stopped, or a step failing, keeps it
-    /// for shutdown instead, and the capture stays due. An owner behind the log takes the capture and completes it once
-    /// it reaches the checkpoint. No command has been applied since the checkpoint, and no withdrawal
-    /// entry has been logged after it (`record`), so the payouts it owes are taken now.
+    /// for shutdown instead, and the capture stays due. An owner behind the log takes the capture and pairs it with
+    /// the history it has indexed (`history::runtime`). No command has been applied since the checkpoint, and no
+    /// withdrawal entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {
         let Some(endpoint) = self.sealing.clone() else { return Ok(()) };
         let Some(permit) = endpoint.try_permit() else {
-            // A capture still in flight a minute after it was handed over waits for an index behind the
-            // log: no cache is written until the index reaches it.
+            // A capture still in flight a minute after it was handed over waits for a history owner that has
+            // not taken it, or is still storing it: no cache is written meanwhile.
             if let Some((seq, handed)) = self.captures.handed
                 && self.engine.now().saturating_sub(handed) >= CAPTURE_LATE
             {
@@ -193,8 +193,8 @@ impl Sequencer {
                     warn_span!("capture", seq).in_scope(|| {
                         warn!(
                             alert = "snapshot_write_failed",
-                            "checkpoint remains in log: the last capture still waits for the history index to reach \
-                             it, after {waited} s"
+                            "checkpoint remains in log: the history owner has not stored the last capture after \
+                             {waited} s"
                         )
                     })
                 });

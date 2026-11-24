@@ -138,6 +138,50 @@ fn the_anchor_pass_refuses_a_seal_failure_and_an_unsealed_span() {
     assert!(format!("{error:#}").contains("prefix"), "{error:#}");
 }
 
+/// A paired cache's history head before its checkpoint binds to it through this log's commands between them,
+/// from any seq this history holds, the head at its segment's start or end included.
+#[test]
+fn a_caches_history_head_binds_to_its_checkpoint_through_the_commands_between() {
+    let (dir, _, prefixes) = sealed_log("bind-history", 25, &[0]);
+    let base = 20;
+    for seq in [0, 9, 10, 19] {
+        bind_history(&dir, (seq, prefixes[seq as usize]), base, prefixes[base as usize]).unwrap();
+    }
+}
+
+/// A head this history does not hold, one paired at the wrong seq, or a cache certifying another
+/// history's prefix is refused: the commands between do not carry the head's prefix to the cache's.
+#[test]
+fn a_caches_history_head_of_another_history_is_refused() {
+    let (dir, _, prefixes) = sealed_log("bind-history-foreign", 25, &[0]);
+    let (base, certified) = (20, prefixes[20]);
+    for seq in [0, 15] {
+        let error = bind_history(&dir, (seq, [4; 32]), base, certified).unwrap_err();
+        assert!(format!("{error:#}").contains("certified prefix"), "a foreign head at seq {seq}: {error:#}");
+        let foreign = log::extend_command_prefix(certified, [9; 32]);
+        assert!(bind_history(&dir, (seq, prefixes[seq as usize]), base, foreign).is_err(), "seq {seq}");
+    }
+    assert!(bind_history(&dir, (14, prefixes[15]), base, certified).is_err(), "a head paired at the wrong seq");
+}
+
+/// A command between the head and the checkpoint that the host rewrote, or a log that lost or skips
+/// one, refuses the cache.
+#[test]
+fn a_caches_history_head_is_refused_over_commands_the_log_altered_or_lost() {
+    let (honest, prefixes) = ticks_log("bind-history-honest", 25, None);
+    bind_history(&honest, (5, prefixes[5]), 20, prefixes[20]).unwrap();
+    let (altered, _) = ticks_log("bind-history-altered", 25, Some(12));
+    let error = bind_history(&altered, (5, prefixes[5]), 20, prefixes[20]).unwrap_err();
+    assert!(format!("{error:#}").contains("certified prefix"), "{error:#}");
+    // An altered command after the checkpoint is the suffix's, which the replay checks.
+    bind_history(&altered, (5, prefixes[5]), 11, prefixes[11]).unwrap();
+    let error = bind_history(&honest, (5, prefixes[5]), 30, prefixes[24]).unwrap_err();
+    assert!(format!("{error:#}").contains("no command at the snapshot base 30"), "{error:#}");
+    std::fs::remove_file(honest.join(segment(10))).unwrap();
+    let error = bind_history(&honest, (5, prefixes[5]), 20, prefixes[20]).unwrap_err();
+    assert!(format!("{error:#}").contains("seq 20 where seq 10"), "{error:#}");
+}
+
 // ── Helpers ──
 
 /// A log of `commands` sealed ticks, each stamped at its seq, with a signed checkpoint after each seq
@@ -176,6 +220,25 @@ fn sealed_log(label: &str, commands: u64, checkpoints: &[u64]) -> (std::path::Pa
         }
     }
     (write_log(label, &entries), signer, prefixes)
+}
+
+/// A log of `commands` unsealed ticks, each stamped at its seq, in segments of `SEGMENT_COMMANDS`, with
+/// each seq's cumulative command-prefix digest; with `altered`, the tick at that seq is written without
+/// its events, so its digest differs from the one the prefixes hold.
+fn ticks_log(label: &str, commands: u64, altered: Option<u64>) -> (std::path::PathBuf, Vec<[u8; 32]>) {
+    let mut oracle = Engine::new();
+    let (mut entries, mut prefixes, mut command_prefix) = (Vec::new(), Vec::new(), [0u8; 32]);
+    for seq in 0..commands {
+        let sequenced = Sequenced { seq, ts: i64::try_from(seq).unwrap(), cmd: Command::Tick };
+        let events = oracle.apply(&sequenced).unwrap();
+        let entry = CommandEntry { sequenced, events: Some(events), seal: None };
+        command_prefix = log::extend_command_prefix(command_prefix, log::command_digest(&entry).unwrap());
+        prefixes.push(command_prefix);
+        let written =
+            CommandEntry { events: (altered != Some(seq)).then_some(entry.events.clone()).flatten(), ..entry };
+        entries.push(LogEntry::Command(written));
+    }
+    (write_log(label, &entries), prefixes)
 }
 
 /// The file name of the segment that starts at `first_seq`.

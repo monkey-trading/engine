@@ -1,4 +1,6 @@
-//! A bounded checkpoint capture waits in the storage owner's capture slot for the exact history fence.
+//! A bounded checkpoint capture waits in the storage owner's capture slot until the owner takes it; the
+//! owner pairs it with the history it has indexed at the capture's checkpoint, or sooner while the log
+//! runs ahead of it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
@@ -19,7 +21,7 @@ use crate::log::CatalogBoundary;
 use crate::log::catalog::LazyCatalogView;
 use crate::snapshot::head::StoreId;
 use crate::snapshot::lifecycle::Lifecycle;
-use crate::snapshot::paired::{Pair, PrefixId};
+use crate::snapshot::paired::{self, Pair, PrefixId};
 use crate::snapshot::pins::Pins;
 use crate::snapshot::{self, Snapshot, head};
 use crate::stats::background::Encoded;
@@ -34,7 +36,8 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 
 /// One optional in-flight snapshot bounds engine captures independently of writer lag: a capture has a
 /// slot of its own beside the history feed's queue, so an index behind the log still takes it, and
-/// completes it once it reaches the capture's checkpoint.
+/// completes it at the capture's checkpoint, or sooner while the log runs ahead of it
+/// (`history::runtime`).
 #[derive(Clone)]
 pub(crate) struct Endpoint {
     /// The history owner's queue, which tests inspect through.
@@ -48,6 +51,9 @@ pub(crate) struct Endpoint {
     /// Entries the owner has taken, read by tests without joining the owner's queue.
     #[cfg(test)]
     pub(crate) taken: Arc<std::sync::atomic::AtomicU64>,
+    /// While set, the owner indexes none of the input it takes (`hold_index`).
+    #[cfg(test)]
+    pub(crate) index_held: Arc<AtomicBool>,
     /// How many calls currently wait for no capture to be in flight.
     #[cfg(test)]
     pub(crate) waiting: Arc<std::sync::atomic::AtomicUsize>,
@@ -151,6 +157,8 @@ impl Endpoint {
             #[cfg(test)]
             taken: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             #[cfg(test)]
+            index_held: Arc::default(),
+            #[cfg(test)]
             waiting: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(test)]
             encode_polls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -177,6 +185,28 @@ impl Endpoint {
     #[cfg(test)]
     pub(crate) fn inspecting(self, tx: mpsc::Sender<Input>) -> Self {
         Self { tx, ..self }
+    }
+
+    /// Holds the owner's index where it stands while `held`, the owner taking its input all the same;
+    /// released, the owner indexes what it took at its next turn.
+    #[cfg(test)]
+    pub(crate) fn hold_index(&self, held: bool) {
+        self.index_held.store(held, Ordering::Release);
+    }
+
+    /// Holds the owner where it takes this request, behind whatever its queue holds, until the returned
+    /// sender sends or is dropped, so its input runs ahead of it meanwhile.
+    #[cfg(test)]
+    pub(crate) async fn pause(&self) -> Result<std::sync::mpsc::Sender<()>> {
+        let (release, paused) = std::sync::mpsc::channel();
+        self.tx.send(Input::Pause(paused)).await.map_err(|_| anyhow::anyhow!("history owner stopped"))?;
+        Ok(release)
+    }
+
+    /// Whether the owner's queue has no free slot.
+    #[cfg(test)]
+    pub(crate) fn queue_full(&self) -> bool {
+        self.tx.capacity() == 0
     }
 
     /// Whether the history owner has stopped taking input and captures.
@@ -297,9 +327,11 @@ impl Capture {
         }
     }
 
-    /// Completes history authentication and durable paired publication on the blocking owner.
+    /// Completes history authentication and durable paired publication on the blocking owner, pairing the
+    /// capture with the history `history` has indexed, at or before its checkpoint.
     /// Error cases:
-    /// - any acknowledgement differs, required bytes/proofs are missing, or publication fails
+    /// - any acknowledgement differs, the history has passed the checkpoint, required bytes/proofs are
+    ///   missing, or publication fails
     pub(crate) fn complete(
         mut self,
         cfg: &SnapshotSection,
@@ -315,10 +347,17 @@ impl Capture {
         ensure!(self.catalog.checkpoint.checkpoint == prefix.checkpoint, "catalog acknowledged a different checkpoint");
         let head = history.index.head();
         ensure!(
-            head.last_seq() == Some(prefix.offset.seq) && head.last_ts() == Some(prefix.ts),
-            "history acknowledged a different command frontier"
+            head.last_seq().is_some_and(|seq| seq <= prefix.offset.seq) && head.last_ts() <= Some(prefix.ts),
+            "history has indexed nothing, or past the captured checkpoint"
         );
-        ensure!(head.command_prefix == prefix.command_prefix, "history acknowledged a different command/event prefix");
+        if head.last_seq() == Some(prefix.offset.seq) {
+            ensure!(head.last_ts() == Some(prefix.ts), "history acknowledged a different command frontier");
+            ensure!(
+                head.command_prefix == prefix.command_prefix,
+                "history acknowledged a different command/event prefix"
+            );
+        }
+        let history_seq = head.last_seq();
         self.snapshot.context.validate(&prefix.checkpoint, prefix.domain)?;
         {
             let mut publication = lifecycle.publication()?;
@@ -332,7 +371,7 @@ impl Capture {
         // sequencer takes to publish catalog heads; the lock covers only the renames and pruning.
         let staged_head = head::stage(cfg, prefix.domain, history.id, history.store, head, key)?;
         let pair = Pair {
-            format: 1,
+            format: paired::FORMAT,
             codec: CODEC,
             prefix: prefix.clone(),
             history: staged_head.certificate(key)?,
@@ -356,119 +395,10 @@ impl Capture {
         staged_head.publish(&mut publication)?;
         // Pruning rescans the family; the payload just signed needs no read back under the lock.
         staged.publish_then(&mut publication, |path| payloads.seed(path, self.snapshot))?;
-        info!(seq = prefix.offset.seq, "checkpoint snapshot stored");
+        info!(seq = prefix.offset.seq, history_seq = ?history_seq, "checkpoint snapshot stored");
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::Ordering;
-    use std::time::{Duration, Instant};
-
-    use tracing::warn;
-
-    use super::{ENCODE_WAIT, Encoding, Endpoint, STOP_POLL, WriteAlert};
-    use crate::alerts::capture;
-
-    /// A stored capture resolves the episode open when it started completing, but not a failure
-    /// raised while it completed, such as the shutdown wait's: that one stays open for the next.
-    #[test]
-    fn a_stored_capture_resolves_only_failures_raised_before_its_take() {
-        let alert = WriteAlert(std::sync::Arc::new(std::sync::Mutex::new(true)));
-        let lines = capture(|| {
-            let taken = alert.take();
-            alert.failed(|| warn!(alert = "snapshot_write_failed", "raised while a capture completes"));
-            alert.stored(taken);
-            let taken = alert.take();
-            alert.stored(taken);
-            let taken = alert.take();
-            alert.stored(taken);
-        });
-        let firing: Vec<_> = lines.iter().map(|line| line.severity.is_some()).collect();
-        assert_eq!(firing, [true, false], "one failure, then one resolve by the next stored capture: {lines:#?}");
-    }
-
-    /// An engine due from the stats worker is taken when it comes, after several polls too, and a wait
-    /// fails, never hangs, when the worker stops without it, refuses it, or it never comes, or once the
-    /// history owner is stopped, which the wait asks at the end of each poll.
-    #[test]
-    fn a_pending_encoding_is_taken_when_it_comes_and_fails_when_it_does_not() {
-        let within = Duration::from_millis(50);
-        let running = || false;
-        let pending = || std::sync::mpsc::sync_channel::<crate::stats::background::Encoded>(1);
-        assert_eq!(Encoding::Encoded("{}".into()).wait(within, running).unwrap(), "{}");
-        let (reply, encoded) = pending();
-        reply.send(Ok("{\"engine\":1}".into())).unwrap();
-        assert_eq!(Encoding::Pending(encoded).wait(within, running).unwrap(), "{\"engine\":1}");
-        let (reply, encoded) = pending();
-        reply.send(Err("the copy is at None".into())).unwrap();
-        let refused = Encoding::Pending(encoded).wait(within, running).unwrap_err();
-        assert!(format!("{refused:#}").contains("the copy is at None"), "{refused:#}");
-        let (reply, encoded) = pending();
-        drop(reply);
-        let stopped = Encoding::Pending(encoded).wait(within, running).unwrap_err();
-        assert!(format!("{stopped:#}").contains("stopped before encoding"), "{stopped:#}");
-        // A job never delivered: the sender lives on, unsent.
-        let (_reply, encoded) = pending();
-        let never = Encoding::Pending(encoded).wait(within, running).unwrap_err();
-        assert!(format!("{never:#}").contains("within"), "{never:#}");
-        // An encoding that comes after several polls is taken.
-        let (reply, encoded) = pending();
-        let late = std::thread::spawn(move || {
-            std::thread::sleep(STOP_POLL * 3);
-            reply.send(Ok("{\"engine\":2}".into())).unwrap();
-        });
-        assert_eq!(Encoding::Pending(encoded).wait(ENCODE_WAIT, running).unwrap(), "{\"engine\":2}");
-        late.join().unwrap();
-        // An owner stopped while the wait polls for a job never delivered: the stop comes after the first
-        // poll ends, and the wait leaves at the end of the second, not at its bound.
-        let (_reply, encoded) = pending();
-        let polls = std::sync::atomic::AtomicUsize::new(0);
-        let stopped_after_one = || polls.fetch_add(1, Ordering::AcqRel) >= 1;
-        let started = Instant::now();
-        let error = Encoding::Pending(encoded).wait(Duration::from_secs(10), stopped_after_one).unwrap_err();
-        assert!(format!("{error:#}").contains("history owner stopped"), "{error:#}");
-        assert_eq!(polls.load(Ordering::Acquire), 2, "the wait asked for the stop at each poll's end");
-        assert!(
-            started.elapsed() < STOP_POLL * 20,
-            "two polls took {:?}, not one poll's length each",
-            started.elapsed()
-        );
-    }
-
-    /// A shutdown capture wait ends by cancellation when it times out, or by abort on task drop;
-    /// either way the test-only `waiting` count returns to zero, so later assertions never see a
-    /// leaked waiter after the shutdown path ran.
-    #[tokio::test]
-    async fn a_dropped_idle_wait_releases_its_waiter_count() {
-        let (seals, _seals) = tokio::sync::mpsc::channel(1);
-        let endpoint = Endpoint::new(seals, crate::snapshot::head::StoreId([0x42; 32]), Duration::ZERO);
-        let in_flight = endpoint.try_permit().expect("no capture is in flight");
-        let deadline = Instant::now() + Duration::from_secs(5);
-
-        let waiting = tokio::spawn({
-            let endpoint = endpoint.clone();
-            async move { endpoint.idle().await }
-        });
-        while endpoint.waiting.load(Ordering::Acquire) == 0 {
-            assert!(Instant::now() < deadline, "idle never counts its waiter");
-            tokio::task::yield_now().await;
-        }
-        // Cancellation — how a shutdown wait ends on timeout — drops the acquire future, so the
-        // count must fall before the cancelled task's join resolves.
-        waiting.abort();
-        let _ = waiting.await;
-        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0, "a cancelled idle wait leaks its waiter");
-
-        // The shutdown path wraps the wait in a timeout and moves on; the dropped future must
-        // release the count just the same.
-        tokio::time::timeout(Duration::from_millis(10), endpoint.idle()).await.expect_err("the permit stays held");
-        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0, "a timed-out idle wait leaks its waiter");
-
-        // The resolving wait still decrements exactly once.
-        drop(in_flight);
-        endpoint.idle().await;
-        assert_eq!(endpoint.waiting.load(Ordering::Acquire), 0);
-    }
-}
+mod tests;

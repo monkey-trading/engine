@@ -1,4 +1,6 @@
-//! One supervised blocking owner serializes history, exact checkpoint sealing and verified repair.
+//! One supervised blocking owner serializes history, checkpoint sealing and verified repair. A capture
+//! is paired with the history indexed at its checkpoint, or, while the owner's input runs ahead of it,
+//! with the history indexed by the end of the turn that took it, so it never waits for a backlog.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -51,6 +53,10 @@ pub(crate) enum Input {
     Stop,
     #[cfg(test)]
     Inspect(oneshot::Sender<TestState>),
+    /// Holds the owner where it takes this input until the sender sends or is dropped, for tests that
+    /// let its input run ahead of it.
+    #[cfg(test)]
+    Pause(std::sync::mpsc::Receiver<()>),
 }
 
 #[cfg(test)]
@@ -59,6 +65,8 @@ pub(crate) struct TestState {
     pub catalog_pins: usize,
     pub history_pins: usize,
     pub pending_receipts: u64,
+    /// The oldest history version anything pins, below which collection may retire versions.
+    pub pinned_floor: u64,
 }
 
 /// Asks the history owner to stop at its next turn boundary rather than mid-transaction; commands it
@@ -119,6 +127,10 @@ struct Actor {
     /// can watch progress without joining the owner's queue.
     #[cfg(test)]
     taken: Arc<std::sync::atomic::AtomicU64>,
+    /// Shared with the sealing endpoint: while set, the owner takes its input but indexes none of it,
+    /// so a test holds the index behind the log.
+    #[cfg(test)]
+    index_held: Arc<AtomicBool>,
     retained_catalog: BTreeMap<Offset, Arc<crate::log::catalog::LazyCatalogView>>,
     last_entry: Option<Offset>,
     /// The checkpoint at `last_entry`, when the last entry taken is one.
@@ -172,6 +184,8 @@ impl Runtime {
                 commands: Vec::new(),
                 #[cfg(test)]
                 taken: endpoint.taken.clone(),
+                #[cfg(test)]
+                index_held: endpoint.index_held.clone(),
                 retained_catalog: BTreeMap::new(),
                 last_entry: None,
                 at_checkpoint: None,
@@ -286,6 +300,11 @@ impl Actor {
                 break;
             }
             self.index_commands()?;
+            if taken == super::QUEUE {
+                // A full turn: the input runs ahead of the owner, so a capture waiting for its checkpoint
+                // takes the history indexed so far rather than wait for the backlog.
+                self.complete_behind();
+            }
             if self.certification_due() {
                 self.certify_latest();
             }
@@ -330,6 +349,10 @@ impl Actor {
             Input::Inspect(done) => {
                 self.inspections.push(done);
             }
+            #[cfg(test)]
+            Input::Pause(release) => {
+                let _ = release.recv();
+            }
         }
         Ok(())
     }
@@ -347,6 +370,7 @@ impl Actor {
                     .store
                     .pending_receipts(&self.current.index.head().root)
                     .unwrap_or(u64::MAX),
+                pinned_floor: self.current.store.pinned_floor(&self.current.index.head().root).unwrap_or(0),
             });
         }
     }
@@ -386,6 +410,10 @@ impl Actor {
     /// Error cases:
     /// - verified ingestion fails for a reason a fresh generation cannot fix, or repair fails
     fn index_commands(&mut self) -> Result<()> {
+        #[cfg(test)]
+        if self.index_held.load(Ordering::Acquire) {
+            return Ok(());
+        }
         if self.commands.is_empty() {
             return Ok(());
         }
