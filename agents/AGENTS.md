@@ -1433,8 +1433,8 @@ Run from the repo root:
   commands at each update size in `HISTORY_SCALE_BATCHES` (8,32,128,512)
 - A drained stop's final capture with the history index lagging at a multi-GB size:
   `FINAL_CAPTURE_BENCH_DIR=<dir> cargo test -p engine-node --lib
-  sequencer::recovery_scale::final_capture::final_capture_bench -- --ignored --nocapture` empties `<dir>`, writes
-  `RECOVERY_LAUNCH_SECS` (two hours) of `REPLAY_BENCH_MULTIPLE` (10) times launch flow on a book of
+  sequencer::recovery_scale::final_capture::final_capture_bench -- --ignored --nocapture` writes into `<dir>`, new
+  or empty, `RECOVERY_LAUNCH_SECS` (two hours) of `REPLAY_BENCH_MULTIPLE` (10) times launch flow on a book of
   `RECOVERY_ACCOUNTS`, a cache every `FINAL_CAPTURE_INTERVAL_SECS` (300) of it, while the history owner indexes
   behind, then stops as a drained node does and prints the index's size, how far it lagged and the time to the
   final cache within `FINAL_CAPTURE_WITHIN_SECS` (120); run it under `nice`

@@ -1,5 +1,5 @@
 //! A drained stop's final capture with the history index lagging at a multi-GB size, run by hand: a node
-//! takes over the launch book in `FINAL_CAPTURE_BENCH_DIR`, which the run empties first, and writes
+//! takes over the launch book in `FINAL_CAPTURE_BENCH_DIR`, a new or empty directory, and writes
 //! `RECOVERY_LAUNCH_SECS` (two hours) of `REPLAY_BENCH_MULTIPLE` (10) times launch flow on accelerated
 //! sequenced time, capturing a cache every `FINAL_CAPTURE_INTERVAL_SECS` (300) of it, as the soak's node does,
 //! while its history owner indexes behind the flow. Then it stops as a drained node does: it waits for the
@@ -27,7 +27,8 @@ use crate::tee::EnclaveKey;
 #[ignore = "a drained stop's final capture behind a lagging history index, by hand"]
 fn final_capture_bench() {
     let dir = PathBuf::from(std::env::var("FINAL_CAPTURE_BENCH_DIR").expect("FINAL_CAPTURE_BENCH_DIR"));
-    let _ = std::fs::remove_dir_all(&dir);
+    let empty = std::fs::read_dir(&dir).ok().is_none_or(|mut entries| entries.next().is_none());
+    assert!(empty, "FINAL_CAPTURE_BENCH_DIR names a new or empty directory, which the run fills");
     std::fs::create_dir_all(&dir).expect("the bench's directory");
     let (accounts, launch_secs) = (env("RECOVERY_ACCOUNTS", ACCOUNTS), env("RECOVERY_LAUNCH_SECS", 7_200));
     let interval = Duration::from_secs(env("FINAL_CAPTURE_INTERVAL_SECS", 300));

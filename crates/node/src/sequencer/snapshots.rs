@@ -176,8 +176,8 @@ impl Sequencer {
     /// Captures a checkpoint with the recovery facts it had when it was written, which custody
     /// status may have moved on since; with a capture in flight, the history owner stopped, or a step failing, keeps it
     /// for shutdown instead, and the capture stays due. An owner behind the log takes the capture and pairs it with
-    /// the history it has indexed (`history::runtime`). No command has been applied since the checkpoint, and no withdrawal
-    /// entry has been logged after it (`record`), so the payouts it owes are taken now.
+    /// the history it has indexed (`history::runtime`). No command has been applied since the checkpoint, and no
+    /// withdrawal entry has been logged after it (`record`), so the payouts it owes are taken now.
     /// Error cases:
     /// - the authoritative log cannot be synced
     pub(super) fn capture(&mut self, deferred: Deferred) -> anyhow::Result<()> {

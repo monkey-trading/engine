@@ -357,6 +357,7 @@ impl Capture {
                 "history acknowledged a different command/event prefix"
             );
         }
+        let history_seq = head.last_seq();
         self.snapshot.context.validate(&prefix.checkpoint, prefix.domain)?;
         {
             let mut publication = lifecycle.publication()?;
@@ -394,7 +395,7 @@ impl Capture {
         staged_head.publish(&mut publication)?;
         // Pruning rescans the family; the payload just signed needs no read back under the lock.
         staged.publish_then(&mut publication, |path| payloads.seed(path, self.snapshot))?;
-        info!(seq = prefix.offset.seq, "checkpoint snapshot stored");
+        info!(seq = prefix.offset.seq, history_seq = ?history_seq, "checkpoint snapshot stored");
         Ok(())
     }
 }
