@@ -31,6 +31,9 @@ pub struct Replayed {
     /// attributes ranges by and restores its verified head against.
     pub(crate) takings: crate::log_check::Takings,
     pub(crate) checkpoint_roots: BTreeMap<u64, engine_core::eip712::B256>,
+    /// The replay state the replay folded, from which the stats worker folds on for the daily snapshots; none
+    /// for a replay of one range of a log, or of a log whose commands carry no events.
+    pub(crate) fold: Option<crate::sequencer::replay::Fold>,
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<Work>,
     pub(crate) recovery_anchor_work: Option<Work>,

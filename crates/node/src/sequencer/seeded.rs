@@ -51,6 +51,6 @@ impl Sequencer {
         observe: impl FnMut(&LogEntry),
         workers: ReplayWorkers,
     ) -> anyhow::Result<ReplayedLog> {
-        Self::replay_log(Replay::seeded(base, Some(domain), signer), dir, observe, marks, stats, workers)
+        Self::replay_log(Replay::seeded(base, Some(domain), signer), dir, observe, marks, stats, workers, None)
     }
 }

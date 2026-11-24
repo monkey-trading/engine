@@ -91,6 +91,14 @@ pub(super) struct Replay {
     /// The last `crate::log::PrefixRing::CAPACITY` (seq, cumulative-prefix) pairs: the poster's
     /// adoption evidence, seeded before its first tick.
     prefix_ring: crate::log::PrefixRing,
+    /// The same commands' links, with their stamps and sealers, as a daily snapshot carries them.
+    recent: VecDeque<live::Link>,
+    /// Every checkpoint's signer, those a recovery passes over as superseded included, as a daily snapshot
+    /// carries them.
+    signers_seen: BTreeSet<AccountId>,
+    /// Set for a replay from a recovery cache, which holds only part of what the log before it folds to, so
+    /// it gives no fold (`Fold::of`).
+    partial: bool,
     /// The newest commands' derived rows, which the sequencer keeps from where the replay ends.
     derived: crate::history::derived::DerivedRows,
     /// Where the state roots are computed: in the engine, or on a thread of their own.
@@ -247,7 +255,13 @@ impl Replay {
                 if self.range.is_none() {
                     self.command_prefix =
                         crate::log::extend_command_prefix(self.command_prefix, crate::log::command_digest(c)?);
-                    self.prefix_ring.record(seq, engine_core::eip712::B256::from(self.command_prefix));
+                    let link = engine_core::eip712::B256::from(self.command_prefix);
+                    self.prefix_ring.record(seq, link);
+                    let sealer = c.seal.as_ref().map(|seal| seal.signer);
+                    self.recent.push_back(live::Link { seq, link, ts: c.sequenced.ts, sealer });
+                    if self.recent.len() > crate::log::PrefixRing::CAPACITY {
+                        self.recent.pop_front();
+                    }
                 }
                 if self.capture_link_at == Some(seq) {
                     self.captured_link = Some(engine_core::eip712::B256::from(self.command_prefix));
@@ -274,6 +288,7 @@ impl Replay {
                 self.requires_checkpoint_gate |= cp.parent.is_some();
                 self.payout_checkpoints.insert(cp.seq, cp.root.parse()?);
                 let signer = cp.signer.parse()?;
+                self.signers_seen.insert(signer);
                 if let Some(attested) = &self.attested {
                     ensure!(
                         attested.contains(&signer),
@@ -329,6 +344,7 @@ impl Replay {
         assert!(!self.roots.on_thread(), "a replay finishes with its engine holding its tree");
         assert!(!self.origin.run_open(), "a replay finishes with its last run of seals checked");
         self.anchor_unheld().expect("an engine holding its tree computes its root in place");
+        let fold = Fold::of(&self).ok();
         let recovery_base = match self.recovery_origin {
             None => Some(RecoveryBase::Ungated),
             Some(parent) if !parent.has_checkpoint => Some(RecoveryBase::Genesis),
@@ -379,6 +395,7 @@ impl Replay {
             derived: self.derived,
             takings: self.takings,
             checkpoint_roots: self.payout_checkpoints,
+            fold,
         }
     }
 }
@@ -410,7 +427,16 @@ mod ahead_tests;
 #[cfg(test)]
 mod auth_tests;
 mod authorities;
+mod carried;
+pub(crate) use carried::Carried;
+#[cfg(test)]
+pub(crate) use carried::carried_at;
+#[cfg(test)]
+mod carried_tests;
+mod fold;
+pub(crate) use fold::Fold;
 mod live;
+mod resumed;
 pub(crate) use live::{Before, LiveReplay};
 mod marks;
 mod paths;

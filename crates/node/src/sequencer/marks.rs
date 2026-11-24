@@ -112,14 +112,17 @@ impl Sequencer {
         self.marks.tx = Some(tx);
     }
 
-    /// Buffers the mark changes of the command just applied for release with this batch's flush, and
-    /// adds the command, which produced `events`, to the dashboard record.
-    pub(super) fn report_marks(&mut self, sequenced: &Sequenced, events: &[engine_core::event::Event]) {
-        let ts = sequenced.ts;
-        self.marks.report(&self.engine, ts);
-        if let Some(stats) = &self.marks.stats {
-            stats.follow(sequenced);
-            stats.observe(&self.engine, ts, events);
+    /// Buffers the mark changes of the command just applied for release with this batch's flush.
+    pub(super) fn report_marks(&mut self, sequenced: &Sequenced) {
+        self.marks.report(&self.engine, sequenced.ts);
+    }
+
+    /// Adds the command just logged, `stamped`, to the dashboard record and hands it to the stats worker
+    /// with its cumulative command prefix, for the replay state the worker folds.
+    pub(super) fn report_stats(&self, stamped: &super::Stamped) {
+        if let (Some(stats), Some(entry)) = (&self.marks.stats, stamped.entry()) {
+            stats.follow_logged(entry, engine_core::eip712::B256::from(self.command_prefix));
+            stats.observe(&self.engine, entry.sequenced.ts, stamped.as_slice());
         }
     }
 }
@@ -130,6 +133,10 @@ impl Sequencer {
     pub fn track_stats(&mut self, stats: crate::stats::Stats) {
         stats.finish_recovery(&self.engine);
         stats.scan_in_background(&self.engine);
+        // The worker folds the replay state from where recovery left it, for the daily snapshots.
+        if let Some(fold) = self.captures.fold.take() {
+            stats.seed_fold(fold);
+        }
         self.marks.stats = Some(stats);
     }
 }

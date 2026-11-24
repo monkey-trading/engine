@@ -20,9 +20,9 @@ async fn a_snapshot_at_a_seq_the_vault_accepted_another_root_at_is_refused_befor
     {
         let member = scratch_dir(&format!("build-snapshot-vault-root-{}", case.replace(' ', "-")));
         let roots = Roots([(newer, root)].into());
-        let bounds = (u64::MAX, None);
-        let signed =
-            snapshot_start_against(&client, &origins, (&member, &dir), (DOMAIN, &signers), bounds, &roots).await;
+        let bounds = crate::daily_snapshots::Bounds { finalized: u64::MAX, before: None, keep_from: None };
+        let fetching = Some((&client, origins.as_slice()));
+        let signed = snapshot_start_against(fetching, (&member, &dir), (DOMAIN, &signers), bounds, &roots).await;
         assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(taken), "{case}");
         if taken == older {
             let alert = alerts.try_recv().expect("the refusal is paged");

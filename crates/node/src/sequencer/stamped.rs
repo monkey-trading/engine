@@ -53,6 +53,14 @@ impl Stamped {
     pub fn as_slice(&self) -> &[Event] {
         self
     }
+
+    /// The command's log entry, when it logged one.
+    pub(super) fn entry(&self) -> Option<&CommandEntry> {
+        match self.0.as_deref().map(|message| &message.body) {
+            Some(StreamBody::Command(entry)) => Some(entry),
+            _ => None,
+        }
+    }
 }
 
 impl Sequencer {
@@ -74,7 +82,9 @@ impl Sequencer {
         let entry = CommandEntry { sequenced, events: Some(events), seal: Some(seal) };
         let message = Arc::new(StreamMsg::new(offset, LogEntry::Command(entry)).stamped_at(self.time.stamped_at()));
         self.outbox.push(message.clone());
-        Ok(Stamped(Some(message)))
+        let stamped = Stamped(Some(message));
+        self.report_stats(&stamped);
+        Ok(stamped)
     }
 
     /// Appends an entry to the log and queues it for the stream at its offset. After a withdrawal entry,
@@ -84,6 +94,9 @@ impl Sequencer {
     pub(super) fn record(&mut self, entry: LogEntry) -> anyhow::Result<Offset> {
         if matches!(entry, LogEntry::Withdrawal(_)) {
             self.captures.uncaptured = None;
+        }
+        if let Some(stats) = self.marks.stats() {
+            stats.follow_entry(&entry);
         }
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));

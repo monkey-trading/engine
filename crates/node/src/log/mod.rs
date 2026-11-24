@@ -43,6 +43,8 @@ pub(crate) use seals_ahead::SealsAhead;
 pub use seals_ahead::{ReplayWorkers, SealChecks};
 mod segments;
 pub(crate) use segments::{segment_name, segment_seq};
+mod local;
+pub(crate) use local::NotLocal;
 mod scan;
 pub(crate) use scan::uncommanded;
 mod span;
@@ -233,6 +235,7 @@ pub fn read_file(path: &Path, mut visit: impl FnMut(LogEntry) -> anyhow::Result<
 /// manifest nor the catalog is consulted, so the caller binds what it reads, as a digest does.
 /// Error cases:
 /// - the directory or a segment cannot be read, or a non-blank line is not a valid entry
+/// - `from` is before the first segment here, and the manifest lists one before it (`NotLocal`)
 /// - `visit` fails, propagating [`Stop`] for an early end
 pub(crate) fn read_from(
     dir: &Path,
@@ -240,7 +243,19 @@ pub(crate) fn read_from(
     mut visit: impl FnMut(LogEntry) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let files = segments::list_segments(dir)?;
-    let first = files.iter().rposition(|(first_seq, _)| *first_seq <= from).unwrap_or(0);
+    let first = match files.iter().rposition(|(first_seq, _)| *first_seq <= from) {
+        Some(first) => first,
+        None => {
+            // A segment listed before the first here is the archive's to read.
+            let first_local = files.first().map(|(first_seq, _)| *first_seq);
+            let (manifest, _) = Manifest::read(dir)?;
+            if manifest.segments.first().is_some_and(|listed| first_local.is_none_or(|first| listed.first_seq < first))
+            {
+                return Err(NotLocal { seq: from, first_local }.into());
+            }
+            0
+        }
+    };
     files[first..].iter().try_for_each(|(_, path)| read_file(path, &mut visit))
 }
 

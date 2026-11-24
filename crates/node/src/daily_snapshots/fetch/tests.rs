@@ -92,7 +92,8 @@ fn publish(dir: &Path, seq: u64, ts: engine_core::types::Millis) -> Listed {
     };
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
     let offset = Offset { seq, index: 1 };
-    publish_now(dir, Job { offset, checkpoint, ts, engine, signing: Signing::for_tests() }).unwrap()
+    let (carried, history) = crate::daily_snapshots::nothing_carried();
+    publish_now(dir, Job { offset, checkpoint, ts, engine, carried, history, signing: Signing::for_tests() }).unwrap()
 }
 
 /// Serves the daily snapshots in `dir` as an archive does, over plain HTTP on loopback: its base URL.

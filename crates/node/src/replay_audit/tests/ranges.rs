@@ -157,6 +157,8 @@ impl Ranged {
             checkpoint: third.clone(),
             ts: engine.now(),
             engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()),
+            carried: crate::daily_snapshots::nothing_carried().0,
+            history: crate::daily_snapshots::nothing_carried().1,
             signing: Signing::for_tests(),
         };
         entries.push(LogEntry::Withdrawal(release(legacy, &key, domain)));

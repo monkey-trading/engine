@@ -149,6 +149,7 @@ impl Replay {
             trusted_signer,
             origin,
             requires_checkpoint_gate,
+            partial: true,
             ..Self::default()
         };
         replay.prefix_ring.record(base.0, base.1);

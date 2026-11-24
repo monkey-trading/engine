@@ -58,7 +58,7 @@ async fn a_snapshot_whose_root_is_not_its_checkpoints_falls_back_to_a_whole_repl
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
     std::fs::remove_file(snapshots.join(MANIFEST)).unwrap();
     let offset = Offset { seq: listing.seq, index: listing.index };
-    publish_now(&snapshots, Job { offset, checkpoint, ts: listing.ts, engine, signing }).unwrap();
+    publish_now(&snapshots, Job::bare(offset, checkpoint, listing.ts, engine, signing)).unwrap();
     let (_guard, mut alerts) = capture_alerts();
     let signed = usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.expect("signed over its state");
     let follower = open(&dir, Some(signed));
@@ -167,7 +167,7 @@ async fn a_snapshot_of_another_signers_checkpoint_falls_back_to_a_whole_replay()
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
     std::fs::remove_file(snapshots.join(MANIFEST)).unwrap();
     let offset = Offset { seq: listing.seq, index: listing.index };
-    publish_now(&snapshots, Job { offset, checkpoint, ts: listing.ts, engine, signing: other.clone() }).unwrap();
+    publish_now(&snapshots, Job::bare(offset, checkpoint, listing.ts, engine, other.clone())).unwrap();
     let signers: BTreeSet<AccountId> = [signer(), AccountId(other.key.address())].into();
     let (_guard, mut alerts) = capture_alerts();
     assert!(usable(&snapshots, &dir, &signers, u64::MAX).await.is_none(), "the start passes it over");
@@ -249,7 +249,7 @@ async fn a_snapshot_from_the_in_office_members_turns_is_not_taken() {
     std::fs::remove_file(&path).unwrap();
     write_listings(&origin, &listed);
     let offset = Offset { seq: newer.seq, index: newer.index };
-    publish_now(&origin, Job { offset, checkpoint, ts: newer.ts, engine, signing: recorded() }).unwrap();
+    publish_now(&origin, Job::bare(offset, checkpoint, newer.ts, engine, recorded())).unwrap();
     let (client, origins) = (crate::standby::archive::archive_client(false).unwrap(), [serve(&origin).await]);
     let (signers, bounds) = ([signer()].into(), (u64::MAX, Some(turns_began)));
     let (_guard, mut alerts) = capture_alerts();
@@ -409,7 +409,7 @@ fn publish_at(dir: &Path, snapshots: &Path, signing: &Signing, pick: fn(usize) -
     }
     let (offset, checkpoint, ts, engine) = offsets.swap_remove(pick(offsets.len()));
     let seq = offset.seq;
-    publish_now(snapshots, Job { offset, checkpoint, ts, engine, signing: signing.clone() }).unwrap();
+    publish_now(snapshots, Job::bare(offset, checkpoint, ts, engine, signing.clone())).unwrap();
     seq
 }
 

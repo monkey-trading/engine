@@ -23,11 +23,15 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use anyhow::Context;
 use engine_core::Engine;
 use engine_core::command::Sequenced;
-use engine_core::types::Millis;
+use engine_core::eip712::B256;
+use engine_core::types::{AccountId, Millis};
 use tracing::warn;
 
+use crate::log::LogEntry;
+use crate::sequencer::replay::Fold;
 use crate::stats::snapshot::{self, Layout, Snapshot};
 
 /// Commands the worker may lag behind by before the sequencer waits for it: far more than arrive
@@ -36,7 +40,19 @@ const QUEUE: usize = 100_000;
 
 /// One step of the worker's queue, in the order the sequencer produced it.
 pub(crate) enum Job {
-    Apply(Box<Sequenced>),
+    /// A command to apply, with its cumulative command prefix and its seal's signer when the sequencer logged
+    /// it, for the fold.
+    Apply(Box<Sequenced>, Option<Logged>),
+    /// A withdrawal or checkpoint entry the sequencer logged, for the fold.
+    Entry(Box<LogEntry>),
+    /// The replay state after the commands and entries handed over so far, from which the fold goes on.
+    Seed(Box<Fold>),
+    /// Encodes the replay state the fold holds at the checkpoint after the command at `seq`, for a daily
+    /// snapshot, and sends it, or why there is none, to `reply`.
+    Carry {
+        seq: u64,
+        reply: SyncSender<Encoded>,
+    },
     /// A scan of the state after the command at `seq`; `sampled` puts its books in the series, which a
     /// recovery's scan, made due by no command, leaves out.
     Scan {
@@ -58,6 +74,9 @@ pub(crate) enum Job {
 
 /// The engine's encoding at a checkpoint, or why the worker has none.
 pub(crate) type Encoded = Result<String, String>;
+
+/// A logged command's cumulative command prefix and its seal's signer.
+pub(crate) type Logged = (B256, Option<AccountId>);
 
 /// A read of the worker's copy of the engine.
 pub(crate) type ReadJob = Box<dyn FnOnce(&Engine) + Send>;
@@ -104,7 +123,7 @@ impl Reader {
     /// the worker runs takes the record's lock, so the caller must not hold it. `false` once the
     /// worker has stopped.
     pub(super) fn send(&self, job: Job) -> bool {
-        let (command, encode) = (matches!(job, Job::Apply(_)), matches!(job, Job::Encode { .. }));
+        let (command, encode) = (matches!(job, Job::Apply(..)), matches!(job, Job::Encode { .. } | Job::Carry { .. }));
         // Counted before it is queued, and between reads, so no read queues behind it.
         if encode {
             let _admission = self.admission.lock().unwrap_or_else(PoisonError::into_inner);
@@ -265,17 +284,52 @@ fn run(
             return;
         }
     };
+    // The replay state folded beside the copy, once the sequencer seeds it.
+    let mut fold: Option<Fold> = None;
     for job in work {
         match job {
-            Job::Apply(sequenced) => {
-                if let Err(error) = engine.apply(&sequenced) {
-                    let _ = reply.send(Done::Failed(format!("applying seq {}: {error}", sequenced.seq)));
-                    return;
-                }
+            Job::Apply(sequenced, logged) => {
+                let before = engine.protocol_version();
+                let events = match engine.apply(&sequenced) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        let _ = reply.send(Done::Failed(format!("applying seq {}: {error}", sequenced.seq)));
+                        return;
+                    }
+                };
                 // The copy never computes a root, the only thing that drains the engine's record of
                 // changed keys, so it is dropped here or it grows for the life of the process.
                 engine.discard_changed_keys();
                 applied.fetch_add(1, Ordering::Relaxed);
+                if let Some(folding) = fold.as_mut() {
+                    let folded = logged
+                        .context("a command came with no link")
+                        .and_then(|logged| folding.command(&engine, &sequenced, &events, before, logged));
+                    if let Err(error) = folded {
+                        fold = None;
+                        fold_stopped(&format!("seq {}: {error:#}", sequenced.seq));
+                    }
+                }
+            }
+            Job::Entry(entry) => {
+                let folded = match (fold.as_mut(), *entry) {
+                    (Some(folding), LogEntry::Withdrawal(withdrawal)) => folding.withdrawal(&withdrawal),
+                    (Some(folding), LogEntry::Checkpoint(checkpoint)) => folding.checkpoint(&checkpoint),
+                    _ => Ok(()),
+                };
+                if let Err(error) = folded {
+                    fold = None;
+                    fold_stopped(&format!("{error:#}"));
+                }
+            }
+            Job::Seed(seeded) => fold = Some(*seeded),
+            Job::Carry { seq, reply: encoded } => {
+                let carried = match &fold {
+                    Some(folding) => folding.carried(seq).and_then(|carried| Ok(serde_json::to_string(&carried)?)),
+                    None => Err(anyhow::anyhow!("the stats worker folds no replay state")),
+                };
+                encodes.fetch_sub(1, Ordering::AcqRel);
+                let _ = encoded.send(carried.map_err(|error| format!("{error:#}")));
             }
             Job::Read(read) => read(&engine),
             Job::Scan { seq, ts, layout, full, sampled } => {
@@ -306,6 +360,12 @@ fn run(
             }
         }
     }
+}
+
+/// The warning for a fold that stopped: the node's daily snapshots carry no replay state from here, so they
+/// fail until a restart seeds the fold again.
+fn fold_stopped(reason: &str) {
+    warn!(alert = "daily_snapshot_failed", "the stats worker stopped folding the replay state: {reason}");
 }
 
 /// The alert for a worker that stopped: the record scans on the sequencer's thread from here.

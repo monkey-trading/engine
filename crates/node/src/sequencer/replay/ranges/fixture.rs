@@ -34,7 +34,9 @@ pub(crate) fn snapshot_log(
             let ts = replay.engine.now();
             if due(&checkpoint, ts) {
                 let engine = Encoding::Encoded(serde_json::to_string(&replay.engine)?);
-                publish_now(out, Job { offset, checkpoint, ts, engine, signing: signing.clone() })?;
+                let carried = Encoding::Encoded(serde_json::to_string(&replay.carried()?)?);
+                let history = Encoding::Encoded("{}".to_owned());
+                publish_now(out, Job { offset, checkpoint, ts, engine, carried, history, signing: signing.clone() })?;
                 published += 1;
             }
         }

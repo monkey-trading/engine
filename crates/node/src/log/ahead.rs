@@ -32,13 +32,29 @@ impl SegmentedLog {
         let files = list_segments(dir)?;
         let paths: Vec<_> = files.iter().map(|(_, path)| path.clone()).collect();
         let dir = dir.to_owned();
-        let read: Read<Self> = Box::new(move |each| SegmentedLog::open_listed(&dir, files, false, each));
+        let read: Read<Self> = Box::new(move |each| SegmentedLog::open_listed(&dir, files, false, None, each));
         // `open_listed` gives an error from reading a segment this context.
         ahead(read, visit, |at| format!("segment {}", paths[at].display()))
     }
 }
 
 impl SegmentedLog {
+    /// `SegmentedLog::open_from`, reading, checking and parsing the segments on a thread of its own while
+    /// `visit` takes each entry on this one.
+    /// Error cases:
+    /// - as `SegmentedLog::open_from`
+    pub fn open_ahead_from(
+        dir: &Path,
+        from: crate::log::Offset,
+        visit: impl FnMut(LogEntry) -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
+        let files = list_segments(dir)?;
+        let paths: Vec<_> = files.iter().map(|(_, path)| path.clone()).collect();
+        let dir = dir.to_owned();
+        let read: Read<Self> = Box::new(move |each| SegmentedLog::open_listed(&dir, files, false, Some(from), each));
+        ahead(read, visit, |at| format!("segment {}", paths[at].display()))
+    }
+
     /// Hands `visit` each entry of the log in `dir` from the first of the segment holding the command at
     /// `from` to the log's end, in order, until `visit` ends the read early with `Stop`, which is no error:
     /// a replay's read of one range of a log (`span`), read, checked and parsed on a thread of its own while

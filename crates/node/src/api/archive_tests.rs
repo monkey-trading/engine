@@ -62,5 +62,14 @@ fn tick_snapshot() -> Job {
         deferred_withdrawals: false,
     };
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    Job { offset: Offset { seq: 0, index: 1 }, checkpoint, ts: 0, engine, signing: Signing::for_tests() }
+    let (carried, history) = crate::daily_snapshots::nothing_carried();
+    Job {
+        offset: Offset { seq: 0, index: 1 },
+        checkpoint,
+        ts: 0,
+        engine,
+        carried,
+        history,
+        signing: Signing::for_tests(),
+    }
 }

@@ -54,10 +54,16 @@ pub(super) async fn recover(
         return Ok(Recovered { log, history: replica.history, pending, anchor, stats: replica.stats });
     }
     let marks = marks.shared.as_ref().expect("the marks store opens at startup");
-    // Read only for a full replay, a pass over the whole log: a cache's suffix replays under this
-    // node's key alone.
+    // A start from a daily snapshot reads no log before its checkpoint; none means a whole replay.
+    let start = match cfg.snapshots {
+        Some(_) => None,
+        None => snapshot::chosen(cfg, key, setup).await,
+    };
+    // Read only for a replay of the log, from its start or the snapshot's: a cache's suffix replays under
+    // this node's key alone.
+    let from = start.as_ref().map(|start| (start.snapshot.offset, start.snapshot.checkpoint.clone()));
     let authorities = async {
-        super::signer_history::load(setup, &cfg.node.log_dir)
+        super::signer_history::load(setup, &cfg.node.log_dir, from)
             .await
             .inspect_err(|e| error!(alert = "checkpoint_startup_failed", "refusing to serve: {e:#}"))
     };
@@ -73,7 +79,7 @@ pub(super) async fn recover(
     };
     let parent = setup.map(|setup| setup.parent);
     let (log, history, pending) =
-        read_log_and_history_authorities(cfg, key, parent, authorities, marks, &stats, observe).await?;
+        read_log_and_history_authorities(cfg, key, (parent, start), authorities, marks, &stats, observe).await?;
     // Counted once it has run, as every full replay is: a snapshot's start replays only the suffix
     // past it, and one that fell back replayed the whole log.
     if log.snapshot_seq.is_none() {
@@ -113,16 +119,17 @@ fn from_replica(
 }
 
 /// Replays with independently finalized historical signer evidence before any persisted mutation,
-/// from a verified snapshot when snapshots are configured, seeding the marks cache through `marks`.
-/// `authorities` gives that evidence, awaited only for a full replay. The on-chain posted log head
-/// is read before the log replays: the rollback check binds to the link the replay captures at the
-/// posted seq, never a second pass over the host's files.
+/// from a verified recovery cache when `[snapshots]` is configured, or from `start`, a daily snapshot,
+/// when one is given, seeding the marks cache through `marks`. `authorities` gives that evidence,
+/// awaited only for a replay of the log. The on-chain posted log head is read before the log replays:
+/// the rollback check binds to the link the replay captures at the posted seq, never a second pass
+/// over the host's files.
 /// Error cases:
 /// - history, log, authenticated signer history, the posted-head read, or the marks cache fails
 pub(super) async fn read_log_and_history_authorities(
     cfg: &NodeConfig,
     key: &Arc<EnclaveKey>,
-    parent: Option<crate::log::CheckpointParent>,
+    (parent, start): (Option<crate::log::CheckpointParent>, Option<crate::daily_snapshots::Signed>),
     authorities: impl Future<Output = anyhow::Result<crate::checkpoints::SignerHistory>>,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
     stats: &Stats,
@@ -160,21 +167,32 @@ pub(super) async fn read_log_and_history_authorities(
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
     let (sink, seeding, reset_done) = marks::recovery_sink(marks);
-    let log = Sequencer::read_log_with_authorities(
-        &cfg.node.log_dir,
-        Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? }),
-        signer,
-        parent,
-        authorities,
-        |entry| {
-            check.observe(entry);
-            observe(entry);
-        },
-        Some(sink),
-        Some(stats.clone()),
-        capture.map(|posted| posted.seq),
-        cfg.node.replay_workers,
-    )
+    let domain =
+        Some(crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? });
+    let (dir, capture, workers) = (&cfg.node.log_dir, capture.map(|posted| posted.seq), cfg.node.replay_workers);
+    let observing = |entry: &crate::log::LogEntry| {
+        check.observe(entry);
+        observe(entry);
+    };
+    let log = match start {
+        Some(start) => {
+            let trust = (domain, signer, parent);
+            let (sink, stats) = (Some(sink), Some(stats.clone()));
+            Sequencer::read_log_starting(start, dir, trust, authorities, observing, sink, stats, capture, workers)
+        }
+        None => Sequencer::read_log_with_authorities(
+            dir,
+            domain,
+            signer,
+            parent,
+            authorities,
+            observing,
+            Some(sink),
+            Some(stats.clone()),
+            capture,
+            workers,
+        ),
+    }
     .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
     // A replay that never moved a mark still resets: the cache must not serve another log's rows.
     if !reset_done.get() {
@@ -183,6 +201,8 @@ pub(super) async fn read_log_and_history_authorities(
     anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
     Ok((log, check, pending))
 }
+
+mod snapshot;
 
 #[cfg(test)]
 mod tests;

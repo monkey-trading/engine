@@ -164,7 +164,16 @@ fn publish(log: &std::path::Path, dir: &std::path::Path) -> [Listed; 2] {
         replica.apply(&entry).unwrap();
     }
     let mut listed = published.into_iter().skip(1).take(2).map(|(offset, checkpoint, ts, engine)| {
-        let job = Job { offset, checkpoint, ts, engine: Encoding::Encoded(engine), signing: signing.clone() };
+        let (carried, history) = crate::daily_snapshots::nothing_carried();
+        let job = Job {
+            offset,
+            checkpoint,
+            ts,
+            engine: Encoding::Encoded(engine),
+            carried,
+            history,
+            signing: signing.clone(),
+        };
         publish_now(dir, job).unwrap()
     });
     [listed.next().expect("a second checkpoint"), listed.next().expect("a third checkpoint")]

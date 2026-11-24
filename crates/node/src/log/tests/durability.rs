@@ -113,9 +113,9 @@ fn a_segment_listing_taken_before_rotations_opens_with_the_newer_manifest_while_
         writer.append(&cmd(seq)).unwrap();
     }
     writer.flush().unwrap();
-    assert!(SegmentedLog::open_listed(&dir, listed.clone(), false, |_, _| Ok(())).is_err());
+    assert!(SegmentedLog::open_listed(&dir, listed.clone(), false, None, |_, _| Ok(())).is_err());
     let mut seen = Vec::new();
-    SegmentedLog::open_listed(&dir, listed, true, |_, entry| {
+    SegmentedLog::open_listed(&dir, listed, true, None, |_, entry| {
         seen.push(entry);
         Ok(())
     })

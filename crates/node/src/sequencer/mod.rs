@@ -404,7 +404,7 @@ impl Sequencer {
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipts(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
-        self.report_marks(&sequenced, &events);
+        self.report_marks(&sequenced);
         self.log_check.applied(sequenced.seq, sequenced.ts, &events);
         self.next_seq += 1;
         self.last_ts = ts;

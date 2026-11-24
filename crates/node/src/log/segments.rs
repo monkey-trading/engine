@@ -11,7 +11,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
@@ -187,7 +187,7 @@ impl SegmentedLog {
     ///   not named for the next seq
     /// - `visit` fails
     pub fn open(dir: &Path, visit: impl FnMut(LogEntry) -> anyhow::Result<()>) -> anyhow::Result<Self> {
-        Self::open_listed(dir, list_segments(dir)?, false, by_entry(visit))
+        Self::open_listed(dir, list_segments(dir)?, false, None, by_entry(visit))
     }
 
     /// As `open`, while a writer appends and rotates, for history repair. Rotation lists a segment
@@ -196,64 +196,7 @@ impl SegmentedLog {
     /// Error cases:
     /// - as `open`
     pub fn open_while_writing(dir: &Path, visit: impl FnMut(LogEntry) -> anyhow::Result<()>) -> anyhow::Result<Self> {
-        Self::open_listed(dir, list_segments(dir)?, true, by_entry(visit))
-    }
-
-    /// As `open`, over segment files listed before the manifest is read, handing `visit` each entry with
-    /// the index in `files` of the segment it is in; `writing` drops manifest entries beyond those files.
-    /// Error cases:
-    /// - as `open`
-    pub(super) fn open_listed(
-        dir: &Path,
-        files: Vec<(u64, PathBuf)>,
-        writing: bool,
-        mut visit: impl FnMut(usize, LogEntry) -> anyhow::Result<()>,
-    ) -> anyhow::Result<Self> {
-        let (mut manifest, manifest_len) = Manifest::read(dir)?;
-        if writing && manifest.segments.len() > files.len() {
-            Arc::make_mut(&mut manifest.segments).truncate(files.len());
-        }
-        ensure!(
-            manifest.segments.len() <= files.len(),
-            "{MANIFEST} lists {} segments but {} are in {}",
-            manifest.segments.len(),
-            files.len(),
-            dir.display()
-        );
-        let (mut last, mut open) = (None, None);
-        for (i, (first_seq, path)) in files.iter().enumerate() {
-            let listed = manifest.segments.get(i);
-            if listed.is_none() && i + 1 < files.len() {
-                bail!("{} is followed by another segment but is not in {MANIFEST}", path.display());
-            }
-            let segment = Segment::read(*first_seq, path, listed, &mut last, &mut |entry| visit(i, entry))
-                .with_context(|| format!("segment {}", path.display()))?;
-            match listed {
-                Some(listed) => ensure!(
-                    segment.info() == *listed,
-                    "{} does not match {MANIFEST}: on disk {:?}, listed {listed:?}",
-                    path.display(),
-                    segment.info()
-                ),
-                None => open = Some(segment),
-            }
-        }
-        Segment::check_open(open.as_ref(), last)?;
-        manifest.authority = Some(ReadAuthority(()));
-        manifest.flushed = last;
-        manifest.active =
-            open.as_ref().filter(|s| s.bytes > 0).and_then(|s| last.map(|last| ActivePrefix { info: s.info(), last }));
-        Ok(Self {
-            dir: dir.to_owned(),
-            last,
-            manifest,
-            manifest_len,
-            open,
-            pending_catalog: Vec::new(),
-            catalog_owner: None,
-            catalog_domain: None,
-            catalog_rewound: false,
-        })
+        Self::open_listed(dir, list_segments(dir)?, true, None, by_entry(visit))
     }
 
     /// Whether the log's last segment is unlisted and holds entries: a follower's own tail,

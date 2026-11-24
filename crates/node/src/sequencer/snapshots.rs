@@ -46,6 +46,9 @@ pub(super) struct Captures {
     unsigned: Vec<((AccountId, u64), usize)>,
     /// The writer of daily snapshots, under `[daily_snapshots]`.
     daily: Option<crate::daily_snapshots::Writer>,
+    /// The replay state recovery folded, which the stats worker folds on from for the daily snapshots once it
+    /// starts (`track_stats`).
+    pub(super) fold: Option<crate::sequencer::replay::Fold>,
     /// How long each capture held the sequencer's thread, from its permit to its handover, whether
     /// the history owner took it or not. For the recovery scenario.
     #[cfg(test)]
@@ -54,9 +57,13 @@ pub(super) struct Captures {
 
 impl Captures {
     /// No capture taken yet, and with `daily`, the directory of `[daily_snapshots]`, its writer started
-    /// on a log whose last checkpoint is at `last_checkpoint`; a writer that does not start pages Warning
-    /// `daily_snapshot_failed`, and the node runs on without one.
-    pub(super) fn publishing(daily: Option<&std::path::Path>, last_checkpoint: Option<u64>) -> Self {
+    /// on a log whose last checkpoint is at `last_checkpoint`, and the replay state recovery folded, `fold`; a
+    /// writer that does not start pages Warning `daily_snapshot_failed`, and the node runs on without one.
+    pub(super) fn publishing(
+        daily: Option<&std::path::Path>,
+        last_checkpoint: Option<u64>,
+        fold: Option<crate::sequencer::replay::Fold>,
+    ) -> Self {
         let daily = daily.and_then(|dir| {
             crate::daily_snapshots::Writer::start(dir, last_checkpoint)
                 .inspect_err(|e| {
@@ -67,7 +74,7 @@ impl Captures {
                 })
                 .ok()
         });
-        Self { daily, ..Self::default() }
+        Self { daily, fold, ..Self::default() }
     }
 }
 
@@ -103,8 +110,14 @@ impl Sequencer {
             Some(daily) if genesis && daily.due(ts) => {}
             _ => return Ok(()),
         }
-        let (engine, job) = match self.encoding(seq) {
-            Ok(encoding) => encoding,
+        // The replay state at the checkpoint comes from the stats worker's fold, behind the checkpoint's entry.
+        let carried = self.marks.stats().and_then(|stats| stats.carry_job(seq));
+        let encoded = match carried {
+            Some(carried) => self.encoding(seq).map(|engine| (engine, carried)),
+            None => Err(anyhow::anyhow!("no stats worker folds the replay state")),
+        };
+        let ((engine, job), (carry, carried)) = match encoded {
+            Ok(encoded) => encoded,
             Err(e) => {
                 warn!(alert = "daily_snapshot_failed", "no daily snapshot at seq {seq}: {e:#}");
                 if let Some(daily) = self.captures.daily.as_mut() {
@@ -117,13 +130,23 @@ impl Sequencer {
             (Some(job), Some(stats)) => stats.stage_job(job),
             _ => self.sync_log(false)?,
         }
+        if let Some(stats) = self.marks.stats() {
+            stats.stage_job(carry);
+        }
+        let carried = Encoding::Pending(carried);
+        let history = self.history_anchors();
         // The key that signed the checkpoint signs the snapshot, in its deployment.
         let domain = crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault };
         let signing = crate::daily_snapshots::Signing { key: self.key.clone(), domain };
         if let Some(daily) = self.captures.daily.as_mut() {
-            daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine, signing });
+            daily.take(DailyJob { offset, checkpoint: checkpoint.clone(), ts, engine, carried, history, signing });
         }
         Ok(())
+    }
+
+    /// The history anchors a daily snapshot of this checkpoint carries.
+    fn history_anchors(&self) -> Encoding {
+        Encoding::Encoded("{}".to_owned())
     }
 
     /// Collects retired catalog versions, warning when the catalog cannot take the work.

@@ -161,7 +161,8 @@ pub(crate) fn own_check_read(
 
 /// A `TurnTaken` the engine accepted: the turn, the candidate whose turn it took, and the release it
 /// took it under.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Taking {
     turn: u64,
     candidate: AccountId,
@@ -250,7 +251,8 @@ pub(crate) fn applies(engine: &Engine) -> bool {
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
 /// at, from the first command the replay that collected them applied; and the turn and candidate of
 /// each promotion (#595) or skip (#596) the log mirrored, accepted or refused, by the seq of the mirror.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Takings {
     by_seq: BTreeMap<u64, Taking>,
     /// A promoted or skipped-to member sequences from its promotion or its take, before the finalised
@@ -312,9 +314,8 @@ impl Takings {
         self.applied_from = Some(seq);
     }
 
-    /// The records as a replay that applied every command it saw holds them: for a test that compares a
-    /// replica from a snapshot with a whole replay.
-    #[cfg(test)]
+    /// The records as a replay that applied every command it saw holds them: as a daily snapshot carries them,
+    /// and as a test compares a replica from a snapshot with a whole replay.
     pub(crate) fn applied_throughout(&self) -> Self {
         Self { applied_from: None, ..self.clone() }
     }

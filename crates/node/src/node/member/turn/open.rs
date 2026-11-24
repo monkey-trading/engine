@@ -145,16 +145,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                 warn!(alert = "snapshot_start_refused", "the copy's last checkpoint cannot be read: {e:#}")
             })
             .ok()??;
-        let bounds = (finalized?.min(copied.seq), before);
-        crate::daily_snapshots::snapshot_start_against(
-            &archive,
-            &origins,
-            (snapshots, dir),
-            (domain, signers),
-            bounds,
-            roots,
-        )
-        .await
+        let bounds = crate::daily_snapshots::Bounds { finalized: finalized?.min(copied.seq), before, keep_from: None };
+        let fetching = Some((&archive, origins.as_slice()));
+        crate::daily_snapshots::snapshot_start_against(fetching, (snapshots, dir), (domain, signers), bounds, roots)
+            .await
     }
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the

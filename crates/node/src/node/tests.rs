@@ -302,7 +302,7 @@ pub(crate) async fn read_log_and_history_recording(
     let (log, plan, _pending) = super::read_log_and_history_authorities(
         cfg,
         key,
-        parent,
+        (parent, None),
         async { Ok(Default::default()) },
         &scratch,
         stats,
@@ -327,7 +327,7 @@ pub(crate) async fn read_log_and_history_observe(
     let (log, plan, _pending) = super::read_log_and_history_authorities(
         cfg,
         &key,
-        parent,
+        (parent, None),
         async { Ok(Default::default()) },
         &scratch,
         &crate::test_support::stats(),
@@ -345,7 +345,7 @@ async fn read_refusing_signer_history(cfg: &NodeConfig) -> anyhow::Result<Replay
     let refused = async { Err(anyhow::anyhow!("the signer history was read")) };
     let stats = crate::test_support::stats();
     let (log, _plan, _pending) =
-        super::read_log_and_history_authorities(cfg, &key, None, refused, &marks, &stats, |_| {}).await?;
+        super::read_log_and_history_authorities(cfg, &key, (None, None), refused, &marks, &stats, |_| {}).await?;
     Ok(log)
 }
 

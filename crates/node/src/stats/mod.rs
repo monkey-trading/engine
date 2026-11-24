@@ -35,10 +35,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::Context;
 use engine_core::command::Sequenced;
+use engine_core::eip712::B256;
 use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
 
 use crate::config::{NodeConfig, StatsSection};
+use crate::log::{CommandEntry, LogEntry};
+use crate::sequencer::replay::Fold;
 use crate::stats::activity::Activity;
 use crate::stats::distributions::Distributions;
 use crate::stats::series::SeriesStore;
@@ -201,10 +204,35 @@ impl Stats {
     /// Stages a command the sequencer applied for the worker, if there is one, before `observe` sees
     /// it. It goes to the worker with `deliver`, once the command is durable.
     pub(crate) fn follow(&self, sequenced: &Sequenced) {
-        let mut inner = self.lock();
-        if inner.background.is_some() {
-            inner.staged.push(background::Job::Apply(Box::new(sequenced.clone())));
+        self.stage_job(background::Job::Apply(Box::new(sequenced.clone()), None));
+    }
+
+    /// `follow`, for a command the sequencer logged as `entry` with the cumulative command prefix `link`,
+    /// which the worker's fold takes (`seed_fold`).
+    pub(crate) fn follow_logged(&self, entry: &CommandEntry, link: B256) {
+        let logged = (link, entry.seal.as_ref().map(|seal| seal.signer));
+        self.stage_job(background::Job::Apply(Box::new(entry.sequenced.clone()), Some(logged)));
+    }
+
+    /// Stages a withdrawal or checkpoint entry the sequencer logged for the worker's fold.
+    pub(crate) fn follow_entry(&self, entry: &LogEntry) {
+        if !matches!(entry, LogEntry::Command(_)) {
+            self.stage_job(background::Job::Entry(Box::new(entry.clone())));
         }
+    }
+
+    /// Has the worker fold the replay state from `fold`, the state after every command and entry staged so far,
+    /// so a daily snapshot can carry it (`carry_job`).
+    pub(crate) fn seed_fold(&self, fold: Fold) {
+        self.stage_job(background::Job::Seed(Box::new(fold)));
+    }
+
+    /// A job that encodes the replay state the worker folds at the checkpoint after the command at `seq`, the
+    /// last entry staged, and the end its encoding arrives on; `None` when no worker runs.
+    pub(crate) fn carry_job(&self, seq: u64) -> Option<(background::Job, Receiver<background::Encoded>)> {
+        self.lock().background.as_ref()?;
+        let (reply, encoded) = sync_channel(1);
+        Some((background::Job::Carry { seq, reply }, encoded))
     }
 
     /// A job that encodes the worker's copy at the command at `seq`, stamped `ts`, the last one

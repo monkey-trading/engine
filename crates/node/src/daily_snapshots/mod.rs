@@ -11,11 +11,11 @@
 
 mod fetch;
 mod signature;
-pub(crate) use signature::{Signed, Signing, open_signed};
+pub(crate) use signature::{Covered, Signed, Signing, open_signed, sha256};
 mod start;
 #[cfg(test)]
 pub(crate) use start::snapshot_start;
-pub(crate) use start::{AcceptedRoots, entry_at, snapshot_start_against};
+pub(crate) use start::{AcceptedRoots, Bounds, NoRoots, entry_at, snapshot_start_against};
 mod writer;
 #[cfg(test)]
 pub(crate) use writer::publish_now;
@@ -34,11 +34,15 @@ use serde_json::value::RawValue;
 use sha2::Digest;
 
 use crate::log::{Checkpoint, Offset};
+use crate::sequencer::replay::Carried;
 
 /// The manifest's file name.
 pub(crate) const MANIFEST: &str = "manifest.jsonl";
-/// The snapshot format this build writes, signed; it reads the format before it too.
-const SCHEMA: u32 = 2;
+/// The snapshot format this build writes: signed over its state, the replay state it carries and its history
+/// anchors. A start takes only this format; a replay in ranges reads the two before it too.
+const SCHEMA: u32 = 3;
+/// The format signed over its state alone, which carries no replay state.
+const STATE_SCHEMA: u32 = 2;
 /// The format before signatures.
 const UNSIGNED_SCHEMA: u32 = 1;
 /// The most bytes a snapshot a member starts from may hold: several times the 420 MB of one at 100,000 accounts,
@@ -61,6 +65,13 @@ pub(crate) struct DailySnapshot {
     /// The SHA-256 of the engine's encoding, hex (`state_digest`), from the signed format on.
     #[serde(default)]
     pub state: Option<String>,
+    /// The replay state the log before it folds to (`Carried`), from the format that carries it on.
+    #[serde(default)]
+    pub carried: Option<Carried>,
+    /// The anchors of the history the node derives from the log (`History`), from the format that carries the
+    /// replay state on.
+    #[serde(default)]
+    pub history: Option<Box<RawValue>>,
     /// The enclave key's signature over the snapshot (`signature::digest`), from the signed format on.
     #[serde(default)]
     pub signature: Option<String>,
@@ -74,6 +85,8 @@ struct Written<'a> {
     checkpoint: &'a Checkpoint,
     engine: &'a RawValue,
     state: &'a str,
+    carried: &'a RawValue,
+    history: &'a RawValue,
     signature: &'a str,
 }
 
@@ -163,15 +176,20 @@ fn read(path: &Path) -> anyhow::Result<DailySnapshot> {
     let file = File::open(path).with_context(|| format!("opening daily snapshot {}", path.display()))?;
     let snapshot: DailySnapshot = serde_json::from_reader(BufReader::new(file))
         .with_context(|| format!("decoding daily snapshot {}", path.display()))?;
-    let DailySnapshot { schema, offset, checkpoint, state, signature, .. } = &snapshot;
+    let DailySnapshot { schema, offset, checkpoint, state, signature, carried, history, .. } = &snapshot;
     ensure!(
-        *schema == SCHEMA || *schema == UNSIGNED_SCHEMA,
-        "daily snapshot {} is of format {schema}, not {SCHEMA} or {UNSIGNED_SCHEMA}",
+        [UNSIGNED_SCHEMA, STATE_SCHEMA, SCHEMA].contains(schema),
+        "daily snapshot {} is of format {schema}, not {UNSIGNED_SCHEMA} to {SCHEMA}",
         path.display()
     );
     ensure!(
         *schema == UNSIGNED_SCHEMA || (state.is_some() && signature.is_some()),
         "daily snapshot {} is of the signed format but carries no state digest or signature",
+        path.display()
+    );
+    ensure!(
+        (*schema == SCHEMA) == (carried.is_some() && history.is_some()),
+        "daily snapshot {} of format {schema} carries replay state and history anchors only in format {SCHEMA}",
         path.display()
     );
     ensure_named(path, *offset, checkpoint)?;
@@ -240,6 +258,15 @@ pub(crate) fn state_digest(engine: &Engine) -> anyhow::Result<[u8; 32]> {
     serde_json::to_writer(&mut hashed, engine).context("encoding the engine")?;
     let hashed = hashed.into_inner().map_err(|e| e.into_error()).context("hashing the engine's encoding")?;
     Ok(hashed.hash.finalize().into())
+}
+
+/// No replay state and no history anchors, encoded as a daily snapshot carries them: for a test of the writer or of
+/// a read that does not look at them.
+#[cfg(test)]
+pub(crate) fn nothing_carried() -> (crate::snapshot::sealing::Encoding, crate::snapshot::sealing::Encoding) {
+    use crate::snapshot::sealing::Encoding;
+    let carried = serde_json::to_string(&Carried::default()).expect("a default state encodes");
+    (Encoding::Encoded(carried), Encoding::Encoded("{}".to_owned()))
 }
 
 #[cfg(test)]

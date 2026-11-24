@@ -22,7 +22,9 @@ use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
-use crate::daily_snapshots::{Listed, MANIFEST, SCHEMA, Signing, Written, day, offset_named, read_manifest};
+use crate::daily_snapshots::{
+    Covered, Listed, MANIFEST, SCHEMA, Signing, Written, day, offset_named, read_manifest, sha256,
+};
 use crate::log::{Checkpoint, Offset};
 use crate::paced::Paced;
 use crate::snapshot::sealing::{ENCODE_WAIT, Encoding};
@@ -34,8 +36,22 @@ pub(crate) struct Job {
     /// The checkpoint's sequenced time.
     pub ts: Millis,
     pub engine: Encoding,
+    /// The replay state at the checkpoint (`Carried`), encoded by the stats worker's fold.
+    pub carried: Encoding,
+    /// The history anchors at the checkpoint (`History`).
+    pub history: Encoding,
     /// The key that signed the checkpoint, which signs the snapshot.
     pub signing: Signing,
+}
+
+#[cfg(test)]
+impl Job {
+    /// A job of `engine` at `checkpoint`, carrying no replay state and no history anchors: for a test of a read
+    /// that does not look at them.
+    pub(crate) fn bare(offset: Offset, checkpoint: Checkpoint, ts: Millis, engine: Encoding, signing: Signing) -> Self {
+        let (carried, history) = crate::daily_snapshots::nothing_carried();
+        Self { offset, checkpoint, ts, engine, carried, history, signing }
+    }
 }
 
 /// The longest a writer's drop waits for its thread to finish the snapshot it holds, so a slow write never
@@ -234,19 +250,28 @@ pub(crate) fn publish_now(dir: &Path, job: Job) -> anyhow::Result<Listed> {
     publish(dir, &mut listed, job)
 }
 
-/// Writes `job`'s snapshot in `dir` under its name, signed with its key over the SHA-256 of the engine's
-/// encoding as written, which is its state digest (`state_digest`), synced, then lists it in the manifest.
+/// Writes `job`'s snapshot in `dir` under its name, signed with its key over the SHA-256s of the engine's
+/// encoding as written, which is its state digest (`state_digest`), and of the replay state and history anchors
+/// as written, synced, then lists it in the manifest.
 /// Error cases:
-/// - the engine's encoding failed or did not come within `ENCODE_WAIT`, or the checkpoint's root does not
-///   parse, or the file or the manifest cannot be written or synced
+/// - an encoding failed or did not come within `ENCODE_WAIT`, or the checkpoint's root does not parse, or the
+///   file or the manifest cannot be written or synced
 fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Listed> {
     // Bounded, so a job a failing sequencer never delivered cannot hold the writer's drop; nothing stops
     // the writer mid-job.
     let encoded = job.engine.wait(ENCODE_WAIT, || false)?;
     let engine = RawValue::from_string(encoded).context("the engine's encoding is not JSON")?;
-    let state: [u8; 32] = Sha256::digest(engine.get().as_bytes()).into();
+    let carried = RawValue::from_string(job.carried.wait(ENCODE_WAIT, || false).context("the carried replay state")?)
+        .context("the carried replay state's encoding is not JSON")?;
+    let history = RawValue::from_string(job.history.wait(ENCODE_WAIT, || false).context("the history anchors")?)
+        .context("the history anchors' encoding is not JSON")?;
+    let covered = Covered {
+        state: sha256(engine.get().as_bytes()),
+        carried: sha256(carried.get().as_bytes()),
+        history: sha256(history.get().as_bytes()),
+    };
     let root = job.checkpoint.root.parse().context("the snapshot's checkpoint root")?;
-    let (state, signature) = (hex::encode(state), job.signing.sign(job.offset, root, state));
+    let (state, signature) = (hex::encode(covered.state), job.signing.sign(job.offset, root, covered));
     let file = crate::snapshot::name(job.offset);
     let staged = dir.join(format!("{file}.tmp"));
     let written = Written {
@@ -255,6 +280,8 @@ fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Lis
         checkpoint: &job.checkpoint,
         engine: &engine,
         state: &state,
+        carried: &carried,
+        history: &history,
         signature: &signature,
     };
     let (hash, bytes) = write_synced(&staged, |out| serde_json::to_writer(out, &written).map_err(Into::into))?;

@@ -57,29 +57,39 @@ fn a_restart_keeps_only_listed_snapshots_of_checkpoints_the_log_holds() {
     assert_eq!(read_manifest(&dir).unwrap(), [listing]);
 }
 
-/// A published snapshot carries the SHA-256 of its engine's encoding, which is that engine's state digest, and
-/// the writer's signature over its deployment, offset, root and that digest, which recovers to the writer's key
-/// there and to no key in another deployment; its manifest line is the format before signatures, which an earlier
-/// release reads.
+/// A published snapshot carries the SHA-256 of its engine's encoding, which is that engine's state digest, the
+/// replay state and history anchors it was handed, and the writer's signature over its deployment, offset, root
+/// and the SHA-256s of the engine, the replay state and the anchors as written, which recovers to the writer's key
+/// there and to no key in another deployment, nor over other anchors; its manifest line is the format before
+/// signatures, which an earlier release reads.
 #[test]
-fn a_published_snapshot_is_signed_over_its_state() {
+fn a_published_snapshot_is_signed_over_its_state_and_what_it_carries() {
     let dir = scratch_dir("daily-signed");
     let job = job(Offset { seq: 5, index: 1 }, 0);
     let (domain, key) = (job.signing.domain, job.signing.key.address());
     let listing = publish_now(&dir, job).unwrap();
-    let written: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(&listing.file)).unwrap()).unwrap();
-    assert_eq!(written["schema"], 2);
+    let text = std::fs::read_to_string(dir.join(&listing.file)).unwrap();
+    let written: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(written["schema"], 3);
     let engine: Engine = serde_json::from_value(written["engine"].clone()).unwrap();
     let state = state_digest(&engine).unwrap();
     assert_eq!(written["state"].as_str(), Some(hex::encode(state).as_str()));
+    let carried: crate::sequencer::replay::Carried = serde_json::from_value(written["carried"].clone()).unwrap();
+    assert_eq!(carried.digest().unwrap(), Carried::default().digest().unwrap(), "the replay state it was handed");
+    assert_eq!(written["history"], serde_json::json!({}), "the anchors it was handed");
     let signature: engine_core::eip712::Signature = written["signature"].as_str().unwrap().parse().unwrap();
     let root: engine_core::eip712::B256 = listing.root.parse().unwrap();
     let offset = Offset { seq: listing.seq, index: listing.index };
-    let recovered =
-        |domain| engine_core::eip712::recover(&signature::digest(domain, offset, root, state).into(), &signature);
-    assert_eq!(recovered(domain), Some(engine_core::types::AccountId(key)));
+    let carried = sha256(serde_json::to_string(&Carried::default()).unwrap().as_bytes());
+    let covered = Covered { state, carried, history: sha256(b"{}") };
+    let recovered = |domain, covered| {
+        engine_core::eip712::recover(&signature::digest(domain, offset, root, covered).into(), &signature)
+    };
+    assert_eq!(recovered(domain, covered), Some(engine_core::types::AccountId(key)));
     let other = crate::log::CheckpointDomain { chain_id: domain.chain_id + 1, ..domain };
-    assert_ne!(recovered(other), Some(engine_core::types::AccountId(key)), "another deployment");
+    assert_ne!(recovered(other, covered), Some(engine_core::types::AccountId(key)), "another deployment");
+    let altered = Covered { history: sha256(b"{\"stats\":null}"), ..covered };
+    assert_ne!(recovered(domain, altered), Some(engine_core::types::AccountId(key)), "other anchors");
     let line: serde_json::Value =
         serde_json::from_str(std::fs::read_to_string(dir.join(MANIFEST)).unwrap().trim()).unwrap();
     let fields: Vec<&str> = line.as_object().unwrap().keys().map(String::as_str).collect();
@@ -97,7 +107,7 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     let error = format!("{:#}", load(&path).err().expect("an engine at V0 is refused"));
     assert!(error.contains("predates V27"), "{error}");
     let cases: [(&str, Alter); 3] = [
-        ("of format 3", |snapshot| snapshot["schema"] = 3.into()),
+        ("of format 4", |snapshot| snapshot["schema"] = 4.into()),
         ("names offset", |snapshot| snapshot["offset"] = "5:2".into()),
         ("stands at seq", |snapshot| snapshot["checkpoint"]["seq"] = 6.into()),
     ];
@@ -110,10 +120,11 @@ fn load_refuses_a_snapshot_it_cannot_start_a_range_from() {
     }
 }
 
-/// A snapshot of format 1, which carries no state digest or signature, loads as the start of a range; one of
-/// format 2 loses it by lacking either field.
+/// A snapshot of format 1, which carries no state digest or signature, and one of format 2, which carries no
+/// replay state, load as the start of a range; one of format 2 or 3 lacking either signed field is refused, and
+/// one of format 3 must carry the replay state and history anchors, and one of format 2 must not.
 #[test]
-fn load_reads_the_format_before_signatures_and_refuses_the_signed_one_without_them() {
+fn load_reads_the_formats_before_and_refuses_one_without_its_fields() {
     let dir = scratch_dir("daily-formats");
     let offset = Offset { seq: 5, index: 1 };
     let mut job = job(offset, 0);
@@ -123,11 +134,34 @@ fn load_reads_the_format_before_signatures_and_refuses_the_signed_one_without_th
     let written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let write = |snapshot: &serde_json::Value| std::fs::write(&path, serde_json::to_vec(snapshot).unwrap()).unwrap();
     let loaded = load(&path).expect("a signed snapshot of a state with custody finality loads");
-    assert_eq!((loaded.schema, loaded.offset), (2, offset));
+    assert_eq!((loaded.schema, loaded.offset), (3, offset));
+    assert!(loaded.carried.is_some() && loaded.history.is_some(), "it carries the replay state and history anchors");
+
+    let mut state_only = written.clone();
+    state_only["schema"] = 2.into();
+    for field in ["carried", "history"] {
+        state_only.as_object_mut().unwrap().remove(field);
+    }
+    write(&state_only);
+    let loaded = load(&path).expect("a snapshot of format 2 loads with no replay state");
+    assert_eq!((loaded.schema, loaded.carried.is_none()), (2, true));
+    for (schema, field) in [(3, "carried"), (3, "history")] {
+        let mut lacking = written.clone();
+        lacking["schema"] = schema.into();
+        lacking.as_object_mut().unwrap().remove(field);
+        write(&lacking);
+        let error = format!("{:#}", load(&path).err().expect("refused"));
+        assert!(error.contains("carries replay state and history anchors only"), "without {field}: {error}");
+    }
+    let mut extra = written.clone();
+    extra["schema"] = 2.into();
+    write(&extra);
+    let error = format!("{:#}", load(&path).err().expect("a format 2 snapshot carrying replay state is refused"));
+    assert!(error.contains("carries replay state and history anchors only"), "{error}");
 
     let mut unsigned = written.clone();
     unsigned["schema"] = 1.into();
-    for field in ["state", "signature"] {
+    for field in ["state", "signature", "carried", "history"] {
         unsigned.as_object_mut().unwrap().remove(field);
     }
     write(&unsigned);
@@ -230,7 +264,9 @@ fn job(offset: Offset, ts: Millis) -> Job {
         deferred_withdrawals: false,
     };
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    Job { offset, checkpoint, ts, engine, signing: Signing::for_tests() }
+    let carried = Encoding::Encoded(serde_json::to_string(&Carried::default()).unwrap());
+    let history = Encoding::Encoded("{}".to_owned());
+    Job { offset, checkpoint, ts, engine, carried, history, signing: Signing::for_tests() }
 }
 
 /// A staged file whose rename fails is removed, so the next write can stage it again.
