@@ -6,10 +6,16 @@ use rusqlite::{Connection, params};
 use crate::authenticated::reader::Checked;
 use crate::authenticated::receipts::{self, RetiredRow};
 use crate::authenticated::write::Durability;
-use crate::authenticated::{MAX_RECEIPT_ROWS, MAX_UPDATES, Root, Store, batch, codec};
+use crate::authenticated::{MAX_RECEIPT_ROWS, MAX_UPDATES, Root, Store, batch, codec, db};
 
 /// A caller can always offer this finite row budget to cover at least two maximum-size receipts.
 pub const COMPLETE_RECEIPT_BUDGET: usize = MAX_RECEIPT_ROWS * 2;
+
+/// A collection gives back the file's free pages past one in this many of its pages, which it leaves for later
+/// writes to take; 0 gives back every free page. The versions a recovery cache pins become collectable together
+/// once newer caches release them, so their pages come free in a burst that the next minutes' writes take
+/// again: giving them back would move as many pages to shrink the file as those writes grow it by.
+const FREE_PAGE_SHARE: i64 = 8;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GcReport {
@@ -67,6 +73,29 @@ impl Store {
         )?;
         Ok((new_root, report.ok_or_else(|| anyhow::anyhow!("missing completed GC report"))?))
     }
+
+    /// The share of its pages the file keeps free after a collection (`FREE_PAGE_SHARE`).
+    /// Error cases:
+    /// - poisoned runtime lock
+    fn free_page_share(&self) -> Result<i64> {
+        #[cfg(test)]
+        if let Some(share) =
+            self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.free_page_share
+        {
+            return Ok(share);
+        }
+        Ok(FREE_PAGE_SHARE)
+    }
+
+    /// Makes later collections keep one in `share` of the file's pages free, 0 none, for a test that measures it.
+    /// Error cases:
+    /// - poisoned runtime lock
+    #[cfg(test)]
+    pub(crate) fn keep_free_pages(&self, share: i64) -> Result<()> {
+        self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.free_page_share =
+            Some(share);
+        Ok(())
+    }
 }
 
 /// Proves a bounded prefix of whole receipts and consumes enough to strictly reduce the queue.
@@ -83,7 +112,7 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
     let first = receipts::receipt(conn, root, queue.lo)?;
     if queue.hi - queue.lo == 1 && first.maintenance {
         report.idle = true;
-        report.pages_reclaimed = vacuum(conn, budget)?;
+        report.pages_reclaimed = vacuum(conn, budget, store.free_page_share()?)?;
         return Ok((root.clone(), report));
     }
     if budget == 0 {
@@ -135,14 +164,15 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
     // deletes below read through `receipts::point`, which always does.
     let prepared = batch::prepare(conn, root, changes, queue.clone(), true, &Checked::default())?;
     batch::persist(conn, &prepared, &Checked::default(), store.compact(&root.namespace)?)?;
+    let space = db::existing_space(conn, &root.namespace)?;
     for row in &retired {
         report.deleted += match row {
             RetiredRow::Node(key) => conn
-                .prepare_cached("DELETE FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3")?
-                .execute(params![&root.namespace[..], key.version() as i64, codec::path(key)?])?,
+                .prepare_cached("DELETE FROM nodes WHERE space=?1 AND version=?2 AND path=?3")?
+                .execute(params![space, key.version() as i64, codec::path(key)?])?,
             RetiredRow::Value { key, version } => conn
-                .prepare_cached("DELETE FROM value_rows WHERE namespace=?1 AND key=?2 AND version=?3")?
-                .execute(params![&root.namespace[..], &key.0[..], *version as i64])?,
+                .prepare_cached("DELETE FROM value_rows WHERE space=?1 AND key=?2 AND version=?3")?
+                .execute(params![space, &key.0[..], *version as i64])?,
         };
     }
     // Physical deletion cannot invalidate either the new head or the explicitly pinned input head.
@@ -150,18 +180,22 @@ fn collect(store: &Store, conn: &Connection, root: &Root, budget: usize) -> Resu
     receipts::queue(conn, root)?;
     report.receipts_consumed = consumed.len();
     report.queued = queue.hi + 1 - queue.lo;
-    report.pages_reclaimed = vacuum(conn, budget)?;
+    report.pages_reclaimed = vacuum(conn, budget, store.free_page_share()?)?;
     Ok((prepared.root, report))
 }
 
-/// Reclaims at most the provided finite number of free pages using creation-time incremental mode.
+/// Reclaims at most the provided finite number of free pages using creation-time incremental mode, past one
+/// in `share` of the file's pages, which it leaves free; a `share` of 0 leaves none.
 /// Error cases:
 /// - SQLite page accounting or bounded incremental vacuum fails
-fn vacuum(conn: &Connection, pages: usize) -> Result<u64> {
+fn vacuum(conn: &Connection, pages: usize, share: i64) -> Result<u64> {
+    let before: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    let free: i64 = conn.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+    let kept = if share > 0 { before / share } else { 0 };
+    let pages = pages.min(usize::try_from((free - kept).max(0))?);
     if pages == 0 {
         return Ok(0);
     }
-    let before: i64 = conn.pragma_query_value(None, "page_count", |row| row.get(0))?;
     {
         // rusqlite 0.41 execute_batch stops after the first result row; this pragma yields per page.
         let mut statement = conn.prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;

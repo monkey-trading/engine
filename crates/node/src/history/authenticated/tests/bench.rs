@@ -15,6 +15,9 @@ use crate::history::derived::Taken;
 use crate::history::runtime::INDEX_BATCH;
 use crate::log::{LogEntry, SegmentedLog, Stop};
 
+mod measure;
+use measure::{Passes, Rollover, Step, Written};
+
 #[test]
 #[ignore = "a timing run on a recorded log, by hand"]
 fn ingest_rate_on_a_recorded_log() {
@@ -73,13 +76,28 @@ fn ingest_rate_on_a_recorded_log() {
 /// history-head certificate resumes, from the log's next command, in updates of `INDEX_BATCH` commands, its
 /// retired versions collected every 1,024 commands in up to `HISTORY_SCALE_COLLECTION_CALLS` (32, the owner's)
 /// calls, until `HISTORY_SCALE_UNTIL`; then it runs `HISTORY_SCALE_PROBE` (10,240) commands in updates of each
-/// size in `HISTORY_SCALE_BATCHES` (8,32,128,512). Every `HISTORY_SCALE_STEP` (20,480) commands, and after each
-/// probe, it prints the store's size, the commands a second, indexing's and collection's time a command, what
-/// collection retired, and the head's proof that a capture's signed head takes, and saves the head beside it.
+/// size in `HISTORY_SCALE_BATCHES` (8,32,128,512). `HISTORY_SCALE_PASSES` (1) reads the log that many times,
+/// each pass's seqs and times moved past the last's, so a short recording feeds a long run, and
+/// `HISTORY_SCALE_RETENTION_MS` sets a new store's retention (the dev config's), so expiry starts once that
+/// much sequenced time is indexed. As a node's recovery caches do, it pins the head every
+/// `HISTORY_SCALE_CACHE_INTERVAL_MS` (300,000) of sequenced time and keeps the newest `HISTORY_SCALE_CACHE_RETAIN`
+/// (2) pins, so collection retires only what is older than the oldest of them; a retain of 0 pins nothing.
+/// `HISTORY_SCALE_FREE_SHARE` makes collection leave one in that many of the file's pages free for later writes,
+/// where the store's own share applies without it. `HISTORY_SCALE_GROW_BATCH` sets the commands an update takes
+/// until `HISTORY_SCALE_UNTIL` (`INDEX_BATCH`). A rollover's financing rows, which the log does not hold, are
+/// synthesised: `HISTORY_SCALE_ROLLOVER_ROWS` (0) rows, over 100,000 accounts and as many markets as that takes,
+/// on the first command of each `HISTORY_SCALE_ROLLOVER_EVERY_MS` (a day) of sequenced time, whose update's time
+/// each step prints apart.
+/// Every `HISTORY_SCALE_STEP` (20,480) commands, and after each probe, it
+/// prints the store's size, the commands a second, indexing's and collection's time a command, what collection
+/// retired, the head's proof that a capture's signed head takes, what the updates wrote a command (nodes and
+/// their bytes, values and theirs), the events the index holds, its free pages and its bytes an event held,
+/// and saves the head beside it. With `HISTORY_SCALE_BREAKDOWN` set it prints, at the end, each table's and
+/// index's pages and bytes, and the values and nodes by kind.
 #[test]
 #[ignore = "indexing and collection against the index's size, by hand"]
 fn ingest_and_collection_at_scale() {
-    let log = std::env::var("HISTORY_BENCH_LOG").expect("HISTORY_BENCH_LOG names a log directory");
+    let log = PathBuf::from(std::env::var("HISTORY_BENCH_LOG").expect("HISTORY_BENCH_LOG names a log directory"));
     let path = PathBuf::from(std::env::var("HISTORY_SCALE_STORE").expect("HISTORY_SCALE_STORE names a store"));
     let count = |name: &str, default: usize| std::env::var(name).map_or(default, |n| n.parse().expect("a count"));
     let (until, step, probe) = (
@@ -94,43 +112,77 @@ fn ingest_and_collection_at_scale() {
         .map(|batch| batch.parse().expect("an update size"))
         .collect();
     let saved = path.with_extension("head.json");
-    let retention = crate::test_support::dev_config().history.retention_ms().expect("a retention");
+    let retention = match std::env::var("HISTORY_SCALE_RETENTION_MS") {
+        Ok(ms) => ms.parse().expect("a retention in milliseconds"),
+        Err(_) => crate::test_support::dev_config().history.retention_ms().expect("a retention"),
+    };
     let mut index = match std::env::var("HISTORY_SCALE_HEAD") {
         Ok(head) => resumed(&path, Path::new(&head)),
         Err(_) => Index::empty(Store::create(&path).expect("a new store"), NAMESPACE, retention).expect("an index"),
     };
+    if let Ok(share) = std::env::var("HISTORY_SCALE_FREE_SHARE") {
+        index.store.keep_free_pages(share.parse().expect("a share")).expect("the store keeps the share");
+    }
+    let passes = Passes::of(&log, count("HISTORY_SCALE_PASSES", 1) as u64);
     let from = index.head().last_seq().map_or(0, |seq| seq + 1);
-    println!("HISTORY_SCALE from={from} store_mb={}", fs::metadata(&path).expect("the store").len() >> 20);
+    println!(
+        "HISTORY_SCALE from={from} store_mb={} retention_ms={} log_commands={} log_span_ms={} passes={}",
+        fs::metadata(&path).expect("the store").len() >> 20,
+        index.head().retention_ms,
+        passes.commands,
+        passes.span,
+        passes.count
+    );
+    let written = Written::open(&path, index.head().root.namespace);
+    let (interval, retain) =
+        (count("HISTORY_SCALE_CACHE_INTERVAL_MS", 300_000) as i64, count("HISTORY_SCALE_CACHE_RETAIN", 2));
+    let mut caches: std::collections::VecDeque<(Millis, crate::authenticated::Lease)> = Default::default();
     let (mut collected, mut pending, mut probes) = (from, Vec::new(), batches.into_iter());
-    let (mut probing, mut batch) = (false, INDEX_BATCH);
+    let (mut probing, mut batch) = (false, count("HISTORY_SCALE_GROW_BATCH", INDEX_BATCH));
+    let (rows, every) =
+        (count("HISTORY_SCALE_ROLLOVER_ROWS", 0), count("HISTORY_SCALE_ROLLOVER_EVERY_MS", 86_400_000) as i64);
+    let rollover = Rollover::new(rows);
+    let (mut rolled, mut rolling) = (None, false);
     let (mut step_of, mut started) = (Step::default(), Instant::now());
-    let read = SegmentedLog::open(Path::new(&log), |entry| {
-        let LogEntry::Command(command) = entry else { return Ok(()) };
+    passes.read(from, |command| {
         let seq = command.sequenced.seq;
-        if seq < from {
-            return Ok(());
-        }
-        pending.push(Taken { command, derived: None });
+        let period = command.sequenced.ts.div_euclid(every);
+        let derived = (rows > 0 && rolled.replace(period).is_some_and(|last| period > last)).then(|| rollover.rows());
+        rolling |= derived.is_some();
+        pending.push(Taken { command, derived });
         if pending.len() < batch {
             return Ok(());
         }
-        let at = Instant::now();
+        let (at, before) = (Instant::now(), index.head().root.version);
         index.ingest_taken(&pending).expect("the index takes the update");
         (step_of.indexing, step_of.commands, step_of.updates) =
             (step_of.indexing + at.elapsed().as_secs_f64(), step_of.commands + pending.len(), step_of.updates + 1);
+        if std::mem::take(&mut rolling) {
+            step_of.rollovers.push(at.elapsed().as_secs_f64());
+        }
+        step_of.written += written.between(before, index.head().root.version);
         pending.clear();
+        let ts = index.head().last_ts().unwrap_or(0);
+        if retain > 0 && caches.back().is_none_or(|(at, _)| ts.div_euclid(interval) > at.div_euclid(interval)) {
+            caches.push_back((ts, index.store.lease(&index.head().root).expect("the head pins")));
+            if caches.len() > retain {
+                caches.pop_front();
+            }
+        }
         if seq >= collected + 1_024 {
             let at = Instant::now();
             for _ in 0..calls {
-                let root = index.head().root;
+                let (root, call) = (index.head().root, Instant::now());
                 let report = index.maintenance(crate::authenticated::COMPLETE_RECEIPT_BUDGET).expect("collection");
-                (step_of.deleted, step_of.reclaimed) =
-                    (step_of.deleted + report.deleted, step_of.reclaimed + report.pages_reclaimed);
+                step_of.longest_call = step_of.longest_call.max(call.elapsed().as_secs_f64());
+                (step_of.deleted, step_of.reclaimed, step_of.queued) =
+                    (step_of.deleted + report.deleted, step_of.reclaimed + report.pages_reclaimed, report.queued);
                 if report.idle || index.head().root == root {
                     break;
                 }
             }
             step_of.collection += at.elapsed().as_secs_f64();
+            step_of.longest_turn = step_of.longest_turn.max(at.elapsed().as_secs_f64());
             let at = Instant::now();
             Index::resume(index.store.clone(), index.head()).expect("the head proves");
             step_of.proofs.push(at.elapsed().as_secs_f64());
@@ -140,7 +192,7 @@ fn ingest_and_collection_at_scale() {
         if step_of.commands < if probing { probe } else { step } {
             return Ok(());
         }
-        step_of.print(&label, &index, &path, started.elapsed().as_secs_f64());
+        step_of.print(&label, &index, &path, &written, started.elapsed().as_secs_f64());
         fs::write(&saved, serde_json::to_vec(&index.head()).expect("the head encodes")).expect("the head is saved");
         (step_of, started, probing) = (Step::default(), Instant::now(), probing || seq >= until);
         if probing {
@@ -151,41 +203,8 @@ fn ingest_and_collection_at_scale() {
         }
         Ok(())
     });
-    if let Err(error) = read {
-        assert!(error.is::<Stop>(), "the log reads: {error:#}");
-    }
-}
-
-/// What one step of `ingest_and_collection_at_scale` took and did.
-#[derive(Default)]
-struct Step {
-    commands: usize,
-    updates: usize,
-    indexing: f64,
-    collection: f64,
-    deleted: usize,
-    reclaimed: u64,
-    proofs: Vec<f64>,
-}
-
-impl Step {
-    /// Prints the step's figures, `label`led, for `index` and its store at `path`, over `wall` seconds.
-    fn print(&self, label: &str, index: &Index, path: &Path, wall: f64) {
-        let per_command = |secs: f64| secs * 1e6 / self.commands as f64;
-        let proof_ms = self.proofs.iter().sum::<f64>() * 1e3 / self.proofs.len().max(1) as f64;
-        println!(
-            "HISTORY_SCALE {label} at={} store_mb={} commands={} commands_per_s={:.0} indexing_us_per_command={:.0} \
-             collection_us_per_command={:.0} ms_per_update={:.1} deleted_rows={} reclaimed_pages={} head_proof_ms={proof_ms:.2}",
-            index.head().last_seq().unwrap_or(0),
-            fs::metadata(path).map_or(0, |metadata| metadata.len()) >> 20,
-            self.commands,
-            self.commands as f64 / wall,
-            per_command(self.indexing),
-            per_command(self.collection),
-            self.indexing * 1e3 / self.updates.max(1) as f64,
-            self.deleted,
-            self.reclaimed,
-        );
+    if std::env::var("HISTORY_SCALE_BREAKDOWN").is_ok() {
+        written.breakdown();
     }
 }
 

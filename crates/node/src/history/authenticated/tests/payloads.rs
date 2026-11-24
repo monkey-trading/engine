@@ -40,7 +40,7 @@ fn event_larger_than_one_mib_has_bounded_progress_headers_and_exact_api_bytes() 
     assert_eq!(row.cursor, Offset { seq: 0, index: 1 });
     assert!(row.payload.length > 1024 * 1024);
     assert!(row.payload.chunks > 16);
-    assert!(encoded(&row).expect("header bytes").len() < 1024);
+    assert!(stored(&row).expect("header bytes").len() < 1024);
     let state = index.store.read(&index.head.root, STATE_KEY).expect("proved state").expect("state");
     assert!(state.len() < 2048, "progress must not include full command/event bodies");
     for ordinal in 0..row.payload.chunks {
@@ -112,7 +112,7 @@ fn malformed_chunk_count_length_and_payload_account_kind_never_produce_partial_s
                 rewrite(&mut index, vec![(row.chunk_key(0), Some(bytes))]);
             }
         }
-        rewrite(&mut index, vec![(position.key(), encoded(&row))]);
+        rewrite(&mut index, vec![(position.key(), stored(&row))]);
         assert!(index.page(query(A)).is_err(), "payload fault {case}");
     }
 }
@@ -128,7 +128,10 @@ fn complete_expiry_removes_every_large_payload_piece_while_an_old_reader_keeps_e
     let row = stored_row(&index, list.position(0));
     index.ingest(command(1, 2, None)).expect("complete large-payload expiry");
     assert_eq!((index.head().queue_lo, index.head().queue_hi), (1, 1));
-    assert_eq!(index.page(query(A)).expect("current empty"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("current empty"),
+        Page { events: vec![], next: None, retained_from_ms: Some(1) }
+    );
     for ordinal in 0..row.payload.chunks {
         assert!(
             index

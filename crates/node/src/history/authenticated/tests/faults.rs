@@ -2,7 +2,7 @@
 
 use super::*;
 
-use crate::history::authenticated::model::{Queued, queue_key};
+use crate::history::authenticated::model::{Queued, Stored, queue_key};
 use crate::history::authenticated::state::STATE_KEY;
 
 #[test]
@@ -31,7 +31,7 @@ fn malformed_metadata_and_out_of_generation_counts_fail_closed() {
             1 => value.lo = value.hi + 1,
             _ => value.generation = index.head().next_generation,
         }
-        rewrite(&mut index, vec![(ListId { account: A, kind: None }.key(), encoded(&value))]);
+        rewrite(&mut index, vec![(ListId { account: A, kind: None }.key(), stored(&value))]);
         assert!(index.page(query(A)).is_err(), "metadata fault {case}");
     }
 }
@@ -53,7 +53,7 @@ fn wrong_account_kind_cursor_order_and_time_cannot_be_served() {
             4 => value.ts = -1,
             _ => value.cursor.seq = 4,
         }
-        rewrite(&mut index, vec![(position.key(), encoded(&value))]);
+        rewrite(&mut index, vec![(position.key(), stored(&value))]);
         assert!(index.page(PageQuery { limit: 2, ..query(A) }).is_err(), "row fault {case}");
     }
 }
@@ -63,18 +63,18 @@ fn both_queue_references_are_verified_before_expiry_and_no_partial_change_is_com
     for case in 0..5 {
         let (mut index, _) = ranked_fixture(&format!("queue-reference-{case}"));
         let bytes = index.store.read(&index.head.root, &queue_key(0)).expect("queue proof").expect("queue");
-        let mut queued: Queued = serde_json::from_slice(&bytes).expect("queue payload");
+        let mut queued = Queued::decode(&bytes).expect("queue payload");
         match case {
             0 => queued.all.rank += 1,
-            1 => queued.kind.rank += 1,
-            2 => queued.kind.generation = queued.all.generation,
-            3 => queued.row.payload.length += 1,
+            1 => queued.by_kind.rank += 1,
+            2 => queued.by_kind.generation = queued.all.generation,
+            3 => queued.account = B,
             _ => {
                 let second = index.store.read(&index.head.root, &queue_key(1)).expect("queue proof").expect("queue");
-                queued = serde_json::from_slice(&second).expect("second queue payload");
+                queued = Queued::decode(&second).expect("second queue payload");
             }
         }
-        rewrite(&mut index, vec![(queue_key(0), encoded(&queued))]);
+        rewrite(&mut index, vec![(queue_key(0), stored(&queued))]);
         let head = index.head();
         assert!(index.ingest(command(6, 2_000, None)).is_err(), "queue fault {case}");
         assert_eq!(index.head(), head);
@@ -160,7 +160,10 @@ fn rejected_store_batch_does_not_advance_the_in_memory_head_and_can_retry_cleanl
     assert!(injected);
     assert!(index.requires_rebuild());
     assert_eq!(index.head(), before);
-    assert_eq!(index.page(query(A)).expect("unchanged complete empty root"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("unchanged complete empty root"),
+        Page { events: vec![], next: None, retained_from_ms: None }
+    );
     assert!(index.ingest(entry.clone()).is_err(), "stale-root retries must be refused");
     let mut fresh = Index::empty(index.store.clone(), [0x38; 32], 100).expect("fresh verified generation");
     fresh.ingest(entry.clone()).expect("clean rebuild from verified input");

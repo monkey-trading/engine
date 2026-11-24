@@ -107,3 +107,71 @@ fn a_page_reads_its_account_index_in_order_without_sorting() {
         assert!(plan[0].contains("(seq,idx)>(?,?) AND (seq,idx)<(?,?)"), "{plan:?}");
     }
 }
+
+/// The index's size against its retention on a recorded log, run by hand: `HISTORY_BENCH_LOG` names a log whose
+/// first command is seq 0, read `HISTORY_LEGACY_PASSES` (1) times, each pass's seqs and times moved past the
+/// last's, into a new index at `HISTORY_LEGACY_STORE` under a retention of `HISTORY_LEGACY_RETENTION_MS`, in
+/// writes of up to `WRITE_BATCH` commands as the writer takes them. Every `HISTORY_LEGACY_STEP` (204,800) commands
+/// it prints the commands a second, the events the index holds, its file's and its write-ahead log's bytes, its
+/// free pages and its bytes an event held. It derives no rollover rows.
+#[test]
+#[ignore = "the index's size on a recorded log, by hand"]
+fn index_size_on_a_recorded_log() {
+    use std::time::Instant;
+
+    use crate::log::SegmentedLog;
+
+    let log = PathBuf::from(std::env::var("HISTORY_BENCH_LOG").expect("HISTORY_BENCH_LOG names a log directory"));
+    let path = PathBuf::from(std::env::var("HISTORY_LEGACY_STORE").expect("HISTORY_LEGACY_STORE names a new index"));
+    let number = |name: &str| std::env::var(name).ok().map(|n| n.parse::<i64>().expect("a number"));
+    let retention = number("HISTORY_LEGACY_RETENTION_MS").expect("HISTORY_LEGACY_RETENTION_MS");
+    let (passes, step) =
+        (number("HISTORY_LEGACY_PASSES").unwrap_or(1), number("HISTORY_LEGACY_STEP").unwrap_or(204_800));
+    let (mut commands, mut first, mut last) = (0i64, None, 0);
+    SegmentedLog::open(&log, |entry| {
+        if let LogEntry::Command(command) = entry {
+            commands += 1;
+            first.get_or_insert(command.sequenced.ts);
+            last = command.sequenced.ts;
+        }
+        Ok(())
+    })
+    .expect("the log reads");
+    let span = last - first.expect("the log holds a command") + 1;
+    let mut writer = Writer::open(&path, retention).expect("a new index").0;
+    let (mut batch, mut taken, mut started) = (Vec::new(), 0i64, Instant::now());
+    for pass in 0..passes {
+        SegmentedLog::open(&log, |entry| {
+            let LogEntry::Command(mut command) = entry else { return Ok(()) };
+            command.sequenced.seq += u64::try_from(pass * commands).expect("a seq");
+            command.sequenced.ts += pass * span;
+            batch.push(Arc::new(StreamMsg::new(Offset::start_of(command.sequenced.seq), LogEntry::Command(command))));
+            if batch.len() < WRITE_BATCH {
+                return Ok(());
+            }
+            writer.write(&batch).expect("the index takes the batch");
+            taken += batch.len() as i64;
+            batch.clear();
+            if taken % step < WRITE_BATCH as i64 {
+                let conn = Connection::open(&path).expect("the index");
+                let pragma = |name: &str| conn.pragma_query_value(None, name, |row| row.get::<_, i64>(0)).expect(name);
+                let held: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0)).expect("events");
+                let bytes = fs::metadata(&path).expect("the index").len() as i64;
+                let wal = fs::metadata(path.with_extension("sqlite-wal")).map_or(0, |metadata| metadata.len());
+                let free = pragma("freelist_count") * pragma("page_size");
+                println!(
+                    "HISTORY_LEGACY at={taken} commands_per_s={:.0} events_held={held} store_mb={} wal_mb={} free_mb={} \
+                     bytes_per_event_held={:.0}",
+                    step as f64 / started.elapsed().as_secs_f64(),
+                    bytes >> 20,
+                    wal >> 20,
+                    free >> 20,
+                    (bytes - free) as f64 / held.max(1) as f64
+                );
+                started = Instant::now();
+            }
+            Ok(())
+        })
+        .expect("the log reads");
+    }
+}

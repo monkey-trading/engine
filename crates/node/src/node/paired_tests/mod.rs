@@ -11,6 +11,7 @@ mod lagging;
 mod log_heads;
 mod publication;
 mod restart;
+mod retention;
 mod scenario;
 mod startup;
 mod tail;

@@ -168,7 +168,7 @@ fn stage_commands(
             let kind = append(&mut stage.overlay, value.kind_list(), &value, &mut stage.state)?;
             let key = queue_key(stage.state.queue_hi);
             ensure!(stage.overlay.read::<Queued>(&key)?.is_none(), "new history queue ordinal is occupied");
-            stage.overlay.put(key, &Queued { row: value, all, kind })?;
+            stage.overlay.put(key, &Queued { account, kind: value.kind, all, by_kind: kind })?;
             stage.state.queue_hi = stage.state.queue_hi.checked_add(1).context("history queue overflow")?;
             stage.flush_if_full(&mut notify)?;
         }
@@ -176,20 +176,22 @@ fn stage_commands(
     stage.finish()
 }
 
-/// Proves queue identity and both dense references before trusting one expiry decision.
+/// Proves queue identity and both dense references before trusting one expiry decision, and returns the
+/// item and its event's header, which both lists hold at the item's ranks.
 /// Error cases:
 /// - missing/invalid queue, metadata, generation, rank or header
-fn queued(overlay: &mut Overlay, old: &State, ordinal: u64) -> Result<Queued> {
+fn queued(overlay: &mut Overlay, old: &State, ordinal: u64) -> Result<(Queued, Row)> {
     ensure!(old.queue_lo <= ordinal && ordinal < old.queue_hi, "queue ordinal outside old interval");
     let item: Queued = overlay.read(&queue_key(ordinal))?.context("missing chronological history queue item")?;
-    item.row.validate(item.row.all_list(), old)?;
-    ensure!(item.all.generation != item.kind.generation, "history lists share a generation");
-    for (list, position) in [(item.row.all_list(), item.all), (item.row.kind_list(), item.kind)] {
+    ensure!(item.all.generation != item.by_kind.generation, "history lists share a generation");
+    let mut rows = Vec::with_capacity(2);
+    for (list, position) in [(item.all_list(), item.all), (item.kind_list(), item.by_kind)] {
         let meta = metadata(overlay, list, old)?.context("queue references absent history metadata")?;
         ensure!(meta.generation == position.generation, "history queue/list generation mismatch");
-        ensure!(row(overlay, list, &meta, position.rank, old)? == item.row, "history queue/list header mismatch");
+        rows.push(row(overlay, list, &meta, position.rank, old)?);
     }
-    Ok(item)
+    ensure!(rows[0] == rows[1], "history queue/list header mismatch");
+    Ok((item, rows.swap_remove(0)))
 }
 
 /// Deletes every strictly expired event and every payload piece, retaining exact horizon equality.
@@ -199,23 +201,23 @@ fn expire(stage: &mut Staged, old: &State, observe: &mut impl FnMut(&Root, Stage
     let horizon = stage.state.horizon();
     let mut previous: Option<Row> = None;
     while stage.state.queue_lo < stage.state.queue_hi {
-        let item = queued(&mut stage.overlay, old, stage.state.queue_lo)?;
+        let (item, row) = queued(&mut stage.overlay, old, stage.state.queue_lo)?;
         if let Some(previous) = &previous {
-            ensure!(previous.cursor < item.row.cursor && previous.ts <= item.row.ts, "unordered history queue");
+            ensure!(previous.cursor < row.cursor && previous.ts <= row.ts, "unordered history queue");
         }
-        if item.row.ts >= horizon {
+        if row.ts >= horizon {
             break;
         }
-        delete_event(stage, &item.row, observe)?;
+        delete_event(stage, &row, observe)?;
         ensure!(
             stage.overlay.read::<Queued>(&queue_key(stage.state.queue_lo))?.as_ref() == Some(&item),
             "expiring history queue header changed"
         );
-        pop(&mut stage.overlay, item.row.all_list(), item.all, &item.row, old)?;
-        pop(&mut stage.overlay, item.row.kind_list(), item.kind, &item.row, old)?;
+        pop(&mut stage.overlay, item.all_list(), item.all, &row, old)?;
+        pop(&mut stage.overlay, item.kind_list(), item.by_kind, &row, old)?;
         stage.overlay.delete(queue_key(stage.state.queue_lo))?;
         stage.state.queue_lo = stage.state.queue_lo.checked_add(1).context("history queue overflow")?;
-        previous = Some(item.row);
+        previous = Some(row);
         stage.flush_if_full(observe)?;
     }
     Ok(())

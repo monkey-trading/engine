@@ -130,7 +130,8 @@ pub(super) fn access(store: Arc<Store>, path: PathBuf) -> Arc<dyn CatalogRead> {
                 Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
             let later: Option<i64> = conn
                 .query_row(
-                    "SELECT version FROM nodes WHERE namespace=?1 AND version>?2 ORDER BY version LIMIT 1",
+                    "SELECT version FROM nodes WHERE space=(SELECT id FROM spaces WHERE namespace=?1) AND version>?2
+                     ORDER BY version LIMIT 1",
                     params![&root.namespace[..], root.version.map_or(-1, |v| v as i64)],
                     |row| row.get(0),
                 )

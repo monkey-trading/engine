@@ -53,7 +53,10 @@ fn a_fanout_command_uses_bounded_private_batches_and_publishes_only_complete_pag
         .ingest_observed(entry.clone(), |visible, root, info| {
             commits += 1;
             assert_eq!(visible.head(), before, "head() cannot acknowledge partial fanout");
-            assert_eq!(visible.page(query(A)).expect("old public view"), Page { events: vec![], next: None });
+            assert_eq!(
+                visible.page(query(A)).expect("old public view"),
+                Page { events: vec![], next: None, retained_from_ms: None }
+            );
             assert!(info.keys <= STAGED_KEYS + 16);
             assert!(info.buffered_bytes <= STAGED_BYTES + 2 * PAYLOAD_CHUNK_BYTES);
             let bytes = visible.store.read(root, STATE_KEY)?.expect("private state");
@@ -106,7 +109,9 @@ fn the_index_writes_its_nodes_compact_and_its_values_whole() {
     let conn = rusqlite::Connection::open(&path).expect("the store");
     let version = i64::try_from(root.version.expect("a version")).expect("a version in range");
     let firsts = |table: &str, condition: &str| {
-        let query = format!("SELECT data FROM {table} WHERE namespace = ?1 AND version {condition} ?2");
+        let query = format!(
+            "SELECT data FROM {table} WHERE space = (SELECT id FROM spaces WHERE namespace = ?1) AND version {condition} ?2"
+        );
         let mut rows = conn.prepare(&query).expect("a query");
         rows.query_map((&root.namespace[..], version), |row| Ok(row.get::<_, Vec<u8>>(0)?[0]))
             .expect("rows")
@@ -149,7 +154,7 @@ fn a_fanouts_expiry_on_no_events_keeps_equality_then_expires_every_row_and_kind(
         for kind in std::iter::once(None).chain(KINDS.iter().copied().map(Some)) {
             assert_eq!(
                 index.page(PageQuery { kind: kind.map(str::to_owned), ..query(account) }).expect("empty"),
-                Page { events: vec![], next: None }
+                Page { events: vec![], next: None, retained_from_ms: Some(1) }
             );
         }
     }
@@ -201,7 +206,7 @@ fn mid_payload_failure_never_exposes_a_header_for_an_incomplete_event() {
             .ingest_observed(entry.clone(), |visible, _, info| {
                 commits += 1;
                 assert_eq!(visible.head(), before);
-                assert_eq!(visible.page(query(A))?, Page { events: vec![], next: None });
+                assert_eq!(visible.page(query(A))?, Page { events: vec![], next: None, retained_from_ms: None });
                 assert!(info.buffered_bytes < 8 * 1024 * 1024);
                 if commits == 2 {
                     anyhow::bail!("payload-stage failure");

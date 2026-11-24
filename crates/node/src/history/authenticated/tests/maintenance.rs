@@ -82,5 +82,8 @@ async fn cancelled_async_waiter_does_not_release_the_blocking_querys_old_root_pi
     go_tx.send(()).expect("release worker after GC attempt");
     let page = result_rx.await.expect("cancelled waiter did not cancel blocking work").expect("proved old page");
     assert_eq!(page, expected(&[original], &query(A), 1));
-    assert_eq!(index.page(query(A)).expect("new complete view"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("new complete view"),
+        Page { events: vec![], next: None, retained_from_ms: Some(1) }
+    );
 }

@@ -292,6 +292,15 @@ fn read_page(path: &Path, schema: &[SchemaRow], query: &PageQuery) -> anyhow::Re
     // The schema check and the page read see one snapshot of the file.
     let conn = conn.transaction().context("starting a history read")?;
     check_schema(&conn, schema, path)?;
+    // Where the index's history begins: the newest command's time less the retention its rows were pruned
+    // under, as `write_derived` prunes them.
+    let retained_from_ms = conn
+        .query_row("SELECT json_extract(command, '$.ts'), retention_ms FROM progress WHERE id = 0", [], |row| {
+            Ok((row.get::<_, Millis>(0)?, row.get::<_, Millis>(1)?))
+        })
+        .optional()
+        .context("reading history progress")?
+        .map(|(ts, retention_ms)| ts.saturating_sub(retention_ms));
     let account = &query.account.0[..];
     let (before_seq, before_idx) = bound(query.before, i64::MAX);
     let (after_seq, after_idx) = bound(query.after, -1);
@@ -332,7 +341,7 @@ fn read_page(path: &Path, schema: &[SchemaRow], query: &PageQuery) -> anyhow::Re
     } else {
         None
     };
-    Ok(Page { events, next })
+    Ok(Page { events, next, retained_from_ms })
 }
 
 /// Removes the index at `path`, then the write-ahead log and shared-memory files SQLite keeps beside

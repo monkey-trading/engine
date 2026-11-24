@@ -103,6 +103,8 @@ fn streaming_short_or_excess_sources_roll_back_all_chunks() -> Result<()> {
     Ok(())
 }
 
+/// A collection gives the pages a deleted value freed back to the file system, in a bounded vacuum, but for an
+/// eighth of the file's pages, which it keeps free for later writes.
 #[test]
 fn deleted_large_values_release_physical_pages_with_bounded_incremental_vacuum() -> Result<()> {
     let (dir, store) = fresh()?;
@@ -115,7 +117,27 @@ fn deleted_large_values_release_physical_pages_with_bounded_incremental_vacuum()
     let after = std::fs::metadata(dir.path.join("store.sqlite"))?.len();
     assert!(after < before);
     assert!(report.pages_reclaimed <= COMPLETE_RECEIPT_BUDGET as u64);
+    let conn = raw(&dir)?;
+    let pragma = |name: &str| conn.pragma_query_value(None, name, |row| row.get::<_, i64>(0));
+    let (pages, free) = (pragma("page_count")?, pragma("freelist_count")?);
+    let before_vacuum = pages + i64::try_from(report.pages_reclaimed)?;
+    assert_eq!(free, before_vacuum / 8, "an eighth of the file before the vacuum stays free");
     assert_eq!(store.read(&root, b"large")?, None);
+    Ok(())
+}
+
+/// A store that keeps no pages free gives every free page back.
+#[test]
+fn a_store_keeping_no_free_pages_gives_every_one_back() -> Result<()> {
+    let (dir, store) = fresh()?;
+    store.keep_free_pages(0)?;
+    let input = vec![9u8; 8 * 1024 * 1024];
+    let root = store.write_stream(&Root::empty([57; 32]), b"large", input.len() as u64, Cursor::new(input))?;
+    let root = store.update(&root, vec![(b"large".to_vec(), None)])?;
+    let (_, report) = store.gc(&root, COMPLETE_RECEIPT_BUDGET)?;
+    assert!(report.pages_reclaimed > 1);
+    let free: i64 = raw(&dir)?.pragma_query_value(None, "freelist_count", |row| row.get(0))?;
+    assert_eq!(free, 0, "every free page is given back");
     Ok(())
 }
 

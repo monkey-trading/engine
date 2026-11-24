@@ -9,30 +9,37 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use rusqlite::config::DbConfig;
 use rusqlite::limits::Limit;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use crate::authenticated::{Inner, MAX_STORED_VALUE, Runtime, Store, WriteFiles, geometry};
 
 const APPLICATION_ID: i64 = 0x45414a31;
 /// A writer connection's page cache: 32 MiB, as SQLite's negative `cache_size` in KiB.
 const WRITER_CACHE_KIB: i64 = -32768;
-const FORMAT_VERSION: i64 = 3;
+/// Format 4 keys every row by its namespace's small `space` number, not the namespace's 32 bytes, stores a node's
+/// path in its compact form, and keeps no index of values by version.
+const FORMAT_VERSION: i64 = 4;
+/// Each namespace's `space`, which every row of the namespace carries in its place: one a namespace, past
+/// every other's, which the write that first stores the namespace registers. Like every row, a space is
+/// untrusted: a node or value it finds is used only once proved against a caller's root.
+const SPACES: &str = "CREATE TABLE spaces (
+    namespace BLOB PRIMARY KEY CHECK(typeof(namespace) = 'blob' AND length(namespace) = 32),
+    id INTEGER NOT NULL CHECK(typeof(id) = 'integer' AND id > 0)
+) WITHOUT ROWID";
 const NODES: &str = "CREATE TABLE nodes (
-    namespace BLOB NOT NULL CHECK(typeof(namespace) = 'blob' AND length(namespace) = 32),
+    space INTEGER NOT NULL CHECK(typeof(space) = 'integer' AND space > 0),
     version INTEGER NOT NULL CHECK(typeof(version) = 'integer' AND version >= 0),
-    path BLOB NOT NULL CHECK(typeof(path) = 'blob' AND length(path) <= 256),
+    path BLOB NOT NULL CHECK(typeof(path) = 'blob' AND length(path) <= 33),
     data BLOB NOT NULL CHECK(typeof(data) = 'blob' AND length(data) <= 16384),
-    PRIMARY KEY(namespace, version, path)
+    PRIMARY KEY(space, version, path)
 ) WITHOUT ROWID";
 const VALUES: &str = "CREATE TABLE value_rows (
-    namespace BLOB NOT NULL CHECK(typeof(namespace) = 'blob' AND length(namespace) = 32),
+    space INTEGER NOT NULL CHECK(typeof(space) = 'integer' AND space > 0),
     key BLOB NOT NULL CHECK(typeof(key) = 'blob' AND length(key) = 32),
     version INTEGER NOT NULL CHECK(typeof(version) = 'integer' AND version >= 0),
     data BLOB NOT NULL CHECK(typeof(data) = 'blob' AND length(data) <= 4194304),
-    PRIMARY KEY(namespace, key, version)
+    PRIMARY KEY(space, key, version)
 ) WITHOUT ROWID";
-/// Lets activation delete the versions after a signed root by range, not by scanning every value.
-const VALUE_VERSIONS: &str = "CREATE INDEX value_versions ON value_rows(namespace, version)";
 
 impl Store {
     /// Exclusively creates a fresh database file with the authenticated-store schema.
@@ -47,9 +54,9 @@ impl Store {
         ensure!(mode.eq_ignore_ascii_case("delete"), "rollback journal unavailable");
         conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
         let tx = conn.transaction()?;
+        tx.execute_batch(SPACES)?;
         tx.execute_batch(NODES)?;
         tx.execute_batch(VALUES)?;
-        tx.execute_batch(VALUE_VERSIONS)?;
         tx.pragma_update(None, "application_id", APPLICATION_ID)?;
         tx.pragma_update(None, "user_version", FORMAT_VERSION)?;
         validate(&tx)?;
@@ -268,8 +275,8 @@ pub(super) fn validate(conn: &Connection) -> Result<()> {
     )?;
     let mut rows = stmt.query([])?;
     let expected = [
-        ("index", "value_versions", "value_rows", VALUE_VERSIONS),
         ("table", "nodes", "nodes", NODES),
+        ("table", "spaces", "spaces", SPACES),
         ("table", "value_rows", "value_rows", VALUES),
     ];
     for (kind, name, table, sql) in expected {
@@ -284,6 +291,35 @@ pub(super) fn validate(conn: &Connection) -> Result<()> {
     }
     ensure!(rows.next()?.is_none(), "extra authenticated-store schema object");
     Ok(())
+}
+
+/// The space `namespace`'s rows carry in this database, or `None` before a write first stores the namespace.
+/// Error cases:
+/// - the query fails
+pub(super) fn space(conn: &Connection, namespace: &[u8; 32]) -> Result<Option<i64>> {
+    Ok(conn
+        .prepare_cached("SELECT id FROM spaces WHERE namespace = ?1")?
+        .query_row([&namespace[..]], |row| row.get(0))
+        .optional()?)
+}
+
+/// The space of `namespace`, which this write registers, past every other's, if no earlier write did.
+/// Error cases:
+/// - a query or the insert fails
+pub(super) fn register_space(conn: &Connection, namespace: &[u8; 32]) -> Result<i64> {
+    if let Some(id) = space(conn, namespace)? {
+        return Ok(id);
+    }
+    conn.prepare_cached("INSERT INTO spaces(namespace, id) SELECT ?1, coalesce(max(id), 0) + 1 FROM spaces")?
+        .execute([&namespace[..]])?;
+    space(conn, namespace)?.ok_or_else(|| anyhow::anyhow!("a registered namespace has no space"))
+}
+
+/// The space of `namespace`, which an earlier write registered.
+/// Error cases:
+/// - as `space`, or no write has stored the namespace
+pub(super) fn existing_space(conn: &Connection, namespace: &[u8; 32]) -> Result<i64> {
+    space(conn, namespace)?.ok_or_else(|| anyhow::anyhow!("namespace has no stored space"))
 }
 
 /// Resolves relative paths before handing the store to blocking workers.

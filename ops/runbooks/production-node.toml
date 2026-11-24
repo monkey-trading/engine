@@ -503,9 +503,11 @@ trusted_signers = [] # REPLACE: the enclave address the running release attests
 [daily_snapshots]
 dir = "/data/daily-snapshots"
 
+# Account history keeps 30 days, counted back from the newest command; older events stay in the public
+# log and its archive. A change of retention makes the node discard the index and rebuild it from the log.
 [history]
 dir = "/data/history"
-retention = "365d"
+retention = "30d"
 
 # Plain HTTP, no per-account data. Listen on an address only the monitoring network reaches.
 [metrics]

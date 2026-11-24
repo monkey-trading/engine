@@ -82,7 +82,7 @@ fn altered_untouched_sibling_cannot_enter_a_new_certified_root() -> Result<()> {
         entry["hash"] = serde_json::to_value([99u8; 32])?;
     }
     conn.execute(
-        "UPDATE nodes SET data=?1 WHERE namespace=?2 AND version=0 AND path=?3",
+        "UPDATE nodes SET data=?1 WHERE space=(SELECT id FROM spaces WHERE namespace=?2) AND version=0 AND path=?3",
         params![serde_json::to_vec(&child)?, &namespace[..], child_path],
     )?;
     assert!(store.update(&root, vec![put(&a, b"new A")]).is_err());

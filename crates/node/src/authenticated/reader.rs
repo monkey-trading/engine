@@ -8,8 +8,8 @@ use jmt::storage::{LeafNode, Node, NodeKey, TreeReader};
 use jmt::{KeyHash, ValueHash};
 use rusqlite::{Connection, params};
 
-use crate::authenticated::codec;
 use crate::authenticated::{EMPTY_HASH, Hasher, MAX_NODE_BYTES, MAX_STORED_VALUE, PHYSICAL_UPDATES, Root};
+use crate::authenticated::{codec, db};
 
 /// The most nodes an operation keeps checked: a writing reader's node budget.
 pub(super) const CHECKED_NODES: usize = node_budget(PHYSICAL_UPDATES);
@@ -40,6 +40,8 @@ struct Reads {
 pub(super) struct Reader<'a> {
     conn: &'a Connection,
     root: Root,
+    /// The space the root's namespace has in the database, or 0, which none has, before its first write.
+    space: i64,
     cache: RefCell<BTreeMap<NodeKey, Node>>,
     /// The parents whose children this reader has loaded and checked.
     prepared: RefCell<BTreeSet<NodeKey>>,
@@ -94,6 +96,7 @@ impl<'a> Reader<'a> {
         let reader = Self {
             conn,
             root: root.clone(),
+            space: db::space(conn, &root.namespace)?.unwrap_or(0),
             cache: RefCell::new(BTreeMap::new()),
             prepared: RefCell::new(BTreeSet::new()),
             checked,
@@ -202,10 +205,10 @@ impl<'a> Reader<'a> {
         let Some(version) = self.root.version else { return Ok(None) };
         self.charge(0)?;
         let mut stmt = self.conn.prepare_cached(
-            "SELECT version FROM value_rows WHERE namespace=?1 AND key=?2 AND version<=?3
+            "SELECT version FROM value_rows WHERE space=?1 AND key=?2 AND version<=?3
              ORDER BY version DESC LIMIT 1",
         )?;
-        let mut rows = stmt.query(params![&self.root.namespace[..], &key.0[..], version as i64])?;
+        let mut rows = stmt.query(params![self.space, &key.0[..], version as i64])?;
         let Some(row) = rows.next()? else { return Ok(None) };
         let found: i64 = row.get(0)?;
         ensure!(found >= 0 && found as u64 <= version, "invalid value row version");
@@ -239,9 +242,8 @@ impl<'a> Reader<'a> {
     fn fetch(&self, key: &NodeKey) -> Result<Node> {
         self.charge(0)?;
         ensure!(key.version() <= self.root.version.unwrap_or(0), "unexpected future node");
-        let mut stmt =
-            self.conn.prepare_cached("SELECT data FROM nodes WHERE namespace=?1 AND version=?2 AND path=?3")?;
-        let mut rows = stmt.query(params![&self.root.namespace[..], key.version() as i64, codec::path(key)?])?;
+        let mut stmt = self.conn.prepare_cached("SELECT data FROM nodes WHERE space=?1 AND version=?2 AND path=?3")?;
+        let mut rows = stmt.query(params![self.space, key.version() as i64, codec::path(key)?])?;
         let row = rows.next()?.ok_or_else(|| anyhow::anyhow!("missing authenticated node"))?;
         let raw = row.get_ref(0)?.as_blob()?;
         ensure!(raw.len() <= MAX_NODE_BYTES, "oversized node BLOB");
@@ -367,10 +369,10 @@ impl TreeReader for Reader<'_> {
         ensure!(self.root.version == Some(max_version), "unexpected value version");
         self.charge(0)?;
         let mut stmt = self.conn.prepare_cached(
-            "SELECT version, data FROM value_rows WHERE namespace=?1 AND key=?2 AND version<=?3
+            "SELECT version, data FROM value_rows WHERE space=?1 AND key=?2 AND version<=?3
              ORDER BY version DESC LIMIT 1",
         )?;
-        let mut rows = stmt.query(params![&self.root.namespace[..], &key.0[..], max_version as i64])?;
+        let mut rows = stmt.query(params![self.space, &key.0[..], max_version as i64])?;
         let Some(row) = rows.next()? else { return Ok(None) };
         let version: i64 = row.get(0)?;
         ensure!(version >= 0 && version as u64 <= max_version, "invalid value version");

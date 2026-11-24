@@ -27,11 +27,12 @@ mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
 /// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
-/// 2 stores each node as its JSON or as upstream's compact borsh form, and logical format 2 each value as a
-/// descriptor and chunks or, up to one chunk, whole in its own leaf; a first byte tells each pair apart, and
-/// this release reads all four. A release before compact nodes and values stored whole reads JSON nodes and
-/// descriptors alone, so it refuses a store holding either at the first one it meets, and its recovery falls
-/// back as for any unreadable cache.
+/// 3 stores each node as its JSON or as upstream's compact borsh form under its compact path key, each
+/// retirement receipt in its fixed-width form, and every row under its namespace's small space number (`db`);
+/// logical format 2 stores each value as a descriptor and chunks or, up to one chunk, whole in its own leaf. A
+/// first byte tells each pair of forms apart, and this release reads all four. A release before packed format 3
+/// refuses this store's schema at open, as this one refuses an earlier store's, and its recovery falls back as
+/// for any unreadable cache, rebuilding from the log.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -47,7 +48,7 @@ pub enum Proof {
     Jmt012Sha256,
 }
 
-pub const CODEC: Codec = Codec { packed_format: 2, logical_format: 2, proof: Proof::Jmt012Sha256 };
+pub const CODEC: Codec = Codec { packed_format: 3, logical_format: 2, proof: Proof::Jmt012Sha256 };
 
 // Physical representation bounds; logical keys, values, changes and lease counts have no such cap.
 pub const CHUNK_BYTES: usize = 64 * 1024;
@@ -115,6 +116,10 @@ struct Runtime {
     /// The namespaces whose new nodes are written compact, and their values of up to one chunk whole.
     compact: BTreeSet<[u8; 32]>,
     poisoned: bool,
+    /// The share of the file's pages a collection leaves free, as `gc::FREE_PAGE_SHARE` gives it, set by a test
+    /// that measures another.
+    #[cfg(test)]
+    free_page_share: Option<i64>,
 }
 
 #[derive(Default)]

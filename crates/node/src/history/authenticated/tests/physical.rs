@@ -11,8 +11,8 @@ fn physical_metadata_deletion_and_narrowed_counts_cannot_forge_absence_or_comple
             let original = meta(&index, A, kind);
             let mut forged = original.clone();
             forged.hi -= 1;
-            let original_bytes = encoded(&original).expect("metadata bytes");
-            let forged_bytes = encoded(&forged).expect("forged count bytes");
+            let original_bytes = stored(&original).expect("metadata bytes");
+            let forged_bytes = stored(&forged).expect("forged count bytes");
             tamper_payload(&path, &original_bytes, narrow.then_some(forged_bytes.as_slice()));
             assert!(index.page(PageQuery { kind: selected.clone(), ..query(A) }).is_err());
         }
@@ -27,22 +27,22 @@ fn physical_interior_and_lookahead_deletion_is_not_a_shorter_successful_page() {
             let kind = selected.as_deref().map(|_| event_kind(&deposit(A, 1)).expect("kind"));
             let list = meta(&index, A, kind);
             let value = stored_row(&index, list.position(rank));
-            tamper_payload(&path, &encoded(&value).expect("row bytes"), None);
+            tamper_payload(&path, &stored(&value).expect("row bytes"), None);
             assert!(index.page(PageQuery { kind: selected, limit, ..query(A) }).is_err(), "{name}");
         }
     }
 }
 
 #[test]
-fn same_length_valid_json_host_rewrite_is_rejected_after_resume_and_on_repeated_reads() {
-    let (index, path) = ranked_fixture("physical-valid-json");
+fn same_length_valid_host_rewrite_is_rejected_after_resume_and_on_repeated_reads() {
+    let (index, path) = ranked_fixture("physical-valid-rewrite");
     let head = index.head();
     let list = meta(&index, A, None);
     let original = stored_row(&index, list.position(5));
     let mut forged = original.clone();
     forged.ts -= 1;
-    let original_bytes = encoded(&original).expect("original");
-    let forged_bytes = encoded(&forged).expect("forged");
+    let original_bytes = stored(&original).expect("original");
+    let forged_bytes = stored(&forged).expect("forged");
     assert_eq!(original_bytes.len(), forged_bytes.len());
     drop(index);
     let resumed = Index::resume(open_store(&path), head.clone()).expect("fixed state valid before row damage");
@@ -61,8 +61,8 @@ fn expiry_failure_after_overlay_deletions_preserves_old_rows_and_retry_is_exact(
     let original = stored_row(&index, list.position(3));
     let mut forged = original.clone();
     forged.ts -= 1;
-    let original_bytes = encoded(&original).expect("original");
-    let forged_bytes = encoded(&forged).expect("forged");
+    let original_bytes = stored(&original).expect("original");
+    let forged_bytes = stored(&forged).expect("forged");
     tamper_payload(&path, &original_bytes, Some(&forged_bytes));
     assert!(index.ingest(command(6, 2_000, None)).is_err());
     assert_eq!(index.head(), head);

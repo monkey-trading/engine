@@ -6,7 +6,7 @@ use anyhow::Result;
 use rusqlite::params;
 
 use crate::authenticated::tests::{fresh, put, raw, row_count};
-use crate::authenticated::{INTERNAL, Root, Store, codec, key_hash};
+use crate::authenticated::{CHUNK_BYTES, INTERNAL, Root, Store, codec, key_hash};
 
 #[test]
 fn interrupted_batch_rolls_back_and_reopens_at_the_old_root() -> Result<()> {
@@ -71,20 +71,29 @@ fn failure_after_commit_does_not_acknowledge_or_overwrite_the_old_root() -> Resu
     Ok(())
 }
 
-/// Versions committed after the signed root are discarded only once writes are authorized; writes
-/// then resume at the next version and the signed root's values are unchanged.
+/// Versions committed after the signed root are discarded only once writes are authorized, every node
+/// and value row after it with them, a chunked value's and a value stored whole included; writes then
+/// resume at the next version and the signed root's values are unchanged.
 #[test]
 fn discarding_unsigned_versions_resumes_writes_from_the_signed_root() -> Result<()> {
     let (dir, store) = fresh()?;
     let signed = store.update(&Root::empty([24; 32]), vec![put(b"a", b"signed")])?;
     let unsigned = store.update(&signed, vec![put(b"a", b"unsigned"), put(b"b", b"unsigned")])?;
-    store.update(&unsigned, vec![put(b"c", b"unsigned")])?;
+    let chunked = store.update(&unsigned, vec![put(b"c", &vec![7; CHUNK_BYTES * 2 + 1])])?;
+    store.write_compactly([24; 32])?;
+    store.update(&chunked, vec![put(b"d", b"whole"), (b"b".to_vec(), None)])?;
     drop(store);
+    let later = |table: &str| -> Result<i64> {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE version > ?1");
+        Ok(raw(&dir)?.query_row(&sql, [signed.version.map_or(-1, |v| v as i64)], |row| row.get(0))?)
+    };
+    assert!(later("nodes")? > 0 && later("value_rows")? > 4, "the unsigned versions hold nodes and values");
     let reopened = Store::open_existing(dir.path.join("store.sqlite"))?;
     assert!(reopened.ensure_current(&signed).is_err());
     assert!(reopened.discard_after(&signed).is_err(), "preflight stores are read-only");
     reopened.enable_writes()?;
     reopened.discard_after(&signed)?;
+    assert_eq!((later("nodes")?, later("value_rows")?), (0, 0), "nothing after the signed root is left");
     reopened.ensure_current(&signed)?;
     assert_eq!(reopened.read(&signed, b"a")?, Some(b"signed".to_vec()));
     assert_eq!(reopened.read(&signed, b"b")?, None);
@@ -97,7 +106,8 @@ fn discarding_unsigned_versions_resumes_writes_from_the_signed_root() -> Result<
 }
 
 /// Restart readiness must not grow with retained values: a clean restart leaves the store
-/// untouched, and a crash restart deletes later versions by range on the version index.
+/// untouched, and a crash restart reads only the later versions' nodes, by range on their key, and
+/// deletes each later value by its own key.
 #[test]
 fn discarding_unsigned_versions_never_scans_retained_values() -> Result<()> {
     let (dir, store) = fresh()?;
@@ -112,11 +122,18 @@ fn discarding_unsigned_versions_never_scans_retained_values() -> Result<()> {
     reopened.enable_writes()?;
     reopened.discard_after(&signed)?;
     assert_eq!(std::fs::read(&path)?, before, "nothing follows the signed root, so nothing is written");
-    let plan: Vec<String> = raw(&dir)?
-        .prepare("EXPLAIN QUERY PLAN DELETE FROM value_rows WHERE namespace = ?1 AND version > ?2")?
-        .query_map(params![&[25u8; 32][..], 7], |row| row.get(3))?
-        .collect::<rusqlite::Result<_>>()?;
-    assert!(plan.iter().any(|step| step.starts_with("SEARCH") && step.contains("value_versions")), "{plan:?}");
+    let conn = raw(&dir)?;
+    let plan = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Vec<String>> {
+        let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+        Ok(statement.query_map(params, |row| row.get(3))?.collect::<rusqlite::Result<_>>()?)
+    };
+    let nodes = plan("SELECT data FROM nodes WHERE space = ?1 AND version > ?2", &[&1, &7])?;
+    assert!(nodes.iter().all(|step| step.starts_with("SEARCH nodes USING PRIMARY KEY")), "{nodes:?}");
+    let values = plan(
+        "DELETE FROM value_rows WHERE space = ?1 AND key = ?2 AND version > ?3",
+        &[&1, &[0u8; 32].as_slice(), &7],
+    )?;
+    assert!(values.iter().all(|step| step.starts_with("SEARCH value_rows USING PRIMARY KEY")), "{values:?}");
     Ok(())
 }
 
@@ -205,9 +222,10 @@ fn unrelated_malformed_rows_are_not_a_startup_or_point_read_scan() -> Result<()>
     for i in 0u16..512 {
         let mut namespace = [0; 32];
         namespace[..2].copy_from_slice(&i.to_be_bytes());
+        conn.execute("INSERT INTO spaces(namespace, id) VALUES(?1, ?2)", params![&namespace[..], i64::from(i) + 2])?;
         conn.execute(
-            "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
-            params![&namespace[..], codec::path(&codec::root_key(0)?)?, b"invalid node JSON".as_slice()],
+            "INSERT INTO nodes(space,version,path,data) VALUES(?1,0,?2,?3)",
+            params![i64::from(i) + 2, codec::path(&codec::root_key(0)?)?, b"invalid node JSON".as_slice()],
         )?;
     }
     drop(conn);

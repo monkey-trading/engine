@@ -99,12 +99,18 @@ fn empty_generation_and_proven_kind_absence_return_exact_empty_pages() {
     let (mut index, path) = fixture("empty", 100);
     let empty_head = index.head();
     assert_eq!(empty_head, Head::empty(NAMESPACE, 100).expect("head"));
-    assert_eq!(index.page(query(A)).expect("proved empty root"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("proved empty root"),
+        Page { events: vec![], next: None, retained_from_ms: None }
+    );
     drop(index);
     index = Index::resume(open_writer(&path), empty_head).expect("resume canonical empty root");
     index.ingest(command(0, 0, Some(vec![deposit(A, 1)]))).expect("first command");
     for request in [query(B), PageQuery { kind: Some("fill".to_owned()), ..query(A) }] {
-        assert_eq!(index.page(request).expect("proved metadata absence"), Page { events: vec![], next: None });
+        assert_eq!(
+            index.page(request).expect("proved metadata absence"),
+            Page { events: vec![], next: None, retained_from_ms: Some(-100) }
+        );
     }
     let head = index.head();
     let decoded: Head = serde_json::from_slice(&serde_json::to_vec(&head).expect("encode head")).expect("decode head");

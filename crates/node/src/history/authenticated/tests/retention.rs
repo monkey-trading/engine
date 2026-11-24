@@ -45,6 +45,20 @@ fn every_command_expires_strictly_older_events_and_retains_horizon_equality() {
 }
 
 #[test]
+fn every_page_states_where_its_history_begins() {
+    let (mut index, _) = fixture("begins", 1_000);
+    assert_eq!(index.page(query(A)).expect("empty index").retained_from_ms, None, "no command held yet");
+    index.ingest(command(0, 0, Some(vec![deposit(A, 1)]))).expect("first");
+    assert_eq!(index.page(query(A)).expect("first").retained_from_ms, Some(-1_000));
+    index.ingest(command(1, 1_500, Some(vec![deposit(A, 2)]))).expect("second");
+    // The event at 0 left at the horizon 1_500 - 1_000; an account with no events, and a kind filter, state it too.
+    for request in [query(A), query(B), PageQuery { kind: Some("deposited".to_owned()), ..query(A) }] {
+        assert_eq!(index.page(request).expect("page").retained_from_ms, Some(500));
+    }
+    assert_eq!(index.page(query(A)).expect("page").events.len(), 1);
+}
+
+#[test]
 fn empty_list_recreation_uses_fresh_generations_and_old_roots_keep_their_rows() {
     let (mut index, path) = fixture("generation", 1);
     let initial = command(0, 0, Some(vec![deposit(A, 1)]));
@@ -84,7 +98,10 @@ fn large_time_jump_drains_the_global_queue_across_accounts_and_kinds_without_a_c
     for account in [A, B] {
         for kind in [None, Some("deposited".to_owned()), Some("bad_debt".to_owned())] {
             let request = PageQuery { kind, ..query(account) };
-            assert_eq!(index.page(request).expect("fully expired"), Page { events: vec![], next: None });
+            assert_eq!(
+                index.page(request).expect("fully expired"),
+                Page { events: vec![], next: None, retained_from_ms: Some(i64::MAX - 2) }
+            );
         }
     }
 }
@@ -121,7 +138,10 @@ fn retries_do_not_reinsert_expired_rows_advance_versions_or_regress_progress() {
     index.ingest(latest.clone()).expect("equal-tip retry");
     index.ingest(older).expect("already covered prefix retry");
     assert_eq!(index.head(), head);
-    assert_eq!(index.page(query(A)).expect("no reinsertion"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("no reinsertion"),
+        Page { events: vec![], next: None, retained_from_ms: Some(99) }
+    );
     let conflicting = command(1, 100, Some(vec![]));
     assert!(index.ingest(conflicting).is_err());
     assert_eq!(index.head(), head);
@@ -170,7 +190,10 @@ fn exact_large_expiry_requires_store_support_for_the_whole_batch() {
         extend_command_prefix(before.command_prefix, command_digest(&expiry).expect("digest"))
     );
     assert_eq!((index.head().queue_lo, index.head().queue_hi), (seeded, seeded));
-    assert_eq!(index.page(query(A)).expect("empty after full expiry"), Page { events: vec![], next: None });
+    assert_eq!(
+        index.page(query(A)).expect("empty after full expiry"),
+        Page { events: vec![], next: None, retained_from_ms: Some(9_000) }
+    );
 }
 
 #[test]

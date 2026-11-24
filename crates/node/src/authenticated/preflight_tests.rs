@@ -87,8 +87,8 @@ fn wal_appearing_after_geometry_preflight_cannot_create_or_rewrite_sidecars() ->
     let _: String = host.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
     host.pragma_update(None, "wal_autocheckpoint", 0)?;
     host.execute(
-        "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
-        params![&[88u8; 32][..], codec::path(&codec::root_key(0)?)?, br#""Null""#.as_slice()],
+        "INSERT INTO nodes(space,version,path,data) VALUES(?1,0,?2,?3)",
+        params![88, codec::path(&codec::root_key(0)?)?, br#""Null""#.as_slice()],
     )?;
     let before = snapshot(&dir)?;
     let attempt = (|| -> Result<()> {
@@ -115,8 +115,8 @@ fn quiescent_wal_race_also_preserves_every_recovery_byte_on_close() -> Result<()
     let _: String = host.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
     host.pragma_update(None, "wal_autocheckpoint", 0)?;
     host.execute(
-        "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
-        params![&[89u8; 32][..], codec::path(&codec::root_key(0)?)?, br#""Null""#.as_slice()],
+        "INSERT INTO nodes(space,version,path,data) VALUES(?1,0,?2,?3)",
+        params![89, codec::path(&codec::root_key(0)?)?, br#""Null""#.as_slice()],
     )?;
     drop(host);
     let before = snapshot(&dir)?;
@@ -164,11 +164,9 @@ fn point_readiness_ignores_unreferenced_nodes_and_defers_unread_receipt_damage()
     let root = store.update(&Root::empty([64; 32]), vec![put(b"state", b"ready")])?;
     let conn = raw(&dir)?;
     for i in 0u16..1024 {
-        let mut namespace = [0u8; 32];
-        namespace[..2].copy_from_slice(&i.to_be_bytes());
         conn.execute(
-            "INSERT INTO nodes(namespace,version,path,data) VALUES(?1,0,?2,?3)",
-            params![&namespace[..], codec::path(&codec::root_key(0)?)?, b"malformed unused JSON".as_slice()],
+            "INSERT INTO nodes(space,version,path,data) VALUES(?1,0,?2,?3)",
+            params![i64::from(i) + 2, codec::path(&codec::root_key(0)?)?, b"malformed unused JSON".as_slice()],
         )?;
     }
     let receipt = receipt_key(&root.namespace, 0)?;

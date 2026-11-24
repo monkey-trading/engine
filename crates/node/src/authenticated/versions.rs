@@ -62,15 +62,17 @@ impl Store {
         let mut connection = self.read_connection()?;
         let transaction = connection.transaction()?;
         db::validate(&transaction)?;
-        let later: bool = match root.version {
-            Some(version) => transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM nodes WHERE namespace = ?1 AND version > ?2 LIMIT 1)",
-                rusqlite::params![root.namespace.as_slice(), i64::try_from(version)?],
+        let space = db::space(&transaction, &root.namespace)?;
+        let later: bool = match (space, root.version) {
+            (None, _) => false,
+            (Some(space), Some(version)) => transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM nodes WHERE space = ?1 AND version > ?2 LIMIT 1)",
+                rusqlite::params![space, i64::try_from(version)?],
                 |row| row.get(0),
             )?,
-            None => transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM nodes WHERE namespace = ?1 LIMIT 1)",
-                [root.namespace.as_slice()],
+            (Some(space), None) => transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM nodes WHERE space = ?1 LIMIT 1)",
+                [space],
                 |row| row.get(0),
             )?,
         };
@@ -230,19 +232,20 @@ mod tests {
         assert_eq!(pin.read(b"key").unwrap(), Some(b"old".to_vec()));
         store.ensure_current(&last).unwrap();
         let connection = db::connect(&store.inner.path, false).unwrap();
+        let space = db::space(&connection, &first.namespace).unwrap().expect("the namespace's space");
         let plan: String = connection
             .query_row(
-                "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM nodes WHERE namespace = ?1 AND version > ?2 LIMIT 1)",
-                rusqlite::params![first.namespace.as_slice(), 0_i64],
+                "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM nodes WHERE space = ?1 AND version > ?2 LIMIT 1)",
+                rusqlite::params![space, 0_i64],
                 |row| row.get(3),
             )
             .unwrap();
         // The first plan row may describe the scalar subquery. Inspect every plan detail.
         let mut statement = connection
-            .prepare("EXPLAIN QUERY PLAN SELECT 1 FROM nodes WHERE namespace = ?1 AND version > ?2 LIMIT 1")
+            .prepare("EXPLAIN QUERY PLAN SELECT 1 FROM nodes WHERE space = ?1 AND version > ?2 LIMIT 1")
             .unwrap();
         let details = statement
-            .query_map(rusqlite::params![first.namespace.as_slice(), 0_i64], |row| row.get::<_, String>(3))
+            .query_map(rusqlite::params![space, 0_i64], |row| row.get::<_, String>(3))
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
