@@ -42,7 +42,7 @@ mod seals_ahead;
 pub(crate) use seals_ahead::SealsAhead;
 pub use seals_ahead::{ReplayWorkers, SealChecks};
 mod segments;
-pub(crate) use segments::segment_seq;
+pub(crate) use segments::{segment_name, segment_seq};
 mod scan;
 pub(crate) use scan::uncommanded;
 mod span;

@@ -172,9 +172,10 @@ makes the node discard the index and rebuild it from the log, or a larger drive.
 
 Each store's bytes and each volume's free space are metrics, read every `alerts.storage.interval` (a
 minute). A volume is named by the first store on it, in the order of the list below, so adding or removing an
-optional store never renames it. The production layout has the volumes `log` and `history_index`, and an
-alert's message lists every store on its volume with its size. Each read lists the log's directory and reads
-each file but its two newest segments once, since a sealed segment never changes.
+optional store on a volume that holds the log or the history directory leaves its name. The production layout
+has the volumes `log` and `history_index`, and an alert's message lists every store on its volume with its
+size. Each read lists the log's directory and reads each of its files but the sealed segments, which it reads
+once, since a sealed segment never changes.
 
 | Metric | Meaning |
 | --- | --- |

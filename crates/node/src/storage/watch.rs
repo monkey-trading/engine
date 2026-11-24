@@ -26,8 +26,11 @@ enum Level {
 
 #[derive(Default)]
 struct VolumeState {
-    /// The level last announced, none before the first judgement.
-    level: Option<Level>,
+    /// The level last announced.
+    level: Level,
+    /// Whether the alerts the volume is not at have been resolved, which waits for a projection: a run before may
+    /// have left a fill-time episode open, and a watch with no growth history cannot tell it is over.
+    reconciled: bool,
     /// Used bytes at each sample within the rate window.
     samples: VecDeque<(Instant, u64)>,
 }
@@ -43,16 +46,18 @@ pub struct Watch {
 }
 
 impl Watch {
-    /// A watch with no history: its first judgement of each volume and store announces its state either way, since a
-    /// run before it may have left an episode open.
+    /// A watch with no history: it raises what a volume is at when first read, and resolves the alerts a volume is not
+    /// at once its growth over a window is known, and for each store when first read, since a run before it may
+    /// have left an episode open.
     pub fn new(cfg: StorageSection) -> Self {
         Self { cfg, volumes: BTreeMap::new(), unreadable: BTreeSet::new(), judged: BTreeSet::new() }
     }
 
     /// Judges each volume of `reading` at `now` and sets its growth and projected fill as metrics. Raises each
     /// level's alert as a volume reaches it and resolves it as the volume leaves, and does the same for each store
-    /// that could or could not be read. The first time it judges a volume or store it also resolves each alert the
-    /// volume or store is not at, which pages nothing unless an earlier run left that episode open.
+    /// that could or could not be read. The first time it judges a store, and a volume once its growth over a window
+    /// is known, it also resolves each alert the store or volume is not at, which pages nothing unless an earlier run
+    /// left that episode open.
     pub fn observe(&mut self, now: Instant, reading: &Reading, metrics: &Metrics) {
         for volume in &reading.volumes {
             self.judge(now, volume, reading, metrics);
@@ -101,11 +106,16 @@ impl Watch {
                 metrics.storage.volume_fill_seconds.remove(&label);
             }
         }
-        let level = level(&self.cfg, volume, fill_secs, state.level.unwrap_or_default());
-        if state.level != Some(level) {
+        let level = level(&self.cfg, volume, fill_secs, state.level);
+        let reconcile = !state.reconciled && growth.is_some();
+        if level != state.level || reconcile {
             let message = describe(volume, growth, fill_secs, reading);
             announce(&volume.name, state.level, level, &message);
-            state.level = Some(level);
+            if reconcile {
+                resolve_above(&volume.name, level, &message);
+                state.reconciled = true;
+            }
+            state.level = level;
         }
     }
 
@@ -184,17 +194,26 @@ fn describe(volume: &Volume, growth: Option<f64>, fill_secs: Option<f64>, readin
 }
 
 /// Raises the alert of each level `to` reaches and resolves that of each it leaves; the Warning stays open while the
-/// volume is Critical. From no earlier level, it raises each level `to` reaches and resolves the others.
-fn announce(volume: &str, from: Option<Level>, to: Level, message: &str) {
-    let changed = |level| from.map(|from| from >= level) != Some(to >= level);
-    match (changed(Level::Warning), to >= Level::Warning) {
-        (true, true) => warn!(alert = "disk_space_low", volume = %volume, "{message}"),
+/// volume is Critical.
+fn announce(volume: &str, from: Level, to: Level, message: &str) {
+    match (from >= Level::Warning, to >= Level::Warning) {
+        (false, true) => warn!(alert = "disk_space_low", volume = %volume, "{message}"),
         (true, false) => info!(alert_resolved = "disk_space_low", volume = %volume, "{message}"),
-        (false, _) => {}
+        _ => {}
     }
-    match (changed(Level::Critical), to >= Level::Critical) {
-        (true, true) => error!(alert = "disk_space_critical", volume = %volume, "{message}"),
+    match (from >= Level::Critical, to >= Level::Critical) {
+        (false, true) => error!(alert = "disk_space_critical", volume = %volume, "{message}"),
         (true, false) => info!(alert_resolved = "disk_space_critical", volume = %volume, "{message}"),
-        (false, _) => {}
+        _ => {}
+    }
+}
+
+/// Resolves the alert of each level above `level`, which pages nothing unless an earlier run left it open.
+fn resolve_above(volume: &str, level: Level, message: &str) {
+    if level < Level::Warning {
+        info!(alert_resolved = "disk_space_low", volume = %volume, "{message}");
+    }
+    if level < Level::Critical {
+        info!(alert_resolved = "disk_space_critical", volume = %volume, "{message}");
     }
 }

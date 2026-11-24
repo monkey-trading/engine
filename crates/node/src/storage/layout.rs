@@ -11,6 +11,9 @@ use crate::node::marks::{PRIOR_FILE, SEED_FILE};
 /// The start of the file names of the authenticated history index in `snapshots.dir`.
 pub(super) const AUTHENTICATED_PREFIX: &str = "authenticated-";
 
+/// How a store picks its files from a directory: by the file's name, among the entries of the directory itself.
+type Pick = fn(&str) -> bool;
+
 /// What the node keeps on disk that grows, in the order its volumes are named.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Store {
@@ -29,6 +32,18 @@ pub enum Store {
     AlertOutbox,
 }
 
+/// The directories of the configured stores.
+#[derive(Debug)]
+pub struct Layout {
+    log: PathBuf,
+    history: PathBuf,
+    snapshots: Option<PathBuf>,
+    daily_snapshots: Option<PathBuf>,
+    outbox: PathBuf,
+    /// The allocated bytes of each sealed log segment, by its first seq, which `walk_log` reads once.
+    pub(super) sealed: Mutex<BTreeMap<u64, u64>>,
+}
+
 impl Store {
     /// The store's label in metrics and alerts.
     pub fn name(self) -> &'static str {
@@ -42,21 +57,6 @@ impl Store {
         }
     }
 }
-
-/// The directories of the configured stores.
-#[derive(Debug)]
-pub struct Layout {
-    log: PathBuf,
-    history: PathBuf,
-    snapshots: Option<PathBuf>,
-    daily_snapshots: Option<PathBuf>,
-    outbox: PathBuf,
-    /// The allocated bytes of each sealed log segment, by its first seq, which `walk_log` reads once.
-    pub(super) sealed: Mutex<BTreeMap<u64, u64>>,
-}
-
-/// How a store picks its files from a directory: by the file's name, among the entries of the directory itself.
-type Pick = fn(&str) -> bool;
 
 /// Every entry.
 fn all(_: &str) -> bool {

@@ -35,44 +35,57 @@ const READ_BOUND: Duration = Duration::from_secs(30);
 /// Error cases:
 /// - the thread reading the disks cannot start or panicked
 pub async fn run(layout: Layout, cfg: StorageSection, metrics: Arc<Metrics>) -> anyhow::Result<()> {
+    run_reads(move || layout.read(), cfg, metrics, READ_BOUND).await
+}
+
+/// `run` over `read`, which a read longer than `bound` leaves in flight: the next ticks wait for it instead of
+/// starting another, and raise `storage_unreadable` for `all` until it finishes.
+/// Error cases:
+/// - the thread reading cannot start or panicked
+async fn run_reads(
+    read: impl Fn() -> Reading + Send + Sync + 'static,
+    cfg: StorageSection,
+    metrics: Arc<Metrics>,
+    bound: Duration,
+) -> anyhow::Result<()> {
     let mut every = interval(cfg.interval);
     every.set_missed_tick_behavior(MissedTickBehavior::Delay);
     let mut watch = Watch::new(cfg);
-    let layout = Arc::new(layout);
+    let read = Arc::new(read);
     let mut reading: Option<oneshot::Receiver<Reading>> = None;
     loop {
         every.tick().await;
-        let mut read = match reading.take() {
-            Some(read) => read,
-            None => start_read(&layout)?,
+        let mut pending = match reading.take() {
+            Some(pending) => pending,
+            None => start_read(&read)?,
         };
-        match timeout(READ_BOUND, &mut read).await {
+        match timeout(bound, &mut pending).await {
             Ok(Ok(done)) => {
                 done.record(&metrics);
                 watch.observe(std::time::Instant::now(), &done, &metrics);
             }
             Ok(Err(_)) => bail!("the storage read stopped without a result"),
             Err(_) => {
-                reading = Some(read);
-                watch.unread(&format!("the read has not finished in {READ_BOUND:?}"));
+                reading = Some(pending);
+                watch.unread(&format!("the read has not finished in {bound:?}"));
             }
         }
     }
 }
 
-/// Starts a read of every store on a thread of its own.
+/// Starts `read` on a thread of its own.
 /// Error cases:
 /// - the thread cannot be started
-fn start_read(layout: &Arc<Layout>) -> anyhow::Result<oneshot::Receiver<Reading>> {
-    let (done, read) = oneshot::channel();
-    let layout = layout.clone();
+fn start_read(read: &Arc<impl Fn() -> Reading + Send + Sync + 'static>) -> anyhow::Result<oneshot::Receiver<Reading>> {
+    let (done, pending) = oneshot::channel();
+    let read = read.clone();
     std::thread::Builder::new()
         .name("storage-read".to_owned())
         .spawn(move || {
-            let _ = done.send(layout.read());
+            let _ = done.send(read());
         })
         .context("starting the storage read thread")?;
-    Ok(read)
+    Ok(pending)
 }
 
 #[cfg(test)]

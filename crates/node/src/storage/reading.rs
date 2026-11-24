@@ -9,7 +9,7 @@ use std::sync::PoisonError;
 
 use nix::sys::statvfs::statvfs;
 
-use crate::log::segment_seq;
+use crate::log::{segment_name, segment_seq};
 use crate::metrics::{Metrics, StoreLabel, VolumeLabel};
 use crate::storage::layout::{Layout, Store};
 
@@ -45,7 +45,8 @@ impl Layout {
         for (store, dirs) in self.stores() {
             let mut bytes = 0u64;
             let mut readable = true;
-            for (dir, pick) in dirs {
+            // A store sits on the volume of its first directory; the others only add to its bytes.
+            for (index, (dir, pick)) in dirs.into_iter().enumerate() {
                 let walked = if store == Store::Log { self.walk_log(dir) } else { walk(dir, pick, true) };
                 match walked {
                     Ok(found) => bytes = bytes.saturating_add(found),
@@ -53,6 +54,9 @@ impl Layout {
                         readable = false;
                         reading.failures.push((store, format!("reading {}: {error}", dir.display())));
                     }
+                }
+                if index > 0 {
+                    continue;
                 }
                 match volume_of(dir) {
                     Ok((device, total, free)) => {
@@ -72,15 +76,7 @@ impl Layout {
             }
         }
         if !volume_unread {
-            reading.volumes = devices
-                .into_values()
-                .map(|(mut stores, total_bytes, free_bytes)| {
-                    stores.sort();
-                    let name = stores[0].name().to_owned();
-                    Volume { name, stores, total_bytes, free_bytes }
-                })
-                .collect();
-            reading.volumes.sort_by(|a, b| a.stores.cmp(&b.stores));
+            reading.volumes = name_volumes(devices);
         }
         reading
     }
@@ -98,11 +94,6 @@ impl Reading {
             metrics.storage.volume_free_bytes.get_or_create(&label).set(gauge(volume.free_bytes));
         }
     }
-}
-
-/// A byte count as a gauge, which holds a signed integer.
-fn gauge(bytes: u64) -> i64 {
-    i64::try_from(bytes).unwrap_or(i64::MAX)
 }
 
 impl Layout {
@@ -131,26 +122,44 @@ impl Layout {
                 Err(error) => return Err(error),
             };
             match entry.file_name().to_str().and_then(segment_seq) {
-                Some(seq) => segments.push((seq, entry.path())),
+                Some(seq) => segments.push(seq),
                 None => bytes = bytes.saturating_add(entry_bytes(&entry.path())?),
             }
         }
-        segments.sort_unstable_by_key(|(seq, _)| *seq);
+        segments.sort_unstable();
         let sealed_count = segments.len().saturating_sub(2);
-        let mut kept = BTreeMap::new();
-        for (index, (seq, path)) in segments.iter().enumerate() {
+        sealed.retain(|seq, _| segments[..sealed_count].binary_search(seq).is_ok());
+        for (index, seq) in segments.iter().enumerate() {
             let size = match sealed.get(seq) {
                 Some(size) if index < sealed_count => *size,
-                _ => entry_bytes(path)?,
+                _ => entry_bytes(&dir.join(segment_name(*seq)))?,
             };
             if index < sealed_count {
-                kept.insert(*seq, size);
+                sealed.insert(*seq, size);
             }
             bytes = bytes.saturating_add(size);
         }
-        *sealed = kept;
         Ok(bytes)
     }
+}
+
+/// A byte count as a gauge, which holds a signed integer.
+fn gauge(bytes: u64) -> i64 {
+    i64::try_from(bytes).unwrap_or(i64::MAX)
+}
+
+/// The volumes of the devices the stores' first directories are on, each named by its first store, in `Store` order, so
+/// no two volumes share a name.
+pub(super) fn name_volumes(devices: BTreeMap<u64, (Vec<Store>, u64, u64)>) -> Vec<Volume> {
+    let mut volumes: Vec<Volume> = devices
+        .into_values()
+        .map(|(mut stores, total_bytes, free_bytes)| {
+            stores.sort();
+            Volume { name: stores[0].name().to_owned(), stores, total_bytes, free_bytes }
+        })
+        .collect();
+    volumes.sort_by(|a, b| a.stores.cmp(&b.stores));
+    volumes
 }
 
 /// The bytes the disk allocates to the files under `dir`, among its own entries those `pick` names when `top`; a

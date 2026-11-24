@@ -1,5 +1,5 @@
 use super::layout::{AUTHENTICATED_PREFIX, Store};
-use super::reading::Volume;
+use super::reading::{Volume, name_volumes};
 use super::*;
 
 use std::fs;
@@ -15,6 +15,7 @@ use crate::node::marks::{PRIOR_FILE, SEED_FILE};
 use crate::snapshot::head::StoreId;
 use crate::test_support::{capture_alerts_and_resolutions, scratch_dir};
 
+mod run;
 mod scenario;
 
 const GIB: u64 = 1 << 30;
@@ -62,7 +63,7 @@ fn a_sealed_segment_is_statted_once_and_the_two_newest_each_read() {
     let root = scratch_dir("storage-segments");
     let dirs = Dirs::new(&root);
     let layout = dirs.layout();
-    let segment = |seq: u64| dirs.log.join(format!("{seq:020}.jsonl"));
+    let segment = |seq: u64| dirs.log.join(crate::log::segment_name(seq));
     let log_bytes = |layout: &Layout| layout.read().stores.iter().find(|(store, _)| *store == Store::Log).unwrap().1;
     for seq in [0, 1000, 2000, 3000] {
         write(&segment(seq), 1 << 20);
@@ -134,6 +135,22 @@ fn a_directory_that_cannot_be_listed_is_a_failure_and_its_store_keeps_its_last_s
 }
 
 #[test]
+fn volumes_are_named_by_their_first_store_whatever_else_is_on_them() {
+    let device = |stores: &[Store]| (stores.to_vec(), 100 * GIB, 50 * GIB);
+    let names = |devices: Vec<(u64, (Vec<Store>, u64, u64))>| {
+        name_volumes(devices.into_iter().collect()).into_iter().map(|volume| volume.name).collect::<Vec<_>>()
+    };
+    // The log's own volume, and a data volume whose optional stores come and go.
+    let data = [Store::AlertOutbox, Store::HistoryIndex, Store::MarksCache];
+    assert_eq!(names(vec![(1, device(&[Store::Log])), (2, device(&data))]), ["log", "history_index"]);
+    let with_more = [Store::DailySnapshots, Store::RecoveryCaches, Store::AlertOutbox, Store::HistoryIndex];
+    assert_eq!(names(vec![(1, device(&[Store::Log])), (2, device(&with_more))]), ["log", "history_index"]);
+    // The snapshots directory on a volume of its own is named for the store that owns it, not the history index.
+    let split = vec![(1, device(&[Store::Log])), (2, device(&data)), (3, device(&[Store::RecoveryCaches]))];
+    assert_eq!(names(split), ["log", "history_index", "recovery_caches"]);
+}
+
+#[test]
 fn a_volumes_space_is_exported_under_its_name() {
     let reading = Reading { volumes: vec![volume(&[Store::Log], 100 * GIB, 50 * GIB)], ..Reading::default() };
     metrics_text(&reading, |text| {
@@ -149,7 +166,7 @@ fn a_free_share_below_each_threshold_raises_its_alert_and_clears_with_a_margin()
         let reading = reading_with_free(free_percent);
         capture(|| watch.observe(t0, &reading, &metrics))
     };
-    assert!(only_alerts(at(40)).is_empty());
+    assert!(at(40).is_empty());
     let [low] = at(14).try_into().unwrap();
     assert_eq!((low.key(), low.severity), ("disk_space_low{volume=log}".to_owned(), Some(Severity::Warning)));
     assert!(low.summary.starts_with("volume log has 14.0 GiB free of 100.0 GiB (14.0%)"), "{}", low.summary);
@@ -182,37 +199,49 @@ fn a_volume_that_jumps_from_clear_to_critical_raises_both_levels() {
 }
 
 #[test]
-fn a_volumes_first_judgement_resolves_the_levels_it_is_not_at_for_an_episode_a_run_before_left_open() {
+fn a_volume_resolves_the_alerts_it_is_not_at_once_its_growth_is_known_for_an_episode_a_run_before_left_open() {
     let metrics = Metrics::new();
     let t0 = Instant::now();
-    let first = |free_percent| {
+    let window = config().rate_window;
+    let lines_at = |free_percent| {
         let (mut watch, reading) = (Watch::new(config()), reading_with_free(free_percent));
-        let lines = capture(|| watch.observe(t0, &reading, &metrics));
-        lines
-            .iter()
-            .filter(|line| line.name.starts_with("disk_space"))
-            .map(|line| (line.key(), line.severity))
-            .collect::<Vec<_>>()
+        let disk = |lines: Vec<crate::alerts::AlertLine>| {
+            lines.iter().filter(|line| line.name.starts_with("disk_space")).map(|l| (l.key(), l.severity)).collect()
+        };
+        let first: Vec<_> = disk(capture(|| watch.observe(t0, &reading, &metrics)));
+        let later: Vec<_> = disk(capture(|| watch.observe(t0 + window, &reading, &metrics)));
+        (first, later)
     };
     let resolved = |name: &str| (format!("{name}{{volume=log}}"), None);
     let raised = |name: &str, severity| (format!("{name}{{volume=log}}"), Some(severity));
-    // Repaired during the stop: both episodes the earlier run left open end.
-    let clear = first(60);
-    assert!(
-        clear.contains(&resolved("disk_space_low")) && clear.contains(&resolved("disk_space_critical")),
-        "{clear:?}"
-    );
-    // Still low: the Warning is raised again, which pages nothing within its quiet period, and the Critical ends.
-    assert_eq!(first(10), [raised("disk_space_low", Severity::Warning), resolved("disk_space_critical")]);
+    // Healthy: nothing at first, since the projection that ended an earlier fill-time episode is not yet known; then
+    // both episodes an earlier run left open end.
+    assert_eq!(lines_at(60), (vec![], vec![resolved("disk_space_low"), resolved("disk_space_critical")]));
+    // Low on space: the Warning is raised again, which pages nothing within its quiet period; the Critical ends later.
     assert_eq!(
-        first(2),
-        [raised("disk_space_low", Severity::Warning), raised("disk_space_critical", Severity::Critical)]
+        lines_at(10),
+        (vec![raised("disk_space_low", Severity::Warning)], vec![resolved("disk_space_critical")])
     );
-    // A watch that has judged the volume says nothing of a clear one again.
-    let mut watch = Watch::new(config());
-    let reading = reading_with_free(60);
-    capture(|| watch.observe(t0, &reading, &metrics));
-    assert!(capture(|| watch.observe(t0, &reading, &metrics)).is_empty());
+    assert_eq!(
+        lines_at(2),
+        (vec![raised("disk_space_low", Severity::Warning), raised("disk_space_critical", Severity::Critical)], vec![])
+    );
+}
+
+#[test]
+fn a_restart_does_not_end_a_fill_time_episode_it_cannot_yet_judge() {
+    let (mut watch, metrics) = (primed_watch(), Metrics::new());
+    let t0 = Instant::now();
+    let mut at = |hours: u32, used_gib: u64| capture(|| watch.observe(t0 + HOUR * hours, &filling(used_gib), &metrics));
+    // Free space is plentiful and no growth is known: an episode raised on a projected fill is still open at the
+    // receiver, and nothing here ends it.
+    for hours in 0..6 {
+        assert!(at(hours, 100 + 3 * u64::from(hours)).is_empty(), "hour {hours}");
+    }
+    // The window fills with the same 3 GiB an hour, and the Warning is raised again.
+    let [low, critical] = at(6, 118).try_into().unwrap();
+    assert_eq!((low.key(), low.severity), ("disk_space_low{volume=log}".to_owned(), Some(Severity::Warning)));
+    assert_eq!(critical.severity, None);
 }
 
 #[test]
@@ -221,10 +250,12 @@ fn a_volume_filling_within_the_warning_time_alerts_alone_and_clears_with_a_margi
     let t0 = Instant::now();
     let mut at = |hours: u32, used_gib: u64| capture(|| watch.observe(t0 + HOUR * hours, &filling(used_gib), &metrics));
     // The window is six hours: nothing is projected until it is sampled, whatever the first hours wrote.
-    assert!(only_alerts(at(0, 100)).is_empty());
+    assert!(at(0, 100).is_empty());
     // 3 GiB an hour leaves 882 GiB free, about 12 days: inside the 14-day warning, past the 3-day critical.
-    let [low] = at(6, 118).try_into().unwrap();
+    // The Critical an earlier run might have left open ends in the same sample, as the growth becomes known.
+    let [low, critical] = at(6, 118).try_into().unwrap();
     assert_eq!((low.key(), low.severity), ("disk_space_low{volume=log}".to_owned(), Some(Severity::Warning)));
+    assert_eq!((critical.key(), critical.severity), ("disk_space_critical{volume=log}".to_owned(), None));
     // 2.5 GiB an hour, 867 GiB free: 14.5 days is past the warning time and inside the 15.4 days a held one clears at.
     assert!(at(12, 133).is_empty());
     // 2.17 GiB an hour, 854 GiB free: 16.4 days.
@@ -237,7 +268,7 @@ fn a_volume_filling_within_the_critical_time_raises_critical_and_exports_its_pro
     let (mut watch, metrics) = (primed_watch(), Metrics::new());
     let t0 = Instant::now();
     let mut at = |hours: u32, used_gib: u64| capture(|| watch.observe(t0 + HOUR * hours, &filling(used_gib), &metrics));
-    assert!(only_alerts(at(0, 100)).is_empty());
+    assert!(at(0, 100).is_empty());
     // 100 GiB an hour leaves 300 GiB free, three hours.
     let lines = at(6, 700);
     let [low, critical] = lines.as_slice() else { panic!("{lines:?}") };
@@ -269,7 +300,6 @@ fn a_steady_growth_keeps_its_projection_through_a_window_of_uneven_reads() {
         let reading =
             Reading { volumes: vec![volume(&[Store::Log], 1000 * GIB, 1000 * GIB - used)], ..Reading::default() };
         let lines = capture(|| watch.observe(t0 + Duration::from_secs(seconds), &reading, &metrics));
-        let lines = if step == 0 { only_alerts(lines) } else { lines };
         raised += lines.iter().filter(|line| line.severity.is_some()).count();
         resolved += lines.iter().filter(|line| line.severity.is_none()).count();
         if seconds >= 6 * 3600 {
@@ -279,8 +309,9 @@ fn a_steady_growth_keeps_its_projection_through_a_window_of_uneven_reads() {
         seconds += 55 + step * 7 % 11;
     }
     assert!(seconds > 6 * 3600 + 3600, "the loop ran only {seconds} s");
-    // The 12-day projection raises the Warning once, when the window fills, and never flaps.
-    assert_eq!((raised, resolved), (1, 0));
+    // The 12-day projection raises the Warning once, when the window fills, and never flaps; the Critical a run before
+    // might have left open ends in that same sample.
+    assert_eq!((raised, resolved), (1, 1));
 }
 
 #[test]
@@ -294,11 +325,13 @@ fn a_burst_in_the_windows_first_hour_projects_nothing_until_the_window_is_full()
             Reading { volumes: vec![volume(&[Store::Log], 1920 * GIB, (1920 - used_gib) * GIB)], ..Reading::default() };
         capture(|| watch.observe(t0 + Duration::from_secs(60 * minutes), &reading, &metrics))
     };
-    assert!(only_alerts(at(0, 100)).is_empty());
+    assert!(at(0, 100).is_empty());
     assert!(at(60, 123).is_empty());
     metrics_of(&metrics, |text| assert!(!text.contains("engine_volume_growth"), "{text}"));
-    // Over the whole window it is 3.8 GiB an hour, about 20 days to fill.
-    assert!(at(360, 123).is_empty());
+    // Over the whole window it is 3.8 GiB an hour, about 20 days to fill: no alert is raised, and the ones a run before
+    // might have left open end.
+    let lines = at(360, 123);
+    assert!(lines.len() == 2 && lines.iter().all(|line| line.severity.is_none()), "{lines:?}");
     metrics_of(&metrics, |text| {
         let growth = value(text, "engine_volume_growth_bytes_per_second{volume=\"log\"}");
         assert!((growth - 23.0 * GIB as f64 / 21_600.0).abs() < 1.0, "{text}");
@@ -426,8 +459,7 @@ fn config() -> StorageSection {
     StorageSection::default()
 }
 
-/// A watch that has judged every store readable, so what a test raises or resolves is its own. A volume's first
-/// judgement still resolves the levels it is not at, which `only_alerts` leaves out.
+/// A watch that has judged every store readable, so what a test raises or resolves is its own.
 fn primed_watch() -> Watch {
     let mut watch = Watch::new(config());
     let reading = Reading {
@@ -443,11 +475,6 @@ fn primed_watch() -> Watch {
     };
     capture(|| watch.observe(Instant::now(), &reading, &Metrics::new()));
     watch
-}
-
-/// The lines that raise an alert, without the resolutions a first judgement adds.
-fn only_alerts(lines: Vec<crate::alerts::AlertLine>) -> Vec<crate::alerts::AlertLine> {
-    lines.into_iter().filter(|line| line.severity.is_some()).collect()
 }
 
 /// A 1000 GiB volume holding the log, with `used_gib` of it used.

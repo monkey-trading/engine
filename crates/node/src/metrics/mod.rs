@@ -11,10 +11,10 @@ mod listener;
 mod reasons;
 mod roots;
 mod storage;
+use crate::metrics::reasons::prices_reject_reason;
 pub use latency::{LATENCY_BUCKETS, LatencyMetrics};
 pub use listener::router;
 pub(crate) use listener::{alongside, bind};
-use reasons::prices_reject_reason;
 pub use roots::RootMetrics;
 pub use storage::{StorageMetrics, StoreLabel, VolumeLabel};
 
