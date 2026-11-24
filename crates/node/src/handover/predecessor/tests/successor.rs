@@ -44,6 +44,33 @@ async fn a_whole_log_whose_carry_the_config_does_not_name_is_refused_before_conf
     assert!(!exchange.run.is_finished(), "the predecessor ended without a confirmation");
 }
 
+/// A carried log whose `Begin` part lies past its first segment, as a small `node.segment_commands` leaves it, is
+/// read from the whole replay: a config naming another source, or none, is refused before the confirmation, and one
+/// naming the source takes the keys.
+#[tokio::test]
+async fn a_carry_past_the_first_segment_is_read_from_the_whole_log() {
+    for case in 0..3 {
+        let mut exchange = Exchange::start("handover-carry-late").await;
+        exchange.make_upgrade_current();
+        let key = exchange.old.enclave_key().unwrap();
+        let (head, source) = write_carried_log(&exchange.predecessor_log, 5, domain_of(&exchange.successor), &key);
+        exchange.successor.custody.chain_id = source.chain_id;
+        let vault = [None, Some(AccountId([0xa1; 20])), Some(source.vault)][case];
+        exchange.successor.genesis.carry =
+            vault.map(|vault| crate::config::CarrySection { vault, file: "carry.json".into() });
+        let _answer = exchange.answer_drain(Ok(head));
+        let result = exchange.take().await;
+        if case == 2 {
+            result.expect("the log carried from the source the config names");
+        } else {
+            let refused = result.err().expect("the successor confirmed a log it would refuse");
+            assert!(format!("{refused:#}").contains("carried from vault"), "{case}: {refused:#}");
+            assert!(!file_for(&exchange.successor_dir, &exchange.upgrade(), GENERATION).exists(), "sealed");
+            assert!(!exchange.run.is_finished(), "the predecessor ended without a confirmation");
+        }
+    }
+}
+
 /// A segment whose bytes differ from the listing inside the quote-bound message is refused before
 /// the confirmation goes out: the successor does not start on a log the host tampered with.
 #[tokio::test]

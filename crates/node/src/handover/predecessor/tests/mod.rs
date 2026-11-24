@@ -2,6 +2,8 @@
 //! the test sets and a node that answers the request to stop sequencing.
 
 mod assignment;
+mod carried;
+use carried::write_carried_log;
 mod copies;
 mod entries;
 use entries::{checkpoint, command, publish};

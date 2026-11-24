@@ -66,7 +66,7 @@ pub(crate) async fn take(
 ///   vault's current release is another one
 /// - a segment differs from its listing, breaks the chain from the tip, or the log does not reach
 ///   the handed-over checkpoint
-/// - the log's genesis carried from another source than the config's `[genesis.carry]` (`carry::boot::check_taken`)
+/// - the log's genesis carried from another source than the config's `[genesis.carry]` (`carry::boot::check_copy`)
 /// - the keys cannot be sealed, or the predecessor does not acknowledge the confirmation
 /// - the latest assignment cannot be read, or moved before the keys were sealed
 pub(crate) async fn take_with(
@@ -110,10 +110,11 @@ pub(crate) async fn take_with(
         None => crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?.0,
     };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
-    take_segments(&mut stream, dir, (domain, cfg.node.replay_workers), &tails, log_tip, &head, signers, metrics)
-        .await?;
+    let taken =
+        take_segments(&mut stream, dir, (domain, cfg.node.replay_workers), &tails, log_tip, &head, signers, metrics)
+            .await?;
     // A log the start would refuse under this config is refused while the predecessor still holds the keys.
-    crate::carry::boot::check_taken(cfg, dir)?;
+    crate::carry::boot::check_copy(cfg, &taken, false)?;
     let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
     info!(
         enclave = %enclave.address_hex(),
@@ -225,7 +226,7 @@ pub(super) async fn ask(
 /// whole log to replay, authenticated against every signer the vault recorded and every command sealed
 /// by one of them, the seals checked ahead by `workers`, to the handed-over checkpoint: the confirmation
 /// ends the predecessor, so an invalid transfer, or a copy whose command prefix is not the predecessor's,
-/// must be caught here.
+/// must be caught here. Returns the engine the replay leaves.
 /// The replay counts in `metrics.full_replays`.
 /// Error cases:
 /// - a segment is missing, differs from its listing, breaks the chain, or cannot be written
@@ -240,7 +241,7 @@ pub(super) async fn take_segments(
     head: &Head,
     signers: std::collections::BTreeSet<AccountId>,
     metrics: &Metrics,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<engine_core::Engine> {
     let mut tip = log_tip;
     for listed in tails {
         let bytes = receive_bytes(stream).await.context("the predecessor named a log segment but sent no bytes")?;
@@ -259,7 +260,7 @@ pub(super) async fn take_segments(
         head.seq,
         head.root
     );
-    Ok(())
+    Ok(replayed.engine)
 }
 
 /// Confirms the handover by signing the request with the handed-over key, and requires the
