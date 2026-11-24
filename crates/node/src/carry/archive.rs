@@ -28,6 +28,16 @@ pub(crate) async fn check_archived(cfg: &NodeConfig, operator: &Followed) -> any
         .inspect_err(|e| error!(alert = "carry_refused", "refusing to register the standby key: {e:#}"))
 }
 
+/// Whether a member preparing its standby key may register it: `checked` once the operator's archived genesis has
+/// passed `check_archived`, which is then not read again; with no operator in effect, or a failed or refused check,
+/// it may not.
+pub(crate) async fn held(cfg: &NodeConfig, operator: Option<&Followed>, checked: &mut bool) -> bool {
+    if !*checked && let Some(operator) = operator {
+        *checked = check_archived(cfg, operator).await.is_ok();
+    }
+    *checked
+}
+
 /// The source the genesis of the log `origins` archive carried from, read from its segments in order up to the
 /// house capital credit that ends genesis: `Some(None)` for a genesis that carries nothing, `None` while the
 /// archive holds no whole genesis.

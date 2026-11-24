@@ -259,6 +259,12 @@ pub(crate) fn check_copy(cfg: &NodeConfig, copy: &Engine, open: bool) -> anyhow:
         .inspect_err(|e| error!(alert = "carry_refused", "refusing to hold this log's keys: {e:#}"))
 }
 
+/// Whether a member may register its standby key over its open copy, `copy`: only one its start would serve under
+/// this config (`check_copy`, open), so a member with no copy open registers nothing.
+pub(crate) fn serves_copy(cfg: &NodeConfig, copy: Option<&Engine>) -> bool {
+    copy.is_some_and(|copy| check_copy(cfg, copy, true).is_ok())
+}
+
 /// The chain and source vault the config's `[genesis.carry]` names.
 pub(super) fn configured(cfg: &NodeConfig) -> Option<(u64, AccountId)> {
     cfg.genesis.carry.as_ref().map(|carry| (cfg.custody.chain_id, carry.vault))

@@ -181,4 +181,10 @@ fn a_members_copy_is_held_to_the_carry_its_config_names() {
     }
     assert!(check_copy(&named, &nothing, false).is_err(), "a closed genesis that carried nothing");
     assert!(check_copy(&named, &nothing, true).is_ok(), "a copy that may be before its genesis");
+    // The standby key's registration over a copy (`keep_standby`): only one the start would serve, never none open.
+    assert!(serves_copy(&named, Some(&carried)));
+    assert!(serves_copy(&named, Some(&nothing)), "a copy that may be before its genesis");
+    assert!(!serves_copy(&other, Some(&carried)));
+    assert!(!serves_copy(&none, Some(&carried)));
+    assert!(!serves_copy(&named, None), "no copy open");
 }

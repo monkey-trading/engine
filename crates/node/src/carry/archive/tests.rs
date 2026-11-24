@@ -95,6 +95,15 @@ async fn a_member_reads_the_archived_genesis_and_is_held_to_its_carry() {
     assert!(check_archived(&named, &dev).await.is_err(), "a log that carried nothing under a config naming a carry");
     assert!(check_archived(&none, &dev).await.is_ok());
     assert!(check_archived(&named, &early).await.is_ok(), "an archive before its genesis");
+    // The registration gate: a member prepares its standby key only once the archived genesis passes.
+    for (cfg, operator, held_after) in
+        [(&named, Some(&carried), true), (&none, Some(&carried), false), (&named, Some(&dev), false)]
+    {
+        let mut checked = false;
+        assert_eq!(held(cfg, operator, &mut checked).await, held_after);
+        assert_eq!(checked, held_after, "a passed check is kept");
+    }
+    assert!(!held(&named, None, &mut false).await, "no operator in effect to read");
     let down = Followed { origin: "http://127.0.0.1:9".into(), ..early };
     assert!(check_archived(&none, &down).await.is_err(), "an archive that cannot be read");
 }

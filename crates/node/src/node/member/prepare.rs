@@ -53,10 +53,8 @@ impl<C: crate::checkpoints::CheckpointChain, H: PostedHead, T: Sampling> Member<
                     let operator = crate::standby::resolve(self.cfg, &self.vault).await;
                     let operator = operator.inspect_err(|e| warn!("no operator in effect to vouch: {e:#}")).ok();
                     // A member registers its standby key only for a log its start would serve under this config.
-                    if !carry_checked && let Some(operator) = &operator {
-                        carry_checked = crate::carry::archive::check_archived(self.cfg, operator).await.is_ok();
-                    }
-                    if carry_checked && let Ok(reached) = self.reached().await {
+                    let carried = crate::carry::archive::held(self.cfg, operator.as_ref(), &mut carry_checked).await;
+                    if carried && let Ok(reached) = self.reached().await {
                         if let Some(sample) = self.sample {
                             open.sampled(sample);
                         }
