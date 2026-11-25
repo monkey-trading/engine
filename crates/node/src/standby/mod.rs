@@ -210,7 +210,7 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         if let Err(e) = &followed
             && catch_up::before_served(e)
         {
-            let caught = catch_up_copy(&archive, &operator, (&mut writer, &mut copied)).await;
+            let caught = catch_up_copy(cfg, (&chain, &archive), &operator, (&mut writer, &mut copied)).await;
             let pause = if caught.is_ok() { Duration::from_secs(1) } else { standby.poll_interval };
             match caught {
                 Ok(()) => {}
@@ -446,18 +446,23 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
 }
 
 /// Catches the copy open in `writer`, with its chain `copied`, up from `operator`'s archive origins when the operator
-/// serves its stream only from after the copy's head (`catch_up`), each entry checked against the copy before it is
-/// appended.
+/// serves its stream only from after the copy's head (`catch_up`), each entry checked against the copy, and each
+/// checkpoint and withdrawal against the signers the vault recorded, before it is appended. The copy is no longer
+/// marked checked, so the next start replays it before it follows on.
 /// Error cases:
-/// - as `catch_up::catch_up`
+/// - the vault's signers cannot be read (`operator::copy_signers`), or as `catch_up::catch_up`
 async fn catch_up_copy(
-    archive: &reqwest::Client,
+    cfg: &NodeConfig,
+    (chain, archive): (&impl crate::checkpoints::CheckpointChain, &reqwest::Client),
     operator: &Followed,
     (writer, copied): (&mut LogWriter, &mut Chain),
 ) -> anyhow::Result<()> {
     info!(operator = %operator.origin, "the operator serves its stream from after the copy's head: catching up from the archive");
+    let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
+    let signers = operator::copy_signers(cfg, chain, operator).await?;
+    backfill::unmark(&cfg.node.log_dir)?;
     let head = copied.head();
-    let take = |after, bytes: &[u8]| catch_up::take_into(writer, copied, after, bytes);
+    let take = |after, bytes: &[u8]| catch_up::take_into((writer, copied), (domain, &signers), after, bytes);
     let caught = catch_up::catch_up(archive, &operator.origins(), head, take).await?;
     info!(head = ?caught, "the copy caught up from the archive; the stream resumes from it");
     Ok(())

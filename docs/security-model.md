@@ -802,7 +802,10 @@ Known limits:
 - Without snapshots, the account history index is read from the host's disk with only its schema and
   integrity checked, and its rows are not authenticated. It is matched to the log by one
   instruction, the newest it has taken. SQLite reads it in defensive mode, and each event it serves
-  names its place in the log, where anyone can check it.
+  names its place in the log, where anyone can check it. An index behind the daily snapshot a start
+  went on from, as one rebuilt after its directory was removed, catches up through the host's
+  segments before the snapshot, which the start did not check; the index trusts the host's disk
+  either way.
 
 ## The log's archive
 

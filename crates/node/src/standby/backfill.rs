@@ -300,6 +300,17 @@ fn refuse_operator_copy(operator: &Followed, dir: &Path, refused: anyhow::Error)
 /// Marks the copy in `dir` checked.
 /// Error cases:
 /// - the mark cannot be written, or the directory synced
+/// Drops the mark that the copy in `dir` has replayed as a takeover would, as before it takes archive bytes no replay
+/// has read: the next start checks it again (`prepare`).
+/// Error cases:
+/// - the mark cannot be removed, or the directory synced
+pub(super) fn unmark(dir: &Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(dir.join(CHECKED)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("unmarking the copy"),
+        _ => sync(dir),
+    }
+}
+
 fn mark(dir: &Path) -> anyhow::Result<()> {
     std::fs::File::create(dir.join(CHECKED)).and_then(|mark| mark.sync_all()).context("marking the copy checked")?;
     sync(dir)
