@@ -1531,7 +1531,9 @@ JSON line for each completed segment:
 `GET /v1/archive/{file}` returns one completed segment that the manifest lists, as JSON lines. A
 file that the manifest does not list answers 404. The segment still being written is not in the
 archive, and the stream carries it instead. `engine replay` verifies a downloaded archive, and the
-server checks each segment against the manifest before serving it.
+server checks each segment against the manifest before serving it. A server that started from a daily
+snapshot lists and serves only the segments its start read, from the one holding the snapshot's
+checkpoint on; the archive mirrors serve the earlier ones.
 
 ### Daily snapshots
 
@@ -1548,12 +1550,16 @@ snapshot:
 
 `seq` and `index` are the offset of the checkpoint's entry in the log, which names the file, `ts` is
 its sequenced time and `root` its state root. `GET /v1/archive/snapshots/{file}` returns one listed
-snapshot as a JSON object: `schema` (2), `offset`, `checkpoint`, the checkpoint entry as the log
+snapshot as a JSON object: `schema` (3), `offset`, `checkpoint`, the checkpoint entry as the log
 holds it, `engine`, the engine's state, `state`, the SHA-256 of `engine`'s bytes as the file holds
-them, and `signature`, the enclave key's 65-byte signature over the keccak-256 of
-`engine.daily-snapshot.v1`, the chain id as 8 bytes and the vault's 20 bytes, `seq` as 8 bytes and
-`index` as 4, all big-endian, the root's 32 bytes and `state`'s. A snapshot of schema 1, written
-before snapshots were signed, has neither `state` nor `signature`. A file the manifest does not list
+them, `carried`, what a replay of the log holds after the checkpoint besides the engine, `history`, the
+dashboard record and the chart history's anchors at the checkpoint, and `signature`, the enclave key's
+65-byte signature over the keccak-256 of `engine.daily-snapshot.v2`, the chain id as 8 bytes and the
+vault's 20 bytes, `seq` as 8 bytes and `index` as 4, all big-endian, the root's 32 bytes, `state`'s, and
+the SHA-256s of `carried`'s and `history`'s bytes as the file holds them. A snapshot of schema 2 has
+neither `carried` nor `history`, and its signature covers the tag `engine.daily-snapshot.v1` and the
+fields to `state`; one of schema 1, written before snapshots were signed, has neither `state` nor
+`signature`. A file the manifest does not list
 answers 404, and so does every request to a server without `[daily_snapshots]`. The server checks
 each snapshot's length and hash against the manifest before serving it. `engine replay --snapshots`
 takes one only at a checkpoint the log holds, equal to the snapshot's, once the root of the

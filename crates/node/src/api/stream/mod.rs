@@ -235,7 +235,8 @@ pub async fn stream(
         (Some(_), _) => return Err(ApiError::BadRequest("signed must be 1".into())),
     };
     Span::current().record("id", display(start.map_or_else(|| "live".to_owned(), |from| from.to_string())));
-    start::ensure_held(&s.log_dir, start).await?;
+    let manifest = s.manifest.borrow().clone();
+    start::ensure_held(&s.log_dir, &manifest, start).await?;
     let place = s.limits.subscribe()?;
     let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start)
         .timed(s.limits.stream_seconds());

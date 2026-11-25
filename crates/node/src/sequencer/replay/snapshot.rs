@@ -250,6 +250,7 @@ impl Replay {
         self.payout_checkpoints.extend(carried.checkpoint_roots);
         self.takings = takings;
         self.requires_checkpoint_gate |= carried.requires_checkpoint_gate;
+        self.access_alerts = crate::sequencer::access::AccessAlerts::resumed(carried.access_failed_since);
         self.cached = Some(Box::new(cached));
     }
 }

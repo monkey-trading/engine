@@ -52,6 +52,10 @@ pub(crate) struct Carried {
     /// The approvals a checkpoint deferred that no withdrawal entry has signed: seq, account, amount, nonce.
     pub deferred: Vec<(u64, AccountId, Fixed, u64)>,
     pub requires_checkpoint_gate: bool,
+    /// The sequenced time of the access source's latest failure while a failure episode is open, which the first
+    /// fresh decision after it resolves (`sequencer::access::AccessAlerts`).
+    #[serde(default)]
+    pub access_failed_since: Option<engine_core::types::Millis>,
 }
 
 impl Carried {
@@ -164,6 +168,7 @@ impl Replay {
         let mut takings = carried.takings;
         // The replay verifies no range before the commands after the snapshot's.
         takings.set_applied_from(checkpoint.seq.saturating_add(1));
+        self.access_alerts = crate::sequencer::access::AccessAlerts::resumed(carried.access_failed_since);
         let mut prefix_ring = PrefixRing::default();
         carried.links.iter().for_each(|link| prefix_ring.record(link.seq, link.link));
         self.last_marks = engine.markets().iter().filter_map(|(id, market)| Some((*id, market.mark?))).collect();

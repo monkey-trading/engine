@@ -95,6 +95,76 @@ async fn the_fold_and_a_resumed_replay_carry_what_a_whole_replay_carries() {
     }
 }
 
+/// An access source failure episode open at a snapshot's checkpoint stays open in a replay that goes on from it,
+/// and in what that replay carries at its next checkpoint, while no fresh decision after the failure resolves it;
+/// with none open, none is carried.
+#[tokio::test]
+async fn a_replay_from_a_snapshot_keeps_an_open_access_failure() {
+    let dir = scratch_dir("carried-access");
+    crate::sequencer::fixture_tests::write_funded_log(&dir, 4);
+    let entries = log_entries(&dir);
+    let at = *snapshot_starts(&entries).first().unwrap();
+    let next = entries.iter().enumerate().skip(at + 1).find(|(_, entry)| matches!(entry, LogEntry::Checkpoint(_)));
+    let next = next.map(|(index, _)| index).expect("a checkpoint after the snapshot's");
+    // A failure later than every decision the log holds, so none of them resolves it.
+    let failed = Some(i64::MAX - 1);
+    for since in [failed, None] {
+        let DailySnapshot { offset, checkpoint, engine, carried, .. } = snapshot_at(&entries, at, None, None);
+        let carried = Carried { access_failed_since: since, ..carried.unwrap() };
+        let mut replay = Replay::copy(DOMAIN, [signer()].into()).resume(engine, carried, checkpoint, offset).unwrap();
+        assert_eq!(replay.access_alerts.failed(), since.is_some());
+        entries[at + 1..=next].iter().for_each(|entry| replay.apply(entry).unwrap());
+        assert_eq!(replay.carried().unwrap().access_failed_since, since, "at the next checkpoint");
+    }
+}
+
+/// A recovery anchored at the vault's finalized checkpoint goes on from a snapshot as a whole one ends: anchored at
+/// the snapshot's checkpoint or at a later one, it ends with the anchor's work, the custody work after the anchor and
+/// the anchor's time that a whole replay gives; anchored before the snapshot's checkpoint, whose custody work the
+/// snapshot does not carry, it is refused.
+#[tokio::test]
+async fn a_recovery_anchored_at_or_after_the_snapshot_ends_as_a_whole_one() {
+    let dir = scratch_dir("carried-anchor");
+    crate::sequencer::fixture_tests::write_funded_log(&dir, 4);
+    let entries = log_entries(&dir);
+    let starts = snapshot_starts(&entries);
+    let (at, later) = (starts[0], *starts.last().unwrap());
+    assert!(at < later, "two checkpoints a snapshot can stand at");
+    let parent = |index: usize| {
+        let LogEntry::Checkpoint(checkpoint) = &entries[index] else { panic!("no checkpoint at entry {index}") };
+        crate::log::CheckpointParent {
+            has_checkpoint: true,
+            seq: checkpoint.seq,
+            root: checkpoint.root.parse().unwrap(),
+        }
+    };
+    let ends = |replayed: &Replayed| {
+        let anchor = serde_json::to_value(&replayed.recovery_anchor_work).unwrap();
+        let work = serde_json::to_value(&replayed.recovery_work).unwrap();
+        serde_json::json!({ "anchor": anchor, "work": work, "anchor_ts": replayed.anchor_ts })
+    };
+    let resumed_from = |snapshot: usize, anchor: usize| {
+        let DailySnapshot { offset, checkpoint, engine, carried, .. } = snapshot_at(&entries, snapshot, None, None);
+        Replay::with_recovery(Some(DOMAIN), Some(signer()), parent(anchor)).resume(
+            engine,
+            carried.unwrap(),
+            checkpoint,
+            offset,
+        )
+    };
+    for anchor in [at, later] {
+        let mut whole = Replay::with_recovery(Some(DOMAIN), Some(signer()), parent(anchor));
+        entries.iter().for_each(|entry| whole.apply(entry).unwrap());
+        let whole = whole.finish();
+        assert!(whole.recovery_anchor_work.is_some(), "the whole replay anchors at entry {anchor}");
+        let mut resumed = resumed_from(at, anchor).unwrap();
+        entries[at + 1..].iter().for_each(|entry| resumed.apply(entry).unwrap());
+        assert_eq!(ends(&resumed.finish()), ends(&whole), "anchored at entry {anchor}");
+    }
+    let refused = format!("{:#}", resumed_from(later, at).err().expect("an anchor before the snapshot is refused"));
+    assert!(refused.contains("is before the snapshot's"), "{refused}");
+}
+
 /// A carried state that does not stand for its snapshot's engine and checkpoint is refused before any entry
 /// after it is replayed, each at the check it names; and an engine whose root is not its checkpoint's is refused.
 #[tokio::test]

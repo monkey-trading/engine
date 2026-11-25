@@ -115,10 +115,11 @@ async fn a_snapshot_the_start_cannot_go_on_from_gives_way_to_a_whole_replay() {
     assert_eq!(pages(&reader).await, written.pages, "the chart history");
 }
 
-/// With `[snapshots]` and no cache to take, the start replays the log after the daily snapshot into the dashboard
-/// record it carries, which answers as the node's did.
+/// With `[snapshots]` and no cache to take, the start rebuilds the account history index from the whole log, which it
+/// then replays whole, not from the daily snapshot, so the index takes only what the replay verified; its dashboard
+/// record answers as the node's did.
 #[tokio::test]
-async fn a_paired_start_from_a_daily_snapshot_keeps_the_dashboard_record() {
+async fn a_paired_start_with_no_cache_replays_the_whole_log() {
     let mut written = Written::run("snapshot-start-paired").await;
     let root = written.cfg.node.log_dir.parent().unwrap().to_owned();
     written.cfg.snapshots = Some(crate::config::SnapshotSection {
@@ -131,7 +132,7 @@ async fn a_paired_start_from_a_daily_snapshot_keeps_the_dashboard_record() {
     let cfg = &written.cfg;
     let marks = marks::startup(cfg, written.key.marks_key(), false).unwrap();
     let recovered = recover(cfg, &written.key, None, &marks, None, &Metrics::new()).await.unwrap();
-    assert_eq!(recovered.log.snapshot_sequence(), Some(written.snapshot.seq), "the start went on from the snapshot");
+    assert_eq!(recovered.log.snapshot_sequence(), None, "the start replays the whole log");
     assert_eq!(recovered.stats.dump(), written.stats.dump(), "the dashboard record");
 }
 

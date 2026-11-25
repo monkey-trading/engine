@@ -121,24 +121,19 @@ pub(crate) fn open_signed(
         history: &'a RawValue,
         signature: String,
     }
-    /// A snapshot's format, read before the rest.
-    #[derive(Deserialize)]
-    struct Format {
-        schema: u32,
-    }
     let bytes = std::fs::metadata(path).with_context(|| format!("opening daily snapshot {}", path.display()))?.len();
     ensure!(bytes <= MAX_SNAPSHOT_BYTES, "daily snapshot {} is longer than the bound", path.display());
     let text = std::fs::read_to_string(path).with_context(|| format!("reading daily snapshot {}", path.display()))?;
-    let Format { schema } =
-        serde_json::from_str(&text).with_context(|| format!("daily snapshot {} names no format", path.display()))?;
+    // Its format from its first bytes, where every writer puts it, with no second parse of the whole file.
     ensure!(
-        schema == SCHEMA,
-        "daily snapshot {} is of format {schema}, which carries no replay state for a start, not {SCHEMA}",
+        !super::earlier_format(text.as_bytes()),
+        "daily snapshot {} is of an earlier format, which carries no replay state for a start, not {SCHEMA}",
         path.display()
     );
     let Envelope { schema, offset, checkpoint, engine, state, carried, history, signature } =
         serde_json::from_str(&text)
             .with_context(|| format!("daily snapshot {} is not one of format {SCHEMA}", path.display()))?;
+    ensure!(schema == SCHEMA, "daily snapshot {} is of format {schema}, not {SCHEMA}", path.display());
     ensure_named(path, offset, &checkpoint)?;
     let state: [u8; 32] = hex::decode(state.trim_start_matches("0x"))
         .ok()

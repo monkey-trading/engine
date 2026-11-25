@@ -10,7 +10,7 @@ use engine_core::event::{Event, Reject};
 use engine_core::types::{AccountId, Millis};
 use tracing::{info, warn};
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct AccessAlerts {
     failed: bool,
     /// The sequenced time of the open episode's latest failure. A verified decision observed before it,
@@ -32,9 +32,19 @@ impl AccessAlerts {
         Self { failed, since: Millis::MIN }
     }
 
+    /// The state a replay of the log holds where a daily snapshot carries `failed_since` (`failed_since`).
+    pub(super) fn resumed(failed_since: Option<Millis>) -> Self {
+        Self { failed: failed_since.is_some(), since: failed_since.unwrap_or_default() }
+    }
+
     /// Whether a source failure episode is open.
     pub(super) fn failed(&self) -> bool {
         self.failed
+    }
+
+    /// The sequenced time of the open episode's latest failure, if one is open, as a daily snapshot carries it.
+    pub(super) fn failed_since(&self) -> Option<Millis> {
+        self.failed.then_some(self.since)
     }
 
     /// Applies the episode change a command's own screening gives, without alerting. Run on the

@@ -48,7 +48,7 @@ impl Sequencer {
     ) -> Result<(ReplayedLog, Plan)> {
         match Self::read_paired_cache(cfg, signer, parent, stats.as_ref(), capture, None, &mut observe)? {
             Some(recovered) => Ok(recovered),
-            None => Self::replay_paired_log(cfg, signer, parent, authorities, stats, capture, None, observe),
+            None => Self::replay_paired_log(cfg, signer, parent, authorities, stats, capture, observe),
         }
     }
 
@@ -98,16 +98,11 @@ impl Sequencer {
     }
 
     /// The replay a paired recovery falls back to when no cache verifies, planning a strict log-derived
-    /// migration without any persisted mutation: of the log after `daily`'s checkpoint, a signed daily
-    /// snapshot at or under the vault's finalized checkpoint, when one is given, into the dashboard record `stats`
-    /// restored from the one it carries, or else of the whole log, into `stats` started over.
-    /// `capture` is as `read_paired_cache`'s; a head posted at or under the daily snapshot's checkpoint is
-    /// bound to the history it carries (`prefix::under_daily`) before the replay.
+    /// migration without any persisted mutation: of the whole log, into the dashboard record `stats` started over,
+    /// since the history index it plans is rebuilt from the whole log too, and takes only what the replay verified.
+    /// `capture` is as `read_paired_cache`'s.
     /// Error cases:
     /// - snapshots are absent, or the replay cannot verify the authoritative log
-    /// - the replay cannot go on from the daily snapshot at all (`SnapshotRefused`), before it reads an entry
-    /// - the posted head is not in the daily snapshot's history (`prefix::under_daily`)
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn replay_paired_log(
         cfg: &NodeConfig,
         signer: Option<AccountId>,
@@ -115,7 +110,6 @@ impl Sequencer {
         authorities: crate::checkpoints::SignerHistory,
         stats: Option<crate::stats::Stats>,
         capture: Option<crate::log_heads::Head>,
-        mut daily: Option<Signed>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -129,48 +123,24 @@ impl Sequencer {
         if let Some(posted) = capture {
             replay.capture_link_at(posted.seq);
         }
-        // From a daily snapshot, the record goes on from the one it carries, as a start from one without
-        // `[snapshots]` does, or starts over there when it carries none.
-        match (stats, daily.as_mut()) {
-            (Some(stats), Some(daily)) => {
-                match crate::daily_snapshots::History::read(daily.snapshot.history.take().as_deref()).stats {
-                    Some(record) => stats.restore(record),
-                    None => stats.restart(),
-                }
-                replay.record_stats_continuing(stats);
-            }
-            (Some(stats), None) => replay.record_stats_with(stats),
-            (None, _) => {}
+        if let Some(stats) = stats {
+            replay.record_stats_with(stats);
         }
-        let (dir, seals) = (&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
-        let posted_ts = match &daily {
-            Some(daily) => crate::log_heads::prefix::under_daily(dir, capture, daily)?,
-            None => None,
-        };
-        let snapshot_seq = daily.as_ref().map(|daily| daily.snapshot.offset.seq);
-        let mut fingerprint = Fingerprinter::after(daily.as_ref().map(|daily| daily.snapshot.offset));
-        let (replay, log) = match daily {
-            Some(daily) => replay.replay_after(daily, dir, seals, |entry| {
-                fingerprint.observe(entry)?;
-                observe(entry);
-                Ok(())
-            })?,
-            None => {
-                replay.check_ahead(dir, seals);
-                let log = SegmentedLog::open_ahead(dir, |entry| {
-                    replay.apply(&entry)?;
-                    fingerprint.observe(&entry)?;
-                    observe(&entry);
-                    Ok(())
-                });
-                let log = replay.settled(log)?;
-                (replay, log)
-            }
-        };
-        let mut replayed = replay.finish();
-        replayed.ts_at = replayed.ts_at.or(posted_ts);
+        replay.check_ahead(&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
+        let mut fingerprint = Fingerprinter::after(None);
+        let log = SegmentedLog::open_ahead(&cfg.node.log_dir, |entry| {
+            replay.apply(&entry)?;
+            fingerprint.observe(&entry)?;
+            observe(&entry);
+            Ok(())
+        });
+        let log = replay.settled(log)?;
+        let replayed = replay.finish();
         let plan = plan(cfg, snapshots, domain, Source::Rebuild { prefix: fingerprint.finish() }, Catalog::Rebuild);
-        Ok((ReplayedLog { log: log.into(), replayed, snapshot_seq, legacy_authorizations: Default::default() }, plan))
+        Ok((
+            ReplayedLog { log: log.into(), replayed, snapshot_seq: None, legacy_authorizations: Default::default() },
+            plan,
+        ))
     }
 }
 

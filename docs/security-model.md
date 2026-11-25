@@ -519,10 +519,20 @@ start takes only when every row authenticates under the cache's key and every ch
 anchors the snapshot carries; a copy that does not is set aside with Warning `marks_cache_rebuilt`,
 and the chart history before the snapshot is then lost until a provider backfill restores what it can.
 The marks task writes the copy after the marks of every instruction through the checkpoint and before
-any later one. With `[snapshots]`, a start with no recovery cache that verifies replays the log after
-the same snapshot, its dashboard record continuing from the snapshot's and its chart history the cache
-on disk, as after a start from a recovery cache; with `[daily_snapshots]` too, a start takes only a
-recovery cache that carries the replay state, so the daily snapshots go on after it.
+any later one. With `[snapshots]`, a start with no recovery cache that verifies replays the whole log,
+as it rebuilds the account history index from the whole log, which must index only what the start
+verified; with `[daily_snapshots]` too, a start takes only a recovery cache that carries the replay
+state, so the daily snapshots go on after it.
+
+The segments before the snapshot's checkpoint stay what the host says they are: a start from the
+snapshot verified none of them, and without `[snapshots]` no signed catalog vouches for them. So nothing
+the trading server vouches for is read from them: a stream's backfill from before the instruction after
+the checkpoint is refused with 400, naming the public archive, as one from before the log's first
+segment on the host is; a financing charge's rows are re-derived, or checked against their file, only
+from there on; and the archive, whose answers are not signed, lists and serves only the segments the
+start read, from the one holding the checkpoint on, which a member needs to start from the snapshot. A rotation member's or a
+standby's copy fetched from an archive mirror may hold altered segments before its snapshot. It never
+serves them, and a whole replay of the copy, as when no snapshot passes, refuses them.
 
 What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
 signer it pins, the attested signers, or the vault's signer history, and computes everything else

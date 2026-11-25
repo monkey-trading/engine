@@ -340,6 +340,16 @@ impl Flow {
         Flow { traders, rates, moves: BTreeMap::new(), published: None, due, origin_ms: None, ran_us: 0, blocks: 0 }
     }
 
+    /// Moves the flow's time on by `by` with nothing sequenced, as a quiet stretch of a day does: its next run goes
+    /// on that much later, from where `node`'s clock, advanced as much, stands.
+    pub(super) fn skip(&mut self, node: &mut Node, by: Duration) {
+        node.clock.advance(by);
+        node.seq.trust(sample_around(node.clock.as_ref())).expect("a trusted time sample");
+        if let Some(origin) = self.origin_ms.as_mut() {
+            *origin += Millis::try_from(by.as_millis()).expect("a skip within the time range");
+        }
+    }
+
     /// Sequences the next `span` of flow at `multiple` times launch flow into `node`, calling `day` with
     /// what each whole day of it sequenced and the wall time it took.
     pub(super) fn run(

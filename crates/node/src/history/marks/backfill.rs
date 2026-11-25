@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::config::{BackfillSection, FeedsSection, Venue};
 use crate::history::marks::Resolution;
-use crate::history::marks::run::{BATCH, FLUSH_EVERY, Live};
+use crate::history::marks::run::{BATCH, FLUSH_EVERY, Live, write_freezes};
 use crate::history::marks::store::{Seed, Store};
 use anyhow::{Context, bail, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -303,12 +303,20 @@ async fn fetch_rows(
 
 /// The run loop's live-sample service, shared with a backfill's slow fetches: drain the queue
 /// into the buffer, and flush at the batch or the one-second deadline, so a quiet market's
-/// newest mark reaches the cache within the same second it would without a backfill running.
+/// newest mark reaches the cache within the same second it would without a backfill running. A
+/// daily snapshot's freeze is written here, after the samples before it, so a backfill of minutes
+/// does not hold its snapshot's anchors past the writer's wait.
 /// Error cases:
 /// - the store rejects the flush
 fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
     while let Ok(report) = live.samples.try_recv() {
         live.take(report);
+    }
+    if !live.freezes.is_empty() {
+        store.observe(&live.buffered).context(StoreFault)?;
+        live.buffered.clear();
+        write_freezes(store, std::mem::take(&mut live.freezes)).context(StoreFault)?;
+        live.flushed_at = tokio::time::Instant::now();
     }
     if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
         store.observe(&live.buffered).context(StoreFault)?;

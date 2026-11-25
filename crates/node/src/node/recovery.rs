@@ -57,8 +57,8 @@ pub(super) async fn recover(
     }
     // A start from a daily snapshot reads no log before its checkpoint; none means a whole replay. Without
     // `[snapshots]` it is chosen now, so the dashboard record and the marks cache start from the history it carries;
-    // with them a recovery cache comes first, and one is chosen only when a replay of the log, or the cache's pass
-    // over the log's prefix, needs it, the record and the cache then starting at the log's start or the cache's.
+    // with them a recovery cache comes first, and one is chosen only for the cache's pass over the log's prefix,
+    // the record and the cache then starting at the cache's, or at the log's start when no cache is taken.
     let mut start = match cfg.snapshots {
         Some(_) => None,
         None => snapshot::chosen(cfg, key, setup).await,
@@ -173,9 +173,6 @@ pub(super) async fn read_log_and_history_authorities(
         .await
         .inspect_err(|e| error!(alert = "log_heads_startup_failed", "refusing to serve: {e:#}"))?;
     let capture = pending.as_ref().and_then(crate::log_heads::setup::Pending::posted);
-    let from = |start: &Option<crate::daily_snapshots::Signed>| {
-        start.as_ref().map(|start| (start.snapshot.offset, start.snapshot.checkpoint.clone()))
-    };
     if cfg.snapshots.is_some() {
         // Snapshot recovery replays the authenticated suffix only and attaches no marks sink, so the
         // cache keeps the rows it imported and the provider backfill gives the depth they lack.
@@ -192,39 +189,12 @@ pub(super) async fn read_log_and_history_authorities(
                 .inspect_err(recovery_failed)?;
         let (log, plan) = match cached {
             Some(recovered) => recovered,
+            // With no cache to take, the history index is rebuilt from the whole log, which this start then
+            // replays whole too, so the history it indexes is the log it verified.
             None => {
-                if let Some(start) = start.take() {
-                    chosen = start.await;
-                }
-                let file = chosen.as_ref().map(|start| (start.path.clone(), start.snapshot.offset.seq));
-                let evidence = authorities(from(&chosen)).await?;
-                let stats = Some(stats.clone());
-                let read = Sequencer::replay_paired_log(
-                    cfg,
-                    signer,
-                    parent,
-                    evidence,
-                    stats.clone(),
-                    capture,
-                    chosen,
-                    &mut observe,
-                );
-                match read {
-                    // Refused before any entry is read: the whole replay starts the record over.
-                    Err(refused) if refused.is::<SnapshotRefused>() => {
-                        let (file, seq) = file.expect("only a replay from a daily snapshot is refused");
-                        warn!(
-                            alert = "snapshot_start_refused",
-                            seq,
-                            "the start does not go on from daily snapshot {}: {refused:#}; the whole log replays",
-                            file.display()
-                        );
-                        let evidence = authorities(None).await?;
-                        Sequencer::replay_paired_log(cfg, signer, parent, evidence, stats, capture, None, observe)
-                    }
-                    read => read,
-                }
-                .inspect_err(recovery_failed)?
+                let (authorities, stats) = (authorities(None).await?, Some(stats.clone()));
+                Sequencer::replay_paired_log(cfg, signer, parent, authorities, stats, capture, observe)
+                    .inspect_err(recovery_failed)?
             }
         };
         return Ok((log, HistoryPlan::authenticated(plan)?, pending));

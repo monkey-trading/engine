@@ -34,6 +34,24 @@ impl Manifest {
         Ok(())
     }
 
+    /// Refuses an answer the enclave vouches for, from `seq` on, that would read entries this node's start did
+    /// not verify (`verified_from`), as one from before the first segment on this host is refused.
+    /// Error cases:
+    /// - `seq` is before `verified_from` (`NotLocal`, naming the archive)
+    pub(crate) fn ensure_served(&self, seq: u64) -> Result<(), crate::log::NotLocal> {
+        match seq < self.verified_from {
+            true => Err(crate::log::NotLocal { seq, first_local: Some(self.verified_from) }),
+            false => Ok(()),
+        }
+    }
+
+    /// Whether the archive serves `info`'s segment: one this node's start read, so its bytes are its listing's, from
+    /// the one holding the checkpoint before `verified_from` on, which a member needs to start from that checkpoint's
+    /// snapshot.
+    pub(crate) fn archived(&self, info: &SegmentInfo) -> bool {
+        self.ensure_served(info.last_seq.saturating_add(1)).is_ok()
+    }
+
     /// Completed segment count, without hydrating historical descriptors.
     pub fn completed_len(&self) -> u64 {
         self.catalog.as_ref().map_or(self.segments.len() as u64, |c| c.len())
@@ -101,7 +119,8 @@ impl Manifest {
         Ok(Some(active))
     }
 
-    /// Explicitly lists the canonical public manifest; normal startup never calls this method.
+    /// Explicitly lists the canonical public manifest, of the segments this node's start read (`archived`); normal
+    /// startup never calls this method.
     /// Error cases:
     /// - a required catalog proof fails or a listing cannot be encoded
     pub fn canonical_jsonl(&self) -> anyhow::Result<Vec<u8>> {
@@ -110,7 +129,8 @@ impl Manifest {
                 self.ensure_verified()?;
                 catalog.to_jsonl()
             }
-            None => self.segments.iter().try_fold(Vec::new(), |mut out, info| {
+            // A segment this node's start did not read is the host's word, and not listed (`archived`).
+            None => self.segments.iter().filter(|info| self.archived(info)).try_fold(Vec::new(), |mut out, info| {
                 out.extend(listing_line(info)?);
                 Ok(out)
             }),

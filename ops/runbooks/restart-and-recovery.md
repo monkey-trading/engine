@@ -47,8 +47,8 @@ their output call a running trading server a node.
   or none written yet, as in a log's first day) replays every instruction in the log: 30 days of launch
   flow, about 246 million instructions, take about 11 hours, and the log's segments before the newest
   snapshot must all be on the host. With `[snapshots]`, a start that finds no usable cache
-  (`snapshot_rejected`) starts from a daily snapshot in the same way, or replays the whole log, and also
-  rebuilds the history index from the whole log, which takes longer still. With `[daily_snapshots]`
+  (`snapshot_rejected`) replays the whole log, and also rebuilds the history index from it, which takes
+  longer still. With `[daily_snapshots]`
   too, it rejects a cache that carries no replay state, as one from an earlier release or taken while
   the stats worker was stopped, so its daily snapshots go on. Plan a restart's downtime from these.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
@@ -297,7 +297,11 @@ affected.
 
 2. Without `[snapshots]`, remove `history/`, and nothing else. With `[snapshots]`, the account
    history index is in `snapshots/`: remove `snapshots/` and `history/`, and nothing else. The
-   recovery caches go with them, so this start replays the whole log.
+   recovery caches go with them, so this start replays the whole log. Without `[snapshots]`, a start
+   still goes on from the newest daily snapshot, and the chart history before it is lost with
+   `history/` (`marks_cache_rebuilt`). To derive it again from the log, also move the
+   `[daily_snapshots]` directory aside for this start, which then replays the whole log, and move it
+   back once the server sequences.
 
 3. Start the VM. The rebuild is a replay, so allow time in proportion to the length of the log. The
    account history index is rebuilt from the log's start, so every segment of the log must be on the

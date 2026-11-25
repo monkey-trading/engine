@@ -105,8 +105,9 @@ pub(crate) async fn sync_predecessor_log(
     }
     // A poisoned copy must surface now, not after the predecessor has stopped: archive bytes were
     // only hash-checked against the server's own manifest, and this replay of the restored copy, from
-    // a snapshot a recorded signer signed or from its first entry, is the authenticity check, as the
-    // standby's cold start does. It requires every seal, so the copy's command prefix is the predecessor's.
+    // a snapshot a recorded signer signed or from its first entry, is the authenticity check of what it
+    // reads, as the standby's cold start does. It requires every seal, so the copy's command prefix is the
+    // predecessor's; what it does not read, before the snapshot, this node never serves once it sequences.
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
     let start = copy_start(snapshots, dir, (domain, &signers), finalized).await;

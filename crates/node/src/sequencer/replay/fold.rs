@@ -28,6 +28,8 @@ pub(crate) struct Fold {
     authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
     /// Approvals the last command made that the engine does not keep, awaiting their withdrawal entries.
     approved: VecDeque<(AccountId, Fixed, u64)>,
+    /// The access source's failure episode, as a replay follows it.
+    access: crate::sequencer::access::AccessAlerts,
     /// The seq of the checkpoint folded last, while no entry has followed it.
     at_checkpoint: Option<u64>,
 }
@@ -69,9 +71,10 @@ impl Fold {
             authorized: Vec::new(),
             deferred: replay.deferred.clone(),
             requires_checkpoint_gate: replay.requires_checkpoint_gate,
+            access_failed_since: None,
         };
-        let (links, approved) = (replay.recent.clone(), replay.approved.clone());
-        Ok(Self { state, links, authorized, approved, at_checkpoint })
+        let (links, approved, access) = (replay.recent.clone(), replay.approved.clone(), replay.access_alerts.clone());
+        Ok(Self { state, links, authorized, approved, access, at_checkpoint })
     }
 
     /// The state a daily snapshot of the checkpoint at `seq`, folded last, carries.
@@ -86,6 +89,7 @@ impl Fold {
         let mut carried = self.state.clone();
         carried.links = self.links.iter().copied().collect();
         carried.authorized = self.authorized.values().cloned().collect();
+        carried.access_failed_since = self.access.failed_since();
         Ok(carried)
     }
 
@@ -111,6 +115,7 @@ impl Fold {
         before: ProtocolVersion,
         (link, sealer): (B256, Option<AccountId>),
     ) -> anyhow::Result<()> {
+        self.access.observe(engine, &sequenced.cmd, events);
         let (seq, ts, state) = (sequenced.seq, sequenced.ts, &mut self.state);
         state.genesis.command(sequenced, events);
         if crate::sequencer::house::applied_set_params(&sequenced.cmd, events) {

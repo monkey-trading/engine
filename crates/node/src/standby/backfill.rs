@@ -4,9 +4,11 @@
 //! a takeover refuses a copy that does not, once the operator is gone. A copy that does not is set aside
 //! and backfilled again from the operator in effect alone, paging Critical `standby_backfill_refused`, and
 //! so is one a mirror cut short of its first checkpoint, which no replay can check. A copy is marked
-//! checked only while every byte it holds has replayed or come from the operator's signed stream. Each replay
-//! goes on from the newest daily snapshot this node holds whose checkpoint the copy holds, at or before the
-//! vault's finalized checkpoint (`handover::copy_start`), and reads nothing of the copy before it.
+//! checked only while every byte it holds after the replay's start has replayed or come from the operator's
+//! signed stream. Each replay goes on from the newest daily snapshot this node holds whose checkpoint the copy
+//! holds, at or before the vault's finalized checkpoint (`handover::copy_start`), and reads nothing of the copy
+//! before it: those segments stay the mirror's word, which the node never serves once it sequences
+//! (`log::Manifest::verified_from`), and which a whole replay of the copy, when no snapshot passes, checks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

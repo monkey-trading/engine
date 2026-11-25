@@ -38,6 +38,11 @@ pub struct Manifest {
     /// The offset of the last entry the writer has flushed, which readers yield nothing after;
     /// `None` before the first. Only the writer's copy carries it: the file lists segments alone.
     pub flushed: Option<Offset>,
+    /// The first seq this node's start verified, with no signed catalog: one that went on from a daily snapshot
+    /// read nothing before the command after its checkpoint, so the segments before it are the host's word, and
+    /// no answer the enclave vouches for, a stream's backfill, the archive or a re-derivation, serves from them
+    /// (`ensure_served`). Zero for a start that read every segment, or one whose catalog vouches for them.
+    pub verified_from: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -286,6 +286,8 @@ impl Deriver {
                 if from == 0 {
                     self.replays.inc();
                 }
+                // Rows are vouched for only from the log this node's start verified.
+                manifest.borrow().ensure_served(from)?;
                 let reader = LogReader::open(dir, Offset::start_of(from), manifest.clone())?;
                 Replay { reader, engine }
             }

@@ -5,7 +5,7 @@ use std::path::Path;
 use tokio::task::spawn_blocking;
 
 use crate::api::ApiError;
-use crate::log::Offset;
+use crate::log::{Manifest, Offset};
 
 /// The offset a stream starts at: after `after`, at the first message of seq `from`, or with the next
 /// message when it gives neither.
@@ -20,13 +20,16 @@ pub(super) fn offset(after: Option<Offset>, from: Option<u64>) -> Result<Option<
     }
 }
 
-/// Refuses a backfill from `start`, a seq the segments on this host do not reach back to: the log's oldest
-/// segments are in its public archive, which the answer names. A log that cannot be checked is left to the
-/// feed's own read.
+/// Refuses a backfill from `start`, a seq the segments on this host do not reach back to, or one before the
+/// first seq this node's start verified, as `manifest` publishes it (`Manifest::ensure_served`): the log's
+/// oldest segments are in its public archive, which the answer names. A log that cannot be checked is left to
+/// the feed's own read.
 /// Error cases:
-/// - the segment holding `start` is listed but not on this host (`NotLocal`)
-pub(super) async fn ensure_held(dir: &Path, start: Option<Offset>) -> Result<(), ApiError> {
+/// - `start` is before the first verified seq, or the segment holding it is listed but not on this host
+///   (`NotLocal`)
+pub(super) async fn ensure_held(dir: &Path, manifest: &Manifest, start: Option<Offset>) -> Result<(), ApiError> {
     let Some(start) = start else { return Ok(()) };
+    manifest.ensure_served(start.seq).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let dir = dir.to_owned();
     match spawn_blocking(move || crate::log::ensure_local(&dir, start.seq)).await {
         Ok(Err(e)) if e.is::<crate::log::NotLocal>() => Err(ApiError::BadRequest(format!("{e:#}"))),

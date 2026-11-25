@@ -24,6 +24,9 @@ pub(super) struct Marks {
     tx: Option<mpsc::Sender<Report>>,
     last: BTreeMap<MarketId, Fixed>,
     pending: Vec<Report>,
+    /// Freezes the queue had no room for, sent first at the next release; a sample behind one is dropped, so
+    /// no mark of a later command reaches the cache before its frozen copy is written.
+    held: Vec<Report>,
     overflow_warned: bool,
     /// The dashboard record every applied command is added to, once the node attaches it.
     stats: Option<crate::stats::Stats>,
@@ -79,20 +82,30 @@ impl Marks {
         std::mem::take(&mut self.pending)
     }
 
-    /// Sends `reports`, whose commands are durable. A full queue drops the report: the cache is
-    /// derived, and the next change or a recovery reseeds it, and a dropped freeze leaves its
-    /// snapshot no marks anchors; one alert per episode says so, and the first batch the queue
-    /// takes whole ends the episode.
+    /// Sends `reports`, whose commands are durable, after any freeze held back. A full queue drops a
+    /// sample: the cache is derived, and the next change or a whole replay reseeds it; one alert per
+    /// episode says so, and the first batch the queue takes whole ends the episode. A freeze it has no
+    /// room for is held back for the next release, and the samples behind it are dropped meanwhile.
     pub(super) fn release(&mut self, reports: Vec<Report>) {
-        if reports.is_empty() {
+        if reports.is_empty() && self.held.is_empty() {
             return;
         }
-        let Some(tx) = &self.tx else { return };
+        let Some(tx) = self.tx.clone() else { return };
         let mut dropped = false;
         let mut closed = false;
-        for report in reports {
+        let mut queued = std::mem::take(&mut self.held);
+        queued.extend(reports);
+        for report in queued {
+            if !self.held.is_empty() {
+                match report {
+                    Report::Freeze(_) => self.held.push(report),
+                    Report::Sample(_) => dropped = true,
+                }
+                continue;
+            }
             match tx.try_send(report) {
                 Ok(()) => {}
+                Err(TrySendError::Full(Report::Freeze(freeze))) => self.held.push(Report::Freeze(freeze)),
                 Err(TrySendError::Full(_)) => dropped = true,
                 Err(TrySendError::Closed(_)) => closed = true,
             }
@@ -107,7 +120,7 @@ impl Marks {
         if dropped && !self.overflow_warned {
             warn!(
                 alert = "marks_samples_dropped",
-                "the marks queue is full; dropped samples reseed at the next recovery"
+                "the marks queue is full; dropped samples reseed at the next whole replay"
             );
             self.overflow_warned = true;
         } else if !dropped && self.overflow_warned {
@@ -217,5 +230,26 @@ mod tests {
         assert_eq!(sample(rx.try_recv().unwrap()).0, 1, "the mark before the freeze goes first");
         assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
         assert!(Marks::default().freeze(offset).is_none(), "no marks task, no freeze");
+    }
+
+    /// A freeze the full queue has no room for is held back, not dropped, with the samples behind it dropped so none
+    /// reaches the cache before it, and goes first once the queue has room.
+    #[test]
+    fn a_freeze_waits_for_room_and_no_later_mark_overtakes_it() {
+        let (mut marks, mut rx) = marks_with(1);
+        let offset = Offset { seq: 5, index: 2 };
+        marks.pending = samples(&[(1, 10, 1)]);
+        assert!(marks.freeze(offset).is_some());
+        marks.pending.extend(samples(&[(2, 11, 2)]));
+        let pending = marks.take_pending();
+        marks.release(pending);
+        assert_eq!(sample(rx.try_recv().unwrap()).0, 1, "the mark before the freeze fills the queue");
+        assert!(rx.try_recv().is_err(), "neither the freeze nor the mark behind it went");
+        assert!(marks.overflow_warned, "the mark behind the freeze was dropped");
+        marks.release(samples(&[(1, 12, 3)]));
+        assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
+        assert!(rx.try_recv().is_err(), "the next mark waited behind the freeze, and was dropped");
+        marks.release(samples(&[(1, 13, 4)]));
+        assert_eq!(sample(rx.try_recv().unwrap()).2, Fixed::from_int(4), "marks go again once the freeze has");
     }
 }

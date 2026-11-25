@@ -58,12 +58,14 @@ fn dev_scenario_snapshot_start() {
     let signer = AccountId(key.address());
     let signers = [signer].into();
 
-    // The node publishes a snapshot at its first checkpoint, and at its first past each of two midnights.
+    // The node publishes a snapshot at its first checkpoint, and at its first past each of two midnights, paging
+    // nothing on any thread.
+    let mut paged = crate::test_support::capture_alerts_everywhere();
     let mut node = Node::publishing(base.engine(), &log, key.clone(), Some(&snapshots));
     let mut flow = Flow::new(traders, BTreeMap::from([(1, 11.0)]));
     for _ in 0..2 {
         let to_midnight = DAY_MS - node.clock.now_ms().rem_euclid(DAY_MS);
-        node.clock.advance(Duration::from_millis(u64::try_from(to_midnight).unwrap()) - BEFORE_MIDNIGHT);
+        flow.skip(&mut node, Duration::from_millis(u64::try_from(to_midnight).unwrap()) - BEFORE_MIDNIGHT);
         flow.run(&mut node, FLOW, 1.0, |_, _, _| {});
     }
     node.checkpoint_now();
@@ -76,7 +78,9 @@ fn dev_scenario_snapshot_start() {
     }
     drop(node);
     let listed = listed();
-    assert_eq!(listed.len(), 3, "a snapshot at the first checkpoint and past each midnight: {listed:?}");
+    let paged: Vec<_> = std::iter::from_fn(|| paged.try_recv().ok()).collect();
+    assert_eq!(listed.len(), 3, "a snapshot at the first checkpoint and past each midnight: {listed:?}, {paged:?}");
+    assert!(paged.is_empty(), "the node paged: {paged:?}");
     let newest = listed[2].clone();
     let at = Offset { seq: newest.seq, index: newest.index };
     print_sizes(&snapshots.join(&newest.file));
@@ -167,7 +171,7 @@ fn dev_scenario_snapshot_start() {
         std::fs::write(&path, &written).expect("the snapshot restored");
         let in_ranges = replay_ranges_from(&|| base.engine(), &archive, &snapshots, trust(), jobs).expect("ranges");
         let whole = Audited::from(whole);
-        assert_eq!(in_ranges.ranges, 3, "a range from genesis and one from each later snapshot");
+        assert_eq!(in_ranges.ranges, listed.len() + 1, "a range from genesis and one from each snapshot");
         assert_eq!((in_ranges.commands, in_ranges.checkpoints), (whole.commands, whole.checkpoints));
         assert_eq!(state(&in_ranges.engine), state(&whole.engine), "the ranges end in the whole log's state");
     });

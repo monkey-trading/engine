@@ -341,8 +341,10 @@ an index: load only the rule whose hint matches the current action.
   `replay_copy_from`) take, with signer history from its checkpoint (`checkpoints/history.rs`), a posted head under
   it bound to the prefix it carries (`log_heads/prefix.rs`), the takeover cut read from the vault's checkpoint on,
   derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
-  dashboard record restored from the snapshot (a `[snapshots]` fallback's too) and the marks cache from the frozen copy
+  dashboard record restored from the snapshot and the marks cache from the frozen copy
   its anchors match, written by the marks task between the marks before the checkpoint and those after, synced in steps,
+  nothing the enclave vouches for read from the segments before the snapshot (`Manifest::verified_from`: the stream's
+  backfill, the archive, re-derived rows), a `[snapshots]` start with no cache replaying the whole log,
   a `[snapshots]` start under `[daily_snapshots]` taking only a recovery cache that carries its replay state, the entries
   a recovery logs before the stats worker starts folded into its seed (`Captures::fold_before_worker`), a member
   answering a log-check question only for a range that starts after its snapshot (`Checked::from`), and the log's

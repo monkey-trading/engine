@@ -164,13 +164,7 @@ async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
     live.flushed_at = Instant::now();
     let freezes = std::mem::take(&mut live.freezes);
     let mut job = tokio::task::spawn_blocking(move || {
-        for (Freeze { offset, reply }, mut after) in freezes {
-            match store.freeze(offset) {
-                Ok(frozen) => drop(reply.try_send(frozen)),
-                Err(e) => warn!(seq = offset.seq, "no frozen marks cache for the daily snapshot at {offset}: {e:#}"),
-            }
-            write(&mut store, &mut after)?;
-        }
+        write_freezes(&mut store, freezes)?;
         anyhow::Ok(store)
     });
     let mut open = true;
@@ -183,6 +177,21 @@ async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
             },
         }
     }
+}
+
+/// Writes each of `freezes`' frozen copies in order (`Store::freeze`), handing its end the anchors, then the
+/// samples received after it, before the next. A copy that cannot be written is logged, and its end gets nothing.
+/// Error cases:
+/// - the samples after a freeze cannot be written
+pub(super) fn write_freezes(store: &mut Store, freezes: Vec<(Freeze, Vec<MarkSample>)>) -> anyhow::Result<()> {
+    for (Freeze { offset, reply }, mut after) in freezes {
+        match store.freeze(offset) {
+            Ok(frozen) => drop(reply.try_send(frozen)),
+            Err(e) => warn!(seq = offset.seq, "no frozen marks cache for the daily snapshot at {offset}: {e:#}"),
+        }
+        write(store, &mut after)?;
+    }
+    Ok(())
 }
 
 impl Live {
