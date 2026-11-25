@@ -247,9 +247,7 @@ pub(crate) fn replay_copy_from(
     let replay = Replay::copy(domain, attested.clone());
     match replay.replay_after(start, path, SealChecks::Every(workers), |_| Ok(())) {
         Ok((replay, _)) => Ok((attested_end(replay.finish(), path, &attested)?, Some(seq))),
-        Err(refused)
-            if refused.is::<SnapshotRefused>() =>
-        {
+        Err(refused) if refused.is::<SnapshotRefused>() => {
             warn!(
                 alert = "snapshot_start_refused",
                 seq,
