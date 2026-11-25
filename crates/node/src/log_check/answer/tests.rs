@@ -16,10 +16,29 @@ use crate::test_support::dev_config;
 const DIGEST: [u8; 48] = [0x33; 48];
 pub(crate) const TURN: u64 = 20_755;
 
+/// A replica that went on from a daily snapshot attests a checkpoint only for a range that starts at or after the
+/// first command it applied, and one that replayed its whole copy attests any range.
+#[tokio::test]
+async fn a_replica_from_a_snapshot_attests_only_a_range_it_applied_whole() {
+    let nonce = [0x5d; 32];
+    for (from, range, attested) in [(0, 0, true), (21, 21, true), (21, 30, true), (21, 20, false), (21, 0, false)] {
+        let checked = CheckedHeads::default();
+        checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from });
+        let asked = Statement { from: range, ..statement(head(40)) };
+        match answering(checked).answer(&ask(&nonce, asked)).await {
+            Answer::Verified { .. } => assert!(attested, "a replica from seq {from} attested a range from seq {range}"),
+            Answer::Refused { reason } => {
+                assert!(!attested, "a replica from seq {from} refused a range from seq {range}: {reason}");
+                assert!(reason.contains("applied the log from seq"), "{reason}");
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     let answering = answering(checked);
     let nonce = [0x5c; 32];
     let asked = statement(head(40));
@@ -77,15 +96,15 @@ async fn a_member_attests_only_the_checkpoint_its_replica_verified_in_that_turn(
 fn the_checked_heads_keep_the_latest_and_a_rebuild_replaces_what_it_replays_again() {
     let checked = CheckedHeads::default();
     for seq in [10, 20, 30] {
-        checked.record(Checked { head: head(seq), taken: None, signer: operator() });
+        checked.record(Checked { head: head(seq), taken: None, signer: operator(), from: 0 });
     }
     // A rebuilt replica replays from the start: a checkpoint at or before the last drops the later ones.
-    checked.record(Checked { head: head(20), taken: Some((TURN, 0)), signer: operator() });
+    checked.record(Checked { head: head(20), taken: Some((TURN, 0)), signer: operator(), from: 0 });
     assert_eq!(checked.at(30), None);
     assert_eq!(checked.at(20).and_then(|checked| checked.taken), Some((TURN, 0)));
     assert_eq!(checked.latest(), Some(20));
     for seq in 21..(21 + RETAINED as u64) {
-        checked.record(Checked { head: head(seq), taken: None, signer: operator() });
+        checked.record(Checked { head: head(seq), taken: None, signer: operator(), from: 0 });
     }
     assert_eq!((checked.at(10), checked.at(20)), (None, None), "more than the retained checkpoints are kept");
     assert!(checked.at(21).is_some());
@@ -94,7 +113,7 @@ fn the_checked_heads_keep_the_latest_and_a_rebuild_replaces_what_it_replays_agai
 #[tokio::test]
 async fn a_member_answers_over_its_endpoint_while_it_runs_past_an_idle_connection_and_frees_it_once_dropped() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     let answering = answering(checked);
     let listen = answering.listen;
     let nonce = [0x7a; 32];
@@ -150,7 +169,7 @@ impl Attestor for Counting {
 #[tokio::test]
 async fn a_replayed_question_is_answered_with_the_evidence_already_produced() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     let quotes = Arc::new(AtomicUsize::new(0));
     let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
     let (nonce, question) = ([0x21; 32], statement(head(40)));
@@ -160,8 +179,8 @@ async fn a_replayed_question_is_answered_with_the_evidence_already_produced() {
     assert_eq!(quotes.load(Ordering::SeqCst), 1, "a replay made the member quote again");
     // The same challenge under a statement the signer also signed is not the question it answered.
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
-    checked.record(Checked { head: head(41), taken: Some((TURN, 2)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
+    checked.record(Checked { head: head(41), taken: Some((TURN, 2)), signer: operator(), from: 0 });
     let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
     assert!(matches!(answering.answer(&ask(&nonce, question)).await, Answer::Verified { .. }));
     let other = Statement { head: head(41), position: 2, ..question };
@@ -174,7 +193,7 @@ async fn a_replayed_question_is_answered_with_the_evidence_already_produced() {
 #[tokio::test]
 async fn a_member_quotes_at_most_a_set_number_of_times_a_minute() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     let quotes = Arc::new(AtomicUsize::new(0));
     let answering = answering_with(checked, Box::new(Counting(quotes.clone())));
     let mut refused = 0;
@@ -191,7 +210,7 @@ async fn a_member_quotes_at_most_a_set_number_of_times_a_minute() {
 #[tokio::test]
 async fn a_full_table_drops_the_oldest_silent_connection_for_the_operators_question() {
     let checked = CheckedHeads::default();
-    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator() });
+    checked.record(Checked { head: head(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     let mut answering = answering(checked);
     // Every connection here shares one address, so let it hold the whole table.
     (answering.connections, answering.per_peer) = (2, 3);
@@ -240,7 +259,7 @@ fn answering_with(checked: CheckedHeads, attestor: Box<dyn Attestor>) -> Answeri
 
 /// The statement of `head` at `TURN`'s boundary, position 1.
 pub(crate) fn statement(head: VerifiedHead) -> Statement {
-    Statement { signer_epoch: 1, boundary: boundary(TURN), turn: TURN, position: 1, set: 1, head }
+    Statement { signer_epoch: 1, boundary: boundary(TURN), turn: TURN, position: 1, set: 1, head, from: 0 }
 }
 
 /// The operator's question of `statement` under `nonce`, signed by the operator enclave's key.

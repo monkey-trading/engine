@@ -153,7 +153,7 @@ fn dev_scenario_member_snapshot_start() {
 
 /// Serves the log in `log` and the daily snapshots in `snapshots` as a node's archive does, over plain HTTP on
 /// loopback: its base URL.
-async fn serve(log: &Path, snapshots: &Path) -> String {
+pub(super) async fn serve(log: &Path, snapshots: &Path) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener");
     let url = format!("http://{}", listener.local_addr().expect("its address"));
     let file = |dir: &Path| {

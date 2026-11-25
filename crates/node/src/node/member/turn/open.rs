@@ -95,7 +95,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let segment_commands = self.cfg.node.segment_commands;
         let daily = self.cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone());
         let rows =
-            Arc::new(RowsStore::new(&self.cfg.history.dir, self.cfg.history.retention_ms()?).from_snapshots(daily));
+            Arc::new(RowsStore::new(&self.cfg.history.dir, self.cfg.history.retention_ms()?).with_snapshots(daily));
         let kept = (Some(stats.clone()), Some(marks.clone()), Some(self.checked.clone()), Some(rows));
         let stopping = &self.stopping;
         let pins = (posted, keep);

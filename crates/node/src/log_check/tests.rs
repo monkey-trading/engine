@@ -384,6 +384,7 @@ fn the_report_data_and_the_question_bind_every_part_of_the_statement_and_the_cha
         position: 1,
         set: 1,
         head: head(39),
+        from: 21,
     };
     let variants = [
         (CheckpointDomain { chain_id: 1, ..domain }, [1; 32], statement),
@@ -396,6 +397,7 @@ fn the_report_data_and_the_question_bind_every_part_of_the_statement_and_the_cha
         (domain, [1; 32], Statement { head: head(40), ..statement }),
         (domain, [1; 32], Statement { head: VerifiedHead { link: B, ..head(39) }, ..statement }),
         (domain, [1; 32], Statement { head: VerifiedHead { root: B, ..head(39) }, ..statement }),
+        (domain, [1; 32], Statement { from: 22, ..statement }),
     ];
     let base = report_data(domain, &[1; 32], &statement, &[2; 32]);
     assert_ne!(report_data(domain, &[1; 32], &statement, &[4; 32]), base, "another config");

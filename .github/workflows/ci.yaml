@@ -327,7 +327,7 @@ jobs:
                   | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
                   | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh \
                   | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh | scripts/dev-storage-alerts.sh \
-                  | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh)
+                  | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh | scripts/dev-snapshot-start.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -893,6 +893,8 @@ jobs:
         run: ./scripts/dev-daily-snapshots.sh
       - name: Run the member snapshot start dev scenario
         run: ./scripts/dev-member-snapshot-start.sh
+      - name: Run the snapshot start dev scenario
+        run: ./scripts/dev-snapshot-start.sh
       - name: Run the disk alerts dev scenario
         run: ./scripts/dev-storage-alerts.sh
       - name: Run the history retention dev scenario

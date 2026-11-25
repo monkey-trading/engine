@@ -177,7 +177,7 @@ impl Deriver {
     }
 
     /// This deriver, its replays starting from the daily snapshots in `dir`, when given.
-    pub(crate) fn from_snapshots(self, dir: Option<PathBuf>) -> Self {
+    pub(crate) fn with_snapshots(self, dir: Option<PathBuf>) -> Self {
         Self { snapshots: dir, ..self }
     }
 

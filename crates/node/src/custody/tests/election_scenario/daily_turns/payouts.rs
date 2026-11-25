@@ -271,8 +271,15 @@ async fn refuse_own(node: &Node, b: &Member) {
     })
     .await;
     let boundary = engine_core::turns::boundary(due.turn).unwrap();
-    let statement =
-        Statement { signer_epoch: 1, boundary, turn: due.turn, position: due.position, set: due.set, head: due.head };
+    let statement = Statement {
+        signer_epoch: 1,
+        boundary,
+        turn: due.turn,
+        position: due.position,
+        set: due.set,
+        head: due.head,
+        from: due.from,
+    };
     let (nonce, domain) = ([0x6b; 32], CheckpointDomain { chain_id: 31_337, vault: node.state.operator.vault });
     let release = b.release();
     let quoting = Quoting { provider: TeeProvider::Mock, processor: None, kds_base: "https://kds.test" };

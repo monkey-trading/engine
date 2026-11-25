@@ -124,7 +124,7 @@ impl Plan {
                     self.history.retention_ms()?,
                 )?;
                 let rows =
-                    RowsStore::new(&self.history.dir, self.history.retention_ms()?).from_snapshots(self.daily.clone());
+                    RowsStore::new(&self.history.dir, self.history.retention_ms()?).with_snapshots(self.daily.clone());
                 crate::sequencer::history_rebuild::rebuild_history_view(
                     &self.log_dir,
                     log.manifest_view(),
@@ -191,7 +191,7 @@ impl Plan {
         let log_dir = self.log_dir;
         let domain = self.domain;
         let repair_lifecycle = lifecycle.clone();
-        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?).from_snapshots(self.daily);
+        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?).with_snapshots(self.daily);
         let rebuild: runtime::Rebuild = Box::new(move |expected, stopped| {
             rebuild_generation(&repair_lifecycle, &log_dir, &rows, expected, stopped)
         });

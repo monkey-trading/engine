@@ -306,22 +306,45 @@ an index: load only the rule whose hint matches the current action.
   daily snapshots under `[daily_snapshots]` (`daily_snapshots/`: the engine's state at the first checkpoint the node
   writes on each UTC day by sequenced time, encoded by the stats worker's copy once its checkpoint is durable and
   published by a writer thread, each file synced every 4 MiB as it is written (`paced.rs`, as a recovery cache and a rollover's financing rows are), so no large flush builds up behind the log's syncs, then its manifest line synced, every day's kept, a day the writer is still
-  busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; each signed by the enclave key over
-  the deployment, its checkpoint's offset and root and the SHA-256 of the engine's encoding (`daily_snapshots/signature.rs`,
-  schema 2 in the file, the manifest line unchanged, schema 1 still read); served at
+  busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; each carrying, beside the engine, the
+  replay state a replay of the log holds after its checkpoint (`sequencer/replay/carried.rs`: the command count, prefix
+  and latest links, checkpoint accounting, genesis progress, activations, parameters' seq, every checkpoint's signer and
+  root, turn takings, approvals in payout order with their latest authorizations and deferred approvals), which the stats
+  worker folds beside its copy (`sequencer/replay/fold.rs`, seeded from the replay a start ends with), and the history
+  anchors (`daily_snapshots/history.rs`: the dashboard record at the checkpoint, and the marks cache's chain anchors, as
+  the marks task's frozen copy of the cache at the checkpoint holds them, `history/marks/store/frozen.rs`); each signed by
+  the enclave key over the deployment, its checkpoint's offset and root and the SHA-256s of the engine's encoding, the
+  replay state and the anchors as written (`daily_snapshots/signature.rs`, schema 3 in the file, the manifest line
+  unchanged, schemas 1 and 2 still read by ranges and passed over by starts); served at
   `/v1/archive/snapshots/{file}`, two checks at once apart from the stream's backfills, Warning
   `daily_snapshot_unreadable`, `api/archive.rs`) and `engine replay --snapshots <dir> --jobs <n>`
   (`sequencer/replay/ranges/`: the log split at each snapshot's checkpoint the log holds and the ranges replayed at
   once, each from its snapshot, whose resting-order index is rebuilt from its accounts' orders
   (`Engine::rebuild_resting`) and whose root, computed over every key, must be the checkpoint's, through the
   checkpoint the next starts from; a pass over their results in log order requires each range to start at the
-  checkpoint entry and from the state, by the SHA-256 of its whole encoding, the one before ends in, resolves the
-  typed payouts' checkpoints, deferred approvals and custody finality activations' legacy credits an entry names
-  before its range, and adds up the counts, signers and activations; only the last range keeps its engine, a snapshot
+  checkpoint entry and from the state, by the SHA-256 of its whole encoding, the one before ends in; when the
+  directory holds a schema-3 snapshot, only those split the log, and each such range goes on from its snapshot's replay
+  state as an ordinary replay, the pass requiring that state to be the one the range before ends with
+  (`Carried::digest`), and otherwise it resolves the typed payouts' checkpoints, deferred approvals and custody
+  finality activations' legacy credits an entry names before its range, and adds up the counts, signers and
+  activations; only the last range keeps its engine, a snapshot
   past the log's last checkpoint, or of a checkpoint the log does not hold, starts no range, and with
   `--custody-config` none starts after the vault's finalized checkpoint, whose checkpoints to ask the vault about come
   from a scan of the log's segments, one per core at a time, that parses only what are not commands (`log/scan.rs`);
-  `sequencer/recovery_scale/daily.rs` is its dev scenario),
+  `sequencer/recovery_scale/daily.rs` is its dev scenario), and the start from the newest usable daily snapshot
+  and the log after it (`node/recovery/snapshot.rs`, `daily_snapshots/start.rs`, `Replay::replay_after` in
+  `sequencer/replay/resumed.rs`: schema 3, signed by its checkpoint's vault-recorded signer, at or before the vault's
+  finalized checkpoint with the vault's root there, its checkpoint held by the local log; the three newest tried,
+  Warning `snapshot_start_refused` for each refused, a whole replay with none), which a node's start, a member's
+  replica, a standby's open, cold start and takeover, and a handover successor's copy (`handover/copy.rs`,
+  `replay_copy_from`) take, with signer history from its checkpoint (`checkpoints/history.rs`), a posted head under
+  it bound to the prefix it carries (`log_heads/prefix.rs`), the takeover cut read from the vault's checkpoint on,
+  derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
+  dashboard record restored from the snapshot and the marks cache from the frozen copy its anchors match, a member
+  answering a log-check question only for a range that starts after its snapshot (`Checked::from`), and the log's
+  readers pairing manifest lines with segment files by name (`log/local.rs`), a read before the first local segment
+  refused with `log::NotLocal`, which names the archive (the stream's backfill answers 400);
+  `sequencer/recovery_scale/snapshot_start.rs` and `node/recovery/history_tests.rs` are its dev scenario),
   packed proof storage (`authenticated/`), dense account-history lists (`history/authenticated/`),
   and authenticated segment metadata (`log/catalog.rs`),
   TEE attestation (configfs-tsm for TDX and SEV-SNP, given only to a guest whose kernel times on the
@@ -376,17 +399,16 @@ an index: load only the rule whose hint matches the current action.
   life (`node/member.rs`, #593: between its turns it follows the operator in effect, resolved from
   the registry's registered hostname and the vault's signer at the latest block each turn and after a failed
   stint, 1 s after the first and doubling to a stint, `standby/operator.rs`, into a copy with a live replica
-  built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`, or, for an empty
-  copy it backfills under `[daily_snapshots]`, from the newest daily snapshot, of those it holds and those its origins
+  built by one replay, `standby/replica.rs` over `sequencer/replay/live.rs`, `node/member/turn.rs`, or, under
+  `[daily_snapshots]`, from the newest daily snapshot, of those it holds and those its origins
   list, whose checkpoint the copy holds and the vault finalized, stamped before the turns of the member in office
   began as the finalized schedule draws them at trusted time (`in_office_since`), the three newest tried in turn, a
   refused fetch removed and a refused held one giving way to an origin's (`daily_snapshots/fetch.rs`,
   `daily_snapshots/start.rs`, `node/member/turn/open.rs`), signed over its
-  state's bytes by that checkpoint's recorded signer, checked before the state is decoded: a pass over the copy before
-  it applies nothing, checks every link, seal, checkpoint signature and root agreement and authorization, refuses a
-  copy with credits or approvals before custody finality, and folds the command prefix, accounting, payout order,
-  takings and the rest (`sequencer/replay/live/before.rs`), the replica
-  replays on from the snapshot, its root checked at its checkpoint, counting no full replay, its own boundary check
+  state's bytes and the replay state it carries by that checkpoint's recorded signer, checked before either is decoded
+  and before no `keep` seq: the replica goes on from the snapshot's engine and carried state (`LiveReplay::resume`,
+  `Replay::resume`) with no read of the copy before the checkpoint, whose segments need not be on the host, its root
+  checked at its checkpoint, counting no full replay, its dashboard record restored from the snapshot, its own boundary check
   counting only a range after the snapshot and answering none (`log_check::own_check`), a thread of its own derives
   the financing rows before the snapshot while it follows, stopped and not awaited at its turn
   (`standby/replica/rows.rs`, `RowsStore::derive_through`), its marks history starting at the snapshot, and any
@@ -868,6 +890,10 @@ an index: load only the rule whose hint matches the current action.
   format. Its `README.md` gives the method, results, limits and how to re-run.
 - **scripts/** — `check-file-loc.sh`, the 500-line cap per Rust file, opted in per crate;
   `dev-corporate-actions.sh`, the signed localhost TLS/API dividend, split and restart scenario;
+  `dev-snapshot-start.sh`, a node's start from its newest daily snapshot with the log before it removed, to what a
+  whole replay gives, a member's replica from it taking the node's turn, an altered snapshot passed over, the ranges
+  replay checking every snapshot's carried state, and the chart history and dashboard series answering as before the
+  start, a deleted marks row refused;
   `dev-operator-bounds.sh`, the operator's bounds on a dev node: benchmark rates inside and outside the
   cap, the worker signing around a refusal, the stress floor's limit and 72-hour lapse, restart and replay;
   `dev-params-notice.sh`, the V49 notice on a dev node: stress parameters and a market's markup refused
@@ -1176,7 +1202,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts and history retention), the log archive's on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1364,6 +1390,14 @@ Run from the repo root:
   the watcher against a free-share threshold above the volume's free space: `disk_space_low` naming the volume, the
   stores' bytes and the volume's space as metrics, and `storage_unreadable` raised and resolved for a store whose
   directory stops listing)
+- Snapshot start dev scenario: `./scripts/dev-snapshot-start.sh` (needs only Cargo; build the test binary first under
+  the build-slot wrapper; a node writing launch flow on a small book across two UTC midnights publishes three
+  snapshots, starts from the newest with the log's segments before it removed, reading only the entries after it, to
+  what a whole replay gives, and sequences; a member with an empty copy builds its replica from the snapshot and takes
+  the node's turn; a snapshot with altered carried state is passed over with Warning `snapshot_start_refused`; the
+  whole log replays in ranges, each snapshot's carried state checked; then a node's chart history and dashboard series
+  answer the same across a start from a snapshot, a deleted marks row before it is refused at serve time, and an
+  altered frozen copy of the cache is refused at the start; it prints the snapshot's sizes and the start's entries)
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
   flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
   it replays to whole, under a pinned and an attested signer, a snapshot past the log's last checkpoint, or of a

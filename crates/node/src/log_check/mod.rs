@@ -74,6 +74,8 @@ pub(crate) struct Due {
     /// The turn's member, whose node asks and is never asked.
     pub candidate: AccountId,
     pub head: VerifiedHead,
+    /// The first seq of the range the check covers: the one after the last verified head.
+    pub from: u64,
     pub excluded: Sequencers,
 }
 
@@ -170,7 +172,8 @@ struct Taking {
 }
 
 /// What a member's verification states, inside its quote: the boundary, the turn assignment and the
-/// vault's signer epoch it was asked under, and the checkpoint its replica verified.
+/// vault's signer epoch it was asked under, the checkpoint its replica verified, and the first seq of the
+/// range it vouches for, which its replica applied every command from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Statement {
@@ -180,6 +183,7 @@ pub(crate) struct Statement {
     pub position: u16,
     pub set: u32,
     pub head: VerifiedHead,
+    pub from: u64,
 }
 
 /// The operator's question to a member: a fresh challenge, hex, the statement to verify, and the
@@ -211,7 +215,7 @@ pub(crate) fn report_data(
     statement: &Statement,
     config_sha256: &[u8; 32],
 ) -> [u8; 64] {
-    let mut hash = statement_hash(b"engine.log-check.v1", domain, nonce, statement);
+    let mut hash = statement_hash(b"engine.log-check.v2", domain, nonce, statement);
     hash.update(config_sha256);
     crate::handover::padded(hash.finalize().into())
 }
@@ -219,7 +223,7 @@ pub(crate) fn report_data(
 /// The digest the operator's enclave key signs over its question: the challenge and the statement,
 /// for this deployment.
 pub(crate) fn ask_digest(domain: CheckpointDomain, nonce: &[u8; 32], statement: &Statement) -> B256 {
-    B256::from(<[u8; 32]>::from(statement_hash(b"engine.log-check-ask.v1", domain, nonce, statement).finalize()))
+    B256::from(<[u8; 32]>::from(statement_hash(b"engine.log-check-ask.v2", domain, nonce, statement).finalize()))
 }
 
 /// A hash under `tag` of the deployment, the challenge and every field of the statement.
@@ -237,6 +241,7 @@ fn statement_hash(tag: &[u8], domain: CheckpointDomain, nonce: &[u8; 32], statem
     hash.update(statement.head.seq.to_be_bytes());
     hash.update(statement.head.link);
     hash.update(statement.head.root);
+    hash.update(statement.from.to_be_bytes());
     hash
 }
 
@@ -321,7 +326,6 @@ impl Takings {
     }
 
     /// The first command the replay collecting the records applied, when it saw earlier ones (`set_applied_from`).
-    #[cfg(test)]
     pub(crate) fn applied_from(&self) -> Option<u64> {
         self.applied_from
     }

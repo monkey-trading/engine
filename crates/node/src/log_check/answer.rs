@@ -63,6 +63,9 @@ pub(crate) struct Checked {
     pub head: VerifiedHead,
     pub taken: Option<(u64, u16)>,
     pub signer: AccountId,
+    /// The first command the replica applied: zero for one that replayed its whole copy, and the one after
+    /// a daily snapshot's checkpoint for one that went on from the snapshot.
+    pub from: u64,
 }
 
 /// The latest checkpoints a member's replica verified, oldest first, shared between the replica that
@@ -322,10 +325,12 @@ impl Answering {
         Ok(evidence)
     }
 
-    /// The checkpoint this member's replica verified for `statement`, in its turn assignment.
+    /// The checkpoint this member's replica verified for `statement`, in its turn assignment, having applied every
+    /// command of the statement's range.
     /// Error cases:
     /// - the boundary is not the turn's, the replica has not reached the seq or no longer retains
     ///   it, or holds another link, root or taken assignment there
+    /// - the replica went on from a daily snapshot after the range's first command, so it applied none before it
     fn verifies(&self, statement: &Statement) -> anyhow::Result<Checked> {
         let head = statement.head;
         anyhow::ensure!(
@@ -354,6 +359,12 @@ impl Answering {
             head.seq,
             statement.turn,
             statement.position
+        );
+        anyhow::ensure!(
+            checked.from <= statement.from,
+            "this replica applied the log from seq {}, after seq {}, where the range it would vouch for starts",
+            checked.from,
+            statement.from
         );
         Ok(checked)
     }

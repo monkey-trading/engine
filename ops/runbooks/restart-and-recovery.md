@@ -29,15 +29,23 @@ their output call a running trading server a node.
   instructions between them, and the index takes them again after the start, so history pages wait
   until it reaches the log's end. Outside those instructions, the start reads only the log's newest
   segments, back to its last checkpoint, so a restart takes no longer on an old log than on a new one.
-- **Some starts replay much more.** A release without `[snapshots]`, as a first release is, replays
-  every instruction in the log at each start. The replay checks the instructions' seals on a pool of
-  threads, one per core unless `node.replay_workers` sets another number, so it runs faster on more
-  cores. The same machine, with six threads checking seals, recovered about 6,300 instructions a
-  second, seeding the marks cache and the dashboard record as it went, so each weekday of launch flow
-  adds about 26 minutes, and 30 days of launch flow, about 246 million instructions, add about 11
-  hours. With `[snapshots]`, a start that finds no usable cache (`snapshot_rejected`) replays the
-  whole log and also rebuilds the history index from it, which takes longer still. Plan a restart's
-  downtime from these.
+- **Without `[snapshots]`, a restart replays the log past the newest daily snapshot.** A release
+  without `[snapshots]`, as a first release and every rotation member are, starts from the newest
+  daily snapshot in `[daily_snapshots]` that the vault has finalized and that its log holds the
+  checkpoint of, and replays only the instructions after it, at most about a day of them. The replay
+  checks the instructions' seals on a pool of threads, one per core unless `node.replay_workers` sets
+  another number, so it runs faster on more cores. The same machine, with six threads checking seals,
+  replayed about 6,300 instructions a second, so a day of launch flow takes about 26 minutes, on top
+  of loading and checking the snapshot, about 40 CPU-seconds at 100,000 accounts. These figures are
+  projected from the whole replay's rate, not measured at launch scale. The start's time does not grow
+  with the log's age. The chart history and the dashboard figures continue from what the snapshot
+  carries, so they answer as before the restart.
+- **Some starts replay much more.** A start that finds no usable daily snapshot (`snapshot_start_refused`,
+  or none written yet, as in a log's first day) replays every instruction in the log: 30 days of launch
+  flow, about 246 million instructions, take about 11 hours, and the log's segments before the newest
+  snapshot must all be on the host. With `[snapshots]`, a start that finds no usable cache
+  (`snapshot_rejected`) starts from a daily snapshot in the same way, or replays the whole log, and also
+  rebuilds the history index from it, which takes longer still. Plan a restart's downtime from these.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
   chip open the same sealed keys. The enclave address, the signer epoch, the TLS key and therefore
   `$PIN`, the certificate, and the outstanding withdrawal authorisations are unchanged. A restart
@@ -297,11 +305,13 @@ Use this procedure when `daily_snapshot_failed` or `daily_snapshot_unreadable` f
 checkpoint it writes on each UTC day, into the directory that the section names, and serves each
 file beside the log's archive. `engine replay --snapshots` starts a range of the log from a day's
 snapshot, so an audit replays the log's days in parallel. A snapshot is not part of the books: a
-replay checks it against the log's checkpoint and takes nothing that the snapshot alone says. A
-rotation member whose copy is empty starts its replica from one that the enclave key signed, as
-[Standing as an operator candidate](operator-candidate.md) describes, and replays its whole copy
-without one. A missing or damaged snapshot costs an audit or a member's start time, never
-correctness, and clients are not affected.
+replay checks it against the log's checkpoint and the replay state the log before it folds to, and
+takes nothing that the snapshot alone says. Every start, and every rotation member's replica, goes on
+from the newest one that the enclave key signed and the vault has finalized, as
+[Standing as an operator candidate](operator-candidate.md) describes, and replays the whole log
+without one. A missing or damaged snapshot costs an audit or a start time, never correctness, and
+clients are not affected; but a start with no usable snapshot needs every segment of the log on the
+host.
 
 The trading server keeps every day's snapshot, so the directory grows without a bound, by about
 420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old

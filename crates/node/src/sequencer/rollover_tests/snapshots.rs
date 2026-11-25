@@ -33,7 +33,7 @@ fn a_commands_rows_are_derived_again_from_the_newest_snapshot_before_it() {
     let store = Arc::new(RowsStore::new(&history, RETENTION.as_millis() as i64));
     let mut deriver = Deriver::new(gone(), Some((rig.dir.clone(), rig.manifest.clone())))
         .storing(store.clone(), replays.clone())
-        .from_snapshots(Some(snapshots.clone()));
+        .with_snapshots(Some(snapshots.clone()));
     assert_eq!(deriver.rows(&command).unwrap(), Some(kept.clone()), "the rows from the newer snapshot");
     assert_eq!(replays.get(), 0, "no replay from the log's start");
     assert_eq!(store.derived(&command).unwrap().map(|derived| derived.rows), Some(kept), "and stored");
@@ -53,7 +53,7 @@ fn a_repair_derives_a_rollovers_rows_from_the_newest_snapshot_before_it() {
     let command = command_at(&entries, at);
     remove_segments_before(&rig.dir, seq_of(&entries, newer));
     let history = scratch_dir("snapshot-repair-history");
-    let store = RowsStore::new(&history, RETENTION.as_millis() as i64).from_snapshots(Some(snapshots));
+    let store = RowsStore::new(&history, RETENTION.as_millis() as i64).with_snapshots(Some(snapshots));
     let running = AtomicBool::new(false);
     assert_eq!(Rederive::new(&rig.dir, &store).rows(&command, &running).unwrap(), Some(kept.clone()));
     assert_eq!(store.derived(&command).unwrap().map(|derived| derived.rows), Some(kept.clone()), "stored");
@@ -82,7 +82,7 @@ fn the_rows_before_a_replicas_snapshot_are_derived_from_a_snapshot_older_than_th
     remove_segments_before(&rig.dir, seq_of(&entries, index));
     let running = AtomicBool::new(false);
     let store = |name: &str, retention: Millis, daily: Option<PathBuf>| {
-        RowsStore::new(&scratch_dir(name), retention).from_snapshots(daily)
+        RowsStore::new(&scratch_dir(name), retention).with_snapshots(daily)
     };
     let older = store("snapshot-through-older", through_ts - stamped - 1, Some(snapshots.clone()));
     assert_eq!(older.derive_through(&rig.dir, through, &running).unwrap(), Some(1), "the rollover's rows");

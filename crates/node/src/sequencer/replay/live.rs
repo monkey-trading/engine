@@ -215,7 +215,8 @@ impl LiveReplay {
                     let taken = engine.daily_turns().taken.map(|taken| (taken.turn, taken.position));
                     // The replay checked the checkpoint's signature against its signer above.
                     let signer = checkpoint.signer.parse()?;
-                    checked.record(crate::log_check::answer::Checked { head, taken, signer });
+                    let from = self.replay.takings.applied_from().unwrap_or(0);
+                    checked.record(crate::log_check::answer::Checked { head, taken, signer, from });
                 }
                 if self.checkpoints.len() > RETAINED_CHECKPOINTS {
                     self.checkpoints.pop_first();

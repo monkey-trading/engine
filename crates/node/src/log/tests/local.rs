@@ -88,7 +88,7 @@ fn a_reader_naming_an_absent_segment_is_refused_and_one_at_the_first_here_is_not
     let (dir, _) = archived("local-reader", 6);
     read_from_seq(&dir, 2).unwrap();
     read_from_seq(&dir, 5).unwrap();
-    let error = read_from_seq(&dir, 0).err().expect("seq 0 is the archive's");
+    let error = read_from_seq(&dir, 0).expect_err("seq 0 is the archive's");
     assert_eq!(not_local(&error).map(|held| (held.seq, held.first_local)), Some((0, Some(2))));
 }
 
@@ -100,7 +100,7 @@ fn a_segment_missing_after_the_first_here_is_refused() {
     fs::remove_file(dir.join(SEG_4)).unwrap();
     for error in [
         SegmentedLog::open_from(&dir, Offset::start_of(6), |_| Ok(())).err().expect("a gap"),
-        SegmentedLog::read_span_ahead(&dir, 6, |_| Ok(())).err().expect("a gap"),
+        SegmentedLog::read_span_ahead(&dir, 6, |_| Ok(())).expect_err("a gap"),
     ] {
         assert!(not_local(&error).is_none(), "{error:#}");
         assert!(format!("{error:#}").contains("a listed segment after the first on this host is missing"), "{error:#}");

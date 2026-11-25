@@ -33,7 +33,7 @@ struct Building {
 
 impl Building {
     /// A replica of the copy in `dir`, in `domain` under `signers`, going on from `snapshot`, keeping the links and
-    /// checkpoints at `keep`, recording what `records` names but the checkpoints it verifies, its seals checked
+    /// checkpoints at `keep`, recording what `records` names, its seals checked
     /// ahead by `workers`, and holding the posted head `posted` when the links it carries include it; with the
     /// offset the copy is read from, that of the command the snapshot's checkpoint covers. Its dashboard record
     /// goes on from the one the snapshot carries.
@@ -50,11 +50,10 @@ impl Building {
         let toward = (snapshot.offset, snapshot.checkpoint.clone());
         let record = crate::daily_snapshots::History::read(snapshot.history.as_deref()).stats;
         let resumed = LiveReplay::resume(domain, signers, snapshot, keep)?;
-        // A replica from a snapshot answers no boundary check: the range a check covers may start before the
-        // snapshot, whose state the replica did not verify, and the member cannot tell. Its dashboard record goes
-        // on from the one the snapshot carries.
-        let (stats, marks, _, rows) = records;
-        let mut replica = recording_from(resumed, &(stats.clone(), marks.clone(), None, rows.clone()), record);
+        // A replica from a snapshot answers a boundary check only for a range that starts after the snapshot's
+        // checkpoint, since it applied no command before it (`Checked::from`). Its dashboard record goes on from the
+        // one the snapshot carries.
+        let mut replica = recording_from(resumed, records, record);
         replica.check_seals_ahead(dir, workers);
         if let Some((seq, link)) = posted {
             replica.pin(seq, link);

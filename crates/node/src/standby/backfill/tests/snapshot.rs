@@ -163,11 +163,11 @@ fn finalized(operator: &Path) -> Finalized {
 
 /// The last checkpoint the segment `bytes` holds.
 fn last_checkpoint_in(bytes: &[u8]) -> Checkpoint {
-    let checkpoints = bytes.split(|byte| *byte == b'\n').filter_map(|line| match serde_json::from_slice(line) {
+    let mut checkpoints = bytes.split(|byte| *byte == b'\n').filter_map(|line| match serde_json::from_slice(line) {
         Ok(LogEntry::Checkpoint(checkpoint)) => Some(checkpoint),
         _ => None,
     });
-    checkpoints.last().expect("the segment holds a checkpoint")
+    checkpoints.next_back().expect("the segment holds a checkpoint")
 }
 
 /// The chain of the copy in `dir` as it stands after `listed`'s checkpoint, read from the command at its seq on:
