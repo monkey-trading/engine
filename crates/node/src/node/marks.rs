@@ -436,8 +436,8 @@ mod tests {
         let (_guard, mut alerts) = crate::test_support::capture_alerts();
         let copy = frozen_path(&cfg.history.dir, later);
         std::fs::copy(frozen_path(&cfg.history.dir, earlier), &copy).unwrap();
-        assert_eq!(minutes(Some(&frozen)).await, 0, "a rolled back copy is taken");
-        assert_eq!(minutes(None).await, 0, "a copy no anchors name is taken");
+        assert_eq!(minutes(Some(&frozen)).await, 0, "a rolled back copy is not taken");
+        assert_eq!(minutes(None).await, 0, "a snapshot with no anchors takes no copy");
         std::fs::remove_file(&copy).unwrap();
         assert_eq!(minutes(Some(&frozen)).await, 0, "a missing copy starts nothing");
         let rebuilt = std::iter::from_fn(|| alerts.try_recv().ok())

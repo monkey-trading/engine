@@ -6,30 +6,30 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::ensure;
+use engine_core::types::AccountId;
 
 use crate::checkpoints::{SignerHistory, accepted_history, setup::Setup};
 use crate::log::{Checkpoint, CheckpointParent, LogEntry, Offset, SegmentedLog};
 
+/// Where a start from a daily snapshot goes on: its checkpoint's offset, the checkpoint, and the signers of every
+/// checkpoint through it, as the snapshot carries them.
+pub(super) type Start = (Offset, Checkpoint, BTreeSet<AccountId>);
+
 /// Loads immutable accepted identities without opening the log for append or repairing history: from
-/// `start`, the offset and checkpoint of a daily snapshot the start takes, reading only the log after it, or from the
-/// log's start. A typed payout after the snapshot that names a checkpoint before it takes that
+/// `start`, a daily snapshot the start takes, reading only the log after it, or from the log's start. A typed payout after the snapshot that names a checkpoint before it takes that
 /// checkpoint's authority from the vault.
 /// Error cases:
 /// - the log cannot be read, custody is unavailable, or the chain breaks or misses the anchor
 /// - the log holds another entry at the snapshot's offset than its checkpoint
-pub(super) async fn load(
-    setup: Option<&Setup>,
-    dir: &Path,
-    start: Option<(Offset, Checkpoint)>,
-) -> anyhow::Result<SignerHistory> {
+pub(super) async fn load(setup: Option<&Setup>, dir: &Path, start: Option<Start>) -> anyhow::Result<SignerHistory> {
     let Some(setup) = setup else { return Ok(SignerHistory::default()) };
     let (mut candidates, mut epochs, mut earlier) = (Vec::new(), BTreeSet::new(), BTreeSet::new());
-    let from_seq = start.as_ref().map(|(_, checkpoint)| checkpoint.seq);
+    let from_seq = start.as_ref().map(|(_, checkpoint, _)| checkpoint.seq);
     let mut at_start = start.is_none();
     let mut visit = |entry: LogEntry| {
         if !at_start {
             at_start = true;
-            let (offset, checkpoint) = start.as_ref().expect("a read from a snapshot has one");
+            let (offset, checkpoint, _) = start.as_ref().expect("a read from a snapshot has one");
             ensure!(
                 matches!(&entry, LogEntry::Checkpoint(held) if held == checkpoint),
                 "the log holds another entry at {offset} than the daily snapshot's checkpoint"
@@ -54,7 +54,7 @@ pub(super) async fn load(
         Ok(())
     };
     let from = match &start {
-        Some((offset, checkpoint)) => {
+        Some((offset, checkpoint, _)) => {
             SegmentedLog::open_from(dir, *offset, &mut visit)?;
             match checkpoint.parent {
                 Some(_) => {
@@ -69,5 +69,6 @@ pub(super) async fn load(
         }
     };
     let (chain, at, domain) = (&setup.poster.chain, &setup.observation, setup.poster.domain);
-    accepted_history(chain, at, domain, (setup.parent, from), &candidates, (epochs, earlier)).await
+    let prior = start.as_ref().map(|(_, _, prior)| prior.clone()).unwrap_or_default();
+    accepted_history(chain, at, domain, (setup.parent, from, &prior), &candidates, (epochs, earlier)).await
 }

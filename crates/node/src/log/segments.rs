@@ -40,8 +40,9 @@ pub struct Manifest {
     pub flushed: Option<Offset>,
     /// The first seq this node's start verified, with no signed catalog: one that went on from a daily snapshot
     /// read nothing before the command after its checkpoint, so the segments before it are the host's word, and
-    /// no answer the enclave vouches for, a stream's backfill, the archive or a re-derivation, serves from them
-    /// (`ensure_served`). Zero for a start that read every segment, or one whose catalog vouches for them.
+    /// no answer the enclave vouches for, a stream's backfill or a re-derivation, reads them (`ensure_served`); the
+    /// archive, whose answers are not signed, serves them as the host holds them. Zero for a start that read every
+    /// segment, or one whose catalog vouches for them.
     pub verified_from: u64,
 }
 

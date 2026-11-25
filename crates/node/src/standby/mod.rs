@@ -265,15 +265,19 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
 /// Opens the copy for appends, with `empty` taking its entries as the copy's chain, finishing an
 /// interrupted cut first: a crash during a takeover's or a replica's cut leaves a `takeover.json`
 /// marker (`cut`), and re-running the truncation is idempotent, so the next start finishes the
-/// surgery before following again. A copy whose oldest segments are only in the archive is read
-/// from the first command the segments on this host hold.
+/// surgery before following again. The copy is read from its last checkpoint, which its checks replayed, from a
+/// daily snapshot or whole, so a start reads none of it before; one with no checkpoint is read whole, and one
+/// whose oldest segments are only in the archive from the first command the segments on this host hold.
 /// Error cases:
 /// - the copy cannot be opened, or its links computed, or a marked cut cannot be finished
 /// - the segments on this host hold no checkpoint, from which the copy's link is computed
 fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyhow::Result<(LogWriter, Chain)> {
+    cut::finish(dir)?;
+    // A last checkpoint the segments here cannot give leaves the open below to read what they hold and say why.
+    let last = crate::log::last_checkpoint(dir).ok().flatten().map(|checkpoint| Offset::start_of(checkpoint.seq));
     let open =
         |from: Option<Offset>| open_copy_replayed(dir, segment_commands, empty.clone(), from, || (), |_, _| Ok(()));
-    let opened = open(None).or_else(|e| match e.downcast_ref::<crate::log::NotLocal>() {
+    let opened = open(last).or_else(|e| match e.downcast_ref::<crate::log::NotLocal>() {
         Some(crate::log::NotLocal { first_local: Some(first), .. }) => open(Some(Offset::start_of(*first))),
         _ => Err(e),
     });

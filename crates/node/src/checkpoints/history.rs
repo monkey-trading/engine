@@ -13,9 +13,10 @@ use crate::log::{Checkpoint, CheckpointDomain, CheckpointParent};
 /// the child of its latest one and only under its signer at the time, so an unbroken signed-parent
 /// chain that ends at the vault's own anchor is its accepted history, each checkpoint signed by an
 /// epoch signer. `candidates` are those checkpoints in log order after `from`, the chain's start: none
-/// for the log's start, or a daily snapshot's checkpoint, which a start reads no log before;
-/// `payout_epochs` are the epochs typed payouts name, and `earlier` the seqs before `from` of the
-/// checkpoints they name, which the vault gives in one read.
+/// for the log's start, or a daily snapshot's checkpoint, which a start reads no log before, whose
+/// checkpoints' signers through `from` the snapshot carries as `prior`, so a start from it knows the earlier
+/// signers a replay from the log's start does; `payout_epochs` are the epochs typed payouts name, and `earlier`
+/// the seqs before `from` of the checkpoints they name, which the vault gives in one read.
 /// Error cases:
 /// - the chain breaks or misses the anchor, a signature fails, a signer has no epoch, or a custody
 ///   read fails
@@ -24,13 +25,13 @@ pub(crate) async fn accepted_history(
     chain: &impl CheckpointChain,
     at: &Observation,
     domain: CheckpointDomain,
-    (anchor, from): (CheckpointParent, CheckpointParent),
+    (anchor, from, prior): (CheckpointParent, CheckpointParent, &BTreeSet<AccountId>),
     candidates: &[Checkpoint],
     (payout_epochs, earlier): (BTreeSet<u64>, BTreeSet<u64>),
 ) -> anyhow::Result<SignerHistory> {
     let evidence = at.lifecycle.as_ref().context("signer history requires canonical lifecycle evidence")?;
     let mut tip = from;
-    let mut historical = false;
+    let mut historical = prior.iter().any(|signer| *signer != evidence.signer);
     for checkpoint in candidates {
         ensure!(checkpoint.parent == Some(tip), "checkpoint at seq {} breaks the signed parent chain", checkpoint.seq);
         signature::verify_domain(checkpoint, domain)?;

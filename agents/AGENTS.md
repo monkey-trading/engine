@@ -344,7 +344,7 @@ an index: load only the rule whose hint matches the current action.
   dashboard record restored from the snapshot and the marks cache from the frozen copy
   its anchors match, written by the marks task between the marks before the checkpoint and those after, synced in steps,
   nothing the enclave vouches for read from the segments before the snapshot (`Manifest::verified_from`: the stream's
-  backfill, the archive, re-derived rows), a `[snapshots]` start with no cache replaying the whole log,
+  backfill, re-derived rows), a `[snapshots]` start with no cache replaying the whole log,
   a `[snapshots]` start under `[daily_snapshots]` taking only a recovery cache that carries its replay state, the entries
   a recovery logs before the stats worker starts folded into its seed (`Captures::fold_before_worker`), a member
   answering a log-check question only for a range that starts after its snapshot (`Checked::from`), and the log's

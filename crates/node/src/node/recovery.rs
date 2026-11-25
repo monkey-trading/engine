@@ -159,9 +159,7 @@ pub(super) async fn read_log_and_history_authorities(
         Option<crate::log::CheckpointParent>,
         impl Future<Output = Option<crate::daily_snapshots::Signed>>,
     ),
-    authorities: impl AsyncFn(
-        Option<(crate::log::Offset, crate::log::Checkpoint)>,
-    ) -> anyhow::Result<crate::checkpoints::SignerHistory>,
+    authorities: impl AsyncFn(Option<super::signer_history::Start>) -> anyhow::Result<crate::checkpoints::SignerHistory>,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
     stats: &Stats,
     mut observe: impl FnMut(&crate::log::LogEntry),
@@ -237,14 +235,15 @@ async fn replay(
         Option<crate::log_heads::Head>,
     ),
     start: Option<crate::daily_snapshots::Signed>,
-    authorities: &impl AsyncFn(
-        Option<(crate::log::Offset, crate::log::Checkpoint)>,
-    ) -> anyhow::Result<crate::checkpoints::SignerHistory>,
+    authorities: &impl AsyncFn(Option<super::signer_history::Start>) -> anyhow::Result<crate::checkpoints::SignerHistory>,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
     stats: &Stats,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
-    let from = start.as_ref().map(|start| (start.snapshot.offset, start.snapshot.checkpoint.clone()));
+    let from = start.as_ref().map(|start| {
+        let prior = start.snapshot.carried.as_ref().map(|carried| carried.checkpoint_signers.clone());
+        (start.snapshot.offset, start.snapshot.checkpoint.clone(), prior.unwrap_or_default())
+    });
     // A head at or under the snapshot's checkpoint, which the replay after it never reaches, is bound to the history
     // the snapshot carries.
     let posted_ts = match &start {

@@ -528,9 +528,9 @@ The segments before the snapshot's checkpoint stay what the host says they are: 
 snapshot verified none of them, and without `[snapshots]` no signed catalog vouches for them. So nothing
 the trading server vouches for is read from them: a stream's backfill from before the instruction after
 the checkpoint is refused with 400, naming the public archive, as one from before the log's first
-segment on the host is; a financing charge's rows are re-derived, or checked against their file, only
-from there on; and the archive, whose answers are not signed, lists and serves only the segments the
-start read, from the one holding the checkpoint on, which a member needs to start from the snapshot. A rotation member's or a
+segment on the host is; and a financing charge's rows are re-derived, or checked against their file,
+only from there on. The archive, whose answers are not signed, serves the segments as the host holds
+them, which anyone checks by a replay. A rotation member's or a
 standby's copy fetched from an archive mirror may hold altered segments before its snapshot. It never
 serves them, and a whole replay of the copy, as when no snapshot passes, refuses them.
 

@@ -362,9 +362,7 @@ anyone can replay them.
 pair for each signer, in order.
 
 The archive holds completed segments only. The segment still being written, which holds the newest
-instructions, is not in it. A trading server that started from a daily snapshot lists only the segments
-its start read, from the one holding the snapshot's checkpoint on: download the earlier ones from an
-archive mirror into the same directory before the replay.
+instructions, is not in it.
 
 ## Where things live on the host
 

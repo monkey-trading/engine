@@ -40,8 +40,7 @@ impl ServedSnapshots {
     }
 }
 
-/// Serves a pinned canonical catalog listing or an authenticated completed segment, one this node's start read
-/// (`Manifest::archived`): an earlier one is the archive mirrors' to serve.
+/// Serves a pinned canonical catalog listing or an authenticated completed segment.
 /// Error cases:
 /// - the file is not a completed segment, a required proof fails, or disk bytes changed
 pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Result<Response, ApiError> {
@@ -76,8 +75,7 @@ pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Res
     let opened = spawn_blocking(move || {
         let _held = permit;
         view.ensure_verified()?;
-        // A segment this node's start did not read is the host's word, and not served.
-        let listed = view.lookup(seq)?.filter(|listed| view.archived(listed));
+        let listed = view.lookup(seq)?;
         let Some(listed) = listed else {
             return anyhow::Ok(None);
         };

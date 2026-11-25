@@ -1531,9 +1531,7 @@ JSON line for each completed segment:
 `GET /v1/archive/{file}` returns one completed segment that the manifest lists, as JSON lines. A
 file that the manifest does not list answers 404. The segment still being written is not in the
 archive, and the stream carries it instead. `engine replay` verifies a downloaded archive, and the
-server checks each segment against the manifest before serving it. A server that started from a daily
-snapshot lists and serves only the segments its start read, from the one holding the snapshot's
-checkpoint on; the archive mirrors serve the earlier ones.
+server checks each segment against the manifest before serving it.
 
 ### Daily snapshots
 

@@ -120,7 +120,7 @@ async fn build_trust(
         chain,
         &at,
         domain,
-        (parent, CheckpointParent::default()),
+        (parent, CheckpointParent::default(), &BTreeSet::new()),
         &candidates,
         (epochs, BTreeSet::new()),
     )

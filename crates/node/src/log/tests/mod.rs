@@ -453,29 +453,13 @@ fn append(path: &Path, bytes: &[u8]) {
     fs::OpenOptions::new().append(true).open(path).unwrap().write_all(bytes).unwrap();
 }
 
-/// After a start from a daily snapshot, the archive lists and serves the segments the start read, from the one
-/// holding the snapshot's checkpoint on, and a read the enclave vouches for starts no earlier than the command after
-/// it; a start that read every segment serves them all.
+/// After a start from a daily snapshot, a read the enclave vouches for starts no earlier than the command after the
+/// snapshot's checkpoint, and is refused before it naming the archive; a start that read every segment refuses none.
 #[test]
-fn a_start_from_a_snapshot_serves_only_the_segments_it_read() {
-    let info = |first_seq: u64, last_seq: u64| SegmentInfo {
-        file: segment_name(first_seq),
-        first_seq,
-        last_seq,
-        bytes: 1,
-        sha256: "00".repeat(32),
-    };
-    let segments = Arc::new(vec![info(0, 9), info(10, 19), info(20, 29)]);
-    let listed = |manifest: &Manifest| {
-        let listing = String::from_utf8(manifest.canonical_jsonl().unwrap()).unwrap();
-        listing.lines().map(|line| serde_json::from_str::<SegmentInfo>(line).unwrap().first_seq).collect::<Vec<_>>()
-    };
-    let whole = Manifest { segments: segments.clone(), ..Manifest::default() };
-    assert_eq!(listed(&whole), [0, 10, 20]);
-    assert!(whole.ensure_served(0).is_ok());
+fn a_start_from_a_snapshot_vouches_only_for_what_it_read() {
+    assert!(Manifest::default().ensure_served(0).is_ok());
     // The snapshot's checkpoint is at seq 14, so the start verified from seq 15.
-    let resumed = Manifest { segments, verified_from: 15, ..Manifest::default() };
-    assert_eq!(listed(&resumed), [10, 20], "the segment holding the checkpoint and those after it");
+    let resumed = Manifest { verified_from: 15, ..Manifest::default() };
     assert!(resumed.ensure_served(15).is_ok());
     let refused = resumed.ensure_served(14).expect_err("a read before the verified seq").to_string();
     assert!(refused.contains("public archive") && refused.contains("seq 15"), "{refused}");
