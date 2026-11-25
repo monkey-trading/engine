@@ -118,7 +118,7 @@ a development machine at 100,000 accounts on the launch book.
 | --- | --- | --- | --- |
 | vCPUs | 4 | 12 of the host's 48 threads | The guest shape that `measurement.json` measures. Under ten times launch flow the load test's process, which also holds the price stand-ins and the screening source, peaked at 4.6 cores. |
 | Memory | 16 GiB (proposed) | 48 GiB | The launch bar asks for four times the trading server's resident memory. That memory is 1.2 GiB for the trading server and its stats worker's copy, and 2.6 GB to 3.6 GB for the load test's whole process. |
-| Disk | See [Plan each store's capacity](#plan-each-stores-capacity) | | The soak's measured growth of each store. The history index alone fills a 1.92 TB drive in about 85 days at launch flow. |
+| Disk | See [Plan each store's capacity](#plan-each-stores-capacity) | | The soak's measured growth of each store. The history index keeps 30 days of account events, at most about 97 GB at launch flow. |
 
 The memory figure is not covered by the launch measurement, so a guest's memory can change without a
 new release. The vCPU count is covered by it, so a different count is a new image. The 192 GB
@@ -129,9 +129,9 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 ## Plan each store's capacity
 
 The trading server keeps six stores on disk. This section sizes each from the soak's measurements, says what
-the server alerts on, and says what can and cannot be relied on in the figures it reports. **The log, the
-history index and the daily snapshots grow without a bound, and the history index alone fills a 1.92 TB drive
-within months.** Until each store has a bound, plan a node that must run for months on these figures.
+the server alerts on, and says what can and cannot be relied on in the figures it reports. **The log and the
+daily snapshots grow without a bound. The history index keeps 30 days of account events and is bounded by
+them.** Until each store has a bound, plan a node that must run for months on these figures.
 
 ### What each store grows by
 
@@ -144,7 +144,7 @@ launch-flow rows assume the soak's bytes a command hold at the launch mix.
 | Store | Per command | Launch flow, a day | Ten times launch flow, a day | Bounded |
 | --- | --- | --- | --- | --- |
 | Log | 715 to 800 bytes | 5.7 GB | 18 GB | No: every segment is kept, since recovery replays from genesis |
-| History index | about 3.0 KB | about 23 GB | about 68 GB | Only by `history.retention`, which is 365 days in production |
+| History index | see [The history index's bound](#the-history-indexs-bound) | about 2.8 GB with `[snapshots]`, 0.6 GB without | about 22 GB with `[snapshots]`, 4.7 GB without | Yes: 30 days of events, by `history.retention` |
 | Recovery caches | none | flat | flat | Yes: `snapshots.retain` of them; two were about 38 MB each at 10,000 accounts, and the sizing above allows up to 4 GiB in all at 100,000 |
 | Daily snapshots | none | about 0.4 GB, estimated | about 0.4 GB, estimated | No: every day's is kept. The 420 MB is an estimate at 100,000 accounts and **has not been measured** |
 | Marks cache | none | small, not measured | small, not measured | By the retentions in `[history.marks]` |
@@ -155,16 +155,46 @@ On the two drives, the log's own and the data drive that holds everything else:
 | One 1.92 TB drive | Launch flow | Ten times launch flow |
 | --- | --- | --- |
 | Log drive full in | about 337 days | about 107 days |
-| Data drive full in (history index and snapshots) | about 83 days | about 28 days |
-| Data drive's Warning (15% free) in | about 71 days | about 24 days |
+| Data drive full in (history index and snapshots) | about 12 years | about 8 years |
+| Data drive's Warning (15% free) in | about 10 years | about 6 years |
 | Log drive's Warning (15% free) in | about 286 days | about 91 days |
-| History index after 365 days, were it not bounded | about 8.2 TB | about 24.9 TB |
+| History index once it holds 30 days, with `[snapshots]` | about 85 GB, up to 97 GB | about 655 GB, up to 750 GB |
+| History index once it holds 30 days, without `[snapshots]` | about 18 GB | about 142 GB |
 
-A drive's usable size is below its label, since the filesystem keeps some of it, so each figure is a little
-optimistic. The three guests of the test host share its two drives, so a table for one node does not hold
-for three. For months of operation on this hardware, the history index must be bounded before launch, and
-the data drive needs a plan before then: a shorter `history.retention`, which a release changes and which
-makes the node discard the index and rebuild it from the log, or a larger drive.
+The data drive's rows take the larger index, the one with `[snapshots]`, and the daily snapshots' estimate:
+once the index holds 30 days, only the daily snapshots grow the drive. A drive's usable size is below its
+label, since the filesystem keeps some of it, so each figure is a little optimistic. The three guests of the
+test host share its two drives, so a table for one node does not hold for three.
+
+### The history index's bound
+
+The history index keeps the account events of the newest 30 days of sequenced time (`history.retention`), so
+its size is the events it holds times what each costs on disk. The figures come from a recorded log of two
+hours of ten times launch flow at 100,000 accounts: 1.85 million commands and 0.59 account events a command.
+Launch flow's trading, and so its trading events, are a tenth of the recording's; the rollover's rows are the
+same at both.
+
+| Input | Launch flow | Ten times launch flow |
+| --- | --- | --- |
+| Account events from trading, a day | about 1.3 million | about 13 million |
+| Financing rows from the daily rollover, one an open position | 437,500 | 437,500 |
+| Events in 30 days | about 52 million | about 404 million |
+
+| Index | Bytes an event held | 30 days at launch flow | 30 days at ten times launch flow |
+| --- | --- | --- | --- |
+| With `[snapshots]`, the authenticated index | about 1,620, up to 1,850 | about 85 GB, up to 97 GB | about 655 GB, up to 750 GB |
+| Without `[snapshots]` | about 350 | about 18 GB | about 142 GB |
+
+The production release configurations leave `[snapshots]` out while rotation is on, so a node at launch runs
+the index without it. The authenticated index's figure held from 0.1 GB to 1 GB of index on a development
+machine; its upper figure allows for the eighth of the file's pages that collection leaves free for later
+writes. The other index's figure held as it reached 545,000 events and then stayed level while it dropped
+events past its retention. The rollover's rows are taken to cost what a trading event does. Both 30-day
+figures are projections from those costs: neither index has been run at that size. Collection also keeps the
+versions the two newest recovery caches pin, a few minutes of writes, which these figures leave out.
+
+A shorter `history.retention` lowers the bound in proportion. A release sets it, and a node whose index was
+built under another retention discards the index and rebuilds it from the log on its first start.
 
 ### What the server alerts on
 
