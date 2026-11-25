@@ -47,6 +47,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 instant-acme = { version = "0.8.5", default-features = false, features = ["ring"] }
 # Address ranges for the PROXY protocol's trusted proxies; already in the tree through reqwest.
 ipnet = { version = "2.12", features = ["serde"] }
+# The time the S3 stand-in re-signs a request at, in tests only; already in the tree.
+jiff = "0.2"
 jmt = { version = "=0.12.0", default-features = false, features = ["std", "sha2"] }
 k256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 # Model checking of the root worker's handshakes with the sequencer, in tests only.
@@ -80,6 +82,9 @@ rusqlite = { version = "0.41", default-features = false, features = ["bundled", 
 # OpenSSL or aws-lc build.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["alloc"] }
+# Signs the log archive's uploads to its bucket with AWS Signature Version 4, on the RustCrypto HMAC and
+# SHA-256 already in the tree; without its XML responses or a second crypto backend.
+rusty-s3 = { version = "0.11", default-features = false, features = ["rustcrypto"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The SEV-SNP guest's derived key and its own report, which seal the enclave's keys to its launch
@@ -108,6 +113,9 @@ webpki-roots = "1"
 # checked with p384 and rsa, not this crate's ring-backed `verify`, which does not build for the
 # browser.
 x509-parser = "0.18"
+# The log archive's compression: libzstd's reference format, which common tools read. Without its
+# legacy formats and dictionary builder.
+zstd = { version = "0.14", default-features = false }
 
 [profile.release]
 opt-level = 3

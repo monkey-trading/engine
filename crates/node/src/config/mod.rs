@@ -38,6 +38,8 @@ pub use carry::CarrySection;
 pub use tee::TeeSection;
 mod access;
 pub use access::AccessSection;
+mod archive;
+pub use archive::ArchiveSection;
 pub use standby::StandbySection;
 mod custody;
 mod standby;
@@ -145,6 +147,8 @@ pub struct NodeConfig {
     pub snapshots: Option<SnapshotSection>,
     /// The daily snapshots the node publishes beside its archive, for a replay's ranges; none when absent.
     pub daily_snapshots: Option<DailySnapshotsSection>,
+    /// The bucket in object storage the node uploads its log to; none when absent.
+    pub archive: Option<ArchiveSection>,
     pub metrics: MetricsSection,
     pub alerts: AlertsSection,
     /// Enables startup synchronization with an external signed publisher worker.

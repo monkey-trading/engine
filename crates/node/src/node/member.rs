@@ -227,7 +227,8 @@ pub(crate) struct Member<'a, C = CheckpointRpc, H = PostedHeads, T = Roughtime> 
     fallback: turn::Fallback,
     /// Held for each send from the liveness caller's account, shared with the process's fallback fixer.
     sends: Arc<crate::liveness::fallback::Sends>,
-    /// The delivered secrets its venue feeds authenticate with, where it opens them before its turn.
+    /// The delivered secrets its venue feeds authenticate with, where it opens them before its turn, and the
+    /// archive's uploader, to which it hands each copy it opens.
     delivered: Option<&'a Delivered>,
     /// The venue feeds it opened for its own next turn, which the node it starts takes (`warm`).
     warm: Option<Warm>,

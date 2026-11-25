@@ -62,7 +62,7 @@ requests are signed and how a client verifies the server's signed answers.
 | Area | Modules | Responsibility |
 | --- | --- | --- |
 | Startup | `node/`, `config/`, `telemetry`, `sequencer_thread` | Loading and checking the configuration, starting each part of the server in order, and the sequencer's dedicated thread |
-| Sequencing and the log | `sequencer/`, `root_worker/`, `log/`, `snapshot/`, `authenticated/`, `replay_audit/` | Putting commands in order and applying them, the state root's worker thread, the segmented public log, recovery, snapshots and replay |
+| Sequencing and the log | `sequencer/`, `root_worker/`, `log/`, `archive/`, `snapshot/`, `authenticated/`, `replay_audit/` | Putting commands in order and applying them, the state root's worker thread, the segmented public log and its archive in object storage, recovery, snapshots and replay |
 | API | `api/`, `tls/`, `limits/`, `access/`, `withdrawals/` | The REST API and stream, TLS with a certificate from an ACME authority, rate limits, account screening and withdrawal authorisations |
 | Reads | `history/`, `stats/`, `status` | The account history index, the price history cache, the dashboard statistics and the operating status |
 | Enclave and time | `tee/`, `secrets/`, `handover/`, `clock`, `trusted_time/`, `roughtime/`, `verify/` | Attestation, sealed keys, delivered secrets, handing the keys to the next release, trusted time and attestation checks |
@@ -88,7 +88,7 @@ default. Every section refuses keys it does not know.
 | `[custody]`, `[checkpoints]`, `[log_heads]` | The vault, its RPC providers, the operator registry's contracts, checkpoint posting and log head posting |
 | `[liveness]`, `[seed_relay]`, `[standby]` | A rotation member's liveness caller, the turn-seed relayer and standby mode |
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |
-| `[history]`, `[stats]`, `[snapshots]` | The history index and price history cache, dashboard retention, and recovery snapshots |
+| `[history]`, `[stats]`, `[snapshots]`, `[archive]` | The history index and price history cache, dashboard retention, recovery snapshots, and the bucket that keeps the log's archive |
 | `[metrics]`, `[alerts]` | The metrics listener, alert routing to webhooks and the disk alerts' thresholds (`[alerts.storage]`) |
 | `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters, and in `[genesis.carry]` the log whose MONKEY, stakes and awards it carries |
 

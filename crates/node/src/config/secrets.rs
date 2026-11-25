@@ -84,6 +84,8 @@ pub(crate) enum SecretUse {
     WebhookUrl,
     /// A key in a seed relayer URL: the node runs, and the relayer stays off.
     SeedRelay,
+    /// The log archive's bucket keys: the node runs, and uploads to the archive stay off.
+    Archive,
 }
 
 /// A field that names a secret.
@@ -342,6 +344,9 @@ impl NodeConfig {
                 }
             }
         }
+        for (key, name) in self.archive.iter().flat_map(|archive| archive.secret_fields()) {
+            named.push(NamedSecret { name: name.clone(), field: format!("archive.{key}"), usage: SecretUse::Archive });
+        }
         Ok(named)
     }
 
@@ -373,7 +378,7 @@ impl NodeConfig {
 
     /// Checks the fields that name secrets, for the node a config with `[standby]` may be started as.
     /// Error cases:
-    /// - see `check_secrets`, with a standby's vendor keys exempt when the config has `[standby]`
+    /// - see `check_secrets`, with a standby's vendor and archive keys exempt when the config has `[standby]`
     pub(super) fn validate_secrets(&self) -> anyhow::Result<()> {
         self.check_secrets(self.standby.is_some())
     }
@@ -386,9 +391,10 @@ impl NodeConfig {
         self.check_secrets(false)
     }
 
-    /// Checks the fields that name secrets. A standby runs no feeds, so it never reads a vendor's
-    /// key, and `as_standby` leaves those fields out of the check that something can deliver them;
-    /// the standby's other secrets it reads, so they keep their listener or their written value.
+    /// Checks the fields that name secrets. A standby runs no feeds and no archive uploader, so it
+    /// never reads a vendor's key or the bucket's, and `as_standby` leaves those fields out of the
+    /// check that something can deliver them; the standby's other secrets it reads, so they keep their
+    /// listener or their written value.
     /// Error cases:
     /// - a URL's `{name}` is malformed
     /// - an alert route names neither or both of a variable and a secret
@@ -411,7 +417,8 @@ impl NodeConfig {
             !listens || self.tee.provider == TeeProvider::Mock || self.tee.processor.is_some(),
             "[tee.sealing.secrets] with real attestation needs tee.processor, to fetch its quotes' collateral"
         );
-        if let Some(first) = named.iter().find(|field| !(as_standby && field.usage == SecretUse::VendorKey))
+        let exempt = |usage| as_standby && matches!(usage, SecretUse::VendorKey | SecretUse::Archive);
+        if let Some(first) = named.iter().find(|field| !exempt(field.usage))
             && !listens
         {
             bail!("{} names a delivered secret, which needs [tee.sealing.secrets] to receive it", first.field);

@@ -28,7 +28,7 @@ pub const PLACEHOLDER_VALUES: [&str; 16] = [
 ];
 
 /// Keys whose placeholder is a value a deployment could keep, so only its marker shows it is unset.
-const PLAUSIBLE_KEYS: [&str; 3] = ["product_name = ", "min_balance = ", "trusted_signers = "];
+const PLAUSIBLE_KEYS: [&str; 4] = ["product_name = ", "min_balance = ", "trusted_signers = ", "bucket = "];
 
 /// The lines of `text` that hold one of `placeholders` with no marker, or whose marker stands alone
 /// as a comment.

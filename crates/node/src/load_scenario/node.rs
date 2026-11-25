@@ -47,10 +47,10 @@ use crate::test_support::{sequencer_config, trusted_now};
 use crate::tls::TlsIdentity;
 use crate::trusted_time::TrustedClock;
 
-/// The template's `[node]` cadences: a checkpoint and a segment every 1,000 commands, and a tick
-/// every 250 ms.
+/// The template's `[node]` cadences: a checkpoint every 1,000 commands, a segment every 10,000, and a
+/// tick every 250 ms.
 const CHECKPOINT_EVERY: u64 = 1_000;
-const SEGMENT_COMMANDS: u64 = 1_000;
+const SEGMENT_COMMANDS: u64 = 10_000;
 const TICK: Duration = Duration::from_millis(250);
 /// How often trusted time is sampled, as the node's Roughtime client does.
 const SAMPLE_EVERY: Duration = Duration::from_secs(10);

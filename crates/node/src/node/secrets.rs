@@ -56,6 +56,9 @@ pub(crate) struct Delivered {
     pub authority: Option<watch::Sender<Authority>>,
     /// The sealed bundle, which an approved upgrade takes.
     pub store: Option<Arc<SecretStore>>,
+    /// Where each log writer the node runs hands its manifest to the archive's uploader, which runs with
+    /// the bucket's delivered keys.
+    pub archive: Option<crate::archive::Sources>,
 }
 
 impl Delivered {
@@ -245,6 +248,7 @@ pub(crate) async fn startup(
         listener: Some(listener),
         authority: Some(authority),
         store: Some(store),
+        archive: None,
     })
 }
 
@@ -278,6 +282,7 @@ fn report_missing(held: Option<&SignedBundle>, named: &[NamedSecret]) {
             SecretUse::VendorKey => "this vendor connection stays off, and the markets it alone prices go unpriced",
             SecretUse::WebhookUrl => "this alert route stays off, so its alerts are only logged",
             SecretUse::SeedRelay => "the seed relayer stays off",
+            SecretUse::Archive => "uploads to the log archive stay off, and the host keeps every segment",
         };
         error!(alert = "secret_missing", %secret, field = %field_name, "no delivered bundle holds this secret: {effect}");
     }

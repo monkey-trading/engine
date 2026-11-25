@@ -112,6 +112,9 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         )
         .map_err(|e| e.context(CopyRefused))?;
         self.metrics.full_replays.inc_by(follower.replays());
+        if let Some(archive) = self.delivered.and_then(|delivered| delivered.archive.as_ref()) {
+            archive.send_replace(Some(follower.manifest()));
+        }
         info!(seq = ?follower.replica().last_seq(), elapsed = ?started.elapsed(), "built the replica from the copy");
         Ok((follower, stats, history, marks))
     }

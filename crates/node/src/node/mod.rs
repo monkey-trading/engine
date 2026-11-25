@@ -194,6 +194,9 @@ async fn serve_node(
     let (stream_tx, _) = broadcast::channel(CHANNEL_CAPACITY);
     let (withdrawals_tx, withdrawals_rx) = mpsc::unbounded_channel();
     let (manifest_tx, manifest_rx) = watch::channel(Manifest::default());
+    if let Some(archive) = &delivered.archive {
+        archive.send_replace(Some(manifest_rx.clone()));
+    }
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let (signing_tx, signing_rx) = watch::channel(true);
     // Only a rotating node with sealed keys holds a release the schedule can name; reading the vault,

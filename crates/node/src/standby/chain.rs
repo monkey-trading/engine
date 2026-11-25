@@ -274,7 +274,7 @@ fn repeats(copied: &LogEntry, repeated: &LogEntry) -> bool {
 
 /// `entry` with its hex signatures and signer spelt as its writer spells them, a command's seal as the
 /// command prefix reads it (`CommandSeal::respelt`).
-fn spelt(entry: &LogEntry) -> LogEntry {
+pub(crate) fn spelt(entry: &LogEntry) -> LogEntry {
     let respelt = |text: &str| {
         hex::decode(text.strip_prefix("0x").unwrap_or(text))
             .map_or_else(|_| text.to_owned(), |bytes| format!("0x{}", hex::encode(bytes)))

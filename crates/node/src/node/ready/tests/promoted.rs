@@ -77,6 +77,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         listener: None,
         authority: None,
         store: None,
+        archive: None,
     };
     let keys = crate::node::KeyStart { mock_launch_digest: Some(DIGEST), ..Default::default() };
     let mut chain_read = false;

@@ -62,6 +62,23 @@ async fn a_member_replays_its_whole_copy_when_no_snapshot_start_applies() {
     }
 }
 
+/// A member hands the copy it opens to the archive's uploader, whose ranges it uploads while the member follows.
+#[tokio::test]
+async fn a_member_hands_the_copy_it_opens_to_the_archives_uploader() {
+    let fixture = Fixture::start("member-archive", true).await;
+    let origin = scratch_dir("member-archive-origin");
+    publish(&fixture.log, &origin);
+    let followed = followed(archive_with(&fixture.log, &origin).await);
+    let (archive, handed) = tokio::sync::watch::channel(None);
+    let delivered = crate::node::secrets::Delivered { archive: Some(archive), ..Default::default() };
+    let member = fixture.member().with_feeds(&delivered);
+    let (follower, ..) = member.open(Some(&followed)).await.expect("the member opens its copy");
+    let manifest = handed.borrow().clone().expect("the member hands its copy's manifest to the uploader");
+    let listed = manifest.borrow().unlisted_from().unwrap();
+    assert_eq!(listed, follower.manifest().borrow().unlisted_from().unwrap());
+    assert!(listed > 0, "the copy's manifest lists its segments");
+}
+
 /// The turns of the member in office began at the first of the turns in a row its candidate holds, read back past
 /// the turns it holds to one another member holds; at the first turn when it holds every turn before; at the earliest
 /// time when it holds more than are read back; and none are in office before the first turn. The member's own turns,

@@ -18,7 +18,7 @@ use crate::checkpoints::{CheckpointRpc, Observation, VaultState, View};
 use crate::clock::Clock;
 use crate::config::{CustodyProvider, FinalityTag, RpcProviderSection};
 use crate::custody::ContractTerms;
-use crate::log::{CheckpointDomain, CheckpointParent, LogEntry};
+use crate::log::{CheckpointDomain, CheckpointParent, LogEntry, Manifest};
 use crate::log_heads::Head;
 use crate::node::member::Replica;
 use crate::node::secrets::Delivered;
@@ -142,15 +142,9 @@ async fn run_member(
     let metrics = Arc::new(Metrics::new());
     let (_layer, alerts) = crate::alerts::channel(crate::alerts::Routes::default(), metrics.clone());
     let mut routing = alerts.spawn(cfg.alerts.episode_quiet, &cfg.alerts.outbox).await.unwrap();
-    let delivered = Delivered {
-        values: Default::default(),
-        version: None,
-        answered: None,
-        chain_read_keyed: false,
-        listener: None,
-        authority: None,
-        store: None,
-    };
+    // Where the node hands the archive's uploader the manifest of the log it writes.
+    let (archive, handed) = tokio::sync::watch::channel(None);
+    let delivered = Delivered { archive: Some(archive), ..Default::default() };
     let keys = crate::node::KeyStart { mock_launch_digest: Some(DIGEST), ..Default::default() };
     let mut chain_read = false;
     let mut running = Box::pin(crate::node::serve_node(
@@ -169,11 +163,10 @@ async fn run_member(
             Err(e) => return Err(e),
             Ok(ended) => panic!("the node stopped before its first command: {ended:?}"),
         },
-        () = crate::test_support::wait_for("the first command", async {
-            loop {
-                if metrics.commands.get() > 0 {
-                    break;
-                }
+        // The manifest the node hands the archive's uploader is the log it writes, its first command flushed there.
+        () = crate::test_support::wait_for("the first command, in the handed manifest", async {
+            let flushed = |manifest: &Manifest| manifest.flushed.is_some_and(|flushed| flushed.seq > last);
+            while metrics.commands.get() == 0 || !handed.borrow().as_ref().is_some_and(|m| flushed(&m.borrow())) {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }) => {}
@@ -299,6 +292,7 @@ async fn a_start_that_is_not_a_members_checks_its_genesis_staking_config_against
         listener: None,
         authority: None,
         store: None,
+        archive: None,
     };
     let keys = crate::node::KeyStart::default();
     let mut chain_read = false;
