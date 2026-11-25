@@ -1476,7 +1476,14 @@ trading server whose configuration names none, or others, refuses to start on th
 
 1. Take two of the member's `engine.log-head.v2` heads that are of one signer epoch, bind the same
    turn, position and release, and name different links at one seq. The signed stream carries every
-   head, and followers relay them.
+   head, and followers relay them. The assignment must have held office under that epoch, which
+   `LogHeads` records once a head of the epoch binding it lands while it is the turn's current one:
+
+   ```shell
+   cast call $LOG_HEADS 'boundUnder(uint64,uint16,uint64)(bool)' <turn> <position> <epoch> --rpc-url $RPC
+   ```
+
+   The command prints `true` when the assignment held office under that epoch.
 
 2. For each head, find the index of the assignment's revision that the head binds. `revisionOf`
    reads the revision stored at one index of a turn's position:

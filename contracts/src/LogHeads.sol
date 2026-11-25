@@ -24,7 +24,9 @@ import {Vault} from "./Vault.sol";
 /// a host cannot bank heads and post them late. The schedule counts missed heartbeats from the
 /// latest head's `postedAt`. Otherwise heads are hourly `engine.log-head.v1` anchors.
 /// @notice The first head binding a turn's current assignment latches it: once, immutably, the
-/// block time, signer epoch, member, release and generation. Each epoch's newest v2 head's release
+/// block time, signer epoch, member, release and generation. Each signer epoch whose head binds it
+/// while it is current records that the assignment held office under that epoch (`boundUnder`), the
+/// only epochs `FaultProof` takes a fault of the assignment in. Each epoch's newest v2 head's release
 /// names the enclave holding the keys, whichever assignment it binds, and `keyHolder` names that
 /// enclave's candidate for the schedule's skips and promotions.
 /// Trust: the same single accepted operator dependency as the vault's checkpoints — the attested
@@ -89,6 +91,10 @@ contract LogHeads {
 
     /// The latch of each turn's assignment, by its position; empty until the first head binding it.
     mapping(uint64 turn => mapping(uint16 position => Latch)) public latches;
+
+    /// Whether a head of signer epoch `epoch` bound turn `turn`'s assignment at `position` while it was
+    /// the turn in effect's current one, as a latch requires: the epochs the assignment held office under.
+    mapping(uint64 turn => mapping(uint16 position => mapping(uint64 epoch => bool))) public boundUnder;
 
     /// The release of each signer epoch's newest v2 head: the enclave that signed it, which holds the
     /// keys whatever assignment it binds, so a member taking a turn asks it first (#596).
@@ -285,16 +291,21 @@ contract LogHeads {
         if (blockNumber < marked) revert BlockBeforeMark(blockNumber, marked);
     }
 
-    /// @dev Latches the head's assignment when it is the turn in effect's current one, on the release
-    /// the registry names for its member, and nothing has latched it. A head live or held may latch; one
-    /// binding a superseded assignment still counts as a heartbeat but latches nothing.
+    /// @dev When the head's assignment is the turn in effect's current one, on the release the registry
+    /// names for its member, records that it held office under `epoch` and latches it if nothing has. A
+    /// head live or held may; one binding a superseded assignment still counts as a heartbeat but records
+    /// nothing.
     function _latch(OperatorSchedule schedule, uint64 epoch, bytes32 release, HeadV2 calldata head) private {
-        if (latches[head.turn][head.position].at != 0) return;
+        mapping(uint64 => bool) storage bound = boundUnder[head.turn][head.position];
+        bool latched = latches[head.turn][head.position].at != 0;
+        if (latched && bound[epoch]) return;
         (uint64 turn, OperatorSchedule.Turn memory current) = schedule.turnAt(uint64(block.timestamp));
         if (
             head.turn != turn || head.position != current.position || head.generation != current.generation
                 || head.release != release
         ) return;
+        bound[epoch] = true;
+        if (latched) return;
         latches[turn][head.position] =
             Latch(uint64(block.timestamp), epoch, current.candidate, release, current.generation);
         emit TurnLatched(turn, head.position, current.candidate, epoch, release, current.generation);

@@ -14,11 +14,16 @@ import {Vault} from "./Vault.sol";
 /// and release and name different links at the same seq. A link is the cumulative digest of every
 /// command up to its seq, so two links at one seq are two logs. The schedule's assignment at that turn
 /// and position names the member, and the release each head binds, with its generation, must be one
-/// the assignment recorded. `FaultProven` names that member, and the engine cuts its operator share by
-/// a haircut that decays back to nothing.
+/// the assignment recorded. The assignment must have held office under the epoch: `LogHeads` recorded
+/// a head of that epoch binding it while it was the turn's current assignment (`boundUnder`), so the
+/// epoch's key was in force while the member held it. `FaultProven` names that member, and the engine
+/// cuts its operator share by a haircut that decays back to nothing.
 /// @notice Heads under different signer epochs prove nothing: a promotion starts a new epoch and
 /// discards the outgoing epoch's unposted history by design. Neither do heads naming different
-/// assignments, or censorship and delay, which leave no two signed histories.
+/// assignments, or censorship and delay, which leave no two signed histories. A key of an epoch the
+/// assignment never held office under, before it took office or after it left, names no one. Handovers
+/// pass one epoch's key from member to member, so that key can name any member that held office under
+/// its epoch.
 /// @notice Each assignment is proven once, so one rollback's many conflicting seqs restart the haircut
 /// once, not once per seq. Anyone may submit a proof; stakers, who receive the withheld share, have
 /// the reason to pay its gas. There is no admin: the vault reference is immutable, and the schedule is
@@ -38,8 +43,8 @@ contract FaultProof {
     /// @notice Whether a fault has been proven for turn `turn`'s assignment at `position`.
     mapping(uint64 turn => mapping(uint16 position => bool)) public proven;
 
-    /// @notice The enclave holding `member`'s assignment of `turn` at `position` signed two heads under
-    /// `signerEpoch` naming different links at `seq`.
+    /// @notice The enclave holding `member`'s assignment of `turn` at `position`, which held office under
+    /// `signerEpoch`, signed two heads under it naming different links at `seq`.
     event FaultProven(address indexed member, uint64 indexed turn, uint16 position, uint64 signerEpoch, uint64 seq);
 
     error NotConflicting();
@@ -49,6 +54,7 @@ contract FaultProof {
     error NoSchedule();
     error NoAssignment(uint64 turn, uint16 position);
     error ReleaseNotAssigned(bytes32 release, uint64 generation);
+    error EpochNotBound(uint64 epoch, uint64 turn, uint16 position);
 
     constructor(Vault vault_) {
         vault = vault_;
@@ -58,8 +64,9 @@ contract FaultProof {
     /// @dev Reverts unless the heads name one seq with different links (`NotConflicting`) and one turn,
     /// position and release (`DifferentAssignment`), the assignment is not yet proven (`AlreadyProven`),
     /// both signatures recover the vault's signer of `epoch` (`InvalidSigner`), the vault's registry
-    /// names a schedule (`NoSchedule`) that assigned the position (`NoAssignment`), and each head's
-    /// release and generation are the assignment's revision its evidence names (`ReleaseNotAssigned`).
+    /// names a schedule over this vault (`NoSchedule`) that assigned the position (`NoAssignment`), each
+    /// head's release and generation are the assignment's revision its evidence names
+    /// (`ReleaseNotAssigned`), and the assignment held office under `epoch` (`EpochNotBound`).
     function prove(uint64 epoch, Evidence calldata a, Evidence calldata b) external returns (address member) {
         LogHeads.HeadV2 calldata x = a.head;
         LogHeads.HeadV2 calldata y = b.head;
@@ -69,20 +76,25 @@ contract FaultProof {
         address signer = vault.signerAtEpoch(epoch);
         if (ECDSA.recover(_digest(epoch, x), a.signature) != signer) revert InvalidSigner();
         if (ECDSA.recover(_digest(epoch, y), b.signature) != signer) revert InvalidSigner();
-        member = _member(a, b);
+        member = _member(epoch, a, b);
         proven[x.turn][x.position] = true;
         emit FaultProven(member, x.turn, x.position, epoch, x.seq);
     }
 
     /// @dev The member of the heads' assignment, once each head's release and generation are the
-    /// revision its evidence names.
-    function _member(Evidence calldata a, Evidence calldata b) private view returns (address member) {
+    /// revision its evidence names and the assignment held office under `epoch`. The schedule's log heads
+    /// must follow this vault, whose epochs `epoch` numbers.
+    function _member(uint64 epoch, Evidence calldata a, Evidence calldata b) private view returns (address member) {
         OperatorRegistry registry = vault.registry();
         if (address(registry) == address(0)) revert NoSchedule();
         OperatorSchedule schedule = registry.schedule();
         if (address(schedule) == address(0)) revert NoSchedule();
+        LogHeads heads = schedule.logHeads();
+        if (address(heads.vault()) != address(vault)) revert NoSchedule();
         member = _checkRevision(schedule, a);
         _checkRevision(schedule, b);
+        LogHeads.HeadV2 calldata head = a.head;
+        if (!heads.boundUnder(head.turn, head.position, epoch)) revert EpochNotBound(epoch, head.turn, head.position);
     }
 
     /// @dev The assignment's member, once `evidence`'s head binds the release and generation of the

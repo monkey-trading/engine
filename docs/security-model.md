@@ -1657,12 +1657,24 @@ Known limits:
 Anyone can submit to `FaultProof` two `engine.log-head.v2` heads, signed under one signer epoch and
 binding the same turn, position and release, that name different digests at one sequence number.
 `FaultProof` checks both against that epoch's signer and the schedule's assignment, once per
-assignment. The engine then cuts the assigned member's operator share by a haircut that starts at
-the recorded penalty and falls linearly to nothing over its decay period. The withheld part goes to
+assignment. It also requires that the assignment held office under that epoch: `LogHeads` must have
+accepted a head of the epoch binding the assignment while it was the turn's current one. A key of
+an epoch that ended before the assignment took office, or began after it left, therefore names no
+one. The engine then cuts the assigned member's operator share by a haircut that starts at the
+recorded penalty and falls linearly to nothing over its decay period. The withheld part goes to
 stakers.
 
 Known limits:
 
+- Every member that holds office within one signer epoch signs with that epoch's key, which
+  handovers pass from member to member. Whoever holds a copy of the key while its epoch is in force
+  can sign two histories for any assignment that held office under the epoch, and name its member.
+  This needs a key outside an honest enclave, and that key can already sign checkpoints and
+  withdrawals.
+- An epoch under which no head binding the assignment reached `LogHeads` while the assignment was
+  current proves nothing for it, even if the member signed two histories under that epoch. While none
+  of the member's heads land, the schedule skips its turn or promotes past it within a few heartbeat
+  intervals.
 - Heads under different signer epochs, such as the history a promotion discards, prove nothing.
   Neither do heads of different assignments, or a second history whose heads never share a sequence
   number.

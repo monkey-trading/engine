@@ -10,11 +10,14 @@ import {Vault} from "../src/Vault.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
 
-/// `FaultProof.prove`: two heads of one signer epoch, turn, position and release that disagree at one
-/// seq name the assignment's member once; every other pair, and a pair across a promotion's signer
-/// change, proves nothing. Covers a proof against a head `LogHeads` accepted, each refusal, a revision
+/// `FaultProof.prove`: two heads of one signer epoch the assignment held office under, binding its turn,
+/// position and release, that disagree at one seq name the assignment's member once; every other pair, a
+/// pair across a promotion's signer change, and a pair under an epoch the assignment never held office
+/// under, prove nothing. Covers a proof against a head `LogHeads` accepted, each refusal, a revision
 /// index past the last or of another generation, a proof's gas after 300 release moves, the outgoing
-/// epoch's fault proven after a promotion, and fuzzes which pairs prove.
+/// epoch's fault proven after a promotion, the keys of the epochs before and after an assignment's
+/// office, an epoch the timelock installs during it, a schedule over another vault, and fuzzes which
+/// pairs and epochs prove.
 contract FaultProofTest is LivenessTest {
     FaultProof internal faults;
     address internal anyone = makeAddr("anyone");
@@ -23,6 +26,8 @@ contract FaultProofTest is LivenessTest {
         _deployLiveness();
         faults = new FaultProof(vault);
         _startTurn();
+        // Alice takes the turn: her first head binds her assignment under the vault's first epoch.
+        _beat();
     }
 
     /// @dev Two heads at the next seq with different links, as a rolled-back log would have the enclave
@@ -211,6 +216,82 @@ contract FaultProofTest is LivenessTest {
         assertEq(faults.prove(outgoing, _ev(a, sigA), _ev(b, sigB)), alice);
     }
 
+    function test_AKeyOfAnEpochBeforeTheAssignmentTookOfficeNamesNoOne() public {
+        // The outgoing epoch's key signs two histories for the assignment a promotion makes, which holds
+        // office only under the epoch the promotion starts.
+        uint64 outgoing = vault.signerEpoch();
+        uint256 outgoingKey = _signerKey();
+        (uint64 promotedTurn, uint16 position, address successor) = _promote();
+        _beat();
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        assertEq(a.position, position);
+        bytes memory sigA = _signAt(a, outgoingKey, outgoing);
+        bytes memory sigB = _signAt(b, outgoingKey, outgoing);
+        vm.expectRevert(abi.encodeWithSelector(FaultProof.EpochNotBound.selector, outgoing, promotedTurn, position));
+        faults.prove(outgoing, _ev(a, sigA), _ev(b, sigB));
+        assertFalse(logHeads.boundUnder(promotedTurn, position, outgoing));
+        assertTrue(logHeads.boundUnder(promotedTurn, position, outgoing + 1));
+        // Under the epoch it holds office under, its own two histories name the promoted member.
+        assertEq(_prove(a, b), successor);
+    }
+
+    function test_AKeyOfAnEpochAfterTheAssignmentLeftOfficeNamesNoOne() public {
+        // Two histories for alice's assignment, signed by the key a promotion past her installs.
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        uint64 outgoing = vault.signerEpoch();
+        uint256 outgoingKey = _signerKey();
+        _promote();
+        uint64 promoted = vault.signerEpoch();
+        // A head of the new epoch binding her superseded assignment lands as a heartbeat but records nothing.
+        LogHeads.HeadV2 memory stale = _nextHead();
+        (stale.position, stale.release, stale.generation) = (a.position, a.release, a.generation);
+        _post(stale);
+        assertFalse(logHeads.boundUnder(turn, a.position, promoted));
+        bytes memory sigA = _signAt(a, _signerKey(), promoted);
+        bytes memory sigB = _signAt(b, _signerKey(), promoted);
+        vm.expectRevert(abi.encodeWithSelector(FaultProof.EpochNotBound.selector, promoted, turn, a.position));
+        faults.prove(promoted, _ev(a, sigA), _ev(b, sigB));
+        // Under the epoch she held office under, the outgoing key's two histories name her.
+        sigA = _signAt(a, outgoingKey, outgoing);
+        sigB = _signAt(b, outgoingKey, outgoing);
+        assertEq(faults.prove(outgoing, _ev(a, sigA), _ev(b, sigB)), alice);
+    }
+
+    function test_AnEpochTheTimelockInstallsDuringAnAssignmentBindsItOnceItsHeadLands() public {
+        // Alice registers a new enclave, and the timelock installs it while her assignment holds the turn.
+        uint256 enclaveKey = uint256(keccak256("alice's next enclave"));
+        address enclave = vm.addr(enclaveKey);
+        privateKeyOf[enclave] = enclaveKey;
+        vm.prank(alice);
+        registry.setEnclave(enclave);
+        vm.prank(address(governance));
+        vault.setSigner(enclave);
+        uint64 installed = vault.signerEpoch();
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        _expectRevert(abi.encodeWithSelector(FaultProof.EpochNotBound.selector, installed, turn, a.position), a, b);
+        // Her first head under the new epoch binds the assignment under it too.
+        _beat();
+        assertTrue(logHeads.boundUnder(turn, a.position, installed - 1));
+        assertTrue(logHeads.boundUnder(turn, a.position, installed));
+        (a, b) = _conflict();
+        assertEq(_prove(a, b), alice);
+    }
+
+    function test_AScheduleOverAnotherVaultProvesNothing() public {
+        // A vault whose registry names a schedule over another vault, whose epochs share its numbers.
+        Vault other = new Vault(new MockUSDC(), vault.checkpointSigner(), governance, multisig, 7 days, 3 days, 1 days);
+        vm.prank(address(governance));
+        other.setRegistry(address(registry));
+        FaultProof unbound = new FaultProof(other);
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        bytes memory sigA = _signAt(a, _signerKey(), 1, address(other));
+        bytes memory sigB = _signAt(b, _signerKey(), 1, address(other));
+        vm.expectRevert(FaultProof.NoSchedule.selector);
+        unbound.prove(1, _ev(a, sigA), _ev(b, sigB));
+        // The schedule's log heads record the assignment under their own vault's epoch 1.
+        assertTrue(logHeads.boundUnder(turn, a.position, 1));
+    }
+
     function test_NoScheduleProvesNothing() public {
         // A vault with no registry has no assignments to name.
         Vault bare = new Vault(new MockUSDC(), vault.checkpointSigner(), governance, multisig, 7 days, 3 days, 1 days);
@@ -242,6 +323,34 @@ contract FaultProofTest is LivenessTest {
         } else {
             assertEq(_prove(a, b), alice);
         }
+    }
+
+    function testFuzz_OnlyAnEpochTheAssignmentHeldOfficeUnderProves(bool alices, bool outgoingKey) public {
+        // Alice held office under the first epoch, and the member a promotion past her under the next.
+        (LogHeads.HeadV2 memory a, LogHeads.HeadV2 memory b) = _conflict();
+        uint64 outgoing = vault.signerEpoch();
+        uint256 aliceKey = _signerKey();
+        (,, address successor) = _promote();
+        _beat();
+        if (!alices) (a, b) = _conflict();
+        (uint64 epoch, uint256 key) = outgoingKey ? (outgoing, aliceKey) : (outgoing + 1, _signerKey());
+        bytes memory sigA = _signAt(a, key, epoch);
+        bytes memory sigB = _signAt(b, key, epoch);
+        if (alices == outgoingKey) {
+            assertEq(faults.prove(epoch, _ev(a, sigA), _ev(b, sigB)), alices ? alice : successor);
+        } else {
+            vm.expectRevert(abi.encodeWithSelector(FaultProof.EpochNotBound.selector, epoch, a.turn, a.position));
+            faults.prove(epoch, _ev(a, sigA), _ev(b, sigB));
+        }
+    }
+
+    /// @dev Lapses alice's heads until a promotion falls due and promotes, returning the promoted turn,
+    /// position and member.
+    function _promote() internal returns (uint64 promotedTurn, uint16 position, address successor) {
+        _lapse();
+        (promotedTurn, position) = schedule.promote();
+        (successor,) = schedule.revisionOf(promotedTurn, position, 0);
+        assertTrue(successor != alice && successor != address(0));
     }
 
     /// @dev `head` with `signature`, naming the assignment's first revision, a draw's.

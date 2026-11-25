@@ -3,15 +3,17 @@
 //! thousand MONKEY, a close adopts them, and a turn is drawn for B. The node, the enclave holding the
 //! vault's signing key, takes B's turn; its host stops it, keeps a copy of its log, lets it sequence on,
 //! then restarts it from the copy, so it sequences a second history over the same seqs. The enclave's
-//! key signs an `engine.log-head.v2` head of each history at one seq, binding B's assignment, and an
-//! account with no role submits both to the real `FaultProof`. It checks:
+//! key signs an `engine.log-head.v2` head of each history at one seq, binding B's assignment, the first
+//! lands on `LogHeads` as B's heartbeat, and an account with no role submits both to the real
+//! `FaultProof`. It checks:
 //! 1. `FaultProven` names B, and the custody watcher mirrors it into the real sequencer;
 //! 2. the next distribution cuts B's part of the operator's share by the haircut's average over its
 //!    time in office, starting at the penalty, the withheld part going to stakers;
 //! 3. the next epoch's cut is smaller, as the haircut falls linearly, and once it has decayed a later
 //!    turn of B's is paid whole;
 //! 4. after a promotion moves the vault's signer to a standby key in a new signer epoch, a head the new
-//!    key signs paired with B's proves nothing under either epoch.
+//!    key signs paired with B's proves nothing under either epoch, and two heads the new key signs for B's
+//!    assignment, which left office before that epoch began, name no one.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -63,8 +65,10 @@ sol! {
     function promote() external returns (uint64, uint16);
     struct Evidence { ProvenHead head; bytes signature; uint256 revision; }
     function prove(uint64 epoch, Evidence a, Evidence b) external returns (address);
+    function postV2(ProvenHead head, bytes signature) external;
     event FaultProven(address indexed member, uint64 indexed turn, uint16 position, uint64 signerEpoch, uint64 seq);
     error InvalidSigner();
+    error EpochNotBound(uint64 epoch, uint64 turn, uint16 position);
 }
 
 const DIGEST_C: [u8; 48] = [0xc1; 48];
@@ -191,15 +195,21 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
 
     // 3. The enclave signs a head of each at that seq as its log-head poster does: the turn read from
     //    the chain through the custody quorum binds B's assignment, since its keys are sealed in that
-    //    assignment's release and generation. Anyone proves the pair.
+    //    assignment's release and generation. The first lands on `LogHeads` as B's heartbeat, binding
+    //    the assignment under the epoch, as its poster's heads do through its turn. Anyone proves the pair.
     let epoch = chain.view(chain.vault, signerEpochCall {}).await;
     let heads = heads_rpc(&chain, log_heads, &node.dir.with_extension("heads"));
     let keys = (releases[1], assignment.generation);
-    let reached = node.clock.now_ms();
+    // Signed at the block time the heartbeat lands near, within the schedule's tolerance of it.
+    let signed_secs = chain.latest_timestamp().await + 1;
+    chain.mine_at(signed_secs).await;
+    let reached = signed_secs as Millis * 1000;
     let enclave = |link, stamp| Released { head: Head { seq, link }, stamp };
     let a = enclave_head(&heads, keys, enclave(link_a, stamp_a), reached, (&signing, chain.vault, epoch)).await;
     let other = enclave_head(&heads, keys, enclave(link_b, stamp_b), reached, (&signing, chain.vault, epoch)).await;
     assert_eq!((a.0.turn, a.0.position, a.0.release), (turn, assignment.position, releases[1]));
+    let heartbeat = postV2Call { head: abi(&a.0), signature: a.1.clone() };
+    chain.send(chain.accounts[5], log_heads, heartbeat.abi_encode()).await;
     let call = proveCall { epoch, a: evidence(&a, 0), b: evidence(&other, 0) };
     let receipt = chain.send(chain.accounts[7], fault_proof, call.abi_encode()).await;
     let proven = receipt.inner.logs().iter().find_map(|log| FaultProven::decode_log(&log.inner).ok());
@@ -250,9 +260,10 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
 
     // 6. A promotion moves the vault's signer to a standby key in a new epoch; a head the new key signs,
     //    naming B's assignment of the later turn at a seq the old key signed, pairs with it under neither
-    //    epoch.
-    // B's enclave's head of the later turn, read while the turn names it.
-    let released = Released { head: Head { seq, link: link_a }, stamp: stamp_a };
+    //    epoch, and two the new key signs for that assignment, which left office before its epoch began,
+    //    name no one.
+    // B's enclave's head of the later turn, read while the turn names it, past the epoch's heartbeat.
+    let released = Released { head: Head { seq: seq + 1, link: link_a }, stamp: stamp_a };
     let later_keys = (releases[1], assignment.generation);
     let a = enclave_head(&heads, later_keys, released, node.clock.now_ms(), (&signing, chain.vault, epoch)).await;
     let start = chain.latest_timestamp().await;
@@ -276,7 +287,13 @@ async fn dev_scenario_a_member_that_signs_two_histories_has_its_share_cut() {
         let reverted = chain.reverted(chain.accounts[7], fault_proof, call.abi_encode()).await;
         assert_eq!(reverted.as_ref(), InvalidSigner {}.abi_encode().as_slice(), "under epoch {under}");
     }
+    let resigned = (a.0, key.sign_digest(a.0.digest(31337, chain.vault, promoted)).parse().unwrap());
+    let call = proveCall { epoch: promoted, a: evidence(&resigned, 0), b: evidence(&discarded, 0) };
+    let reverted = chain.reverted(chain.accounts[7], fault_proof, call.abi_encode()).await;
+    let unbound = EpochNotBound { epoch: promoted, turn: later, position: a.0.position };
+    assert_eq!(reverted.as_ref(), unbound.abi_encode().as_slice());
     println!("PASS: across the promotion's signer change, epochs {epoch} and {promoted}, the pair proves nothing");
+    println!("PASS: the promoted key's own two heads for B's earlier assignment name no one");
 }
 
 /// Relays a seed for `turn` whose first position picks `member`, draws it at its deadline, and moves
