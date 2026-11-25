@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use tokio::sync::watch;
 use tokio::task::spawn_blocking;
 
 use crate::api::ApiError;
@@ -27,9 +28,14 @@ pub(super) fn offset(after: Option<Offset>, from: Option<u64>) -> Result<Option<
 /// Error cases:
 /// - `start` is before the first verified seq, or the segment holding it is listed but not on this host
 ///   (`NotLocal`)
-pub(super) async fn ensure_held(dir: &Path, manifest: &Manifest, start: Option<Offset>) -> Result<(), ApiError> {
+pub(super) async fn ensure_held(
+    dir: &Path,
+    manifest: &watch::Receiver<Manifest>,
+    start: Option<Offset>,
+) -> Result<(), ApiError> {
     let Some(start) = start else { return Ok(()) };
-    manifest.ensure_served(start.seq).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let served = manifest.borrow().ensure_served(start.seq);
+    served.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let dir = dir.to_owned();
     match spawn_blocking(move || crate::log::ensure_local(&dir, start.seq)).await {
         Ok(Err(e)) if e.is::<crate::log::NotLocal>() => Err(ApiError::BadRequest(format!("{e:#}"))),
