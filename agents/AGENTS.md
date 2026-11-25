@@ -627,7 +627,8 @@ an index: load only the rule whose hint matches the current action.
   assignment the enclave holds, its release and generation, the stamp, the signing time within
   `headTolerance` of the block's, or for a held head a recent block (`ArbSys`, `src/ArbSys.sol`) newer
   than the bound one and no older than the latest witnessed slot's, and latches each assignment's first
-  head once (`latches`). `OperatorSchedule` holds the heartbeat rule within deployment bounds, marks
+  head once (`latches`), recording each signer epoch whose head binds an assignment while it is current
+  (`boundUnder`). `OperatorSchedule` holds the heartbeat rule within deployment bounds, marks
   slots (`witness`), promotes the next qualified member's vouched standby key to the vault's signer in a
   new epoch with no timelock (`promote`, `Vault.promoteSigner`), keeps every assignment and its release
   revisions (`assignmentOf`), and registers standby keys from the candidate with a vouch from the vault's
@@ -649,8 +650,10 @@ an index: load only the rule whose hint matches the current action.
   `src/FaultProof.sol` (from #597) takes two `engine.log-head.v2` heads of one signer epoch, turn,
   position and release that name different links at one seq, checks both against that epoch's signer
   (`signerAtEpoch`) and the assignment's revision each names (`OperatorSchedule.revisionOf`, one read
-  per head), and emits `FaultProven` naming the member once per assignment, so a promotion's new
-  epoch pairs with nothing before it.
+  per head), requires the assignment to have held office under the epoch (`LogHeads.boundUnder`, of
+  the schedule's log heads over the same vault), and emits `FaultProven` naming the member once per
+  assignment, so a promotion's new epoch pairs with nothing before it and no other epoch's key names
+  the member.
   `src/SeedSchedule.sol` fixes each operator turn's seed epoch, for the `turnLength` fixed at deployment (a day
   in production; a divisor of a day of at least five minutes for a development stack, whose turns `OperatorSchedule`
   takes from its receiver)
