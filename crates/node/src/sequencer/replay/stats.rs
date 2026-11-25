@@ -15,6 +15,13 @@ impl Replay {
         self.stats = Some(stats);
     }
 
+    /// Has this replay record every command it applies into `stats` as it stands: for a replay that goes on from a
+    /// daily snapshot's checkpoint, into the record the snapshot carries (`Stats::restore`), or one started over
+    /// there when it carries none.
+    pub(crate) fn record_stats_continuing(&mut self, stats: Stats) {
+        self.stats = Some(stats);
+    }
+
     /// Starts the stats worker over a copy of the state replayed so far, if this replay records stats: each
     /// command it applies from here reaches the worker as it is applied (`record`), so a start from this
     /// replay's state takes the worker on and copies nothing.

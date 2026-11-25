@@ -11,7 +11,8 @@ use super::*;
 
 /// A vault that names `signer`, and the release `current` holds as its current one; with `synced`
 /// set it reads the fold too, and that is the release its generation has folded. Its earlier epoch's
-/// signer is the test sequencer's key, which signs the logs the tests' nodes write.
+/// signer is the test sequencer's key, which signs the logs the tests' nodes write. The checkpoint it
+/// accepted last is the one `finalized` holds, at every view.
 pub(super) struct Vault {
     pub(super) signer: AccountId,
     pub(super) current: Arc<Mutex<CurrentRelease>>,
@@ -21,6 +22,8 @@ pub(super) struct Vault {
     pub(super) rotation: Rotation,
     /// The turn the finalised schedule names, at any time at or after its boundary.
     pub(super) scheduled: Arc<Mutex<Option<ScheduledTurn>>>,
+    /// The checkpoint it accepted last, `(seq, root)`; none until a test sets one.
+    pub(super) finalized: Arc<Mutex<Option<(u64, String)>>>,
 }
 
 /// The registry's rotation switch as the vault reads it, at the latest block and at finality, and
@@ -38,7 +41,7 @@ impl CheckpointChain for Vault {
         Ok(VaultState {
             height: 1,
             signer: self.signer,
-            checkpoint: None,
+            checkpoint: self.finalized.lock().unwrap().clone(),
             balance: zero,
             deposits: 0,
             deposited: zero,

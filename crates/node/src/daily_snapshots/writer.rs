@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::daily_snapshots::{
-    Covered, Listed, MANIFEST, SCHEMA, Signing, Written, day, offset_named, read_manifest, sha256,
+    Covered, Listed, MANIFEST, Pending, SCHEMA, Signing, Written, day, offset_named, read_manifest, sha256,
 };
 use crate::log::{Checkpoint, Offset};
 use crate::paced::Paced;
@@ -38,8 +38,8 @@ pub(crate) struct Job {
     pub engine: Encoding,
     /// The replay state at the checkpoint (`Carried`), encoded by the stats worker's fold.
     pub carried: Encoding,
-    /// The history anchors at the checkpoint (`History`).
-    pub history: Encoding,
+    /// The history anchors at the checkpoint (`History`), as they complete.
+    pub history: Pending,
     /// The key that signed the checkpoint, which signs the snapshot.
     pub signing: Signing,
 }
@@ -263,7 +263,7 @@ fn publish(dir: &Path, listed: &mut Vec<Listed>, job: Job) -> anyhow::Result<Lis
     let engine = RawValue::from_string(encoded).context("the engine's encoding is not JSON")?;
     let carried = RawValue::from_string(job.carried.wait(ENCODE_WAIT, || false).context("the carried replay state")?)
         .context("the carried replay state's encoding is not JSON")?;
-    let history = RawValue::from_string(job.history.wait(ENCODE_WAIT, || false).context("the history anchors")?)
+    let history = RawValue::from_string(job.history.wait(ENCODE_WAIT).context("the history anchors")?)
         .context("the history anchors' encoding is not JSON")?;
     let covered = Covered {
         state: sha256(engine.get().as_bytes()),

@@ -8,7 +8,7 @@ use engine_core::types::AccountId;
 
 use crate::checkpoints::Takeover;
 use crate::config::NodeConfig;
-use crate::log::{Checkpoint, LogEntry, SegmentedLog};
+use crate::log::{Checkpoint, LogEntry, Offset, SegmentedLog};
 use crate::tee::EnclaveKey;
 
 /// On a takeover's first start under the new signer, cuts the log to the vault's finalized
@@ -56,24 +56,28 @@ pub(in crate::node) async fn cut_to_finalized_anchor(cfg: &NodeConfig, key: &Arc
 /// the log's newest segments, and so reads no more of a long log than of a short one. The signer it
 /// finds there is not checked against the signature, but one forged to name this key cuts nothing,
 /// and recovery's replay refuses a checkpoint this key did not sign. A cut writes the log, so it is
-/// decided on a whole read, which refuses a log that does not open, or a checkpoint whose signer is
-/// not an address, before anything is cut.
+/// decided on a read of every segment it could cut, from the one holding the vault's checkpoint's command
+/// on, which refuses one that does not open, or a checkpoint whose signer is not an address, before anything
+/// is cut; the segments before it need not be on this host. A log that holds no checkpoint from there on is
+/// judged by its last one, as the newest segments give it.
 /// Error cases:
-/// - the log cannot be read, or a checkpoint's signer is not an address
+/// - the log cannot be read from the vault's checkpoint's command on, or a checkpoint's signer there is not an
+///   address
 fn cut_due(dir: &Path, signer: AccountId, (seq, root): (u64, String)) -> anyhow::Result<Option<Takeover>> {
     let signer_of = |checkpoint: &Checkpoint| checkpoint.signer.parse::<AccountId>();
-    if crate::log::last_checkpoint(dir)?.as_ref().map(signer_of).transpose()? == Some(signer) {
+    let newest = crate::log::last_checkpoint(dir)?;
+    if newest.as_ref().map(signer_of).transpose()? == Some(signer) {
         return Ok(None);
     }
     let mut last: Option<Checkpoint> = None;
-    SegmentedLog::open(dir, |entry| {
+    SegmentedLog::open_from(dir, Offset::start_of(seq), |entry| {
         if let LogEntry::Checkpoint(checkpoint) = entry {
             signer_of(&checkpoint)?;
             last = Some(checkpoint);
         }
         Ok(())
     })?;
-    let Some(last) = last else { return Ok(None) };
+    let Some(last) = last.or(newest) else { return Ok(None) };
     if signer_of(&last)? == signer || (last.seq <= seq && last.root == root) {
         return Ok(None);
     }
@@ -135,10 +139,10 @@ mod tests {
     }
 
     /// A tail another key signed past the vault's checkpoint is cut back to it, a log that holds the
-    /// vault's checkpoint last is not, and a cut is decided on a whole read, which refuses a log a
-    /// segment of which no longer reads before anything is cut.
+    /// vault's checkpoint last is not, and a cut is decided on a read of every segment it could cut, which
+    /// refuses a log a segment of which no longer reads before anything is cut.
     #[test]
-    fn a_cut_is_due_only_for_another_keys_tail_and_decided_on_a_whole_read() {
+    fn a_cut_is_due_only_for_another_keys_tail_and_decided_on_a_read_of_what_it_cuts() {
         let dir = log("takeover-due", &[(1, OUTGOING, 1), (3, OUTGOING, 3)]);
         let due = cut_due(&dir, OURS, (1, root(1))).unwrap();
         assert_eq!(due.map(|to| (to.seq, to.root, to.signer)), Some((1, root(1), OURS)));
@@ -147,8 +151,8 @@ mod tests {
         cut_due(&dir, OURS, (1, root(1))).expect_err("a log that does not open is refused, so nothing is cut");
     }
 
-    /// A cut is refused when any checkpoint the whole read finds names a signer that is not an address,
-    /// not only the last, as the read the cut is decided on always refused it.
+    /// A cut is refused when any checkpoint the read it is decided on finds names a signer that is not an
+    /// address, not only the last.
     #[test]
     fn a_cut_is_refused_over_any_checkpoint_whose_signer_is_not_an_address() {
         let dir = log("takeover-signer", &[(1, OUTGOING, 1), (2, UNREADABLE, 2), (3, OUTGOING, 3)]);
@@ -157,6 +161,20 @@ mod tests {
         assert!(!Manifest::load(&dir).unwrap().segments.iter().any(|listed| dir.join(&listed.file) == newest));
         std::fs::write(&newest, text.replace(&UNREADABLE.to_string(), "0xnot-an-address")).unwrap();
         cut_due(&dir, OURS, (1, root(1))).expect_err("an unreadable signer is refused, so nothing is cut");
+    }
+
+    /// A cut reads the log only from the segment holding the vault's checkpoint's command on: the segments
+    /// before it may be gone from this host, as when only the archive holds them, and one there that no longer
+    /// reads decides nothing.
+    #[test]
+    fn a_cut_reads_no_segment_before_the_vaults_checkpoint() {
+        let dir = log("takeover-archived", &[(1, OUTGOING, 1), (3, OUTGOING, 3), (5, OUTGOING, 5)]);
+        damage_first_segment(&dir);
+        let due = cut_due(&dir, OURS, (3, root(3))).unwrap();
+        assert_eq!(due.map(|to| (to.seq, to.root)), Some((3, root(3))));
+        std::fs::remove_file(dir.join("00000000000000000000.jsonl")).unwrap();
+        let due = cut_due(&dir, OURS, (3, root(3))).unwrap();
+        assert_eq!(due.map(|to| (to.seq, to.root)), Some((3, root(3))), "the first segment is only in the archive");
     }
 
     // ── Helpers ──

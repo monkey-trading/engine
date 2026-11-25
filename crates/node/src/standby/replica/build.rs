@@ -1,16 +1,15 @@
 //! How a follower's replica is built as its copy is opened: by one replay of the whole copy, or from a daily
-//! snapshot, by a pass over the copy before the snapshot's checkpoint that applies nothing
-//! (`sequencer::replay::Before`), then a replay of the copy from the snapshot's state, its checkpoint first, as
-//! the replica takes the stream's entries. A build from a snapshot that fails, for any reason the copy or the
-//! snapshot gives, pages Warning `snapshot_start_refused`, and the replica is built by a whole replay instead,
-//! which refuses the copy for itself if it is the copy that is at fault.
+//! snapshot, whose engine and the replay state it carries stand for the copy through its checkpoint
+//! (`LiveReplay::resume`). A build from a snapshot reads the copy from the command that checkpoint covers, which a
+//! resumed stream repeats first, requires the checkpoint at the snapshot's offset, and replays the entries after
+//! it, so the copy's segments before it need not be on this host. A build from a snapshot that fails, for any
+//! reason the copy or the snapshot gives, pages Warning `snapshot_start_refused`, and the replica is built by a
+//! whole replay instead, which refuses the copy for itself if it is the copy that is at fault.
 
 use std::cell::Cell;
 use std::collections::{BTreeSet, VecDeque};
-use std::thread::JoinHandle;
 
 use anyhow::{Context, anyhow, ensure};
-use engine_core::Engine;
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use tracing::{error, info, warn};
@@ -18,120 +17,69 @@ use tracing::{error, info, warn};
 use crate::checkpoints::Takeover;
 use crate::daily_snapshots::{DailySnapshot, Signed, open_signed};
 use crate::log::{Checkpoint, CheckpointDomain, LogEntry, Manifest, Offset, ReplayWorkers, offset_of};
-use crate::sequencer::replay::{Before, LiveReplay};
+use crate::sequencer::replay::LiveReplay;
 use crate::standby::chain::Chain;
 use crate::standby::open_copy_replayed;
 use crate::standby::replica::rows::RowsBefore;
-use crate::standby::replica::{Follower, Records, recording};
+use crate::standby::replica::{Follower, Records, recording_from};
 
-/// What a build holds as it reads the copy: the pass toward a daily snapshot's checkpoint, until the copy
-/// reaches it, then the replica.
-enum Building {
-    /// Taken while the pass becomes the replica.
-    Before(Option<Box<Toward>>),
-    Live(Box<LiveReplay>),
-}
-
-/// The pass toward the checkpoint at `at`, with the snapshot's engine, whose root a thread of its own computes
-/// meanwhile, over every key.
-struct Toward {
-    pass: Before,
-    at: Offset,
-    checkpoint: Checkpoint,
-    rooting: Rooting,
-}
-
-/// The thread computing the root of a snapshot's state, which gives the engine back.
-struct Rooting(Option<JoinHandle<Engine>>);
-
-impl Drop for Rooting {
-    /// Joins the thread, so a build that ends before the snapshot's checkpoint leaves none running.
-    fn drop(&mut self) {
-        if let Some(rooting) = self.0.take() {
-            // A thread that panicked computed nothing the build still needs.
-            let _ = rooting.join();
-        }
-    }
-}
-
-impl Rooting {
-    /// The snapshot's engine, holding its state tree, once the thread has computed its root.
-    /// Error cases:
-    /// - the computation panicked
-    fn engine(mut self) -> anyhow::Result<Engine> {
-        let rooting = self.0.take().expect("the thread is joined only here or on drop");
-        rooting.join().map_err(|_| anyhow!("computing the root of the snapshot's state panicked"))
-    }
-}
-
-impl Toward {
-    /// Starts the pass over the copy at `dir` toward `snapshot`'s checkpoint, its seals checked ahead by
-    /// `workers`, and the thread computing the root of the snapshot's state.
-    /// Error cases:
-    /// - the thread cannot start
-    fn start(
-        snapshot: DailySnapshot,
-        (domain, signers): (CheckpointDomain, BTreeSet<AccountId>),
-        keep: &[u64],
-        (dir, workers): (&std::path::Path, ReplayWorkers),
-    ) -> anyhow::Result<Self> {
-        let DailySnapshot { offset, checkpoint, mut engine, .. } = snapshot;
-        let mut pass = Before::new(domain, signers, &engine, keep);
-        pass.check_seals_ahead(dir, workers);
-        let rooting = std::thread::Builder::new()
-            .name("snapshot-root".into())
-            .spawn(move || {
-                engine.state_root();
-                engine
-            })
-            .context("starting the thread that computes the snapshot's root")?;
-        Ok(Self { pass, at: offset, checkpoint, rooting: Rooting(Some(rooting)) })
-    }
+/// What a build holds as it reads the copy: the replica, and for one gone on from a daily snapshot, the
+/// snapshot's checkpoint, with its offset, until the copy reaches it.
+struct Building {
+    replica: LiveReplay,
+    /// The entries before it the snapshot stands for: the replica stands just past it.
+    toward: Option<(Offset, Checkpoint)>,
 }
 
 impl Building {
-    /// Applies the copy's next entry: to the pass before the snapshot's checkpoint; at the checkpoint, the
-    /// pass becomes the replica, recording what `records` names, and applies it; after it, to the replica.
+    /// A replica of the copy in `dir`, in `domain` under `signers`, going on from `snapshot`, keeping the links and
+    /// checkpoints at `keep`, recording what `records` names but the checkpoints it verifies, its seals checked
+    /// ahead by `workers`, and holding the posted head `posted` when the links it carries include it; with the
+    /// offset the copy is read from, that of the command the snapshot's checkpoint covers. Its dashboard record
+    /// goes on from the one the snapshot carries.
     /// Error cases:
-    /// - the entry fails the pass (`Before::entry`) or the replica (`LiveReplay::apply`)
-    /// - the copy holds another entry at the snapshot's offset than its checkpoint, or the snapshot's state does
-    ///   not stand where the pass ends (`Before::into_live`), or its root cannot be computed
-    fn apply(&mut self, entry: &LogEntry, records: &Records) -> anyhow::Result<()> {
-        let toward = match self {
-            Building::Live(replica) => return replica.apply(entry),
-            Building::Before(toward) => toward.as_mut().context("the pass failed to become the replica")?,
-        };
-        if toward.pass.next_offset(entry) != Some(toward.at) {
-            return toward.pass.entry(entry);
-        }
-        ensure!(
-            matches!(entry, LogEntry::Checkpoint(held) if *held == toward.checkpoint),
-            "the copy holds another entry at {} than the snapshot's checkpoint",
-            toward.at
-        );
-        let Building::Before(Some(toward)) = std::mem::replace(self, Building::Before(None)) else {
-            unreachable!("the pass is held until it becomes the replica")
-        };
-        let Toward { pass, rooting, checkpoint, .. } = *toward;
-        let engine = rooting.engine()?;
+    /// - the snapshot does not stand for its engine and checkpoint, or its root is not its checkpoint's
+    ///   (`LiveReplay::resume`)
+    fn resume(
+        snapshot: DailySnapshot,
+        (domain, signers): (CheckpointDomain, BTreeSet<AccountId>),
+        records: &Records,
+        (keep, posted): (&[u64], Option<(u64, B256)>),
+        (dir, workers): (&std::path::Path, ReplayWorkers),
+    ) -> anyhow::Result<(Self, Offset)> {
+        let toward = (snapshot.offset, snapshot.checkpoint.clone());
+        let record = crate::daily_snapshots::History::read(snapshot.history.as_deref()).stats;
+        let resumed = LiveReplay::resume(domain, signers, snapshot, keep)?;
         // A replica from a snapshot answers no boundary check: the range a check covers may start before the
-        // snapshot, whose state the replica did not verify, and the member cannot tell.
+        // snapshot, whose state the replica did not verify, and the member cannot tell. Its dashboard record goes
+        // on from the one the snapshot carries.
         let (stats, marks, _, rows) = records;
-        let mut replica =
-            recording(pass.into_live(engine, &checkpoint)?, &(stats.clone(), marks.clone(), None, rows.clone()));
-        // The marks fold starts at the snapshot, as the marks it holds were taken there.
-        replica.count_marks_taken();
-        replica.apply(entry)?;
-        *self = Building::Live(Box::new(replica));
-        Ok(())
+        let mut replica = recording_from(resumed, &(stats.clone(), marks.clone(), None, rows.clone()), record);
+        replica.check_seals_ahead(dir, workers);
+        if let Some((seq, link)) = posted {
+            replica.pin(seq, link);
+        }
+        let from = Offset::start_of(toward.0.seq);
+        Ok((Self { replica, toward: Some(toward) }, from))
     }
 
-    /// Keeps the posted head `(seq, link)` as one the build holds (`LiveReplay::pin`).
-    fn pin(&mut self, seq: u64, link: B256) {
-        match self {
-            Building::Live(replica) => _ = replica.pin(seq, link),
-            Building::Before(Some(toward)) => _ = toward.pass.pin(seq, link),
-            Building::Before(None) => {}
+    /// Applies the copy's entry at `offset`: before a daily snapshot's checkpoint, nothing; at it, nothing, as the
+    /// replica stands past it; after it, the replica applies it.
+    /// Error cases:
+    /// - the copy holds another entry at the snapshot's offset than its checkpoint
+    /// - the entry fails the replica (`LiveReplay::apply`)
+    fn apply(&mut self, offset: Offset, entry: &LogEntry) -> anyhow::Result<()> {
+        match &self.toward {
+            None => self.replica.apply(entry),
+            Some((at, _)) if offset < *at => Ok(()),
+            Some((at, checkpoint)) => {
+                ensure!(
+                    offset == *at && matches!(entry, LogEntry::Checkpoint(held) if held == checkpoint),
+                    "the copy holds another entry at {at} than the snapshot's checkpoint"
+                );
+                self.toward = None;
+                Ok(())
+            }
         }
     }
 
@@ -139,12 +87,9 @@ impl Building {
     /// Error cases:
     /// - the copy ended before the snapshot's checkpoint
     fn replica(self) -> anyhow::Result<LiveReplay> {
-        match self {
-            Building::Live(replica) => Ok(*replica),
-            Building::Before(toward) => Err(anyhow!(
-                "the copy ends before the snapshot's checkpoint at {}",
-                toward.map_or_else(|| "its offset".to_owned(), |toward| toward.at.to_string())
-            )),
+        match self.toward {
+            None => Ok(self.replica),
+            Some((at, _)) => Err(anyhow!("the copy ends before the snapshot's checkpoint at {at}")),
         }
     }
 }
@@ -173,16 +118,17 @@ impl Follower {
             let observing = |entry: &LogEntry| observe(entry).inspect_err(|_| observing_failed.set(true));
             let (dir, _, workers) = copy;
             let mut first = Some(snapshot.snapshot);
-            let mut prepare = || -> anyhow::Result<(Building, bool)> {
+            let mut prepare = || -> anyhow::Result<(Building, Option<Offset>)> {
                 let snapshot = match first.take() {
                     Some(snapshot) => snapshot,
                     // A build after a cut reads the snapshot again, as it reads the copy again.
                     None => open_signed(&path, domain, &signers)?.snapshot,
                 };
-                let toward = Toward::start(snapshot, (domain, signers.clone()), keep, (dir, workers))?;
-                Ok((Building::Before(Some(Box::new(toward))), false))
+                let trust = (domain, signers.clone());
+                let (building, from) = Building::resume(snapshot, trust, records, (keep, posted), (dir, workers))?;
+                Ok((building, Some(from)))
             };
-            match Self::open_with(copy, ids.clone(), &mut prepare, records, posted, observing) {
+            match Self::open_with(copy, ids.clone(), &mut prepare, posted, observing) {
                 Ok(mut follower) => {
                     info!(seq, snapshot = %path.display(), %signer, "built the replica from a daily snapshot");
                     let (_, _, _, rows) = records;
@@ -198,16 +144,16 @@ impl Follower {
                 ),
             }
         }
-        let mut prepare = || -> anyhow::Result<(Building, bool)> {
+        let mut prepare = || -> anyhow::Result<(Building, Option<Offset>)> {
             let mut replica = fresh();
             replica.check_seals_ahead(copy.0, copy.2);
-            Ok((Building::Live(Box::new(replica)), true))
+            Ok((Building { replica, toward: None }, None))
         };
-        Self::open_with(copy, ids, &mut prepare, records, posted, observe)
+        Self::open_with(copy, ids, &mut prepare, posted, observe)
     }
 
     /// Opens the copy in `dir`, building its replica as `prepare` says, as it is read: from the start of the
-    /// copy, or a daily snapshot, and whether that build is a whole replay. A tail after the copy's last
+    /// copy, a whole replay, or from the offset `prepare` gives, a daily snapshot's. A tail after the copy's last
     /// checkpoint that no accepted signer sealed is copied aside to `<dir>.unaccepted-<seq>`, paged as Critical
     /// `copy_tail_unaccepted`, and cut back (`cut`), and the replica built again, from what `prepare` gives
     /// again.
@@ -218,17 +164,16 @@ impl Follower {
     fn open_with(
         (dir, segment_commands, _): (&std::path::Path, u64, ReplayWorkers),
         (domain, enclave, recorded): (CheckpointDomain, AccountId, BTreeSet<AccountId>),
-        prepare: &mut dyn FnMut() -> anyhow::Result<(Building, bool)>,
-        records: &Records,
+        prepare: &mut dyn FnMut() -> anyhow::Result<(Building, Option<Offset>)>,
         posted: Option<(u64, B256)>,
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<Self> {
         let (mut opened, mut previous) = (VecDeque::new(), None);
         let mut apply = |building: &mut Building, entry: &LogEntry| {
             observe(entry)?;
-            building.apply(entry, records)?;
             let offset = offset_of(previous, entry)?;
-            // A retried build reads the copy again from its start.
+            building.apply(offset, entry)?;
+            // A retried build reads the copy again from where it starts.
             if previous.is_some_and(|was| offset <= was) {
                 opened.clear();
             }
@@ -240,19 +185,19 @@ impl Follower {
             if let (Some((seq, link)), LogEntry::Command(command)) = (posted, entry)
                 && command.sequenced.seq == seq
             {
-                building.pin(seq, link);
+                building.replica.pin(seq, link);
             }
             Ok(())
         };
         let chain = Chain::new(domain, enclave);
         let mut replays = 0;
-        let mut build = |prepare: &mut dyn FnMut() -> anyhow::Result<(Building, bool)>| {
-            let (building, whole) = prepare()?;
-            replays += u64::from(whole);
+        let mut build = |prepare: &mut dyn FnMut() -> anyhow::Result<(Building, Option<Offset>)>| {
+            let (building, from) = prepare()?;
+            replays += u64::from(from.is_none());
             let building = Cell::new(Some(building));
             let fresh = || building.take().expect("a build reads the copy once");
             let (writer, copied, built) =
-                open_copy_replayed(dir, segment_commands.max(1), chain.clone(), fresh, &mut apply)
+                open_copy_replayed(dir, segment_commands.max(1), chain.clone(), from, fresh, &mut apply)
                     .context("the copy does not replay")?;
             anyhow::Ok((writer, copied, built.replica()?))
         };

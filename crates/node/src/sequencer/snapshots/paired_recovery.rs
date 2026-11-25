@@ -10,6 +10,7 @@ use tracing::{error, info};
 
 use crate::authenticated::Store;
 use crate::config::{HistorySection, NodeConfig, SnapshotSection};
+use crate::daily_snapshots::Signed;
 use crate::history::authenticated::Index;
 use crate::history::rebuild::Fingerprinter;
 use crate::history::startup::{Catalog, Plan, Resume, Source};
@@ -45,9 +46,9 @@ impl Sequencer {
         capture: Option<crate::log_heads::Head>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
-        match Self::read_paired_cache(cfg, signer, parent, stats.as_ref(), capture, &mut observe)? {
+        match Self::read_paired_cache(cfg, signer, parent, stats.as_ref(), capture, None, &mut observe)? {
             Some(recovered) => Ok(recovered),
-            None => Self::replay_paired_log(cfg, signer, parent, authorities, stats, capture, observe),
+            None => Self::replay_paired_log(cfg, signer, parent, authorities, stats, capture, None, observe),
         }
     }
 
@@ -56,7 +57,8 @@ impl Sequencer {
     /// posted head: the replayed suffix records the cumulative command-prefix digest at its seq for
     /// the posted-head check, and a posted seq at or under the snapshot base is bound to the snapshot's
     /// history by the commands since it before the snapshot is accepted (a refusal is fatal, not a
-    /// candidate rejection).
+    /// candidate rejection). `daily`, a signed daily snapshot at or under the vault's finalized checkpoint,
+    /// starts the pass over the log's prefix a cache's check makes with no head posted.
     /// Error cases:
     /// - snapshots are absent, or the posted head conflicts with the log below a cache's base
     pub(crate) fn read_paired_cache(
@@ -65,6 +67,7 @@ impl Sequencer {
         parent: Option<CheckpointParent>,
         stats: Option<&crate::stats::Stats>,
         capture: Option<crate::log_heads::Head>,
+        daily: Option<&Signed>,
         observe: &mut impl FnMut(&LogEntry),
     ) -> Result<Option<(ReplayedLog, Plan)>> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -79,7 +82,8 @@ impl Sequencer {
         match candidates {
             Ok(paths) => {
                 for path in paths {
-                    match candidate(cfg, snapshots, &path, domain, signer, parent, stats, capture, observe) {
+                    let checks = (signer, parent, capture, daily);
+                    match candidate(cfg, snapshots, &path, domain, checks, stats, observe) {
                         Ok(recovered) => return Ok(Some(recovered)),
                         // A posted head the log does not hold refuses startup; it is not a cache to
                         // reject and fall back from — the fallback would serve the conflicting books.
@@ -93,10 +97,15 @@ impl Sequencer {
         Ok(None)
     }
 
-    /// The full replay a paired recovery falls back to when no cache verifies, planning a strict
-    /// log-derived migration without any persisted mutation. `capture` is as `read_paired_cache`'s.
+    /// The replay a paired recovery falls back to when no cache verifies, planning a strict log-derived
+    /// migration without any persisted mutation: of the log after `daily`'s checkpoint, a signed daily
+    /// snapshot at or under the vault's finalized checkpoint, when one is given, or else of the whole log.
+    /// `capture` is as `read_paired_cache`'s; a head posted at or under the daily snapshot's checkpoint is
+    /// bound to the history it carries (`prefix::under_daily`) before the replay.
     /// Error cases:
-    /// - snapshots are absent, or the full replay cannot verify the authoritative log
+    /// - snapshots are absent, or the replay cannot verify the authoritative log
+    /// - the posted head is not in the daily snapshot's history (`prefix::under_daily`)
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn replay_paired_log(
         cfg: &NodeConfig,
         signer: Option<AccountId>,
@@ -104,6 +113,7 @@ impl Sequencer {
         authorities: crate::checkpoints::SignerHistory,
         stats: Option<crate::stats::Stats>,
         capture: Option<crate::log_heads::Head>,
+        daily: Option<Signed>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -120,22 +130,35 @@ impl Sequencer {
         if let Some(stats) = stats {
             replay.record_stats_with(stats);
         }
-        replay.check_ahead(&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
-        let mut fingerprint = Fingerprinter::new();
-        let log = SegmentedLog::open_ahead(&cfg.node.log_dir, |entry| {
-            replay.apply(&entry)?;
-            fingerprint.observe(&entry)?;
-            observe(&entry);
-            Ok(())
-        });
-        let log = replay.settled(log)?;
-        let replayed = replay.finish();
-        let plan =
-            plan(cfg, snapshots, domain, signer, Source::Rebuild { prefix: fingerprint.finish() }, Catalog::Rebuild);
-        Ok((
-            ReplayedLog { log: log.into(), replayed, snapshot_seq: None, legacy_authorizations: Default::default() },
-            plan,
-        ))
+        let (dir, seals) = (&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
+        let posted_ts = match &daily {
+            Some(daily) => crate::log_heads::prefix::under_daily(dir, capture, daily)?,
+            None => None,
+        };
+        let snapshot_seq = daily.as_ref().map(|daily| daily.snapshot.offset.seq);
+        let mut fingerprint = Fingerprinter::after(daily.as_ref().map(|daily| daily.snapshot.offset));
+        let (replay, log) = match daily {
+            Some(daily) => replay.replay_after(daily, dir, seals, |entry| {
+                fingerprint.observe(entry)?;
+                observe(entry);
+                Ok(())
+            })?,
+            None => {
+                replay.check_ahead(dir, seals);
+                let log = SegmentedLog::open_ahead(dir, |entry| {
+                    replay.apply(&entry)?;
+                    fingerprint.observe(&entry)?;
+                    observe(&entry);
+                    Ok(())
+                });
+                let log = replay.settled(log)?;
+                (replay, log)
+            }
+        };
+        let mut replayed = replay.finish();
+        replayed.ts_at = replayed.ts_at.or(posted_ts);
+        let plan = plan(cfg, snapshots, domain, Source::Rebuild { prefix: fingerprint.finish() }, Catalog::Rebuild);
+        Ok((ReplayedLog { log: log.into(), replayed, snapshot_seq, legacy_authorizations: Default::default() }, plan))
     }
 }
 
@@ -181,24 +204,26 @@ impl AnchorChain {
 /// A posted head at or under C is bound to C's history by the commands since it before the
 /// snapshot is accepted; that refusal (see `log_heads::prefix::Rollback`) aborts recovery rather
 /// than falling back, so a forked prefix cannot be served from the snapshot. With `[log_heads]` and
-/// no head posted, a pass over the on-disk prefix stamps a vault-finalized checkpoint under C. With a
-/// finalized checkpoint at or past C, the suffix's signed parent chain from C to it is checked
-/// (`AnchorChain`).
+/// no head posted, a pass over the on-disk prefix, from `daily`'s checkpoint when a signed daily snapshot
+/// under C is given, stamps a vault-finalized checkpoint under C. With a finalized checkpoint at or past C,
+/// the suffix's signed parent chain from C to it is checked (`AnchorChain`).
 /// Error cases:
 /// - certificate, fixed metadata, prefix extension, the paired head's binding to C, boundary bytes, replay,
 ///   the posted-head prefix
 ///   check, the parent chain to the finalized checkpoint, or the anchor-stamping pass, or availability
 ///   fails
-#[allow(clippy::too_many_arguments)]
 fn candidate(
     cfg: &NodeConfig,
     snapshots: &SnapshotSection,
     path: &Path,
     domain: CheckpointDomain,
-    signer: Option<AccountId>,
-    parent: Option<CheckpointParent>,
+    (signer, parent, capture, daily): (
+        Option<AccountId>,
+        Option<CheckpointParent>,
+        Option<crate::log_heads::Head>,
+        Option<&Signed>,
+    ),
     stats: Option<&crate::stats::Stats>,
-    capture: Option<crate::log_heads::Head>,
     observe: &mut impl FnMut(&LogEntry),
 ) -> Result<(ReplayedLog, Plan)> {
     let (snapshot, engine) = snapshot::read(snapshots, path, domain.chain_id, domain.vault)?;
@@ -219,8 +244,15 @@ fn candidate(
         posted_ts = Some(crate::log_heads::prefix::since(dir, posted, at.seq, engine.now(), certified)?);
     } else if let Some(anchor) = anchor {
         let trusted = signer.context("snapshot recovery needs the trusted signer to verify the log's prefix")?;
-        let workers = cfg.node.replay_workers;
-        let verified = crate::log_heads::prefix::verify(dir, domain, trusted, anchor.seq, at.seq, certified, workers)?;
+        let (workers, start) = (cfg.node.replay_workers, daily.and_then(|daily| start_of(daily, anchor.seq)));
+        let verified = crate::log_heads::prefix::verify_from(
+            dir,
+            (domain, trusted),
+            (anchor.seq, at.seq),
+            certified,
+            workers,
+            start,
+        )?;
         anchor_ts = Some(verified.anchor_ts);
     }
     let pair = snapshot.pair.as_ref().context("engine-only cache requires full history migration")?;
@@ -329,7 +361,6 @@ fn candidate(
         cfg,
         snapshots,
         domain,
-        signer,
         Source::Complete { id: history_id, store: history_store, head: history_head },
         Catalog::Complete { id: catalog_id, store: catalog_store, resume },
     );
@@ -389,7 +420,6 @@ fn plan(
     cfg: &NodeConfig,
     snapshots: &SnapshotSection,
     domain: CheckpointDomain,
-    signer: Option<AccountId>,
     source: Source,
     catalog: Catalog,
 ) -> Plan {
@@ -398,11 +428,23 @@ fn plan(
         history: HistorySection { dir: cfg.history.dir.clone(), retention: cfg.history.retention, marks: None },
         log_dir: cfg.node.log_dir.clone(),
         domain,
-        signer,
         source,
         catalog,
-        workers: cfg.node.replay_workers,
+        daily: cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone()),
     }
+}
+
+/// Where the pass over a log's prefix to the vault's finalized checkpoint at `anchor` starts in place of the
+/// log's start: `daily`'s checkpoint, when it is at or under the anchor and carries its replay state.
+fn start_of(daily: &Signed, anchor: u64) -> Option<crate::log_heads::prefix::SnapshotStart<'_>> {
+    let snapshot = &daily.snapshot;
+    let carried = snapshot.carried.as_ref().filter(|_| snapshot.offset.seq <= anchor)?;
+    Some(crate::log_heads::prefix::SnapshotStart {
+        offset: snapshot.offset,
+        checkpoint: &snapshot.checkpoint,
+        command_prefix: carried.command_prefix.into(),
+        ts: snapshot.engine.now(),
+    })
 }
 
 /// The parent link a checkpoint's child names.

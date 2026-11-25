@@ -4,8 +4,6 @@
 //! checkpoint gate at the vault's finalized checkpoint, and the latest commands' cumulative prefixes,
 //! the evidence that the replica holds a posted log head or a predecessor's tip.
 
-mod before;
-pub(crate) use before::Before;
 mod retained;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -147,6 +145,12 @@ impl LiveReplay {
         self.replay.record_stats_with(stats);
     }
 
+    /// Has the replica record every command it applies into `stats` as it stands (see
+    /// `Replay::record_stats_continuing`).
+    pub(crate) fn record_stats_continuing(&mut self, stats: Stats) {
+        self.replay.record_stats_continuing(stats);
+    }
+
     /// Keeps the stats worker in step with the replica from here, if it records stats, so a start from
     /// it makes no copy of the state (see `Replay::warm_stats`).
     pub(crate) fn warm_stats(&self) {
@@ -157,13 +161,6 @@ impl LiveReplay {
     /// seeds the marks cache.
     pub(crate) fn sample_marks_with(&mut self, sink: crate::history::marks::MarkSink) {
         self.replay.sample_marks_with(sink);
-    }
-
-    /// Counts the marks the engine holds now as taken, as a replay that applied the commands that set them does:
-    /// for a replica from a daily snapshot, so its first command hands on only the marks it moves.
-    pub(crate) fn count_marks_taken(&mut self) {
-        let marks = self.replay.engine.markets().iter().filter_map(|(id, market)| Some((*id, market.mark?)));
-        self.replay.last_marks = marks.collect();
     }
 
     /// Has the seals of the copy at `path` checked ahead of the replica by `workers`, from the next command

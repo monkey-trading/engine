@@ -138,6 +138,22 @@ impl HistoryPlan {
         }
     }
 
+    /// Notes the entry the log in `dir` holds at the index's last command, when that command is at or before `seq`:
+    /// the checkpoint of the daily snapshot a start took, which observed only the log after it. The one entry is
+    /// read, so an index the log still holds unchanged resumes; one whose command cannot be read, as before the
+    /// first segment on this host (`log::NotLocal`), is discarded with the reason.
+    pub(crate) fn observe_before(&mut self, dir: &std::path::Path, seq: u64) {
+        let Ok(Some(last)) = &self.progress else { return };
+        let at = last.sequenced.seq;
+        if at > seq || self.found.is_some() {
+            return;
+        }
+        match crate::daily_snapshots::entry_at(dir, crate::log::Offset::start_of(at)) {
+            Ok(entry) => entry.iter().for_each(|entry| self.observe(entry)),
+            Err(e) => self.progress = Err(e.context(format!("reading seq {at}, the last command the index took"))),
+        }
+    }
+
     /// Opens or repairs history only after the caller has authorized persisted mutations.
     /// Error cases:
     /// - SQLite open or authorized repair fails

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A new member's start from a daily snapshot, on deterministic time with isolated temporary state: a node
-# writing launch flow on a small book across a UTC midnight publishes a signed snapshot at its first checkpoint
-# and at its first past midnight; a member with an empty copy backfills the node's archive over HTTP, fetches the
+# writing launch flow on a small book across a UTC midnight has a signed snapshot, carrying the replay state, at
+# its first checkpoint and at its first past midnight; a member with an empty copy backfills the node's archive over HTTP, fetches the
 # newest snapshot its copy holds, and builds its replica from it with no whole replay, to what a whole replay of
 # the copy gives; it takes the node's turn through the tail handover and stamps its first command; a member whose
 # in-office member's turns began at midnight takes the snapshot before them; and a snapshot whose state its signer

@@ -97,8 +97,11 @@ pub(super) struct Replay {
     /// carries them.
     signers_seen: BTreeSet<AccountId>,
     /// Set for a replay from a recovery cache, which holds only part of what the log before it folds to, so
-    /// it gives no fold (`Fold::of`).
+    /// it gives no fold (`Fold::of`) unless the cache carries the rest (`cached`).
     partial: bool,
+    /// From a cache that carries the replay state at its checkpoint, the payout state a whole replay holds there
+    /// that the cache's own leaves out.
+    cached: Option<Box<snapshot::Cached>>,
     /// The newest commands' derived rows, which the sequencer keeps from where the replay ends.
     derived: crate::history::derived::DerivedRows,
     /// Where the state roots are computed: in the engine, or on a thread of their own.
@@ -400,12 +403,14 @@ impl Replay {
     }
 }
 
-pub(crate) use paths::{replay_copy, replay_path_with_authorities};
+#[cfg(test)]
+pub(crate) use paths::replay_copy;
+#[cfg(test)]
+pub(crate) use paths::{publish_daily_snapshot, remove_segments_before, replay_path_from, replay_path_from_observing};
+pub(crate) use paths::{replay_copy_from, replay_path_with_authorities};
 pub use paths::{
     replay_path, replay_path_in_domain, replay_path_with_attested, replay_path_with_trust, replay_with_signer,
 };
-#[cfg(test)]
-pub(crate) use paths::{replay_path_from, replay_path_from_observing};
 
 /// Replays `entries`, a whole log held in memory (see `Replay`), its command seals checked at the end of
 /// each run (`SealChecks::RunEnds`).
@@ -432,12 +437,12 @@ pub(crate) use carried::Carried;
 #[cfg(test)]
 pub(crate) use carried::carried_at;
 #[cfg(test)]
-mod carried_tests;
+pub(crate) mod carried_tests;
 mod fold;
 pub(crate) use fold::Fold;
 mod live;
 mod resumed;
-pub(crate) use live::{Before, LiveReplay};
+pub(crate) use live::{LiveReplay, RETAINED_LINKS};
 mod marks;
 mod paths;
 pub(crate) mod ranges;

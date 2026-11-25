@@ -4,10 +4,10 @@ use std::collections::VecDeque;
 
 use engine_core::emissions::TokenUnits;
 use engine_core::types::{AccountId, Millis};
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// What an activity entry records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Kind {
     /// An emission period's allocation to an account that lost in it.
@@ -17,12 +17,13 @@ pub(crate) enum Kind {
 }
 
 /// One MONKEY event, as the log carries it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Entry {
     /// Orders entries in time: the command's seq and the event's index in it. A client passes the
     /// last it has as `before` to page back. A decimal string, since the number passes what a
     /// JavaScript number holds exactly.
-    #[serde(serialize_with = "as_text")]
+    #[serde(serialize_with = "as_text", deserialize_with = "from_text")]
     pub id: u64,
     pub seq: u64,
     pub ts: Millis,
@@ -35,8 +36,12 @@ pub(crate) struct Entry {
     pub period: Option<u64>,
 }
 
-/// The newest `capacity` entries.
+/// The newest `capacity` entries. A daily snapshot carries the entries, and the restoring node's settings give
+/// the capacity (`keep`).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Activity {
+    #[serde(skip)]
     capacity: usize,
     entries: VecDeque<Entry>,
     /// Whether the ring has dropped an entry for room.
@@ -46,6 +51,14 @@ pub(crate) struct Activity {
 /// Serializes an id as a decimal string.
 pub(crate) fn as_text<S: serde::Serializer>(id: &u64, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.collect_str(id)
+}
+
+/// Reads an id `as_text` wrote.
+/// Error cases:
+/// - the value is not a decimal string of a `u64`
+fn from_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let text = String::deserialize(deserializer)?;
+    text.parse().map_err(serde::de::Error::custom)
 }
 
 /// The bits of an id that count the event within its command.
@@ -59,6 +72,15 @@ pub(crate) fn id(seq: u64, index: usize) -> u64 {
 impl Activity {
     pub(crate) fn new(capacity: usize) -> Self {
         Self { capacity, entries: VecDeque::new(), evicted: false }
+    }
+
+    /// Holds at most `capacity` entries from here, dropping the oldest past it.
+    pub(super) fn keep(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        while self.entries.len() > capacity {
+            self.entries.pop_front();
+            self.evicted = true;
+        }
     }
 
     /// Adds the newest entry, dropping the oldest past capacity.

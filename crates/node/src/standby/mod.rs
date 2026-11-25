@@ -53,7 +53,7 @@ mod replica;
 pub(crate) use replica::Follower;
 
 use crate::config::{CustodyProvider, NodeConfig, StandbySection};
-use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, ReplayWorkers, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, Offset, ReplayWorkers, SegmentedLog};
 use crate::node::member::turn::COMING_UP;
 use crate::telemetry::Telemetry;
 
@@ -139,8 +139,9 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
     let domain =
         CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().context("custody.vault")? };
     // A poisoned cold start must surface now, not when the operator is already gone.
-    let signers = async || operator::copy_signers(cfg, &chain, &operator).await;
-    backfill::prepare(&archive, &operator, dir, (domain, cfg.node.replay_workers), signers).await?;
+    let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
+    let trust = async || backfill::read_trust(cfg, &chain, &operator, (dir, snapshots), domain).await;
+    backfill::prepare(&archive, &operator, dir, (domain, cfg.node.replay_workers), trust).await?;
     let (mut writer, mut copied) =
         open_copy(dir, cfg.node.segment_commands.max(1), Chain::new(domain, operator.enclave))?;
     info!(operator = %operator.origin, enclave = %operator.enclave, "standby following the operator in effect");
@@ -163,7 +164,8 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
                 let checked = (domain, signers, cfg.node.replay_workers);
-                let finalized = finalize(&archive, checked, &operator.origins(), dir, &takeover, copied).await;
+                let finalized =
+                    finalize(&archive, checked, &operator.origins(), (dir, snapshots), &takeover, copied).await;
                 if let Err(e) = finalized {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
@@ -262,21 +264,33 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
 /// Opens the copy for appends, with `empty` taking its entries as the copy's chain, finishing an
 /// interrupted cut first: a crash during a takeover's or a replica's cut leaves a `takeover.json`
 /// marker (`cut`), and re-running the truncation is idempotent, so the next start finishes the
-/// surgery before following again.
+/// surgery before following again. A copy whose oldest segments are only in the archive is read
+/// from the first command the segments on this host hold.
 /// Error cases:
 /// - the copy cannot be opened, or its links computed, or a marked cut cannot be finished
+/// - the segments on this host hold no checkpoint, from which the copy's link is computed
 fn open_copy(dir: &std::path::Path, segment_commands: u64, empty: Chain) -> anyhow::Result<(LogWriter, Chain)> {
-    open_copy_replayed(dir, segment_commands, empty, || (), |_, _| Ok(())).map(|(writer, copied, ())| (writer, copied))
+    let open =
+        |from: Option<Offset>| open_copy_replayed(dir, segment_commands, empty.clone(), from, || (), |_, _| Ok(()));
+    let opened = open(None).or_else(|e| match e.downcast_ref::<crate::log::NotLocal>() {
+        Some(crate::log::NotLocal { first_local: Some(first), .. }) => open(Some(Offset::start_of(*first))),
+        _ => Err(e),
+    });
+    opened.map(|(writer, copied, ())| (writer, copied))
 }
 
-/// `open_copy`, also handing each entry to `apply` on what `fresh` starts each attempt with: a
-/// replica replays the copy as it is opened, with no second read.
+/// `open_copy`, also handing each entry to `apply` on what `fresh` starts each attempt with, and
+/// reading the copy from the command at `from` when given, from its start otherwise: a replica
+/// replays the copy as it is opened, with no second read. A read from a command takes the copy's
+/// link from the first checkpoint after it, as the link restarts at each.
 /// Error cases:
 /// - as `open_copy`, or `apply` refuses an entry
+/// - the copy holds no segment from `from` on (`SegmentedLog::open_from`), or no checkpoint after it
 fn open_copy_replayed<R>(
     dir: &std::path::Path,
     segment_commands: u64,
     empty: Chain,
+    from: Option<Offset>,
     fresh: impl Fn() -> R,
     mut apply: impl FnMut(&mut R, &LogEntry) -> anyhow::Result<()>,
 ) -> anyhow::Result<(LogWriter, Chain, R)> {
@@ -284,10 +298,19 @@ fn open_copy_replayed<R>(
         let (manifest_tx, _) = tokio::sync::watch::channel(Manifest::default());
         let mut copied = empty.clone();
         let mut replayed = fresh();
-        let log = SegmentedLog::open(dir, |entry| {
+        let mut linked = false;
+        let visit = |entry: LogEntry| {
+            linked |= matches!(entry, LogEntry::Checkpoint(_));
             apply(&mut replayed, &entry)?;
             copied.record(entry)
-        })?;
+        };
+        let log = match from {
+            Some(from) => SegmentedLog::open_from(dir, from, visit)?,
+            None => SegmentedLog::open(dir, visit)?,
+        };
+        if let Some(from) = from {
+            ensure!(linked, "the copy holds no checkpoint from {from} on, from which its link is computed");
+        }
         anyhow::Ok((log.into_writer(segment_commands, manifest_tx)?, copied, replayed))
     };
     cut::finish(dir)?;
@@ -296,9 +319,10 @@ fn open_copy_replayed<R>(
 
 /// Finalizes the copy for the takeover: refreshes completed segments from the archive in case the
 /// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
-/// that extend `copied`, then replays the whole copy in `domain` against `signers`, every command
-/// sealed by one of them, its seals checked ahead by `workers`, requires that checkpoint and truncates
-/// the copy after it, dropping the unsigned tail.
+/// that extend `copied`, then replays the copy in `domain` against `signers`, every command
+/// sealed by one of them, its seals checked ahead by `workers`, from the daily snapshot in `snapshots`
+/// that `handover::copy_start` gives at or before the takeover's checkpoint, the vault's latest at
+/// finality, or whole; requires that checkpoint and truncates the copy after it, dropping the unsigned tail.
 /// Error cases:
 /// - the archive refresh fails hard, the copy does not replay against `signers`, or it holds no
 ///   checkpoint at the vault's latest
@@ -306,10 +330,13 @@ async fn finalize(
     archive: &reqwest::Client,
     (domain, signers, workers): (CheckpointDomain, std::collections::BTreeSet<AccountId>, ReplayWorkers),
     origins: &[String],
-    dir: &std::path::Path,
+    (dir, snapshots): (&std::path::Path, Option<&std::path::Path>),
     takeover: &Takeover,
     mut copied: Chain,
 ) -> anyhow::Result<()> {
+    // The snapshot is of the copy the stream gave, which the refresh only extends and its undo restores.
+    let finalized = crate::handover::Finalized { seq: takeover.seq, root: takeover.root.clone() };
+    let start = crate::handover::copy_start(snapshots, dir, (domain, &signers), Some(&finalized)).await;
     // The refresh adds archive bytes no check has replayed yet: until the replay commits them, what the
     // copy held before is recorded, and any start drops what the refresh added.
     backfill::begin_refresh(dir)?;
@@ -323,13 +350,14 @@ async fn finalize(
         Some((e, None)) => warn!("refreshing the archive before the takeover failed: {e:#}"),
         None => {}
     }
-    // The whole copy must replay before any history is dropped: archive-fetched bytes were only
-    // hash-checked against the server's own manifest, and this catches a forged prefix here
-    // rather than after the timelock installs this enclave. Withdrawals verify against `signers`,
-    // the keys that signed this copy's payouts (`operator::copy_signers`), and every command must carry
-    // one's seal, so the copy's command prefix is the one the operator posted heads of. A cold start's
-    // backfill passes the same replay before the standby follows onto it.
-    backfill::replay_refreshed(dir, (domain, workers), signers).context("refusing to truncate the copy")?;
+    // The copy must replay, from a snapshot a recorded signer signed or from its first entry, before any
+    // history is dropped: archive-fetched bytes were only hash-checked against the server's own manifest,
+    // and this catches a forged prefix here rather than after the timelock installs this enclave.
+    // Withdrawals verify against `signers`, the keys that signed this copy's payouts
+    // (`operator::copy_signers`), and every command must carry one's seal, so the copy's command prefix is
+    // the one the operator posted heads of. A cold start's backfill passes the same replay before the
+    // standby follows onto it.
+    backfill::replay_refreshed(dir, (domain, workers), signers, start).context("refusing to truncate the copy")?;
     // The resume point is the latest checkpoint in the published log that the outgoing key
     // signed and that extends the vault's latest root: the anchor itself, then every later
     // checkpoint of the copy that continues the outgoing key's signed parent chain. Checkpoints
@@ -344,13 +372,14 @@ async fn finalize(
 /// The latest published checkpoint the outgoing key signed that extends the vault's latest root:
 /// the anchor checkpoint itself, then the newest later copy checkpoint whose signed parent is
 /// the running tip. Every skipped or foreign-signed checkpoint between them breaks the chain, so
-/// the result is the deepest unbroken continuation.
+/// the result is the deepest unbroken continuation. The copy is read from the anchor's seq on, so
+/// its segments before the one holding the anchor need not be on this host.
 /// Error cases:
-/// - the copy cannot be read, or holds no checkpoint at the anchor
+/// - the copy cannot be read from the anchor's seq, or holds no checkpoint at the anchor
 fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Result<(u64, String)> {
     let mut tip: Option<(u64, String)> = None;
     let mut found_anchor = false;
-    SegmentedLog::open(dir, |entry| {
+    SegmentedLog::open_from(dir, crate::log::Offset::start_of(takeover.seq), |entry| {
         if let LogEntry::Checkpoint(checkpoint) = &entry {
             let root = checkpoint.root.to_lowercase();
             // The signer as replay reads it: a copy may spell an address in either case.

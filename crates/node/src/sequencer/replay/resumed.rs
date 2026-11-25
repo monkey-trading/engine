@@ -8,6 +8,19 @@ use crate::daily_snapshots::{DailySnapshot, Signed};
 use crate::log::{LogEntry, SealChecks, SegmentedLog};
 use crate::sequencer::replay::Replay;
 
+/// Marks a replay that cannot go on from a daily snapshot at all, before it reads the log after it: the
+/// snapshot carries no replay state, or does not stand for its engine and checkpoint (`Replay::resume`). A
+/// caller that holds the whole log can replay it instead.
+#[derive(Debug)]
+pub(crate) struct SnapshotRefused;
+
+impl std::fmt::Display for SnapshotRefused {
+    /// Says the replay cannot go on from the snapshot.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the replay cannot go on from the daily snapshot")
+    }
+}
+
 impl Replay {
     /// This replay, set up with its trust, going on from `signed`'s checkpoint, then reading the log in `dir`
     /// from the entry after it to its end, each entry handed to `observe` before the replay applies it, its
@@ -15,7 +28,7 @@ impl Replay {
     /// before the one holding the checkpoint are not read, and need not be on this host.
     /// Error cases:
     /// - the snapshot carries no replay state, or it does not stand for the snapshot's engine and checkpoint, or
-    ///   the engine's root is not the checkpoint's (`resume`)
+    ///   the engine's root is not the checkpoint's (`resume`), each under `SnapshotRefused`
     /// - the log holds another entry at the snapshot's offset than its checkpoint, or ends before it
     /// - the log cannot be read from there (`SegmentedLog::open_ahead_from`), an entry fails replay, or `observe`
     ///   fails
@@ -27,8 +40,10 @@ impl Replay {
         mut observe: impl FnMut(&LogEntry) -> anyhow::Result<()>,
     ) -> anyhow::Result<(Self, SegmentedLog)> {
         let DailySnapshot { offset, checkpoint, engine, carried, .. } = signed.snapshot;
-        let carried = carried.context("the daily snapshot carries no replay state")?;
-        let mut replay = self.resume(engine, carried, checkpoint.clone(), offset)?;
+        let resumed = carried
+            .context("the daily snapshot carries no replay state")
+            .and_then(|carried| self.resume(engine, carried, checkpoint.clone(), offset));
+        let mut replay = resumed.context(SnapshotRefused)?;
         replay.check_ahead(dir, seals);
         let mut at_checkpoint = None;
         let read = SegmentedLog::open_ahead_from(dir, offset, |entry| {

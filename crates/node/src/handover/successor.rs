@@ -22,8 +22,9 @@ use crate::handover::assigned::{Binding, Bound};
 use crate::handover::evidence::{self, CollateralCache, Peer, Quoting};
 use crate::handover::tail::{TailRefused, Tip, Unacknowledged, tail_report_data, version_name};
 use crate::handover::{
-    CHALLENGE_TIMEOUT, Challenge, Confirm, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, bound_report_data,
-    confirm_digest, confirmed_digest, keys_report_data, open_keys, receive, receive_bytes, request_report_data, send,
+    CHALLENGE_TIMEOUT, Challenge, Confirm, Finalized, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request,
+    bound_report_data, confirm_digest, confirmed_digest, keys_report_data, open_keys, receive, receive_bytes,
+    request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, ReplayWorkers, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
@@ -110,9 +111,20 @@ pub(crate) async fn take_with(
         None => crate::handover::turns::named_generation(vault, &observation, &release, reached_ms).await?.0,
     };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
-    let taken =
-        take_segments(&mut stream, dir, (domain, cfg.node.replay_workers), &tails, log_tip, &head, signers, metrics)
-            .await?;
+    let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
+    let finalized = Finalized::of(&observation.state);
+    let trust = (signers, finalized.as_ref());
+    let taken = take_segments(
+        &mut stream,
+        (dir, snapshots),
+        (domain, cfg.node.replay_workers),
+        &tails,
+        log_tip,
+        &head,
+        trust,
+        metrics,
+    )
+    .await?;
     // A log the start would refuse under this config is refused while the predecessor still holds the keys.
     crate::carry::boot::check_copy(cfg, &taken, false)?;
     let store = bound.seal(&release, (&sealing.dir, sealer), generation, keys).await?;
@@ -223,23 +235,24 @@ pub(super) async fn ask(
 
 /// Takes the whole segments the keys name (`tails`) past the copy's listed tip `log_tip` into the
 /// log in `dir`, each checked against its listing and chained to the one before, then requires the
-/// whole log to replay, authenticated against every signer the vault recorded and every command sealed
-/// by one of them, the seals checked ahead by `workers`, to the handed-over checkpoint: the confirmation
-/// ends the predecessor, so an invalid transfer, or a copy whose command prefix is not the predecessor's,
-/// must be caught here. Returns the engine the replay leaves.
-/// The replay counts in `metrics.full_replays`.
+/// log to replay, authenticated against `signers`, every signer the vault recorded, and every command
+/// sealed by one of them, the seals checked ahead by `workers`, to the handed-over checkpoint: the
+/// confirmation ends the predecessor, so an invalid transfer, or a copy whose command prefix is not the
+/// predecessor's, must be caught here. The log replays from the daily snapshot in `snapshots` that
+/// `copy_start` gives under `finalized`, the vault's finalized checkpoint, or whole, which counts in
+/// `metrics.full_replays`. Returns the engine the replay leaves.
 /// Error cases:
 /// - a segment is missing, differs from its listing, breaks the chain, or cannot be written
 /// - the log does not replay, or does not end at the handed-over checkpoint
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn take_segments(
     stream: &mut TcpStream,
-    dir: &Path,
+    (dir, snapshots): (&Path, Option<&Path>),
     (domain, workers): (CheckpointDomain, ReplayWorkers),
     tails: &[SegmentInfo],
     log_tip: Option<u64>,
     head: &Head,
-    signers: std::collections::BTreeSet<AccountId>,
+    (signers, finalized): (std::collections::BTreeSet<AccountId>, Option<&Finalized>),
     metrics: &Metrics,
 ) -> anyhow::Result<engine_core::Engine> {
     let mut tip = log_tip;
@@ -251,9 +264,12 @@ pub(super) async fn take_segments(
     if tails.is_empty() {
         info!("the predecessor handed no log segments over: the restored log already reaches the head");
     }
-    let replayed =
-        crate::sequencer::replay_copy(dir, domain, signers, workers).context("the restored log does not replay")?;
-    metrics.full_replays.inc();
+    let start = crate::handover::copy_start(snapshots, dir, (domain, &signers), finalized).await;
+    let (replayed, from) = crate::sequencer::replay_copy_from(start, dir, domain, signers, workers)
+        .context("the restored log does not replay")?;
+    if from.is_none() {
+        metrics.full_replays.inc();
+    }
     ensure!(
         replayed.last_signed_checkpoint.as_ref().is_some_and(|cp| cp.seq == head.seq && cp.root == head.root),
         "the restored log's last checkpoint is not the predecessor's final checkpoint (seq {}, root {})",

@@ -7,9 +7,11 @@ use sha2::{Digest, Sha256};
 
 use crate::log::{LogEntry, Offset, offset_of};
 
-/// The complete read-only replay prefix; this is a comparison witness, never root authority.
+/// The complete read-only replay prefix; this is a comparison witness, never root authority. A replay from a
+/// daily snapshot reads only the entries after its checkpoint, at `after`, and binds those alone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct ReplayFingerprint {
+    pub after: Option<Offset>,
     pub entries: u64,
     pub last: Option<Offset>,
     pub digest: [u8; 32],
@@ -17,17 +19,24 @@ pub(crate) struct ReplayFingerprint {
 
 /// Updated in the same visit that strictly replays each entry, using canonical typed input bytes.
 pub(crate) struct Fingerprinter {
+    after: Option<Offset>,
     hash: Sha256,
     entries: u64,
     last: Option<Offset>,
 }
 
 impl Fingerprinter {
-    /// Starts the domain-separated sequence comparison.
+    /// Starts the domain-separated sequence comparison of every entry.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::after(None)
+    }
+
+    /// Starts the comparison of the entries after the entry at `after`, or of every entry without it.
+    pub(crate) fn after(after: Option<Offset>) -> Self {
         let mut hash = Sha256::new();
         hash.update(b"engine.history.rebuild-prefix.v1");
-        Self { hash, entries: 0, last: None }
+        Self { after, hash, entries: 0, last: after }
     }
 
     /// Includes every command, withdrawal, and checkpoint in physical entry order.
@@ -45,7 +54,8 @@ impl Fingerprinter {
 
     /// Captures the authenticated input identity, without retaining its event or log history.
     pub(crate) fn finish(self) -> ReplayFingerprint {
-        ReplayFingerprint { entries: self.entries, last: self.last, digest: self.hash.finalize().into() }
+        let (after, entries, last) = (self.after, self.entries, self.last);
+        ReplayFingerprint { after, entries, last, digest: self.hash.finalize().into() }
     }
 }
 

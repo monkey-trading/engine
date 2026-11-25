@@ -6,7 +6,7 @@ use engine_core::eip712::B256;
 use engine_core::event::Event;
 use engine_core::turns::TurnReason;
 use engine_core::types::{AccountId, Millis};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::stats::Stats;
 
@@ -16,7 +16,8 @@ pub(crate) const TURN_HISTORY: usize = 2_000;
 pub(crate) const MAX_TURNS_PAGE: usize = 100;
 
 /// One assignment of a turn, as its mirror's events said, and its member's `TurnTaken`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TurnRecord {
     pub turn: u64,
     pub position: u16,
@@ -37,7 +38,8 @@ pub(crate) struct TurnRecord {
 }
 
 /// The newest `TURN_HISTORY` turn assignments, oldest first.
-#[derive(Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct TurnHistory {
     records: VecDeque<TurnRecord>,
     /// Whether the ring has dropped a record for room.

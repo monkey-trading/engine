@@ -179,3 +179,23 @@ pub(super) fn first_read(manifest: &Manifest, files: &[LocalSegment], from: Opti
         None => Ok(0),
     }
 }
+
+/// Requires the log in `dir` to hold, on this host, the segment a read from seq `from` starts in or, when
+/// `from` is before every segment here, no listed segment before the first here: the check a read makes
+/// before it opens, so a caller can refuse it before it commits to an answer.
+/// Error cases:
+/// - the directory or the manifest cannot be read
+/// - `from` is before the first segment here and the manifest lists one before it (`NotLocal`)
+pub(crate) fn ensure_local(dir: &Path, from: u64) -> anyhow::Result<()> {
+    let files = list_segments(dir)?;
+    if files.iter().any(|(first_seq, _)| *first_seq <= from) {
+        return Ok(());
+    }
+    // A segment listed before the first here is the archive's to read.
+    let first_local = files.first().map(|(first_seq, _)| *first_seq);
+    let (manifest, _) = Manifest::read(dir)?;
+    match manifest.segments.first().filter(|listed| first_local.is_none_or(|first| listed.first_seq < first)) {
+        Some(_) => Err(NotLocal { seq: from, first_local }.into()),
+        None => Ok(()),
+    }
+}

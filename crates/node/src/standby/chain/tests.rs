@@ -282,7 +282,50 @@ async fn an_archive_segment_is_taken_only_if_every_entry_extends_the_copy() {
     assert_eq!((copied.head(), copied.link), (whole.head(), whole.link));
 }
 
+/// A copy whose oldest segments are only in the archive opens from the first command the segments on this host
+/// hold, with the head, resume point and link the whole copy gives; one whose segments here hold no checkpoint is
+/// refused, as its link cannot be computed.
+#[test]
+fn a_copy_without_its_oldest_segments_opens_from_the_first_one_held() {
+    let operator = scratch_dir("chain-local-operator");
+    crate::sequencer::fixture_tests::write_funded_log(&operator, 4);
+    let copy = scratch_dir("chain-local-copy");
+    copy_log(&operator, &copy);
+    let segments = segments_of(&copy);
+    assert!(segments.len() > 3, "the log spans several segments");
+    segments[..2].iter().for_each(|path| std::fs::remove_file(path).unwrap());
+    let enclave = AccountId(EnclaveKey::test_key().address());
+    let commands = crate::test_support::SEGMENT_COMMANDS;
+    let (_, opened) = crate::standby::open_copy(&copy, commands, Chain::new(DOMAIN, enclave)).unwrap();
+    let whole = chain_of(&operator);
+    assert_eq!((opened.head(), opened.resume_seq(), opened.link), (whole.head(), whole.resume_seq(), whole.link));
+
+    // One command a segment: the segments here, after the first's checkpoint, hold none.
+    let held = scratch_dir("chain-local-unlinked");
+    let (manifest, _) = tokio::sync::watch::channel(crate::log::Manifest::default());
+    let mut writer = SegmentedLog::open(&held, |_| Ok(())).unwrap().into_writer(1, manifest).unwrap();
+    for entry in [command(0), checkpoint(0), command(1), command(2)] {
+        writer.append(&entry).unwrap();
+    }
+    writer.flush().unwrap();
+    drop(writer);
+    std::fs::remove_file(&segments_of(&held)[0]).unwrap();
+    let refused = crate::standby::open_copy(&held, 1, Chain::new(DOMAIN, enclave)).err().expect("no link");
+    assert!(format!("{refused:#}").contains("holds no checkpoint from 1:0 on"), "{refused:#}");
+}
+
 // ── Helpers ──
+
+/// The segment files of the log in `dir`, oldest first.
+fn segments_of(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut segments: Vec<(u64, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|file| file.unwrap().path())
+        .filter_map(|path| Some((crate::log::segment_seq(path.file_name()?.to_str()?)?, path)))
+        .collect();
+    segments.sort_unstable();
+    segments.into_iter().map(|(_, path)| path).collect()
+}
 
 /// The chain of the copy in `dir`, as the standby opens it.
 fn chain_of(dir: &Path) -> Chain {

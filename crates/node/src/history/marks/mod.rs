@@ -1,7 +1,9 @@
 //! The derived marks cache: each market's index-mark history, kept as per-resolution OHLC buckets
 //! in SQLite beside the account history index and served signed at `/v1/markets/{id}/marks`. The
 //! cache is rebuildable state, never sequenced: a full recovery without `[snapshots]` seeds it from the
-//! log's replay (the same derivation as the live index), live commands keep it current, and an optional provider backfill
+//! log's replay (the same derivation as the live index), a start from a daily snapshot from the frozen
+//! copy of the cache at its checkpoint that the snapshot's anchors vouch for (`store::Frozen`) and the
+//! replay of the log after it, live commands keep it current, and an optional provider backfill
 //! seeds the depth a fresh log cannot have. Every bucket says whether it is log-derived or
 //! provider-seeded, so a client can weigh seeded history against what the public log proves. The
 //! buckets are chained: each row names the bucket below it under its authentication tag, and
@@ -34,6 +36,21 @@ use crate::config::{MarksSection, default_marks_retention_1h, default_marks_rete
 /// One mark a command left: the market, the sequenced time, and the index mark it held once the
 /// command applied.
 pub(crate) type MarkSample = (MarketId, Millis, Fixed);
+
+/// What the sequencer hands the marks task, in the order the commands behind it are durable.
+pub(crate) enum Report {
+    /// A mark a command left.
+    Sample(MarkSample),
+    /// A daily snapshot's freeze, behind the marks of every command its checkpoint covers.
+    Freeze(Freeze),
+}
+
+/// A daily snapshot's request for a frozen copy of the cache at its checkpoint (`Store::freeze`), whose offset
+/// names the copy, and the end the cache's committed anchors then go to.
+pub(crate) struct Freeze {
+    pub offset: crate::log::Offset,
+    pub reply: std::sync::mpsc::SyncSender<store::Frozen>,
+}
 /// The sink recovery's replay hands each changed mark to, to seed the cache.
 pub(crate) type MarkSink = Box<dyn FnMut(MarketId, Millis, Fixed)>;
 
@@ -218,6 +235,12 @@ impl Seeder {
     /// and reset completion through `reset_done`.
     pub fn new(store: Rc<RefCell<Store>>, failed: Rc<Cell<bool>>, reset_done: Rc<Cell<bool>>) -> Self {
         Self { store, buffered: Vec::new(), reset: false, failed, reset_done }
+    }
+
+    /// A seeder that extends `store` and resets nothing, for a replay that goes on from a daily snapshot's
+    /// checkpoint into the cache its frozen copy started, reporting failure through `failed`.
+    pub(crate) fn extending(store: Rc<RefCell<Store>>, failed: Rc<Cell<bool>>) -> Self {
+        Self { store, buffered: Vec::new(), reset: true, failed, reset_done: Rc::new(Cell::new(true)) }
     }
 
     /// Resets the log-derived content on the first sample, then buffers it, flushing at `BATCH`.

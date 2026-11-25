@@ -20,7 +20,8 @@ use engine_core::types::{AccountId, Millis};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tracing::warn;
 
-use crate::history::derived::{Derived, aggregates};
+use crate::daily_snapshots::{Listed, entry_at};
+use crate::history::derived::{Derived, aggregates, apply_logged, engine_from};
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset, SegmentedLog, Stop};
 use crate::paced::Paced;
 
@@ -37,6 +38,8 @@ const ROW: usize = 40;
 pub(crate) struct RowsStore {
     dir: PathBuf,
     retention_ms: Millis,
+    /// The directory of the node's daily snapshots, from which a derivation starts (`derive_through`).
+    snapshots: Option<PathBuf>,
     checked: Mutex<Option<(u64, Derived)>>,
     /// One permit, held by the read that owns `derived_at`'s turn (`turn`).
     gate: Arc<Semaphore>,
@@ -46,7 +49,18 @@ impl RowsStore {
     /// The store under `history_dir`, keeping a command's rows `retention_ms` from its stamp, as the
     /// history keeps its rows.
     pub(crate) fn new(history_dir: &Path, retention_ms: Millis) -> Self {
-        Self { dir: history_dir.join(DIR), retention_ms, checked: Mutex::default(), gate: Arc::new(Semaphore::new(1)) }
+        let (dir, gate) = (history_dir.join(DIR), Arc::new(Semaphore::new(1)));
+        Self { dir, retention_ms, snapshots: None, checked: Mutex::default(), gate }
+    }
+
+    /// This store, its derivations starting from the daily snapshots in `dir`, when given.
+    pub(crate) fn from_snapshots(self, dir: Option<PathBuf>) -> Self {
+        Self { snapshots: dir, ..self }
+    }
+
+    /// The directory of the node's daily snapshots, if derivations start from them.
+    pub(crate) fn snapshots(&self) -> Option<&Path> {
+        self.snapshots.as_deref()
     }
 
     /// Waits for the turn to read from this store, which `derived_at` takes one at a time. A reader holds
@@ -74,29 +88,43 @@ impl RowsStore {
         }
     }
 
-    /// Applies the log in `dir` from its start through the command at `through` to an engine of its own, checked
-    /// against each command's logged events, and keeps each command's rows (`keep`), until `stop` is set: the rows
-    /// a whole replay of the log would have kept, for a replica that applied only the commands after `through`.
-    /// How many commands' rows it kept, or none for a log that starts past genesis, which no empty engine applies,
-    /// or a derivation `stop` ended.
+    /// Applies the log in `dir` through the command at `through` to an engine of its own, checked against each
+    /// command's logged events (`apply_logged`), and keeps each command's rows (`keep`), until `stop` is set: the
+    /// rows a whole replay of the log would have left in the store, for a replica that applied only the commands
+    /// after `through`. The store keeps a command's rows for its retention, so the engine starts at the newest
+    /// daily snapshot stamped more than that before `through`'s command, or else at genesis, and reads only the
+    /// log after it. How many commands' rows it kept, or none for a log that starts past genesis, which no empty
+    /// engine applies, or a derivation `stop` ended.
     /// Error cases:
-    /// - the log cannot be read, a command does not apply, or its logged events differ from the engine's
+    /// - the log cannot be read, from where the engine starts included (`log::NotLocal` before the first segment
+    ///   on this host), a command does not apply, or its logged events differ from the engine's
     /// - a command's rows are not those its events' aggregates cover
     pub(crate) fn derive_through(&self, dir: &Path, through: u64, stop: &AtomicBool) -> anyhow::Result<Option<u64>> {
-        let (mut engine, mut kept, mut ended) = (engine_core::Engine::new(), 0u64, None);
-        SegmentedLog::read_span_ahead(dir, 0, |entry| {
+        let stamped = match self.snapshots {
+            Some(_) => match entry_at(dir, Offset::start_of(through))? {
+                Some(LogEntry::Command(command)) => Some(command.sequenced.ts),
+                _ => None,
+            },
+            None => None,
+        };
+        let kept_from = stamped.map(|ts| ts.saturating_sub(self.retention_ms));
+        let before = |listing: &Listed| listing.seq < through && kept_from.is_some_and(|from| listing.ts < from);
+        let mut engine = engine_from(self.snapshots(), before);
+        let from = engine.last_seq().map_or(0, |last| last + 1);
+        let (mut kept, mut ended) = (0u64, None);
+        SegmentedLog::read_span_ahead(dir, from, |entry| {
             if stop.load(Ordering::Acquire) {
                 return Err(Stop.into());
             }
             let LogEntry::Command(command) = entry else { return Ok(()) };
             let seq = command.sequenced.seq;
+            if seq < from {
+                return Ok(());
+            }
             if engine.last_seq().is_none() && seq != 0 {
                 return Err(Stop.into());
             }
-            let events = engine.apply(&command.sequenced).with_context(|| format!("applying seq {seq}"))?;
-            // No root is computed, the only thing that drains the engine's record of changed keys.
-            engine.discard_changed_keys();
-            ensure!(command.events.as_ref() == Some(&events), "events logged at seq {seq} differ from the engine's");
+            let events = apply_logged(&mut engine, &command)?;
             if let Some(derived) = Derived::of(seq, &events, engine.take_derived())? {
                 self.keep(seq, command.sequenced.ts, &derived.rows);
                 kept += 1;

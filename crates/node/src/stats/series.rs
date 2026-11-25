@@ -184,15 +184,16 @@ pub(crate) enum Entry {
 }
 
 /// A series' buckets, one map per kept resolution.
-type Buckets = [BTreeMap<Millis, Bucket>; 3];
+pub(super) type Buckets = [BTreeMap<Millis, Bucket>; 3];
 
 /// Every series, with their retention.
+#[derive(Clone)]
 pub(crate) struct SeriesStore {
-    retention: [Option<Millis>; 3],
-    newest: Millis,
+    pub(super) retention: [Option<Millis>; 3],
+    pub(super) newest: Millis,
     /// The minute the series were last pruned at.
-    pruned_minute: Millis,
-    series: BTreeMap<(Metric, Option<MarketId>), Buckets>,
+    pub(super) pruned_minute: Millis,
+    pub(super) series: BTreeMap<(Metric, Option<MarketId>), Buckets>,
 }
 
 impl SeriesStore {
@@ -248,6 +249,12 @@ impl SeriesStore {
             self.pruned_minute = minute;
             self.prune();
         }
+    }
+
+    /// Keeps each resolution for its retention in `retention` from here, dropping what has aged out under it.
+    pub(super) fn keep(&mut self, retention: [Option<Millis>; 3]) {
+        self.retention = retention;
+        self.prune();
     }
 
     /// Drops the buckets of every series that fall before their resolution's retention, counted back

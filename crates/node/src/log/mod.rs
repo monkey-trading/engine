@@ -44,7 +44,7 @@ pub use seals_ahead::{ReplayWorkers, SealChecks};
 mod segments;
 pub(crate) use segments::{segment_name, segment_seq};
 mod local;
-pub(crate) use local::NotLocal;
+pub(crate) use local::{NotLocal, ensure_local};
 mod scan;
 pub(crate) use scan::uncommanded;
 mod span;
@@ -246,13 +246,7 @@ pub(crate) fn read_from(
     let first = match files.iter().rposition(|(first_seq, _)| *first_seq <= from) {
         Some(first) => first,
         None => {
-            // A segment listed before the first here is the archive's to read.
-            let first_local = files.first().map(|(first_seq, _)| *first_seq);
-            let (manifest, _) = Manifest::read(dir)?;
-            if manifest.segments.first().is_some_and(|listed| first_local.is_none_or(|first| listed.first_seq < first))
-            {
-                return Err(NotLocal { seq: from, first_local }.into());
-            }
+            local::ensure_local(dir, from)?;
             0
         }
     };

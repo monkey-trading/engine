@@ -134,7 +134,7 @@ impl Sequencer {
             stats.stage_job(carry);
         }
         let carried = Encoding::Pending(carried);
-        let history = self.history_anchors();
+        let history = self.history_anchors(offset);
         // The key that signed the checkpoint signs the snapshot, in its deployment.
         let domain = crate::log::CheckpointDomain { chain_id: self.chain_id, vault: self.vault };
         let signing = crate::daily_snapshots::Signing { key: self.key.clone(), domain };
@@ -144,9 +144,12 @@ impl Sequencer {
         Ok(())
     }
 
-    /// The history anchors a daily snapshot of this checkpoint carries.
-    fn history_anchors(&self) -> Encoding {
-        Encoding::Encoded("{}".to_owned())
+    /// The history a daily snapshot of this checkpoint, whose entry is at `offset`, carries: the dashboard record
+    /// as it stands, which the scans in flight complete (`Stats::capture`), and the marks cache's anchors once the
+    /// marks task has frozen it behind the marks of every command the checkpoint covers (`Marks::freeze`).
+    fn history_anchors(&mut self, offset: Offset) -> crate::daily_snapshots::Pending {
+        let stats = self.marks.stats().map(crate::stats::Stats::capture);
+        crate::daily_snapshots::Pending::new(stats, self.marks.freeze(offset))
     }
 
     /// Collects retired catalog versions, warning when the catalog cannot take the work.
@@ -269,9 +272,13 @@ impl Sequencer {
             self.fault(&endpoint, CaptureStage::Encode)?;
             let seq = snapshot.checkpoint.seq;
             let (engine, job) = self.encoding(seq)?;
+            // The replay state at the checkpoint, from the stats worker's fold, which has folded its entry.
+            let carry = self.marks.stats().and_then(|stats| stats.carry_job(seq));
+            let (carry, carried) = carry.map(|(job, carried)| (job, Encoding::Pending(carried))).unzip();
             slot.submit(crate::snapshot::sealing::Capture {
                 snapshot,
                 engine,
+                carried,
                 ts: self.last_ts,
                 catalog_store: endpoint.catalog_store,
                 catalog,
@@ -282,8 +289,8 @@ impl Sequencer {
             });
             // Staged only once the capture is in the owner's slot: a refused one, as when the owner has
             // stopped, costs the worker no encoding.
-            if let (Some(job), Some(stats)) = (job, self.marks.stats()) {
-                stats.stage_job(job);
+            if let Some(stats) = self.marks.stats() {
+                job.into_iter().chain(carry).for_each(|job| stats.stage_job(job));
             }
             Ok(seq)
         })();
@@ -445,6 +452,7 @@ impl Sequencer {
             progress,
             context,
             pair: None,
+            carried: None,
         };
         snapshot
             .context

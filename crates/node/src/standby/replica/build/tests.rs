@@ -3,14 +3,20 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use engine_core::Engine;
+
 use super::*;
 use crate::daily_snapshots::{Job, Listed, MANIFEST, Signing, publish_now, read_manifest, snapshot_start};
 use crate::log_check::answer::CheckedHeads;
+use crate::sequencer::replay::Carried;
 use crate::snapshot::sealing::Encoding;
 use crate::tee::EnclaveKey;
 use crate::test_support::capture_alerts;
 use crate::test_support::{SEGMENT_COMMANDS, log_entries, scratch_dir};
 
+mod fetch;
+mod local;
+mod refused;
 mod vault_root;
 
 /// The deployment the test sequencer seals and signs for.
@@ -38,53 +44,83 @@ async fn a_follower_builds_its_replica_from_a_signed_snapshot() {
     from.into_log(None, signer(), None).expect("the replica from the snapshot starts its turn");
 }
 
-/// A snapshot whose state its signer vouched for but whose root is not its checkpoint's is refused when the
-/// replica applies the checkpoint, paged as Warning `snapshot_start_refused`, and the replica replays the whole
-/// copy instead.
+/// A snapshot its checkpoint's recorded signer signed whose state or carried replay state does not stand for its
+/// checkpoint is refused as the replica goes on from it, paged as Warning `snapshot_start_refused`, and the replica
+/// replays the whole copy instead: a balance its checkpoint's root does not hold, an approval out of the payout
+/// order, and carried links that end before its checkpoint's command.
 #[tokio::test]
-async fn a_snapshot_whose_root_is_not_its_checkpoints_falls_back_to_a_whole_replay() {
-    let (dir, snapshots) = (scratch_dir("build-snapshot-root"), scratch_dir("build-snapshot-root-daily"));
+async fn a_snapshot_that_does_not_stand_for_its_checkpoint_falls_back_to_a_whole_replay() {
+    let dir = scratch_dir("build-snapshot-stand");
     write_log(&dir).await;
-    let signing = Signing { key: Arc::new(EnclaveKey::test_key()), domain: DOMAIN };
-    publish_middle(&dir, &snapshots, &signing);
-    // The signer vouches for a balance the checkpoint's root does not hold.
-    let listing = read_manifest(&snapshots).unwrap().pop().unwrap();
-    let path = snapshots.join(&listing.file);
-    let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let accounts = written["engine"]["accounts"].as_object_mut().unwrap();
-    accounts.values_mut().next().unwrap()["balance"] = serde_json::json!("1");
-    let checkpoint: Checkpoint = serde_json::from_value(written["checkpoint"].clone()).unwrap();
-    let engine: Engine = serde_json::from_value(written["engine"].take()).unwrap();
-    let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    std::fs::remove_file(snapshots.join(MANIFEST)).unwrap();
-    let offset = Offset { seq: listing.seq, index: listing.index };
-    publish_now(&snapshots, Job::bare(offset, checkpoint, listing.ts, engine, signing)).unwrap();
-    let (_guard, mut alerts) = capture_alerts();
-    let signed = usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.expect("signed over its state");
-    let follower = open(&dir, Some(signed));
-    assert_eq!(follower.replays(), 1, "the replica replayed the whole copy");
-    assert_eq!(engine_json(&follower), engine_json(&open(&dir, None)));
-    let alert = alerts.try_recv().expect("the refusal is paged");
-    assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("snapshot_start_refused", "WARN"));
-    assert!(alert["message"].contains("state root mismatch"), "{alert:?}");
+    let whole = engine_json(&open(&dir, None));
+    type Alter = fn(&mut serde_json::Value, &mut Carried);
+    let cases: [(&str, Alter, &str); 3] = [
+        (
+            "a balance the root does not hold",
+            |engine, _| {
+                let accounts = engine["accounts"].as_object_mut().unwrap();
+                accounts.values_mut().next().unwrap()["balance"] = serde_json::json!("1");
+            },
+            "state root mismatch",
+        ),
+        (
+            "an approval out of the payout order",
+            |_, carried| _ = carried.payout_order.pop().expect("the snapshot holds an approval"),
+            "payout order is not the engine's approvals",
+        ),
+        (
+            "links that end before its checkpoint's command",
+            |_, carried| _ = carried.links.pop(),
+            "do not end at the checkpoint's command",
+        ),
+    ];
+    for (case, alter, said) in cases {
+        let snapshots = scratch_dir("build-snapshot-stand-daily");
+        // The last checkpoint, whose state holds approvals.
+        publish_altered(&dir, &snapshots, &recorded(), |held| held - 1, |_, engine, carried| alter(engine, carried));
+        let (_guard, mut alerts) = capture_alerts();
+        let signed = usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.expect(case);
+        let follower = open(&dir, Some(signed));
+        assert_eq!(follower.replays(), 1, "{case}: the replica replayed the whole copy");
+        assert_eq!(engine_json(&follower), whole, "{case}");
+        let alert = alerts.try_recv().unwrap_or_else(|_| panic!("{case}: nothing paged"));
+        assert_eq!((alert["alert"].as_str(), alert["level"].as_str()), ("snapshot_start_refused", "WARN"), "{case}");
+        assert!(alert["message"].contains(said), "{case}: {alert:?}");
+    }
 }
 
 /// A snapshot no replica starts from is passed over, paged as Warning `snapshot_start_refused`: one whose state
-/// is not the state its signature covers, one signed by a key the vault has not recorded, one of the format
-/// before signatures, and one of a checkpoint the copy does not hold. One of a checkpoint past the bound, the
-/// vault's finalized one, is not tried.
+/// or carried replay state is not what its signature covers, one signed by a key the vault has not recorded, one
+/// signed for another deployment, and one of a checkpoint the copy does not hold. One of a checkpoint past the
+/// bound, the vault's finalized one, is not tried.
 #[tokio::test]
 async fn a_snapshot_a_replica_cannot_start_from_is_passed_over() {
     let dir = scratch_dir("build-snapshot-refused");
     write_log(&dir).await;
-    let recorded = Signing { key: Arc::new(EnclaveKey::test_key()), domain: DOMAIN };
-    type Alter = fn(&mut serde_json::Value);
-    let cases: [(&str, Option<Alter>, Signing, &str); 4] = [
+    let recorded = recorded();
+    let elsewhere = CheckpointDomain { chain_id: 1, vault: AccountId([0x11; 20]) };
+    // Each alters the published file in place.
+    type Alter = fn(&Path);
+    let cases: [(&str, Option<Alter>, Signing, &str); 5] = [
         (
             "an altered state",
-            Some(|snapshot| snapshot["engine"]["accounts"].as_object_mut().unwrap().clear()),
+            Some(|path| {
+                rewrite_snapshot(path, |snapshot| snapshot["engine"]["accounts"].as_object_mut().unwrap().clear())
+            }),
             recorded.clone(),
             "is not the state its signature covers",
+        ),
+        (
+            "an altered carried state",
+            Some(|path| {
+                // The carried state's bytes alone, the engine's left as written.
+                let written = std::fs::read_to_string(path).unwrap();
+                let altered = written.replacen("\"carried\":{\"commands\":", "\"carried\":{\"commands\":1", 1);
+                assert_ne!(altered, written, "the snapshot carries a command count");
+                std::fs::write(path, altered).unwrap();
+            }),
+            recorded.clone(),
+            "is not signed by",
         ),
         (
             "an unrecorded signer",
@@ -92,20 +128,12 @@ async fn a_snapshot_a_replica_cannot_start_from_is_passed_over() {
             Signing { key: Arc::new(EnclaveKey::generate()), domain: DOMAIN },
             "is not signed by",
         ),
-        (
-            "the unsigned format",
-            Some(|snapshot| {
-                snapshot["schema"] = 1.into();
-                let object = snapshot.as_object_mut().unwrap();
-                object.remove("state");
-                object.remove("signature");
-            }),
-            recorded.clone(),
-            "is not one of the signed format",
-        ),
+        ("another deployment", None, Signing { key: recorded.key.clone(), domain: elsewhere }, "is not signed by"),
         (
             "a checkpoint the copy does not hold",
-            Some(|snapshot| snapshot["checkpoint"]["root"] = serde_json::json!(format!("0x{}", hex::encode([3; 32])))),
+            Some(|path| {
+                rewrite_snapshot(path, |snapshot| snapshot["checkpoint"]["root"] = serde_json::json!(unheld_root()))
+            }),
             recorded.clone(),
             "the copy holds no checkpoint",
         ),
@@ -115,15 +143,10 @@ async fn a_snapshot_a_replica_cannot_start_from_is_passed_over() {
         let seq = publish_middle(&dir, &snapshots, &signing);
         let listing = read_manifest(&snapshots).unwrap().pop().unwrap();
         if let Some(alter) = alter {
-            let path = snapshots.join(&listing.file);
-            let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            alter(&mut written);
-            std::fs::write(&path, serde_json::to_vec(&written).unwrap()).unwrap();
-            if case == "a checkpoint the copy does not hold" {
-                rewrite_listing(&snapshots, |listing| {
-                    listing.root = written["checkpoint"]["root"].as_str().unwrap().into()
-                });
-            }
+            alter(&snapshots.join(&listing.file));
+        }
+        if case == "a checkpoint the copy does not hold" {
+            rewrite_listing(&snapshots, |listing| listing.root = unheld_root());
         }
         let (guard, mut alerts) = capture_alerts();
         assert!(usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.is_none(), "{case}");
@@ -147,27 +170,22 @@ async fn a_snapshot_a_replica_cannot_start_from_is_passed_over() {
 }
 
 /// A snapshot whose embedded checkpoint names the copy's root but another recorded signer, which signed the
-/// snapshot, is not taken: the copy holds another checkpoint at its offset, which the start finds, and the
-/// replica's build finds too should one reach it, each paged as Warning `snapshot_start_refused`, the build before
-/// the whole replay.
+/// snapshot and which its carried state names, is not taken: the copy holds another checkpoint at its offset,
+/// which the start finds, and the replica's build finds too should one reach it, each paged as Warning
+/// `snapshot_start_refused`, the build before the whole replay.
 #[tokio::test]
 async fn a_snapshot_of_another_signers_checkpoint_falls_back_to_a_whole_replay() {
     let (dir, snapshots) = (scratch_dir("build-snapshot-signer"), scratch_dir("build-snapshot-signer-daily"));
     write_log(&dir).await;
-    publish_middle(&dir, &snapshots, &recorded());
     let other = Signing { key: Arc::new(EnclaveKey::generate()), domain: DOMAIN };
+    let resigned = |checkpoint: &mut Checkpoint, _: &mut serde_json::Value, carried: &mut Carried| {
+        let root: B256 = checkpoint.root.parse().unwrap();
+        checkpoint.signature = other.key.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, checkpoint.seq, &root.0);
+        checkpoint.signer = other.key.address_hex();
+        carried.checkpoint_signers.insert(AccountId(other.key.address()));
+    };
+    publish_altered(&dir, &snapshots, &other, |held| held / 2, resigned);
     let listing = read_manifest(&snapshots).unwrap().pop().unwrap();
-    let written: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(snapshots.join(&listing.file)).unwrap()).unwrap();
-    let mut checkpoint: Checkpoint = serde_json::from_value(written["checkpoint"].clone()).unwrap();
-    let root: B256 = checkpoint.root.parse().unwrap();
-    checkpoint.signature = other.key.sign_checkpoint(DOMAIN.chain_id, &DOMAIN.vault.0, checkpoint.seq, &root.0);
-    checkpoint.signer = other.key.address_hex();
-    let engine: Engine = serde_json::from_value(written["engine"].clone()).unwrap();
-    let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    std::fs::remove_file(snapshots.join(MANIFEST)).unwrap();
-    let offset = Offset { seq: listing.seq, index: listing.index };
-    publish_now(&snapshots, Job::bare(offset, checkpoint, listing.ts, engine, other.clone())).unwrap();
     let signers: BTreeSet<AccountId> = [signer(), AccountId(other.key.address())].into();
     let (_guard, mut alerts) = capture_alerts();
     assert!(usable(&snapshots, &dir, &signers, u64::MAX).await.is_none(), "the start passes it over");
@@ -180,136 +198,6 @@ async fn a_snapshot_of_another_signers_checkpoint_falls_back_to_a_whole_replay()
     let alert = alerts.try_recv().expect("the refusal is paged");
     assert_eq!(alert["alert"].as_str(), "snapshot_start_refused");
     assert!(alert["message"].contains("the copy holds another entry at"), "{alert:?}");
-}
-
-/// The newest snapshot the member's origins list that passes is taken, fetched, kept and listed; a newer one that is
-/// refused is passed over and its fetched file removed; and with no origin answering, the start pages.
-#[tokio::test]
-async fn the_newest_snapshot_that_passes_is_fetched_and_a_refused_one_removed() {
-    let (dir, origin) = (scratch_dir("build-snapshot-fetch"), scratch_dir("build-snapshot-fetch-origin"));
-    write_log(&dir).await;
-    let older = publish_at(&dir, &origin, &recorded(), |held| held / 3);
-    let newer = publish_at(&dir, &origin, &recorded(), |held| 2 * held / 3);
-    assert!(older < newer);
-    // The newer snapshot's state is not the one its signature covers, though its listing matches its bytes.
-    let mut listed = read_manifest(&origin).unwrap();
-    let damaged = listed.last_mut().unwrap();
-    let path = origin.join(&damaged.file);
-    let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    written["engine"]["accounts"].as_object_mut().unwrap().clear();
-    let bytes = serde_json::to_vec(&written).unwrap();
-    (damaged.bytes, damaged.sha256) = (bytes.len() as u64, hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes)));
-    std::fs::write(&path, bytes).unwrap();
-    let lines: String = listed.iter().map(|listing| serde_json::to_string(listing).unwrap() + "\n").collect();
-    std::fs::write(origin.join(MANIFEST), lines).unwrap();
-    let member = scratch_dir("build-snapshot-fetch-member");
-    let client = crate::standby::archive::archive_client(false).unwrap();
-    let (_guard, mut alerts) = capture_alerts();
-    let origins = [serve(&origin).await];
-    let signed = snapshot_start(&client, &origins, (&member, &dir), DOMAIN, &[signer()].into(), (u64::MAX, None)).await;
-    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(older));
-    let alert = alerts.try_recv().expect("the refusal is paged");
-    assert_eq!(
-        (alert["alert"].as_str(), alert["seq"].as_str()),
-        ("snapshot_start_refused", newer.to_string().as_str())
-    );
-    let kept: Vec<u64> = read_manifest(&member).unwrap().iter().map(|listing| listing.seq).collect();
-    assert_eq!(kept, [older], "the snapshot taken is listed");
-    let files =
-        std::fs::read_dir(&member).unwrap().filter(|file| file.as_ref().unwrap().path() != member.join(MANIFEST));
-    assert_eq!(files.count(), 1, "the refused one's file is removed");
-
-    let (unreachable, empty, signers) =
-        (["http://127.0.0.1:1".to_owned()], scratch_dir("build-none"), [signer()].into());
-    let none = snapshot_start(&client, &unreachable, (&empty, &dir), DOMAIN, &signers, (u64::MAX, None));
-    assert!(none.await.is_none());
-    let alert = alerts.try_recv().expect("the silence is paged");
-    assert!(alert["message"].contains("no origin's daily snapshot manifest could be read"), "{alert:?}");
-}
-
-/// A snapshot from the turns of the member in office is not taken: one listed as stamped in them is not fetched,
-/// and one listed otherwise is refused once its state's stamp shows it, paged, and its fetched file removed; and a
-/// held snapshot that is refused gives way to an origin's at its offset, which replaces it.
-#[tokio::test]
-async fn a_snapshot_from_the_in_office_members_turns_is_not_taken() {
-    let (dir, origin) = (scratch_dir("build-snapshot-turns"), scratch_dir("build-snapshot-turns-origin"));
-    write_log(&dir).await;
-    let older = publish_at(&dir, &origin, &recorded(), |held| held / 3);
-    publish_at(&dir, &origin, &recorded(), |held| 2 * held / 3);
-    // The newer snapshot's state is stamped an hour on, as its signer vouches, while its listing says otherwise.
-    let mut listed = read_manifest(&origin).unwrap();
-    let newer = listed.pop().unwrap();
-    let path = origin.join(&newer.file);
-    let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let turns_began = written["engine"]["now"].as_i64().unwrap() + 3_600_000;
-    written["engine"]["now"] = serde_json::json!(turns_began);
-    let checkpoint: Checkpoint = serde_json::from_value(written["checkpoint"].clone()).unwrap();
-    let engine: Engine = serde_json::from_value(written["engine"].take()).unwrap();
-    let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
-    std::fs::remove_file(&path).unwrap();
-    write_listings(&origin, &listed);
-    let offset = Offset { seq: newer.seq, index: newer.index };
-    publish_now(&origin, Job::bare(offset, checkpoint, newer.ts, engine, recorded())).unwrap();
-    let (client, origins) = (crate::standby::archive::archive_client(false).unwrap(), [serve(&origin).await]);
-    let (signers, bounds) = ([signer()].into(), (u64::MAX, Some(turns_began)));
-    let (_guard, mut alerts) = capture_alerts();
-
-    let member = scratch_dir("build-snapshot-turns-member");
-    let signed = snapshot_start(&client, &origins, (&member, &dir), DOMAIN, &signers, bounds).await;
-    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(older), "the one before the turns");
-    let alert = alerts.try_recv().expect("the refusal is paged");
-    assert!(alert["message"].contains("from the turns of the member in office"), "{alert:?}");
-    assert!(!member.join(&newer.file).exists(), "the refused one's file is removed");
-
-    // Listed as it is stamped, it is not fetched; and a damaged held copy of the older one gives way to the origin's.
-    let mut truthful = read_manifest(&origin).unwrap();
-    truthful.last_mut().unwrap().ts = turns_began;
-    write_listings(&origin, &truthful);
-    let held = scratch_dir("build-snapshot-turns-held");
-    std::fs::create_dir_all(&held).unwrap();
-    let kept = truthful.first().unwrap().clone();
-    let mut damaged: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(origin.join(&kept.file)).unwrap()).unwrap();
-    damaged["engine"]["accounts"].as_object_mut().unwrap().clear();
-    std::fs::write(held.join(&kept.file), serde_json::to_vec(&damaged).unwrap()).unwrap();
-    write_listings(&held, std::slice::from_ref(&kept));
-    let signed = snapshot_start(&client, &origins, (&held, &dir), DOMAIN, &signers, bounds).await;
-    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(older), "the origin's copy of the older one");
-    let alert = alerts.try_recv().expect("the held one's refusal is paged");
-    assert!(alert["message"].contains("signature"), "{alert:?}");
-    assert!(alerts.try_recv().is_err(), "the newer one is not tried");
-    assert!(!held.join(&newer.file).exists(), "the newer one is not fetched");
-    assert_eq!(read_manifest(&held).unwrap(), std::slice::from_ref(&kept), "the older one listed once");
-    assert_eq!(std::fs::read(held.join(&kept.file)).unwrap(), std::fs::read(origin.join(&kept.file)).unwrap());
-}
-
-/// A snapshot an origin lists but cannot serve gives way to the next origin's copy at the same offset, which counts as
-/// one attempt: a mirror that copied the manifest but not the files does not keep the operator's snapshot from the
-/// member.
-#[tokio::test]
-async fn a_refused_origins_snapshot_gives_way_to_the_next_origins_at_its_offset() {
-    let (dir, origin) = (scratch_dir("build-snapshot-mirror"), scratch_dir("build-snapshot-mirror-origin"));
-    write_log(&dir).await;
-    let older = publish_at(&dir, &origin, &recorded(), |held| held / 3);
-    let newer = publish_at(&dir, &origin, &recorded(), |held| 2 * held / 3);
-    assert!(older < newer);
-    let mirror = scratch_dir("build-snapshot-mirror-files");
-    std::fs::create_dir_all(&mirror).unwrap();
-    std::fs::copy(origin.join(MANIFEST), mirror.join(MANIFEST)).unwrap();
-    let member = scratch_dir("build-snapshot-mirror-member");
-    let client = crate::standby::archive::archive_client(false).unwrap();
-    let origins = [serve(&mirror).await, serve(&origin).await];
-    let (_guard, mut alerts) = capture_alerts();
-    let signed = snapshot_start(&client, &origins, (&member, &dir), DOMAIN, &[signer()].into(), (u64::MAX, None)).await;
-    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(newer), "the newest, from the operator");
-    let alert = alerts.try_recv().expect("the mirror's refusal is paged");
-    assert_eq!(
-        (alert["alert"].as_str(), alert["seq"].as_str()),
-        ("snapshot_start_refused", newer.to_string().as_str())
-    );
-    assert!(alerts.try_recv().is_err(), "the operator's copy passes");
-    let kept: Vec<u64> = read_manifest(&member).unwrap().iter().map(|listing| listing.seq).collect();
-    assert_eq!(kept, [newer], "the snapshot taken is listed");
 }
 
 /// A copy with a tail no accepted signer sealed, after the checkpoint a signed snapshot stands at, is cut back and its
@@ -379,6 +267,27 @@ fn write_listings(snapshots: &Path, listed: &[Listed]) {
     std::fs::write(snapshots.join(MANIFEST), lines).unwrap();
 }
 
+/// Rewrites the daily snapshot at `path` with `alter` applied to its fields (`write_snapshot`).
+fn rewrite_snapshot(path: &Path, alter: impl FnOnce(&mut serde_json::Value)) {
+    let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    alter(&mut written);
+    write_snapshot(path, &written);
+}
+
+/// A checkpoint root the test logs hold at no seq.
+fn unheld_root() -> String {
+    format!("0x{}", hex::encode([3; 32]))
+}
+
+/// Writes `snapshot`, a daily snapshot's fields, to `path` with its format first, as the writer puts it, so a start
+/// reads the format it names from the file's first bytes.
+fn write_snapshot(path: &Path, snapshot: &serde_json::Value) {
+    let mut fields = snapshot.as_object().unwrap().clone();
+    let schema = fields.remove("schema").unwrap();
+    let rest = serde_json::to_string(&fields).unwrap();
+    std::fs::write(path, format!("{{\"schema\":{schema},{}", &rest[1..])).unwrap();
+}
+
 /// Writes a log of the dev genesis and screened credits and withdrawals, each authorized as mock custody does,
 /// and ticks, across several checkpoints, ending at one (`write_funded_log`).
 async fn write_log(dir: &Path) {
@@ -394,6 +303,18 @@ fn publish_middle(dir: &Path, snapshots: &Path, signing: &Signing) -> u64 {
 /// `publish_middle`, at the checkpoint `pick` names among the copy's checkpoints of a state with custody finality,
 /// given how many there are.
 fn publish_at(dir: &Path, snapshots: &Path, signing: &Signing, pick: fn(usize) -> usize) -> u64 {
+    publish_altered(dir, snapshots, signing, pick, |_, _, _| {})
+}
+
+/// `publish_at`, carrying what a whole replay of the copy carries at its checkpoint, with `alter` applied to its
+/// checkpoint, engine and carried state before it is signed.
+fn publish_altered(
+    dir: &Path,
+    snapshots: &Path,
+    signing: &Signing,
+    pick: fn(usize) -> usize,
+    alter: impl FnOnce(&mut Checkpoint, &mut serde_json::Value, &mut Carried),
+) -> u64 {
     let entries = log_entries(dir);
     let mut replica = LiveReplay::new(DOMAIN, [signer()].into());
     let (mut at, mut offsets) = (None, Vec::new());
@@ -402,15 +323,22 @@ fn publish_at(dir: &Path, snapshots: &Path, signing: &Signing, pick: fn(usize) -
         if let LogEntry::Checkpoint(checkpoint) = entry
             && replica.engine().deposit_finality_enabled()
         {
-            let engine = Encoding::Encoded(serde_json::to_string(replica.engine()).unwrap());
+            let engine = serde_json::to_value(replica.engine()).unwrap();
             offsets.push((at.unwrap(), checkpoint.clone(), replica.engine().now(), engine));
         }
         replica.apply(entry).unwrap();
     }
-    let (offset, checkpoint, ts, engine) = offsets.swap_remove(pick(offsets.len()));
-    let seq = offset.seq;
-    publish_now(snapshots, Job::bare(offset, checkpoint, ts, engine, signing.clone())).unwrap();
-    seq
+    let (offset, mut checkpoint, ts, mut engine) = offsets.swap_remove(pick(offsets.len()));
+    let mut carried: Carried =
+        serde_json::from_str(&crate::sequencer::replay::carried_at(dir, offset, (DOMAIN, [signer()].into())).unwrap())
+            .unwrap();
+    alter(&mut checkpoint, &mut engine, &mut carried);
+    let engine: Engine = serde_json::from_value(engine).unwrap();
+    let (engine, carried) = (serde_json::to_string(&engine).unwrap(), serde_json::to_string(&carried).unwrap());
+    let (engine, carried, history) =
+        (Encoding::Encoded(engine), Encoding::Encoded(carried), crate::daily_snapshots::Pending::none());
+    publish_now(snapshots, Job { offset, checkpoint, ts, engine, carried, history, signing: signing.clone() }).unwrap();
+    offset.seq
 }
 
 /// The snapshot in `snapshots` a replica of the copy in `dir` starts from, under `signers` and below `bound`, with no
@@ -449,9 +377,21 @@ fn open_with(
     signers: BTreeSet<AccountId>,
     checked: Option<CheckedHeads>,
 ) -> Follower {
+    try_open(dir, snapshot, signers, checked).unwrap()
+}
+
+/// `open_with`, or why the copy does not open.
+/// Error cases:
+/// - as `Follower::open_pinned`
+fn try_open(
+    dir: &Path,
+    snapshot: Option<Signed>,
+    signers: BTreeSet<AccountId>,
+    checked: Option<CheckedHeads>,
+) -> anyhow::Result<Follower> {
     let records = (None, None, checked, None);
     let workers = ReplayWorkers::available();
-    let opened = Follower::open_pinned(
+    Follower::open_pinned(
         dir,
         SEGMENT_COMMANDS,
         workers,
@@ -462,8 +402,7 @@ fn open_with(
         (None, &[]),
         snapshot,
         |_| Ok(()),
-    );
-    opened.unwrap()
+    )
 }
 
 /// Serves the daily snapshots in `dir` as an archive does, over plain HTTP on loopback: its base URL.

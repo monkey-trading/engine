@@ -35,12 +35,17 @@ pub(crate) struct Fold {
 impl Fold {
     /// The fold `replay` holds after the entry it applied last.
     /// Error cases:
-    /// - the replay is of one range of a log or from a recovery cache, or of a log whose commands carry no events
+    /// - the replay is of one range of a log or from a recovery cache that carries no replay state, or of a log
+    ///   whose commands carry no events
     pub(in crate::sequencer) fn of(replay: &Replay) -> anyhow::Result<Self> {
         ensure!(
-            replay.range.is_none() && !replay.partial,
-            "a replay of one range of a log, or from a recovery cache, holds no whole fold"
+            replay.range.is_none() && (!replay.partial || replay.cached.is_some()),
+            "a replay of one range of a log, or from a recovery cache that carries no replay state, holds no whole fold"
         );
+        let (payout_order, signed, authorized) = match &replay.cached {
+            Some(cached) => cached.whole(replay),
+            None => (replay.payout_order.clone(), replay.signed.clone(), replay.authorized.clone()),
+        };
         ensure!(replay.logs_events || replay.commands == 0, "a fold is of a log whose commands carry events");
         let at_checkpoint = replay
             .last_signed_checkpoint
@@ -59,13 +64,13 @@ impl Fold {
             checkpoint_signers: replay.signers_seen.clone(),
             checkpoint_roots: replay.payout_checkpoints.clone(),
             takings: replay.takings.applied_throughout(),
-            payout_order: replay.payout_order.clone(),
-            signed: replay.signed.clone(),
+            payout_order,
+            signed,
             authorized: Vec::new(),
             deferred: replay.deferred.clone(),
             requires_checkpoint_gate: replay.requires_checkpoint_gate,
         };
-        let (links, authorized, approved) = (replay.recent.clone(), replay.authorized.clone(), replay.approved.clone());
+        let (links, approved) = (replay.recent.clone(), replay.approved.clone());
         Ok(Self { state, links, authorized, approved, at_checkpoint })
     }
 

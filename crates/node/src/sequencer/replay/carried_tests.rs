@@ -235,7 +235,7 @@ fn finished(replica: LiveReplay, dir: &Path) -> Replayed {
 }
 
 /// What a start from a replica reads besides the engine, as JSON.
-fn facts(replayed: &Replayed) -> serde_json::Value {
+pub(crate) fn facts(replayed: &Replayed) -> serde_json::Value {
     let roots: Vec<_> = (0..=replayed.engine.last_seq().unwrap()).map(|seq| replayed.checkpoint_root(seq)).collect();
     serde_json::json!({
         "engine": serde_json::to_value(&replayed.engine).unwrap(),

@@ -11,8 +11,8 @@ use engine_core::{Engine, Fixed};
 use crate::stats::activity::{Entry, Kind, id};
 use crate::stats::background::{self, Background};
 use crate::stats::distributions::{EpochClose, OperatorShare, Skipped};
-use crate::stats::series::{Amount, Metric, from_raw, from_units};
-use crate::stats::snapshot::{self, MarketBook, Snapshot};
+use crate::stats::series::{Amount, Metric, SeriesStore, from_raw, from_units};
+use crate::stats::snapshot::{self, Snapshot};
 use crate::stats::{Begin, Distribution, Inner, Settings, Stats};
 
 /// A base unit count as a series value.
@@ -195,24 +195,29 @@ impl Inner {
             match polled {
                 Ok(Some((snapshot, sampled))) => self.take(*snapshot, sampled),
                 Ok(None) => break,
-                Err(reason) => {
-                    self.background = None;
-                    background::stopped(&reason);
-                }
+                Err(reason) => self.worker_stopped(&reason),
             }
         }
     }
 
-    /// Installs `snapshot` if `sampled`, or only serves it, as a recovery's scan, made due by no command.
+    /// Leaves the scans to the caller's thread from here, for `reason`, with an alert, handing over the records
+    /// taken at a checkpoint as they stand, since no scan they wait for comes.
+    pub(super) fn worker_stopped(&mut self, reason: &str) {
+        self.background = None;
+        self.release_captures();
+        background::stopped(reason);
+    }
+
+    /// Installs `snapshot` if `sampled`, or only serves it, as a recovery's scan, made due by no command, and in
+    /// each record taken at a checkpoint that waits for it.
     pub(super) fn take(&mut self, snapshot: Snapshot, sampled: bool) {
+        self.complete_captures(&snapshot, sampled);
         if sampled { self.install(snapshot) } else { self.serve(snapshot) }
     }
 
     /// Serves `snapshot` and samples its long and short at the time it was due.
     pub(super) fn install(&mut self, snapshot: Snapshot) {
-        for (market, book) in &snapshot.markets {
-            self.sample_book(*market, book, snapshot.ts);
-        }
+        sample_books(&mut self.series, &snapshot);
         self.serve(snapshot);
     }
 
@@ -249,10 +254,12 @@ impl Inner {
             self.series.level(Metric::CumulativeDistributed, None, ts, units(staking.distributed.0));
         }
     }
+}
 
-    /// Samples a market's long and short from a scan.
-    fn sample_book(&mut self, market: u32, book: &MarketBook, ts: Millis) {
-        self.series.level(Metric::Long, Some(market), ts, from_raw(book.long.usd.raw()));
-        self.series.level(Metric::Short, Some(market), ts, from_raw(book.short.usd.raw()));
+/// Samples each market's long and short from `snapshot` into `series`, at the time the scan was due.
+pub(super) fn sample_books(series: &mut SeriesStore, snapshot: &Snapshot) {
+    for (market, book) in &snapshot.markets {
+        series.level(Metric::Long, Some(*market), snapshot.ts, from_raw(book.long.usd.raw()));
+        series.level(Metric::Short, Some(*market), snapshot.ts, from_raw(book.short.usd.raw()));
     }
 }

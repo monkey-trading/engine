@@ -211,7 +211,7 @@ async fn a_followers_link_serves_the_entries_it_took_without_a_hole() {
         .filter(|(offset, _)| *offset > after)
         .collect();
     assert_eq!(copy.entries_after(Some(after)), taken, "the ring was given what the copy took");
-    assert_eq!(copy.entries(Some(after)).await, taken);
+    assert_eq!(copy.entries(Some(after)).await.unwrap(), taken);
 }
 
 /// Entries that start the log take onto an empty copy and onto no other.
@@ -276,7 +276,7 @@ async fn a_link_made_after_the_copy_took_entries_never_serves_a_ring_with_a_hole
     follower.link_with(copy.clone());
     assert!(follower.take_tail(log[split - 1].0, &lines(&log[split..])).unwrap() > 0);
     assert_eq!(copy.entries_after(Some(after)), Vec::new(), "no ring is served across the entries it lacks");
-    assert_eq!(copy.entries(Some(after)).await, log, "the copy's log serves them");
+    assert_eq!(copy.entries(Some(after)).await.unwrap(), log, "the copy's log serves them");
 }
 
 /// An empty copy takes the log's first entries, sealed by a key an earlier signer change replaced, once

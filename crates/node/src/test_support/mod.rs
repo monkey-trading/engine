@@ -81,7 +81,7 @@ pub struct TestSequencer {
     /// What custody receives.
     pub withdrawals: mpsc::UnboundedReceiver<SignedWithdrawal>,
     pub metrics: Arc<Metrics>,
-    marks_rx: Option<mpsc::Receiver<crate::history::marks::MarkSample>>,
+    marks_rx: Option<mpsc::Receiver<crate::history::marks::Report>>,
     /// The dashboard record the sequencer adds every command to.
     pub stats: crate::stats::Stats,
     /// The newest commands' derived rows the sequencer keeps.
@@ -181,7 +181,7 @@ impl TestSequencer {
         Self { tx, stream, manifest, withdrawals, metrics, marks_rx: Some(marks_rx), stats, derived, task }
     }
 
-    pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::MarkSample> {
+    pub fn take_marks(&mut self) -> mpsc::Receiver<crate::history::marks::Report> {
         self.marks_rx.take().expect("taken once")
     }
 

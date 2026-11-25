@@ -105,7 +105,8 @@ impl Sequencer {
     }
 
     /// `read_log_with_authorities`, going on from `start`, a daily snapshot whose checkpoint the log holds, and
-    /// reading only the log after it (`Replay::replay_after`).
+    /// reading only the log after it (`Replay::replay_after`), recording into `stats` as it stands: the record the
+    /// snapshot carries (`Stats::restore`), or one started over at the snapshot.
     /// Error cases:
     /// - as `read_log_with_authorities`, or the snapshot does not stand where the log holds its checkpoint
     #[allow(clippy::too_many_arguments)]
@@ -151,8 +152,11 @@ impl Sequencer {
         if let Some(sink) = marks {
             replay.sample_marks_with(sink);
         }
-        if let Some(stats) = stats {
-            replay.record_stats_with(stats);
+        // From a daily snapshot, the caller has put the record at its checkpoint.
+        match (stats, &start) {
+            (Some(stats), Some(_)) => replay.record_stats_continuing(stats),
+            (Some(stats), None) => replay.record_stats_with(stats),
+            (None, _) => {}
         }
         let seals = crate::log::SealChecks::Every(workers);
         let (replay, log, snapshot_seq) = match start {

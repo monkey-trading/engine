@@ -75,8 +75,10 @@ impl Chain {
     }
 
     /// Takes the copy's next entry as read from its own files, which hold only what the stream or
-    /// the archive gave it: its links are computed, not checked. Its checkpoints' signers join the
-    /// set that may seal what comes next: the copy is the trusted local artifact.
+    /// the archive gave it: its links are computed, not checked, and for a copy read from a command
+    /// after its first, from the first checkpoint read on, as the link restarts there
+    /// (`open_copy_replayed`). Its checkpoints' signers join the set that may seal what comes next:
+    /// the copy is the trusted local artifact.
     /// Error cases:
     /// - the entry does not follow the last one, or its link cannot be computed
     pub(super) fn record(&mut self, entry: LogEntry) -> anyhow::Result<()> {

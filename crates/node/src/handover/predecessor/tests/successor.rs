@@ -119,6 +119,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         rotation: Default::default(),
         synced: Arc::default(),
         scheduled: Default::default(),
+        finalized: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())
@@ -166,6 +167,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         rotation: Default::default(),
         synced: Arc::default(),
         scheduled: Default::default(),
+        finalized: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
     let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())

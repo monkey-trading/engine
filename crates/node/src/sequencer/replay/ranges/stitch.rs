@@ -63,6 +63,7 @@ pub(super) fn stitch(
     results: Vec<anyhow::Result<RangeReplayed>>,
     ranges: usize,
     trust: &Trust,
+    whole: bool,
 ) -> anyhow::Result<Audited> {
     let mut roots: BTreeMap<u64, B256> = BTreeMap::new();
     let mut deferred: Vec<(u64, AccountId, Fixed, u64)> = Vec::new();
@@ -70,7 +71,7 @@ pub(super) fn stitch(
     let (mut activations, mut checkpoint_signers) = (Vec::new(), BTreeSet::new());
     let (mut last, mut ended, mut ledger) = (None, None, Vec::new());
     for (at, result) in results.into_iter().enumerate() {
-        let RangeReplayed { replayed, refs, anchored: held, start, end } = match result {
+        let RangeReplayed { replayed, refs, anchored: held, start, file, end } = match result {
             Ok(replayed) => replayed,
             Err(failed) => {
                 let differs =
@@ -90,8 +91,10 @@ pub(super) fn stitch(
         // So the ranges are one history: each starts from the checkpoint and the state the one before ends in.
         ensure!(
             at == 0 || (start.is_some() && start == ended),
-            "range {} of {ranges} starts from another checkpoint or state than range {at} ends in",
-            at + 1
+            "range {} of {ranges} starts from another checkpoint or state than range {at} ends in{}",
+            at + 1,
+            file.as_ref()
+                .map_or(String::new(), |file| format!(": daily snapshot {} does not match the log", file.display()))
         );
         ended = end;
         if at == 0 {
@@ -107,13 +110,22 @@ pub(super) fn stitch(
                 );
             }
         }
-        roots.extend(replayed.checkpoint_roots.iter().map(|(seq, root)| (*seq, *root)));
-        deferred.extend(replayed.deferred.iter().copied());
-        commands += replayed.commands;
-        // Each range after the first applies the checkpoint the one before it ended at, again.
-        checkpoints += replayed.checkpoints - u64::from(at > 0);
-        activations.extend(replayed.activations.iter().copied());
-        checkpoint_signers.extend(replayed.checkpoint_signers.iter().copied());
+        if whole {
+            // Each range goes on from the state the one before ends in, so the last range's totals are the log's.
+            commands = replayed.commands;
+            checkpoints = replayed.checkpoints;
+            activations.clone_from(&replayed.activations);
+            checkpoint_signers.clone_from(&replayed.checkpoint_signers);
+            deferred.clone_from(&replayed.deferred);
+        } else {
+            roots.extend(replayed.checkpoint_roots.iter().map(|(seq, root)| (*seq, *root)));
+            deferred.extend(replayed.deferred.iter().copied());
+            commands += replayed.commands;
+            // Each range after the first applies the checkpoint the one before it ended at, again.
+            checkpoints += replayed.checkpoints - u64::from(at > 0);
+            activations.extend(replayed.activations.iter().copied());
+            checkpoint_signers.extend(replayed.checkpoint_signers.iter().copied());
+        }
         anchored |= held;
         last = Some(replayed);
     }

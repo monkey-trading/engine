@@ -208,13 +208,17 @@ impl Replay {
     }
 }
 
-/// The replay state a whole replay of the log in `dir` carries after its checkpoint at `offset`, encoded as a
-/// daily snapshot carries it: for a test that writes a snapshot there.
+/// The replay state a whole replay of the log in `dir`, a copy in `domain` under `attested`, carries after its
+/// checkpoint at `offset`, encoded as a daily snapshot carries it: for a test that writes a snapshot there.
 /// Error cases:
 /// - the log cannot be read or replayed to `offset`, or holds no checkpoint there
 #[cfg(test)]
-pub(crate) fn carried_at(dir: &std::path::Path, offset: Offset) -> anyhow::Result<String> {
-    let mut replay = Replay::default();
+pub(crate) fn carried_at(
+    dir: &std::path::Path,
+    offset: Offset,
+    (domain, attested): (crate::log::CheckpointDomain, BTreeSet<AccountId>),
+) -> anyhow::Result<String> {
+    let mut replay = Replay::copy(domain, attested);
     let read = crate::log::SegmentedLog::open(dir, |entry| {
         replay.apply(&entry)?;
         ensure!(replay.last_offset != Some(offset), crate::log::Stop);

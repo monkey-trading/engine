@@ -243,9 +243,8 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     let mut index = Index::empty(store, [0x33; 32], i64::try_from(RETENTION.as_millis()).unwrap()).unwrap();
     let replayed = crate::sequencer::replay(&log_entries(&rig.dir)).unwrap();
     let tip = (at, replayed.engine.now(), replayed.command_prefix);
-    let (domain, signer) = (CheckpointDomain { chain_id: 31337, vault: AccountId([0; 20]) }, rig.signer());
     let rows = RowsStore::new(&rebuilt, RETENTION.as_millis() as i64);
-    rebuild_history_prefix(&rig.dir, domain, Some(signer), tip, &rows, &mut index, &AtomicBool::new(false)).unwrap();
+    rebuild_history_prefix(&rig.dir, tip, &rows, &mut index, &AtomicBool::new(false)).unwrap();
     assert_eq!(listed(index.page(query()).unwrap()), expected, "rebuilt");
     // Each rebuild writes the rollover's rows file, which the financing read proves its rows from.
     let proves = |rows: &RowsStore| {
@@ -267,9 +266,8 @@ async fn the_history_index_lists_a_rollovers_rows_kept_replayed_or_rebuilt() {
     log_entries(&rig.dir).iter().for_each(|entry| fingerprint.observe(entry).unwrap());
     let (view, rows) = (published_manifest(&rig.dir).borrow().clone(), RowsStore::new(&strict, 1_000_000));
     let expected = fingerprint.finish();
-    rebuild_history_view(&rig.dir, view, &expected, (domain, Some(signer)), &rows, &mut index, Default::default())
-        .unwrap();
-    assert!(proves(&rows), "the strict rebuild stored the rows");
+    rebuild_history_view(&rig.dir, view, &expected, &rows, &mut index).unwrap();
+    assert!(proves(&rows), "the view rebuild stored the rows");
 }
 
 /// A rotation member's replica writes each rollover's rows to the history's store as it applies them, so its
@@ -359,6 +357,8 @@ fn the_rows_before_a_snapshot_are_derived_into_the_store() {
     assert_eq!(stopped.derive_through(&rig.dir, at, &AtomicBool::new(true)).unwrap(), None);
     assert!(stopped.derived(&rollover).unwrap().is_none(), "a stopped derivation keeps nothing");
 }
+
+mod snapshots;
 
 // ── Helpers ──
 

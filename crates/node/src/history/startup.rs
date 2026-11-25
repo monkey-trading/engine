@@ -14,12 +14,12 @@ use crate::history::authenticated::{Head, Index};
 use crate::history::derived::RowsStore;
 use crate::history::rebuild::ReplayFingerprint;
 use crate::history::runtime::{self, Replacement};
+use crate::log::CheckpointDomain;
 use crate::log::catalog::CatalogRoot;
 use crate::log::catalog_access::{CatalogRead, StoreCatalogRead};
 use crate::log::catalog_head::VerifiedCatalogHead;
 use crate::log::catalog_head::{CatalogDomain, CatalogHeadAuthority};
 use crate::log::catalog_owner::CatalogOwner;
-use crate::log::{CheckpointDomain, ReplayWorkers};
 use crate::sequencer::ReplayedLog;
 use crate::snapshot::generations::Allocate;
 use crate::snapshot::head::StoreId;
@@ -32,11 +32,10 @@ pub(crate) struct Plan {
     pub history: HistorySection,
     pub log_dir: PathBuf,
     pub domain: CheckpointDomain,
-    pub signer: Option<engine_core::types::AccountId>,
     pub source: Source,
     pub catalog: Catalog,
-    /// The threads that check command seals ahead of a rebuild's replay.
-    pub workers: ReplayWorkers,
+    /// The directory of the node's daily snapshots, from which a rebuild derives rows the history's store lacks.
+    pub daily: Option<PathBuf>,
 }
 
 pub(crate) enum Source {
@@ -124,14 +123,14 @@ impl Plan {
                     generation.id.history_namespace(),
                     self.history.retention_ms()?,
                 )?;
+                let rows =
+                    RowsStore::new(&self.history.dir, self.history.retention_ms()?).from_snapshots(self.daily.clone());
                 crate::sequencer::history_rebuild::rebuild_history_view(
                     &self.log_dir,
                     log.manifest_view(),
                     &prefix,
-                    (self.domain, self.signer),
-                    &RowsStore::new(&self.history.dir, self.history.retention_ms()?),
+                    &rows,
                     &mut index,
-                    self.workers,
                 )?;
                 log.verify_history_tip(&index.head())?;
                 Replacement { id: generation.id, store: generation.store, index }
@@ -191,11 +190,10 @@ impl Plan {
         pins.refresh(&producer, self.domain)?;
         let log_dir = self.log_dir;
         let domain = self.domain;
-        let signer = self.signer;
         let repair_lifecycle = lifecycle.clone();
-        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?);
+        let rows = RowsStore::new(&self.history.dir, self.history.retention_ms()?).from_snapshots(self.daily);
         let rebuild: runtime::Rebuild = Box::new(move |expected, stopped| {
-            rebuild_generation(&repair_lifecycle, &log_dir, domain, signer, &rows, expected, stopped)
+            rebuild_generation(&repair_lifecycle, &log_dir, &rows, expected, stopped)
         });
         let config = runtime::Config { snapshots: producer, domain, key, lifecycle, catalog_store: catalog_id };
         let runtime = runtime::Runtime::new(current, pins, config, rebuild)?;
@@ -209,8 +207,6 @@ impl Plan {
 fn rebuild_generation(
     lifecycle: &Lifecycle,
     log_dir: &std::path::Path,
-    domain: CheckpointDomain,
-    signer: Option<engine_core::types::AccountId>,
     rows: &RowsStore,
     expected: &Head,
     stopped: &AtomicBool,
@@ -227,8 +223,6 @@ fn rebuild_generation(
     if let Some(seq) = expected.last_seq() {
         crate::sequencer::history_rebuild::rebuild_history_prefix(
             log_dir,
-            domain,
-            signer,
             (seq, expected.last_ts().context("complete repair head lacks time")?, expected.command_prefix),
             rows,
             &mut index,

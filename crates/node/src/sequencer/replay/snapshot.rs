@@ -1,14 +1,46 @@
-//! Replay restored from a verified state snapshot instead of the full log.
+//! Replay restored from a verified state snapshot instead of the full log. A cache that carries the replay
+//! state a whole replay holds at its checkpoint (`Carried`) gives a replay from it the fold a whole replay
+//! would give (`Fold::of`), while it continues from the cache's own payout state.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use anyhow::{Context, ensure};
 use engine_core::Engine;
 use engine_core::types::AccountId;
+use tracing::warn;
 
-use crate::log::CheckpointDomain;
-use crate::sequencer::replay::Replay;
+use crate::log::{CheckpointDomain, PrefixRing};
+use crate::sequencer::SignedWithdrawal;
+use crate::sequencer::replay::{Carried, Replay};
 use crate::snapshot::{Progress, RecoveryBase, Snapshot};
+
+/// The payout state a whole replay of the log holds at a cache's checkpoint, which the cache's own leaves out of
+/// the approvals it no longer owed: every approval in payout order, those a withdrawal entry signed, and each one's
+/// latest authorization.
+pub(in crate::sequencer) struct Cached {
+    payout_order: Vec<((AccountId, u64), usize)>,
+    /// How many approvals the cache's own payout order starts with, the owed ones, which this order holds too.
+    owed: usize,
+    signed: BTreeSet<(AccountId, u64)>,
+    authorized: BTreeMap<(AccountId, u64), SignedWithdrawal>,
+}
+
+/// The payout state a fold reads: payout order, signed approvals and latest authorizations.
+pub(in crate::sequencer) type Payouts =
+    (Vec<((AccountId, u64), usize)>, BTreeSet<(AccountId, u64)>, BTreeMap<(AccountId, u64), SignedWithdrawal>);
+
+impl Cached {
+    /// The payout state a whole replay holds where `replay`, from the cache, stands: this state, with what the
+    /// replay took after the checkpoint.
+    pub(in crate::sequencer) fn whole(&self, replay: &Replay) -> Payouts {
+        let later = replay.payout_order.get(self.owed..).unwrap_or_default();
+        let payout_order = self.payout_order.iter().chain(later).copied().collect();
+        let signed = self.signed.union(&replay.signed).copied().collect();
+        let mut authorized = self.authorized.clone();
+        authorized.extend(replay.authorized.iter().map(|(key, withdrawal)| (*key, withdrawal.clone())));
+        (payout_order, signed, authorized)
+    }
+}
 
 impl Replay {
     /// Matches a separately signed complete history head to this actual strict replay prefix.
@@ -100,6 +132,7 @@ impl Replay {
             context,
             checkpoint,
             offset,
+            carried,
             ..
         } = snapshot;
         let last_checkpoint_ts = Some(engine.now());
@@ -153,6 +186,73 @@ impl Replay {
             ..Self::default()
         };
         replay.prefix_ring.record(base.0, base.1);
+        if let Some(carried) = carried {
+            match replay.cached(&carried) {
+                Ok(cached) => replay.take_carried(carried, cached),
+                Err(e) => warn!(
+                    seq = base.0,
+                    "the cache's carried replay state is not its own, so its replay folds none: {e:#}"
+                ),
+            }
+        }
         Ok(replay)
     }
+
+    /// What a whole replay holds at this cache replay's checkpoint, from `carried`, beside the payout state the
+    /// cache continues from.
+    /// Error cases:
+    /// - the state does not stand for the engine and the checkpoint (`Carried::check`)
+    /// - it differs from the cache's command count and prefix, checkpoint count, accounting, genesis, activations,
+    ///   parameters' seq or deferred approvals
+    /// - the approvals the cache owes are not in its payout order in turn, one it signed is not signed there, or
+    ///   their latest authorizations differ
+    fn cached(&self, carried: &Carried) -> anyhow::Result<Cached> {
+        let checkpoint = self.last_signed_checkpoint.as_ref().context("a cache replay stands at its checkpoint")?;
+        carried.check(&self.engine, checkpoint)?;
+        let encoded = |genesis| serde_json::to_vec(genesis).context("encoding the genesis progress");
+        ensure!(
+            (carried.commands, carried.command_prefix.0, carried.checkpoints, carried.accounting)
+                == (self.commands, self.command_prefix, self.checkpoints, self.accounting)
+                && (&carried.activations, carried.params_seq, &carried.deferred)
+                    == (&self.activations, self.params_seq, &self.deferred)
+                && encoded(&carried.genesis)? == encoded(&self.genesis)?,
+            "the carried state is of another prefix than the cache's"
+        );
+        let owed: BTreeSet<_> = self.payout_order.iter().map(|(key, _)| *key).collect();
+        let in_order: Vec<_> = carried.payout_order.iter().filter(|(key, _)| owed.contains(key)).copied().collect();
+        ensure!(in_order == self.payout_order, "the cache's owed approvals are not in the carried payout order");
+        ensure!(
+            self.signed.is_subset(&carried.signed),
+            "an approval the cache signed is not signed in the carried state"
+        );
+        let authorized: BTreeMap<_, _> = carried.authorized.iter().map(|w| ((w.account, w.nonce), w.clone())).collect();
+        ensure!(
+            self.authorized.iter().all(|(key, latest)| authorized.get(key) == Some(latest)),
+            "an owed approval's latest authorization is not the carried state's"
+        );
+        let (payout_order, signed) = (carried.payout_order.clone(), carried.signed.clone());
+        Ok(Cached { payout_order, owed: self.payout_order.len(), signed, authorized })
+    }
+
+    /// Takes `carried`, checked as `cached`, so this replay folds as a whole replay does: the latest commands'
+    /// links, every checkpoint's signer and root, the turn takings and the checkpoint gate from it, and the payout
+    /// state the cache leaves out kept apart (`Cached`).
+    fn take_carried(&mut self, carried: Carried, cached: Cached) {
+        let seq = self.last_signed_checkpoint.as_ref().map_or(0, |checkpoint| checkpoint.seq);
+        let mut prefix_ring = PrefixRing::default();
+        carried.links.iter().for_each(|link| prefix_ring.record(link.seq, link.link));
+        let mut takings = carried.takings;
+        // The replay verifies no range before the commands after the cache's.
+        takings.set_applied_from(seq.saturating_add(1));
+        self.prefix_ring = prefix_ring;
+        self.recent = VecDeque::from(carried.links);
+        self.signers_seen = carried.checkpoint_signers;
+        self.payout_checkpoints.extend(carried.checkpoint_roots);
+        self.takings = takings;
+        self.requires_checkpoint_gate |= carried.requires_checkpoint_gate;
+        self.cached = Some(Box::new(cached));
+    }
 }
+
+#[cfg(test)]
+mod tests;

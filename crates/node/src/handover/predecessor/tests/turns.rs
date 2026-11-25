@@ -215,6 +215,7 @@ async fn a_turns_member_takes_the_keys_from_its_source_while_the_sources_archive
         synced: exchange.synced.clone(),
         rotation: exchange.rotation.clone(),
         scheduled: exchange.scheduled.clone(),
+        finalized: exchange.finalized.clone(),
     };
     let at = vault.observe(View::Finalized, &[]).await.unwrap();
     let sealer = MockSealer { launch_digest: UPGRADE };

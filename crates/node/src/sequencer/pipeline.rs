@@ -32,7 +32,7 @@ use tokio::sync::{Notify, oneshot, watch};
 use tracing::error;
 
 use crate::benchmarks::BenchmarkSchedule;
-use crate::history::marks::MarkSample;
+use crate::history::marks::Report;
 use crate::log::SyncJob;
 use crate::sequencer::checkpoints::publish::After;
 use crate::sequencer::house::HouseState;
@@ -78,7 +78,7 @@ pub(super) struct Release {
     /// The stamp of the command at `head`.
     stamp: engine_core::types::Millis,
     outbox: Vec<Arc<StreamMsg>>,
-    marks: Vec<MarkSample>,
+    marks: Vec<Report>,
     house: Option<(Vec<oneshot::Sender<HouseState>>, HouseState)>,
     schedule: Option<BenchmarkSchedule>,
     stats: Vec<StatsJob>,

@@ -265,7 +265,7 @@ fn job(offset: Offset, ts: Millis) -> Job {
     };
     let engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
     let carried = Encoding::Encoded(serde_json::to_string(&Carried::default()).unwrap());
-    let history = Encoding::Encoded("{}".to_owned());
+    let history = crate::daily_snapshots::Pending::none();
     Job { offset, checkpoint, ts, engine, carried, history, signing: Signing::for_tests() }
 }
 

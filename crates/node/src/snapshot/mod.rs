@@ -46,6 +46,11 @@ pub(crate) struct Snapshot {
     pub context: RecoveryContext,
     #[serde(deserialize_with = "required_pair")]
     pub pair: Option<paired::Pair>,
+    /// The replay state a whole replay of the log holds just after the checkpoint (`Carried`), as the stats
+    /// worker folds it, from which a replay from this cache folds on for the daily snapshots; absent from a cache
+    /// written while the worker folded none, or before caches carried it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried: Option<crate::sequencer::replay::Carried>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -10,6 +10,8 @@
 //! `manifest.jsonl` lists one line per snapshot.
 
 mod fetch;
+mod history;
+pub(crate) use history::{History, Pending};
 mod signature;
 pub(crate) use signature::{Covered, Signed, Signing, open_signed, sha256};
 mod start;
@@ -40,7 +42,7 @@ use crate::sequencer::replay::Carried;
 pub(crate) const MANIFEST: &str = "manifest.jsonl";
 /// The snapshot format this build writes: signed over its state, the replay state it carries and its history
 /// anchors. A start takes only this format; a replay in ranges reads the two before it too.
-const SCHEMA: u32 = 3;
+pub(crate) const SCHEMA: u32 = 3;
 /// The format signed over its state alone, which carries no replay state.
 const STATE_SCHEMA: u32 = 2;
 /// The format before signatures.
@@ -234,19 +236,20 @@ fn ensure_engine(path: &Path, snapshot: &DailySnapshot) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The checkpoint the daily snapshot at `path` names, read without decoding its engine.
+/// The format and the checkpoint the daily snapshot at `path` names, read without decoding its engine.
 /// Error cases:
 /// - the file cannot be read, or is not a snapshot's JSON
-pub(crate) fn checkpoint_of(path: &Path) -> anyhow::Result<Checkpoint> {
-    /// A snapshot's checkpoint, its other fields read past.
+pub(crate) fn named(path: &Path) -> anyhow::Result<(u32, Checkpoint)> {
+    /// A snapshot's format and checkpoint, its other fields read past.
     #[derive(Deserialize)]
     struct Named {
+        schema: u32,
         checkpoint: Checkpoint,
     }
     let file = File::open(path).with_context(|| format!("opening daily snapshot {}", path.display()))?;
     let named: Named = serde_json::from_reader(BufReader::new(file))
         .with_context(|| format!("reading daily snapshot {}'s checkpoint", path.display()))?;
-    Ok(named.checkpoint)
+    Ok((named.schema, named.checkpoint))
 }
 
 /// The SHA-256 of `engine`'s encoding, which binds every part of its state, those its root leaves out
@@ -260,13 +263,13 @@ pub(crate) fn state_digest(engine: &Engine) -> anyhow::Result<[u8; 32]> {
     Ok(hashed.hash.finalize().into())
 }
 
-/// No replay state and no history anchors, encoded as a daily snapshot carries them: for a test of the writer or of
-/// a read that does not look at them.
+/// No replay state and no history anchors, as a daily snapshot carries them: for a test of the writer or of a read
+/// that does not look at them.
 #[cfg(test)]
-pub(crate) fn nothing_carried() -> (crate::snapshot::sealing::Encoding, crate::snapshot::sealing::Encoding) {
+pub(crate) fn nothing_carried() -> (crate::snapshot::sealing::Encoding, Pending) {
     use crate::snapshot::sealing::Encoding;
     let carried = serde_json::to_string(&Carried::default()).expect("a default state encodes");
-    (Encoding::Encoded(carried), Encoding::Encoded("{}".to_owned()))
+    (Encoding::Encoded(carried), Pending::none())
 }
 
 #[cfg(test)]

@@ -29,7 +29,7 @@ fn a_ranges_references_resolve_once_against_the_ranges_before_it() {
 /// later range is taken: the results end at the earliest failure, which is the fault reported.
 #[test]
 fn ranges_report_in_log_order_and_end_at_the_earliest_failure() {
-    let ranges: Vec<Range> = (0..8).map(|_| Range { start: None, end: None }).collect();
+    let ranges: Vec<Range> = (0..8).map(|_| Range { start: None, end: None, whole: false }).collect();
     let at = |range: &Range| ranges.iter().position(|held| std::ptr::eq(held, range)).unwrap();
     for jobs in [1, 3, 8] {
         let jobs = NonZeroUsize::new(jobs).unwrap();
@@ -59,19 +59,19 @@ fn each_range_starts_from_the_checkpoint_and_state_the_one_before_ends_in() {
             domain: None,
             deferred_withdrawals: false,
         };
-        Boundary { checkpoint, state: [state; 32] }
+        Boundary { checkpoint, state: [state; 32], carried: None }
     };
     let range = |start, end| {
         let mut replayed = Replay::default().finish();
         replayed.checkpoints = 1;
-        Ok(RangeReplayed { replayed, refs: None, anchored: false, start, end })
+        Ok(RangeReplayed { replayed, refs: None, anchored: false, start, file: None, end })
     };
     let trust = Trust::Pinned { domain: None, signer: None };
-    stitch::stitch(vec![range(None, Some(at(4, 1))), range(Some(at(4, 1)), None)], 2, &trust).unwrap();
+    stitch::stitch(vec![range(None, Some(at(4, 1))), range(Some(at(4, 1)), None)], 2, &trust, false).unwrap();
     for (case, start) in
         [("no snapshot", None), ("another checkpoint", Some(at(5, 1))), ("another state", Some(at(4, 2)))]
     {
-        let error = stitch::stitch(vec![range(None, Some(at(4, 1))), range(start, None)], 2, &trust)
+        let error = stitch::stitch(vec![range(None, Some(at(4, 1))), range(start, None)], 2, &trust, false)
             .err()
             .unwrap_or_else(|| panic!("{case} was stitched"));
         assert!(error.to_string().contains("range 2 of 2 starts from another checkpoint or state"), "{case}: {error}");
@@ -94,18 +94,19 @@ fn a_failed_range_from_a_snapshot_the_range_before_does_not_end_at_blames_the_sn
             deferred_withdrawals: false,
         },
         state: [state; 32],
+        carried: None,
     };
     let first = || {
         let mut replayed = Replay::default().finish();
         replayed.checkpoints = 1;
-        Ok(RangeReplayed { replayed, refs: None, anchored: false, start: None, end: Some(at(1)) })
+        Ok(RangeReplayed { replayed, refs: None, anchored: false, start: None, file: None, end: Some(at(1)) })
     };
     let failed = |state| {
         let from = FromSnapshot { start: at(state), file: PathBuf::from("snapshot.json") };
         Err(anyhow::anyhow!("events logged at seq 9 differ from the events replay gives").context(from))
     };
     let trust = Trust::Pinned { domain: None, signer: None };
-    let error = |state| format!("{:#}", stitch::stitch(vec![first(), failed(state)], 2, &trust).err().unwrap());
+    let error = |state| format!("{:#}", stitch::stitch(vec![first(), failed(state)], 2, &trust, false).err().unwrap());
     let blamed = error(2);
     assert!(
         blamed.starts_with(
@@ -143,6 +144,7 @@ fn a_ranges_custody_activation_lists_the_first_ranges_ledger() {
             deferred_withdrawals: false,
         },
         state: [1; 32],
+        carried: None,
     };
     let range = |first: bool, ledger: Vec<LegacyDeposit>, ledgers: Vec<Vec<LegacyDeposit>>| {
         let mut replayed = Replay::default().finish();
@@ -150,11 +152,11 @@ fn a_ranges_custody_activation_lists_the_first_ranges_ledger() {
         replayed.legacy_deposits = ledger.into_iter().map(|credit| (credit.chain_ref.clone(), credit)).collect();
         let refs = Some(Refs { start: (!first).then_some(4), ledgers, ..Refs::default() });
         let (start, end) = if first { (None, Some(boundary())) } else { (Some(boundary()), None) };
-        Ok(RangeReplayed { replayed, refs, anchored: false, start, end })
+        Ok(RangeReplayed { replayed, refs, anchored: false, start, file: None, end })
     };
     let trust = Trust::Pinned { domain: None, signer: None };
     let stitched = |ledgers| {
-        stitch::stitch(vec![range(true, vec![credit.clone()], vec![]), range(false, vec![], ledgers)], 2, &trust)
+        stitch::stitch(vec![range(true, vec![credit.clone()], vec![]), range(false, vec![], ledgers)], 2, &trust, false)
     };
     stitched(vec![vec![credit.clone()]]).unwrap();
     for (case, ledgers) in [("none", vec![vec![]]), ("another", vec![vec![credit.clone()], vec![]])] {

@@ -10,7 +10,9 @@ use engine_core::{Engine, Fixed};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, info, warn};
 
-use crate::history::marks::MarkSample;
+use crate::history::marks::store::Frozen;
+use crate::history::marks::{Freeze, Report};
+use crate::log::Offset;
 use crate::sequencer::Sequencer;
 
 /// Live mark reporting for the derived marks cache: the channel, the last mark per market (only
@@ -19,9 +21,9 @@ use crate::sequencer::Sequencer;
 /// episode.
 #[derive(Default)]
 pub(super) struct Marks {
-    tx: Option<mpsc::Sender<MarkSample>>,
+    tx: Option<mpsc::Sender<Report>>,
     last: BTreeMap<MarketId, Fixed>,
-    pending: Vec<MarkSample>,
+    pending: Vec<Report>,
     overflow_warned: bool,
     /// The dashboard record every applied command is added to, once the node attaches it.
     stats: Option<crate::stats::Stats>,
@@ -40,9 +42,19 @@ impl Marks {
             if let Some(mark) = market.mark
                 && self.last.insert(*id, mark) != Some(mark)
             {
-                self.pending.push((*id, ts, mark));
+                self.pending.push(Report::Sample((*id, ts, mark)));
             }
         }
+    }
+
+    /// Buffers a daily snapshot's freeze for the checkpoint at `offset`, behind the reports of every command it
+    /// covers, for `release` with them, and gives the end the cache's anchors come back on once the marks task has
+    /// written the frozen copy; `None` when no marks task runs, as on a member.
+    pub(super) fn freeze(&mut self, offset: Offset) -> Option<std::sync::mpsc::Receiver<Frozen>> {
+        self.tx.as_ref()?;
+        let (reply, frozen) = std::sync::mpsc::sync_channel(1);
+        self.pending.push(Report::Freeze(Freeze { offset, reply }));
+        Some(frozen)
     }
 
     /// The dashboard record, whose worker also encodes recovery caches, once the node attaches it.
@@ -63,22 +75,23 @@ impl Marks {
     }
 
     /// Takes the buffered reports, for `release` once their commands are durable.
-    pub(super) fn take_pending(&mut self) -> Vec<MarkSample> {
+    pub(super) fn take_pending(&mut self) -> Vec<Report> {
         std::mem::take(&mut self.pending)
     }
 
-    /// Sends `samples`, whose commands are durable. A full queue drops the sample:
-    /// the cache is derived, and the next change or a recovery reseeds it; one alert per episode
-    /// says so, and the first batch the queue takes whole ends the episode.
-    pub(super) fn release(&mut self, samples: Vec<MarkSample>) {
-        if samples.is_empty() {
+    /// Sends `reports`, whose commands are durable. A full queue drops the report: the cache is
+    /// derived, and the next change or a recovery reseeds it, and a dropped freeze leaves its
+    /// snapshot no marks anchors; one alert per episode says so, and the first batch the queue
+    /// takes whole ends the episode.
+    pub(super) fn release(&mut self, reports: Vec<Report>) {
+        if reports.is_empty() {
             return;
         }
         let Some(tx) = &self.tx else { return };
         let mut dropped = false;
         let mut closed = false;
-        for sample in samples {
-            match tx.try_send(sample) {
+        for report in reports {
+            match tx.try_send(report) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => dropped = true,
                 Err(TrySendError::Closed(_)) => closed = true,
@@ -108,7 +121,7 @@ impl Sequencer {
     /// Sends each market's mark changes to `tx` for the derived marks cache. Only changes go, at
     /// the command's sequenced time, once the command is durable, so a cache seeded at recovery
     /// continues exactly.
-    pub fn track_marks(&mut self, tx: mpsc::Sender<MarkSample>) {
+    pub(crate) fn track_marks(&mut self, tx: mpsc::Sender<Report>) {
         self.marks.tx = Some(tx);
     }
 
@@ -145,29 +158,40 @@ impl Sequencer {
 mod tests {
     use super::*;
 
-    fn marks_with(capacity: usize) -> (Marks, mpsc::Receiver<MarkSample>) {
+    fn marks_with(capacity: usize) -> (Marks, mpsc::Receiver<Report>) {
         let (tx, rx) = mpsc::channel(capacity);
         (Marks { tx: Some(tx), ..Marks::default() }, rx)
+    }
+
+    fn samples(samples: &[(MarketId, Millis, i64)]) -> Vec<Report> {
+        samples.iter().map(|&(market, ts, mark)| Report::Sample((market, ts, Fixed::from_int(mark)))).collect()
+    }
+
+    fn sample(report: Report) -> crate::history::marks::MarkSample {
+        match report {
+            Report::Sample(sample) => sample,
+            Report::Freeze(_) => panic!("a freeze where a sample was sent"),
+        }
     }
 
     #[test]
     fn a_full_queue_drops_samples_and_a_batch_it_takes_whole_ends_the_episode() {
         let (mut marks, mut rx) = marks_with(1);
-        marks.release(vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))]);
+        marks.release(samples(&[(1, 10, 1), (2, 10, 2)]));
         assert!(marks.overflow_warned, "the second sample found the queue full");
-        assert_eq!(rx.try_recv().unwrap().0, 1);
+        assert_eq!(sample(rx.try_recv().unwrap()).0, 1);
         assert!(rx.try_recv().is_err(), "the dropped sample is not queued");
         // A later batch the queue takes whole clears the episode, so the next overflow alerts again.
-        marks.release(vec![(1, 20, Fixed::from_int(3))]);
+        marks.release(samples(&[(1, 20, 3)]));
         assert!(!marks.overflow_warned);
-        assert_eq!(rx.try_recv().unwrap().2, Fixed::from_int(3));
+        assert_eq!(sample(rx.try_recv().unwrap()).2, Fixed::from_int(3));
     }
 
     #[test]
     fn a_closed_queue_is_not_a_drop_and_stops_reporting() {
         let (mut marks, rx) = marks_with(1);
         drop(rx);
-        marks.release(vec![(1, 10, Fixed::from_int(1))]);
+        marks.release(samples(&[(1, 10, 1)]));
         assert!(!marks.overflow_warned, "a receiver gone at shutdown is not an overflow");
         assert!(marks.tx.is_none());
     }
@@ -175,8 +199,23 @@ mod tests {
     #[test]
     fn an_episode_stays_open_while_the_queue_keeps_dropping() {
         let (mut marks, _rx) = marks_with(1);
-        marks.release(vec![(1, 10, Fixed::from_int(1)), (2, 10, Fixed::from_int(2))]);
-        marks.release(vec![(1, 20, Fixed::from_int(3))]);
+        marks.release(samples(&[(1, 10, 1), (2, 10, 2)]));
+        marks.release(samples(&[(1, 20, 3)]));
         assert!(marks.overflow_warned, "the queue never drained");
+    }
+
+    /// A daily snapshot's freeze goes to the marks task behind the marks of the commands before it, with them, and
+    /// none is asked of a sequencer that reports to no marks task.
+    #[test]
+    fn a_freeze_follows_the_marks_buffered_before_it() {
+        let (mut marks, mut rx) = marks_with(8);
+        marks.pending = samples(&[(1, 10, 1)]);
+        let offset = Offset { seq: 5, index: 2 };
+        assert!(marks.freeze(offset).is_some());
+        let pending = marks.take_pending();
+        marks.release(pending);
+        assert_eq!(sample(rx.try_recv().unwrap()).0, 1, "the mark before the freeze goes first");
+        assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
+        assert!(Marks::default().freeze(offset).is_none(), "no marks task, no freeze");
     }
 }

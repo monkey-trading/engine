@@ -149,14 +149,16 @@ fn manifest_tail(dir: &Path, window: u64) -> anyhow::Result<(Vec<SegmentInfo>, b
 /// every later entry. The checkpoint's segment keeps its name and, when the checkpoint ends it,
 /// its listing; otherwise the segment loses its listing and stands as the open one, exactly as if
 /// its writer had stopped there. Later segment files and their listings are removed. The caller
-/// must hold no open handles on the log: it drops its writer first.
+/// must hold no open handles on the log: it drops its writer first. Only the segment holding the
+/// command at `seq`, which holds every entry at `seq`, and those after it are read.
 /// Error cases:
 /// - the log cannot be read, or holds no checkpoint at `seq` with `root`
 /// - a segment or the manifest cannot be rewritten
 pub(crate) fn truncate_to_checkpoint(dir: &Path, seq: u64, root: &str) -> anyhow::Result<()> {
     let files = list_segments(dir)?;
+    let first = files.iter().rposition(|(first_seq, _)| *first_seq <= seq).unwrap_or(0);
     let mut target: Option<(usize, u64)> = None;
-    for (index, (_, path)) in files.iter().enumerate() {
+    for (index, (_, path)) in files.iter().enumerate().skip(first) {
         let file = fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
         let mut reader = BufReader::new(file);
         let mut line = Vec::new();

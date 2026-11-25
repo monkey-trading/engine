@@ -307,8 +307,8 @@ async fn fetch_rows(
 /// Error cases:
 /// - the store rejects the flush
 fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
-    while let Ok(sample) = live.samples.try_recv() {
-        live.buffered.push(sample);
+    while let Ok(report) = live.samples.try_recv() {
+        live.take(report);
     }
     if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
         store.observe(&live.buffered).context(StoreFault)?;

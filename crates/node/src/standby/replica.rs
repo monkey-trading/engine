@@ -1,8 +1,8 @@
 //! A follower's copy of the operator's log with its live replica. The replica is built once, when the
-//! follower starts, by replaying the copy as it is opened, authenticated against the vault's recorded
-//! signers; from then it takes every entry the copy takes, before the copy does, and is the authority
-//! a start from the copy uses: the files are not read again, so a host that alters them after the
-//! build changes nothing the start relies on.
+//! follower starts, by replaying the copy as it is opened, from its start or from a daily snapshot
+//! (`build`), authenticated against the vault's recorded signers; from then it takes every entry the
+//! copy takes, before the copy does, and is the authority a start from the copy uses: the files are not
+//! read again, so a host that alters them after the build changes nothing the start relies on.
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
@@ -395,9 +395,24 @@ impl Follower {
 }
 
 /// `replica`, recording what `records` names as it applies each entry (see `Follower::open_pinned`).
-fn recording(mut replica: LiveReplay, (stats, marks, checked, rows): &Records) -> LiveReplay {
-    if let Some(stats) = stats {
-        replica.record_stats_with(stats.clone());
+fn recording(replica: LiveReplay, records: &Records) -> LiveReplay {
+    recording_from(replica, records, None)
+}
+
+/// `recording`, its dashboard record put at `record`, the one a daily snapshot the replica starts from carries
+/// (`Stats::restore`), or started over when there is none.
+fn recording_from(
+    mut replica: LiveReplay,
+    (stats, marks, checked, rows): &Records,
+    record: Option<crate::stats::Record>,
+) -> LiveReplay {
+    match (stats, record) {
+        (Some(stats), Some(record)) => {
+            stats.restore(record);
+            replica.record_stats_continuing(stats.clone());
+        }
+        (Some(stats), None) => replica.record_stats_with(stats.clone()),
+        (None, _) => {}
     }
     if let Some(checked) = checked {
         replica.record_checked_with(checked.clone());

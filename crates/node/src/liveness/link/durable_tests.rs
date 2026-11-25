@@ -46,13 +46,17 @@ async fn entries_older_than_the_ring_and_from_the_first_come_from_the_durable_lo
     let log = offsets(&dir);
     let copy = copy_over(&dir);
     assert_eq!(copy.entries_after(None), Vec::new(), "the ring holds nothing");
-    assert_eq!(copy.entries(None).await, log, "an empty asker is given the log from its first entry");
+    assert_eq!(copy.entries(None).await.unwrap(), log, "an empty asker is given the log from its first entry");
     let after = log[2].0;
-    assert_eq!(copy.entries(Some(after)).await, log[3..].to_vec(), "a gap beyond the ring is read from the log");
+    assert_eq!(
+        copy.entries(Some(after)).await.unwrap(),
+        log[3..].to_vec(),
+        "a gap beyond the ring is read from the log"
+    );
     let tip = log.last().unwrap().0;
-    assert!(copy.entries(Some(tip)).await.is_empty(), "nothing past the log's tip");
+    assert!(copy.entries(Some(tip)).await.unwrap().is_empty(), "nothing past the log's tip");
     let largest = Some(Offset { seq: u64::MAX, index: u32::MAX });
-    assert!(copy.entries(largest).await.is_empty(), "the largest offset answers nothing");
+    assert!(copy.entries(largest).await.unwrap().is_empty(), "the largest offset answers nothing");
 }
 
 /// A ring that begins after seq 0's command cannot start an empty asker's chain: it is not served.
@@ -64,7 +68,10 @@ async fn a_ring_that_begins_after_the_first_entry_does_not_serve_an_empty_asker(
     for (offset, entry) in offsets(&dir).into_iter().skip(2) {
         ring.appended(offset, &entry);
     }
-    assert!(ring.entries(None).await.is_empty(), "a ring that begins after seq 0 does not serve an empty asker");
+    assert!(
+        ring.entries(None).await.unwrap().is_empty(),
+        "a ring that begins after seq 0 does not serve an empty asker"
+    );
 }
 
 #[tokio::test]
@@ -92,7 +99,7 @@ async fn a_gap_larger_than_a_page_is_served_in_bounded_pages_that_chain() {
     let copy = copy_over(&dir);
     let (mut after, mut served, mut pages) = (None, Vec::new(), 0);
     loop {
-        let page = copy.entries(after).await;
+        let page = copy.entries(after).await.unwrap();
         if page.is_empty() {
             break;
         }
@@ -118,5 +125,31 @@ async fn a_ring_that_lost_the_checkpoint_before_its_first_command_gives_way_to_t
     assert!(matches!(log[next].1, LogEntry::Command(_)), "a command follows the checkpoint");
     let copy = copy_over(&dir);
     log[next..].iter().for_each(|(offset, entry)| copy.appended(*offset, entry));
-    assert_eq!(copy.entries(Some(after)).await, log[at..].to_vec(), "the asker is given the checkpoint first");
+    assert_eq!(copy.entries(Some(after)).await.unwrap(), log[at..].to_vec(), "the asker is given the checkpoint first");
+}
+
+/// A copy that keeps only its newest segments answers from them, and refuses an asker whose entries are in
+/// the log's archive, naming it, not with an empty page the asker would take for the log's end.
+#[tokio::test]
+async fn entries_in_the_archive_are_refused_naming_it() {
+    let dir = scratch_dir("link-durable-archived");
+    let (manifest, published) = tokio::sync::watch::channel(crate::log::Manifest::default());
+    let mut writer = crate::log::SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest).unwrap();
+    for seq in 0..6 {
+        let sequenced = engine_core::command::Sequenced { seq, ts: 1, cmd: Command::Tick };
+        writer
+            .append(&LogEntry::Command(crate::log::CommandEntry { seal: None, sequenced, events: Some(Vec::new()) }))
+            .unwrap();
+    }
+    writer.flush().unwrap();
+    std::fs::remove_file(dir.join("00000000000000000000.jsonl")).unwrap();
+    let copy = Copy::default();
+    copy.logged(dir.clone(), published.clone());
+    for after in [None, Some(Offset::start_of(0)), Some(Offset::start_of(1))] {
+        let error = copy.entries(after).await.err().unwrap_or_else(|| panic!("{after:?} was answered"));
+        assert!(error.is::<crate::log::NotLocal>(), "{after:?}: {error:#}");
+        assert!(format!("{error:#}").contains("public archive"), "{after:?}: {error:#}");
+    }
+    let page = copy.entries(Some(Offset::start_of(3))).await.unwrap();
+    assert_eq!(page.iter().map(|(offset, _)| offset.seq).collect::<Vec<_>>(), [4, 5]);
 }

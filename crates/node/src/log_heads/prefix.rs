@@ -5,9 +5,12 @@
 //! digest, must give the snapshot's certified `context.command_prefix`. The prefix is a hash chain,
 //! so a match proves the snapshot's history holds the head, and only the commands since the head
 //! are read. A mismatch refuses startup. With no head posted, `verify` hashes and seal-checks the
-//! on-disk prefix from the log's start through the base, binding it to the snapshot, and stamps
-//! the command a vault-finalized checkpoint under the base covers, for the stall alarm. A cache's
-//! history head before its checkpoint is bound the same way, by `bind_history`.
+//! on-disk prefix from the log's start, or from a signed daily snapshot's checkpoint with the command
+//! prefix it carries (`verify_from`), through the base, binding it to the snapshot, and stamps the
+//! command a vault-finalized checkpoint under the base covers, for the stall alarm. A cache's history
+//! head before its checkpoint is bound the same way, by `bind_history`. A start from a daily snapshot
+//! binds a posted head at or under its checkpoint to the history the snapshot carries
+//! (`under_snapshot`).
 
 use std::path::Path;
 
@@ -17,8 +20,10 @@ use engine_core::types::{AccountId, Millis};
 use tracing::error;
 
 use super::Head;
-use crate::log::{self, CheckpointDomain, LogEntry, ReplayWorkers, SegmentedLog, Stop};
+use crate::daily_snapshots::Signed;
+use crate::log::{self, Checkpoint, CheckpointDomain, LogEntry, Offset, ReplayWorkers, SegmentedLog, Stop};
 use crate::sequencer::origin::Origin;
+use crate::sequencer::replay::Carried;
 
 /// Marks a posted-head refusal below the snapshot base: the candidate loop must not treat it as a
 /// rejectable cache and fall back — the node refuses to start.
@@ -41,6 +46,16 @@ pub(crate) struct Verified {
     pub anchor_ts: Millis,
 }
 
+/// Where the anchor pass starts in place of the log's start: a signed daily snapshot's checkpoint, at `offset`,
+/// with the cumulative command prefix and the stamp the snapshot carries for the command it covers.
+#[derive(Clone, Copy)]
+pub(crate) struct SnapshotStart<'a> {
+    pub offset: Offset,
+    pub checkpoint: &'a Checkpoint,
+    pub command_prefix: [u8; 32],
+    pub ts: Millis,
+}
+
 /// Whether the log's commands after `posted`, through the snapshot base `base`, extend the head's
 /// cumulative command-prefix digest to the snapshot's certified one. Only the segments from the one
 /// holding the head's next command are read, and no seal is checked: the digest comparison and the
@@ -60,18 +75,57 @@ pub(crate) fn since(
     let (command_prefix, first_ts) =
         extend(dir, (posted.seq, posted.link.into()), base).context("binding the on-chain log head to the snapshot")?;
     if command_prefix != certified_prefix {
-        error!(
+        return Err(rollback(posted, base));
+    }
+    Ok(first_ts.unwrap_or(base_ts))
+}
+
+/// For a start from the daily snapshot `start`, binds `posted`, a head at or under its checkpoint, to the history
+/// the snapshot carries (`under_snapshot`), and returns the stamp the stall alarm starts from; none for no head, or
+/// one past the checkpoint, which the replay of the log after it binds.
+/// Error cases:
+/// - the snapshot carries no replay state, or as `under_snapshot`
+pub(crate) fn under_daily(dir: &Path, posted: Option<Head>, start: &Signed) -> anyhow::Result<Option<Millis>> {
+    let snapshot = &start.snapshot;
+    let Some(posted) = posted.filter(|posted| posted.seq <= snapshot.offset.seq) else { return Ok(None) };
+    let carried = snapshot.carried.as_ref().context("the daily snapshot carries no replay state")?;
+    under_snapshot(dir, posted, carried, (snapshot.offset.seq, snapshot.engine.now())).map(Some)
+}
+
+/// Whether a head `posted` at or under a daily snapshot's checkpoint, at `base` and stamped `base_ts`, is in the
+/// history the snapshot carries: the link the carried links hold at its seq, when they hold it, or else the
+/// commands after it through the base hashed onto its link (`since`), must give the snapshot's. Returns the stamp
+/// the stall alarm starts from, as `since` does.
+/// Error cases:
+/// - as `since`: a link or digest of another history is a `Rollback`
+fn under_snapshot(
+    dir: &Path,
+    posted: Head,
+    carried: &Carried,
+    (base, base_ts): (u64, Millis),
+) -> anyhow::Result<Millis> {
+    let Some(at) = carried.links.iter().position(|link| link.seq == posted.seq) else {
+        return since(dir, posted, base, base_ts, carried.command_prefix.into());
+    };
+    if carried.links[at].link != posted.link {
+        return Err(rollback(posted, base));
+    }
+    Ok(carried.links.get(at + 1).map_or(base_ts, |next| next.ts))
+}
+
+/// The refusal of a head `posted` that the history through the snapshot base `base` does not hold, with its
+/// Critical.
+fn rollback(posted: Head, base: u64) -> anyhow::Error {
+    error!(
             alert = "log_rollback",
             seq = posted.seq,
             posted_link = %posted.link,
             "the commands after the on-chain log head at seq {} do not give the snapshot's certified prefix at \
              its base {base}: the snapshot's history does not hold the head, or the log's commands since it are \
              damaged; refusing to start",
-            posted.seq
-        );
-        return Err(anyhow::Error::new(Rollback));
-    }
-    Ok(first_ts.unwrap_or(base_ts))
+        posted.seq
+    );
+    anyhow::Error::new(Rollback)
 }
 
 /// Whether the log's commands after a paired cache's history head, `head` (its seq and cumulative
@@ -140,6 +194,7 @@ fn extend(
 /// - the log cannot be opened or a seal is invalid, an unsealed span lacks the trusted authority,
 ///   or the log holds no command at the anchor or the base
 /// - the command prefix differs from the certified one: a rejected cache
+#[cfg(test)]
 pub(crate) fn verify(
     dir: &Path,
     domain: CheckpointDomain,
@@ -149,12 +204,40 @@ pub(crate) fn verify(
     certified_prefix: [u8; 32],
     workers: ReplayWorkers,
 ) -> anyhow::Result<Verified> {
+    verify_from(dir, (domain, signer), (anchor, base), certified_prefix, workers, None)
+}
+
+/// `verify`, from `start`, a signed daily snapshot's checkpoint at or under the anchor, when given: only the
+/// segments from the one holding its entry are read, which must be its checkpoint, the seals are chained from
+/// its link and the command prefix from the one it carries.
+/// Error cases:
+/// - as `verify`, or the log holds another entry at the snapshot's offset (`log::NotLocal` before the first
+///   segment on this host)
+/// - the snapshot's checkpoint is past the anchor
+pub(crate) fn verify_from(
+    dir: &Path,
+    (domain, signer): (CheckpointDomain, AccountId),
+    (anchor, base): (u64, u64),
+    certified_prefix: [u8; 32],
+    workers: ReplayWorkers,
+    start: Option<SnapshotStart<'_>>,
+) -> anyhow::Result<Verified> {
     let mut origin = Origin::new(Some(domain), Some(signer));
-    origin.check_ahead(dir, 0, workers);
-    let mut command_prefix = [0u8; 32];
-    let mut previous = None;
-    let (mut anchor_ts, mut base_prefix) = (None, None);
-    let result = SegmentedLog::open(dir, |entry| {
+    let (mut command_prefix, mut previous, mut anchor_ts) = ([0u8; 32], None, None);
+    if let Some(start) = start {
+        ensure!(start.offset.seq <= anchor, "the daily snapshot's checkpoint is past the finalized checkpoint's");
+        origin.link = crate::log::command_seal::checkpoint_link(start.checkpoint)?;
+        (command_prefix, anchor_ts) = (start.command_prefix, (start.offset.seq == anchor).then_some(start.ts));
+    }
+    origin.check_ahead(dir, start.map_or(0, |start| start.offset.seq + 1), workers);
+    let mut base_prefix = None;
+    let mut visit = |entry: LogEntry| {
+        if let Some(start) = start.filter(|_| previous.is_none()) {
+            let held = matches!(&entry, LogEntry::Checkpoint(held) if held == start.checkpoint);
+            ensure!(held, "the log holds another entry at {} than the daily snapshot's checkpoint", start.offset);
+            previous = Some(start.offset);
+            return Ok(());
+        }
         let offset = log::offset_of(previous, &entry)?;
         if offset.seq > base {
             // The boundary is checked before the entry is processed: no origin update, no prefix
@@ -181,7 +264,11 @@ pub(crate) fn verify(
             LogEntry::Withdrawal(_) => {}
         }
         Ok(())
-    });
+    };
+    let result = match start {
+        Some(start) => SegmentedLog::open_from(dir, start.offset, &mut visit),
+        None => SegmentedLog::open(dir, &mut visit),
+    };
     match result {
         Ok(_) => {}
         Err(cause) if cause.is::<Stop>() => {}

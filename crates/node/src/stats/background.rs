@@ -225,7 +225,7 @@ impl Background {
         self.sent.load(Ordering::Relaxed) - self.applied.load(Ordering::Relaxed)
     }
 
-    #[cfg(test)]
+    /// Scans requested whose results are not yet taken.
     pub(super) fn in_flight(&self) -> usize {
         self.in_flight
     }
