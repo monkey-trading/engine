@@ -210,7 +210,9 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         if let Err(e) = &followed
             && catch_up::before_served(e)
         {
-            match catch_up_copy(&archive, &operator, (&mut writer, &mut copied)).await {
+            let caught = catch_up_copy(&archive, &operator, (&mut writer, &mut copied)).await;
+            let pause = if caught.is_ok() { Duration::from_secs(1) } else { standby.poll_interval };
+            match caught {
                 Ok(()) => {}
                 Err(e) if rollback_of(&e).is_some() => {
                     if rolled_back.is_none() {
@@ -225,7 +227,7 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                     }
                 }
             }
-            sleep(Duration::from_secs(1)).await;
+            sleep(pause).await;
             continue;
         }
         // The stream itself worked: what it carried is another matter.

@@ -39,13 +39,14 @@ pub(crate) fn before_served(error: &anyhow::Error) -> bool {
 /// - the manifest or a segment cannot be fetched, a listing is not canonical, a segment differs from its listing,
 ///   or a line does not parse
 /// - `take` refuses a segment's entries (a `Rollback` for one that does not extend the copy)
+/// - the archive lists nothing past the copy's head, so the stream would be refused again
 pub(crate) async fn catch_up(
     archive: &reqwest::Client,
     origins: &[String],
     mut head: Option<Offset>,
     mut take: impl FnMut(Option<Offset>, &[u8]) -> anyhow::Result<Option<Offset>>,
 ) -> anyhow::Result<Option<Offset>> {
-    let listings = fetch_manifest(archive, origins).await.context("fetching the published manifest")?;
+    let (listings, from) = (fetch_manifest(archive, origins).await.context("fetching the published manifest")?, head);
     for listed in listings.iter().filter(|listed| head.is_none_or(|head| listed.last_seq >= head.seq)) {
         validate_listing(listed)?;
         let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
@@ -62,6 +63,7 @@ pub(crate) async fn catch_up(
             head = take(head, &after).with_context(|| format!("archive segment {}", listed.file))?;
         }
     }
+    anyhow::ensure!(head != from, "the archive lists nothing past the copy's head, {from:?}");
     Ok(head)
 }
 

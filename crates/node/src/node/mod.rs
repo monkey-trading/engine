@@ -403,9 +403,8 @@ async fn serve_node(
         backfills.clone(),
         Some(history.resume_at()),
     );
-    let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())))
-        .storing(rows, metrics.full_replays.clone())
-        .with_snapshots(daily);
+    let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())));
+    let deriver = deriver.storing(rows, metrics.full_replays.clone()).with_snapshots(daily);
     let (history_task, history_stopper) = shutdown::spawn_history(history, history_feed, deriver);
     let history_finished = false;
     let handing_over = None;
