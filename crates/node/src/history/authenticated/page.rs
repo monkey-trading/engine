@@ -20,9 +20,10 @@ impl Index {
         let list = ListId { account: query.account, kind: query.kind.as_deref().map(kind_id).transpose()? };
         let _pin = self.store.lease(&self.head.root)?;
         let state = checked_state(&self.store, &self.head)?;
+        let retained_from_ms = state.last_command.map(|_| state.horizon());
         let mut overlay = Overlay::new(&self.store, &self.head.root);
         let Some(meta) = metadata(&mut overlay, list, &state)? else {
-            return Ok(Page { events: Vec::new(), next: None });
+            return Ok(Page { events: Vec::new(), next: None, retained_from_ms });
         };
         let mut search = Search { overlay, list, meta, state };
         let lo = match query.after {
@@ -59,7 +60,7 @@ impl Index {
         } else {
             None
         };
-        Ok(Page { events, next })
+        Ok(Page { events, next, retained_from_ms })
     }
 }
 

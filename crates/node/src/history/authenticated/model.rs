@@ -1,15 +1,27 @@
-//! Fixed-size list/queue headers and authenticated, scope-qualified payload chunk addresses.
+//! Fixed-size list/queue headers and authenticated, scope-qualified payload chunk addresses. A header is
+//! stored as its fields in order, each fixed-width and big-endian (`Stored`), a few dozen bytes each.
 
 use anyhow::{Context, Result, bail, ensure};
 use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
-use serde::{Deserialize, Serialize};
 
+use crate::authenticated::Fields;
 use crate::history::authenticated::state::State;
 use crate::history::{HistoryEvent, KINDS};
 use crate::log::Offset;
 
 pub(super) const PAYLOAD_CHUNK_BYTES: usize = crate::authenticated::CHUNK_BYTES;
+
+/// A value the index stores under a key: its bytes, and back from exactly those bytes.
+pub(super) trait Stored: Sized {
+    /// The value's stored bytes.
+    fn encode(&self) -> Vec<u8>;
+
+    /// The value whose stored bytes are `bytes`.
+    /// Error cases:
+    /// - the bytes are not exactly one value's
+    fn decode(bytes: &[u8]) -> Result<Self>;
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ListId {
@@ -17,31 +29,27 @@ pub(super) struct ListId {
     pub kind: Option<u8>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Metadata {
     pub generation: u64,
     pub lo: u64,
     pub hi: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Position {
     pub generation: u64,
     pub rank: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Payload {
     pub length: u64,
     pub chunks: u64,
 }
 
-/// Dense lists and the queue carry headers, never unbounded serialized events.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// Dense lists carry headers, never unbounded serialized events.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Row {
     pub account: AccountId,
     pub kind: u8,
@@ -50,12 +58,87 @@ pub(super) struct Row {
     pub payload: Payload,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A queued event's lists and its rank in each, from which expiry reads its header.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Queued {
-    pub row: Row,
+    pub account: AccountId,
+    pub kind: u8,
     pub all: Position,
-    pub kind: Position,
+    pub by_kind: Position,
+}
+
+impl Stored for Metadata {
+    /// Its generation, lo and hi.
+    fn encode(&self) -> Vec<u8> {
+        [self.generation, self.lo, self.hi].iter().flat_map(|field| field.to_be_bytes()).collect()
+    }
+
+    /// Error cases:
+    /// - the bytes are not exactly three counters
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut fields = Fields::new(bytes);
+        let metadata = Self { generation: fields.u64()?, lo: fields.u64()?, hi: fields.u64()? };
+        fields.end()?;
+        Ok(metadata)
+    }
+}
+
+impl Stored for Row {
+    /// Its account, kind, cursor's seq and index, time, and payload's length and chunks.
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(57);
+        bytes.extend_from_slice(&self.account.0);
+        bytes.push(self.kind);
+        bytes.extend_from_slice(&self.cursor.seq.to_be_bytes());
+        bytes.extend_from_slice(&self.cursor.index.to_be_bytes());
+        bytes.extend_from_slice(&self.ts.to_be_bytes());
+        bytes.extend_from_slice(&self.payload.length.to_be_bytes());
+        bytes.extend_from_slice(&self.payload.chunks.to_be_bytes());
+        bytes
+    }
+
+    /// Error cases:
+    /// - the bytes are not exactly one row's fields
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut fields = Fields::new(bytes);
+        let row = Self {
+            account: AccountId(fields.take()?),
+            kind: fields.byte()?,
+            cursor: Offset { seq: fields.u64()?, index: u32::from_be_bytes(fields.take()?) },
+            ts: i64::from_be_bytes(fields.take()?),
+            payload: Payload { length: fields.u64()?, chunks: fields.u64()? },
+        };
+        fields.end()?;
+        Ok(row)
+    }
+}
+
+impl Stored for Queued {
+    /// Its account, kind, and the all-kind and individual-kind lists' generations and ranks.
+    fn encode(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(53);
+        bytes.extend_from_slice(&self.account.0);
+        bytes.push(self.kind);
+        for position in [self.all, self.by_kind] {
+            bytes.extend_from_slice(&position.generation.to_be_bytes());
+            bytes.extend_from_slice(&position.rank.to_be_bytes());
+        }
+        bytes
+    }
+
+    /// Error cases:
+    /// - the bytes are not exactly one queue item's fields
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let mut fields = Fields::new(bytes);
+        let queued = Self {
+            account: AccountId(fields.take()?),
+            kind: fields.byte()?,
+            all: Position { generation: fields.u64()?, rank: fields.u64()? },
+            by_kind: Position { generation: fields.u64()?, rank: fields.u64()? },
+        };
+        fields.end()?;
+        Ok(queued)
+    }
 }
 
 impl ListId {
@@ -117,6 +200,18 @@ impl Payload {
         let offset = ordinal.checked_mul(PAYLOAD_CHUNK_BYTES as u64).context("payload offset overflow")?;
         let remaining = self.length.checked_sub(offset).context("payload offset exceeds length")?;
         usize::try_from(remaining.min(PAYLOAD_CHUNK_BYTES as u64)).context("payload chunk length")
+    }
+}
+
+impl Queued {
+    /// Identifies the all-kind list.
+    pub fn all_list(&self) -> ListId {
+        ListId { account: self.account, kind: None }
+    }
+
+    /// Identifies the individual-kind list.
+    pub fn kind_list(&self) -> ListId {
+        ListId { account: self.account, kind: Some(self.kind) }
     }
 }
 

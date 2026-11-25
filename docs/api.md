@@ -839,10 +839,15 @@ Both fields are `null` for an account that has not declared. The route answers f
 ### History
 
 `GET /v1/accounts/{address}/history` returns an account's events from the server's history index,
-newest first, as `{"events": [...], "next": <cursor or null>}`. Each event carries its `cursor`, the
-seq of the command that produced it and the event's index among that command's events, written
-`<seq>:<index>`. It also carries `ts`, the time at which the command was processed, and then the
-event's own fields.
+newest first, as `{"events": [...], "next": <cursor or null>, "retained_from_ms": <time or null>}`.
+Each event carries its `cursor`, the seq of the command that produced it and the event's index among
+that command's events, written `<seq>:<index>`. It also carries `ts`, the time at which the command
+was processed, and then the event's own fields.
+
+`retained_from_ms` is where the history begins: the index holds every event from that time on, and
+none before it. It is the time of the newest command the index holds less `history.retention`, so it
+moves forward as commands arrive, and it is `null` until the index holds a command. A log younger than
+the retention holds no event before its first command, so its history begins there.
 
 | Parameter | Meaning |
 | --- | --- |
@@ -868,9 +873,10 @@ each position's charge as a `financing` event. The server derives those events f
 rather than reading them from the log, and gives each one an index past every event the command
 logged, so its cursor sorts after them.
 
-The index keeps events for the period that `history.retention` sets, counted back from the newest
-command, and the log keeps every event. While the index is still taking the commands that the log
-held when the server started, the route answers 503 `history is catching up with the log`.
+The index keeps events for the period that `history.retention` sets, 30 days in production, counted
+back from the newest command, and the log keeps every event: an older event is in the public log and
+its archive, where a replay finds it. While the index is still taking the commands that the log held
+when the server started, the route answers 503 `history is catching up with the log`.
 
 ### Financing charges
 

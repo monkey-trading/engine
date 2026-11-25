@@ -8,7 +8,7 @@ fn the_writer_refuses_another_schema_version() {
     drop(Writer::open(&path, 1).unwrap().0);
     Connection::open(&path).unwrap().pragma_update(None, "user_version", 1).unwrap();
     let err = Writer::open(&path, 1).err().expect("refused");
-    assert!(format!("{err:#}").contains("history schema 1, not 2"), "{err:#}");
+    assert!(format!("{err:#}").contains("history schema 1, not 3"), "{err:#}");
 }
 
 /// Missing secondary-index entries cannot make retained events disappear from successful pages.

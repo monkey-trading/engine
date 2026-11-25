@@ -165,8 +165,8 @@ pub(crate) fn interrupt_transaction(path: &Path) {
     conn.execute_batch("PRAGMA cache_size = 1; BEGIN IMMEDIATE").unwrap();
     for n in 0..256i64 {
         conn.execute(
-            "INSERT INTO nodes(namespace, version, path, data) VALUES(?1, ?2, ?3, ?4)",
-            rusqlite::params![&[9u8; 32][..], 1_000_000 + n, &n.to_be_bytes()[..], &[0u8; 4096][..]],
+            "INSERT INTO nodes(space, version, path, data) VALUES(?1, ?2, ?3, ?4)",
+            rusqlite::params![9, 1_000_000 + n, &n.to_be_bytes()[..], &[0u8; 4096][..]],
         )
         .unwrap();
     }

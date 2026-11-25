@@ -143,13 +143,19 @@ async fn taking_the_same_commands_again_changes_nothing() {
 async fn events_older_than_the_retention_leave_the_index() {
     let path = file(&index_dir("retention"));
     let mut writer = Writer::open(&path, 1_000).unwrap().0;
+    let reader = Reader::new(path, ready());
+    assert_eq!(page(&reader, A, None, None, None, 10).await.retained_from_ms, None, "no command held yet");
     let deposit_a = || vec![Event::Deposited { account: A, amount: Fixed::from_int(1) }];
     writer.write(&[command(1, 0, deposit_a()), command(2, 500, deposit_a())]).unwrap();
-    let reader = Reader::new(path, ready());
     assert_eq!(cursors(&every_page(&reader, A, None, 10).await), ["2:0", "1:0"]);
+    assert_eq!(page(&reader, A, None, None, None, 10).await.retained_from_ms, Some(-500));
     // The horizon is 1_500 - 1_000: the event at 0 leaves, the one at exactly 500 stays.
     writer.write(&[command(3, 1_500, deposit_a())]).unwrap();
     assert_eq!(cursors(&every_page(&reader, A, None, 10).await), ["3:0", "2:0"]);
+    // Every page states where the history begins, an account with no events held included.
+    for account in [A, B] {
+        assert_eq!(page(&reader, account, None, None, None, 10).await.retained_from_ms, Some(500));
+    }
 }
 
 #[tokio::test]

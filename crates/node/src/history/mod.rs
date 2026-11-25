@@ -120,6 +120,9 @@ pub struct Page {
     pub events: Vec<HistoryEvent>,
     /// The `before` for the next, older page; `None` when no older event matches.
     pub next: Option<Offset>,
+    /// Where the index's history begins: it holds every event from this time on, the time of the newest
+    /// command it holds less `history.retention`, and none before it. `None` until it holds a command.
+    pub retained_from_ms: Option<Millis>,
 }
 
 /// An account event and where it sits in the log.

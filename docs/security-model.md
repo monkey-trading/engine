@@ -724,7 +724,9 @@ Known limits:
   applies, and a full `engine replay` checks the log segments a snapshot skipped.
 - A read of the authenticated account history checks each value, and each node along its proof,
   against the signed root. A stored node that no read or update uses is checked by the next update
-  that rewrites its parent, so corruption there is found then and not before.
+  that rewrites its parent, so corruption there is found then and not before. The file finds a
+  namespace's rows by a small number it keeps beside them. A host that changes that number makes
+  reads find other rows, which fail their proofs as any rewritten row does.
 - The host can withhold, omit or replace the daily snapshots it serves, and a day on which its
   writer is still busy with the last snapshot has none. A replay in ranges accepts a snapshot only
   at a checkpoint the log holds, so this makes the replay slower, down to a whole replay, and never

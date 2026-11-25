@@ -11,6 +11,7 @@ use crate::authenticated::reader::{Checked, Reader};
 use crate::authenticated::receipts::{Queue, Receipt, RetiredRow, queue_key, receipt_key};
 use crate::authenticated::{
     Changes, Hasher, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, MAX_STORED_VALUE, MAX_UPDATES, PHYSICAL_UPDATES, Root, codec,
+    db,
 };
 
 pub(super) struct Prepared {
@@ -48,13 +49,13 @@ pub(super) fn prepare(
     let receipt_key = receipt_key(&old.namespace, version)?;
     ensure!(!exact.contains_key(&receipt_key), "reserved receipt collision");
     let mut receipt = Receipt { old: old.clone(), version, maintenance, rows: Vec::new() };
-    exact.insert(receipt_key, Some(serde_json::to_vec(&receipt)?));
+    exact.insert(receipt_key, Some(receipt.encode()?));
     // Both passes read the same immutable old root, so they share one checked node cache.
     let reader = Reader::new(conn, old, true, checked)?;
     let preliminary = generate(&reader, old, exact.iter().map(|(k, v)| (*k, v.clone())).collect(), false)?;
     receipt.rows = retirements(&reader, old, &preliminary.batch, &preliminary.exact, version)?;
     ensure!(receipt.rows.len() <= MAX_RECEIPT_ROWS, "receipt exceeds derived physical-batch envelope");
-    let raw = serde_json::to_vec(&receipt)?;
+    let raw = receipt.encode()?;
     ensure!(
         raw.len() <= MAX_RECEIPT_BYTES && raw.len() <= MAX_STORED_VALUE,
         "receipt encoding exceeds derived envelope"
@@ -159,18 +160,21 @@ fn retirements(
 }
 
 /// Inserts immutable nodes, `compact` or as JSON, and live values, then proves every exact written result
-/// in this transaction, reading each new node back, with the nodes the operation has `checked`.
+/// in this transaction, reading each new node back, with the nodes the operation has `checked`. Each value is
+/// written beside the leaf node its write gives it at its own version, which `Store::discard_after` relies on.
 /// Error cases:
-/// - version collision, malformed generated node or mismatch in actual persisted bytes
+/// - an unregistered namespace, version collision, malformed generated node or mismatch in actual persisted
+///   bytes
 pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked, compact: bool) -> Result<()> {
     let root = &prepared.root;
     let version = root.version.ok_or_else(|| anyhow::anyhow!("unversioned generated root"))?;
+    let space = db::existing_space(conn, &root.namespace)?;
     for (key, node) in prepared.batch.node_batch.nodes() {
         ensure!(key.version() == version, "generated node version mismatch");
         let raw = codec::encode(node, compact)?;
         codec::decode(key, &raw)?;
-        conn.prepare_cached("INSERT INTO nodes(namespace,version,path,data) VALUES(?1,?2,?3,?4)")?.execute(params![
-            &root.namespace[..],
+        conn.prepare_cached("INSERT INTO nodes(space,version,path,data) VALUES(?1,?2,?3,?4)")?.execute(params![
+            space,
             version as i64,
             codec::path(key)?,
             raw
@@ -179,8 +183,8 @@ pub(super) fn persist(conn: &Connection, prepared: &Prepared, checked: &Checked,
     for ((row_version, key), value) in prepared.batch.node_batch.values() {
         // Missing leaves never read value rows; omitting tombstones avoids permanent per-delete garbage.
         if let Some(value) = value {
-            conn.prepare_cached("INSERT INTO value_rows(namespace,key,version,data) VALUES(?1,?2,?3,?4)")?
-                .execute(params![&root.namespace[..], &key.0[..], *row_version as i64, value])?;
+            conn.prepare_cached("INSERT INTO value_rows(space,key,version,data) VALUES(?1,?2,?3,?4)")?
+                .execute(params![space, &key.0[..], *row_version as i64, value])?;
         }
     }
     let reader = Reader::new(conn, root, true, checked)?;

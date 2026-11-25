@@ -3,10 +3,9 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use crate::authenticated::{Lease, Root, Session, Store};
+use crate::history::authenticated::model::Stored;
 
 pub(super) struct Overlay {
     store: Store,
@@ -41,8 +40,8 @@ impl Overlay {
     /// Decodes a local known write or a point-proved old value/absence.
     /// Error cases:
     /// - storage, proof or decoding failure
-    pub fn read<T: DeserializeOwned>(&mut self, key: &[u8]) -> Result<Option<T>> {
-        self.read_bytes(key)?.map(|bytes| serde_json::from_slice(&bytes).context("decoding history value")).transpose()
+    pub fn read<T: Stored>(&mut self, key: &[u8]) -> Result<Option<T>> {
+        self.read_bytes(key)?.map(|bytes| T::decode(&bytes).context("decoding history value")).transpose()
     }
 
     /// Reads exact chunk bytes, always against the pinned old root or a known local write.
@@ -58,9 +57,9 @@ impl Overlay {
 
     /// Stages a bounded structured header/state after proving the old value/absence.
     /// Error cases:
-    /// - encoding or old-value proof fails
-    pub fn put<T: Serialize>(&mut self, key: Vec<u8>, value: &T) -> Result<()> {
-        self.put_bytes(key, serde_json::to_vec(value).context("encoding history mutation")?)
+    /// - old-value proof fails
+    pub fn put<T: Stored>(&mut self, key: Vec<u8>, value: &T) -> Result<()> {
+        self.put_bytes(key, value.encode())
     }
 
     /// Stages exact raw payload bytes after proving the old value/absence.

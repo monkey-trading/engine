@@ -9,7 +9,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use crate::authenticated::blobs::{self, Compare};
 use crate::authenticated::reader::Checked;
 use crate::authenticated::staging::Staging;
-use crate::authenticated::{Root, Store, caller_key, db, geometry};
+use crate::authenticated::{Root, Store, caller_key, codec, db, geometry};
 
 /// Whether a write syncs the database file and its directory, after SQLite's own commit syncs, before it
 /// returns its root.
@@ -153,7 +153,7 @@ impl Store {
         let mut conn = db::connect(&self.inner.path, true)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
-        let written = match work(&tx).and_then(|written| {
+        let written = match db::register_space(&tx, &root.namespace).and_then(|_| work(&tx)).and_then(|written| {
             before_commit(&tx)?;
             Ok(written)
         }) {
@@ -191,7 +191,12 @@ impl Store {
     /// caller passes only a root it authenticated, after recovery preflight. Later versions cannot
     /// have collected that root's data: the writer kept the root pinned while it wrote them. Every
     /// commit writes nodes at its version, so a store with none after `root` is left untouched;
-    /// otherwise both deletes are range deletes on a version index.
+    /// otherwise the nodes go by a range delete, and each value written after `root` by the leaf node
+    /// its write gave it at its own version (`batch::persist`), which names its key. A later node that does
+    /// not decode names no key, so the later values then go by a scan of every value. A host that rewrites a
+    /// later node into another that decodes can hide a value from the discard; the value is never served, as
+    /// every read proves what it finds against its root, and the next write at its version fails on it, every
+    /// commit writing its receipt there, which a history owner answers by rebuilding from the log.
     /// Error cases:
     /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {
@@ -204,23 +209,39 @@ impl Store {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         db::validate(&tx)?;
         let after = root.version.map_or(Ok(-1), i64::try_from)?;
+        let Some(space) = db::space(&tx, &root.namespace)? else {
+            tx.rollback()?;
+            return self.publish(root);
+        };
         let later: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM nodes WHERE namespace = ?1 AND version > ?2)",
-            rusqlite::params![root.namespace.as_slice(), after],
+            "SELECT EXISTS(SELECT 1 FROM nodes WHERE space = ?1 AND version > ?2)",
+            rusqlite::params![space, after],
             |row| row.get(0),
         )?;
         if !later {
             tx.rollback()?;
             return self.publish(root);
         }
-        tx.execute(
-            "DELETE FROM nodes WHERE namespace = ?1 AND version > ?2",
-            rusqlite::params![root.namespace.as_slice(), after],
-        )?;
-        tx.execute(
-            "DELETE FROM value_rows WHERE namespace = ?1 AND version > ?2",
-            rusqlite::params![root.namespace.as_slice(), after],
-        )?;
+        let mut undecoded = false;
+        {
+            let mut leaves = tx.prepare("SELECT data FROM nodes WHERE space = ?1 AND version > ?2")?;
+            let mut rows = leaves.query(rusqlite::params![space, after])?;
+            let mut delete =
+                tx.prepare_cached("DELETE FROM value_rows WHERE space = ?1 AND key = ?2 AND version > ?3")?;
+            while let Some(row) = rows.next()? {
+                match codec::leaf_key(row.get_ref(0)?.as_blob()?) {
+                    Ok(Some(key)) => {
+                        delete.execute(rusqlite::params![space, &key[..], after])?;
+                    }
+                    Ok(None) => {}
+                    Err(_) => undecoded = true,
+                }
+            }
+        }
+        if undecoded {
+            tx.execute("DELETE FROM value_rows WHERE space = ?1 AND version > ?2", rusqlite::params![space, after])?;
+        }
+        tx.execute("DELETE FROM nodes WHERE space = ?1 AND version > ?2", rusqlite::params![space, after])?;
         if let Err(error) = tx.commit().map_err(anyhow::Error::from).and_then(|()| self.sync()) {
             self.inner.runtime.lock().map_err(|_| anyhow::anyhow!("lease registry poisoned"))?.poisoned = true;
             return Err(error);

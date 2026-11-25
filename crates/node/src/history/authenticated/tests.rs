@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::authenticated::Store;
 use crate::history::authenticated::blobs::read_event;
-use crate::history::authenticated::model::{ListId, Metadata, Position, Row, event_kind};
+use crate::history::authenticated::model::{ListId, Metadata, Position, Row, Stored, event_kind};
 use crate::history::authenticated::staging::STAGED_KEYS;
 use crate::history::authenticated::state::CommandId;
 use crate::history::authenticated::{Head, Index};
@@ -29,6 +29,7 @@ mod payloads;
 mod physical;
 mod retention;
 mod staged;
+mod stored;
 
 const A: AccountId = AccountId([0xa; 20]);
 const B: AccountId = AccountId([0xb; 20]);
@@ -92,7 +93,8 @@ fn expected(commands: &[CommandEntry], query: &PageQuery, retention_ms: Millis) 
     } else {
         None
     };
-    Page { events, next }
+    let retained_from_ms = commands.last().map(|last| last.sequenced.ts.saturating_sub(retention_ms));
+    Page { events, next, retained_from_ms }
 }
 
 /// Proves and decodes a fixture list's metadata using the actual Store boundary.
@@ -102,18 +104,23 @@ fn meta(index: &Index, account: AccountId, kind: Option<u8>) -> Metadata {
         .read(&index.head.root, &ListId { account, kind }.key())
         .expect("proved metadata")
         .expect("fixture populated list");
-    serde_json::from_slice(&bytes).expect("fixture metadata")
+    Metadata::decode(&bytes).expect("fixture metadata")
 }
 
 /// Proves and decodes one fixture rank.
 fn stored_row(index: &Index, position: Position) -> Row {
     let bytes = index.store.read(&index.head.root, &position.key()).expect("proved rank").expect("fixture rank");
-    serde_json::from_slice(&bytes).expect("fixture row")
+    Row::decode(&bytes).expect("fixture row")
 }
 
-/// Encodes a semantic fault without inventing cryptographic proof bytes.
+/// Encodes an event, as its payload is stored, for a semantic fault without inventing cryptographic proof bytes.
 fn encoded<T: Serialize>(value: &T) -> Option<Vec<u8>> {
     Some(serde_json::to_vec(value).expect("encode fixture mutation"))
+}
+
+/// Encodes a list or queue header as it is stored, for a semantic fault.
+fn stored<T: Stored>(value: &T) -> Option<Vec<u8>> {
+    Some(value.encode())
 }
 
 /// Manufactures a logically inconsistent root to isolate semantic guards, not host-proof soundness.

@@ -232,6 +232,33 @@ async fn history_refuses_a_malformed_address_cursor_kind_or_limit() {
     assert_eq!(get(addr, "/v1/accounts/0x1234/history").await.0, 400);
 }
 
+/// A history page states where its history begins: the newest command's time less the retention, as a number.
+#[tokio::test]
+async fn a_history_page_states_where_its_history_begins() {
+    let (dir, index) = (scratch_dir("history-begins"), scratch_dir("history-begins-index"));
+    let node = TestSequencer::start_legacy(&dir, 16);
+    let history = TestHistory::start(&node, &dir, &index).await.unwrap();
+    node.submit(deposit(100, "dep-1")).await;
+    node.stop().await;
+    history.finish().await.unwrap();
+    let newest = crate::test_support::log_entries(&dir)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Command(command) => Some(command.sequenced.ts),
+            _ => None,
+        })
+        .max()
+        .unwrap();
+    let addr = serve_history(Reader::new(index.join(INDEX_FILE), watch::channel(true).1)).await;
+    for account in [TRADER, engine_core::types::AccountId([9; 20])] {
+        let (status, body) = get(addr, &format!("/v1/accounts/{account}/history")).await;
+        assert_eq!(status, 200);
+        let page: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let retention = i64::try_from(crate::test_support::RETENTION.as_millis()).unwrap();
+        assert_eq!(page["retained_from_ms"], serde_json::json!(newest - retention), "{account}");
+    }
+}
+
 #[tokio::test]
 async fn history_answers_503_while_catching_up_and_500_when_unreadable() {
     let (dir, index) = (scratch_dir("history-unavailable"), scratch_dir("history-unavailable-index"));

@@ -3,7 +3,7 @@
 use anyhow::{Result, bail, ensure};
 use jmt::storage::{LeafNode, NibblePath, Node, NodeKey};
 use jmt::{KeyHash, ValueHash};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::authenticated::{EMPTY_HASH, Hasher, MAX_NODE_BYTES};
 
@@ -57,20 +57,41 @@ enum WireType {
     Internal { leaf_count: usize },
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// A node path's nibble count and the bytes that pack its nibbles, two to a byte, high nibble first.
 struct PathWire {
     num_nibbles: usize,
     bytes: Vec<u8>,
 }
 
-/// Serializes a generated node path as its canonical point-lookup key.
+/// Serializes a generated node path as its canonical point-lookup key: its nibble count in one byte, then the
+/// bytes that pack its nibbles, two to a byte, high nibble first, an odd path's last low nibble zero.
 /// Error cases:
 /// - the upstream key violates the bounded path format
 pub(super) fn path(key: &NodeKey) -> Result<Vec<u8>> {
-    let raw = serde_json::to_vec(key.nibble_path())?;
+    let nibbles = key.nibble_path().num_nibbles();
+    ensure!(nibbles <= 64, "invalid path length");
+    let mut raw = Vec::with_capacity(1 + nibbles.div_ceil(2));
+    raw.push(u8::try_from(nibbles)?);
+    for (at, nibble) in key.nibble_path().nibbles().enumerate() {
+        let nibble = u8::from(nibble);
+        if at.is_multiple_of(2) {
+            raw.push(nibble << 4);
+        } else {
+            *raw.last_mut().expect("an even nibble pushed its byte") |= nibble;
+        }
+    }
     path_wire(&raw)?;
     Ok(raw)
+}
+
+/// The key of the node stored at `version` under the path key `raw` (`path`).
+/// Error cases:
+/// - the path key is malformed
+pub(super) fn node_key(version: u64, raw: &[u8]) -> Result<NodeKey> {
+    let path = path_wire(raw)?;
+    let nibbles =
+        (0..path.num_nibbles).map(|at| (path.bytes[at / 2] >> if at.is_multiple_of(2) { 4 } else { 0 } & 15).into());
+    Ok(NodeKey::new(version, nibbles.collect()))
 }
 
 /// Creates a root node key: the empty path at `version`.
@@ -252,6 +273,21 @@ impl<'a> Bytes<'a> {
     }
 }
 
+/// The key hash of a stored leaf node, compact or JSON, or `None` for another node.
+/// Error cases:
+/// - the stored bytes are no node
+pub(super) fn leaf_key(raw: &[u8]) -> Result<Option<[u8; 32]>> {
+    ensure!(raw.len() <= MAX_NODE_BYTES, "node exceeds storage format");
+    let wire = match raw.first() {
+        Some(&(NULL_VARIANT | INTERNAL_VARIANT | LEAF_VARIANT)) => compact(raw)?,
+        _ => serde_json::from_slice(raw)?,
+    };
+    Ok(match wire {
+        WireNode::Leaf(leaf) => Some(leaf.key_hash),
+        WireNode::Null | WireNode::Internal(_) => None,
+    })
+}
+
 /// Computes node hashes exclusively through upstream implementations.
 pub(super) fn hash(node: &Node) -> [u8; 32] {
     match node {
@@ -261,12 +297,12 @@ pub(super) fn hash(node: &Node) -> [u8; 32] {
     }
 }
 
-/// Validates the generated serde path without trusting its stored length.
+/// Validates a path key (`path`) without trusting its stored length.
 /// Error cases:
 /// - excessive length, inconsistent byte count, or nonzero padding
 fn path_wire(raw: &[u8]) -> Result<PathWire> {
-    ensure!(raw.len() <= 256, "oversized path");
-    let path: PathWire = serde_json::from_slice(raw)?;
+    ensure!(!raw.is_empty() && raw.len() <= 33, "invalid path key length");
+    let path = PathWire { num_nibbles: usize::from(raw[0]), bytes: raw[1..].to_vec() };
     ensure!(path.num_nibbles <= 64 && path.bytes.len() == path.num_nibbles.div_ceil(2), "invalid path length");
     if !path.num_nibbles.is_multiple_of(2) {
         ensure!(path.bytes.last().is_some_and(|b| b & 15 == 0), "invalid path padding");

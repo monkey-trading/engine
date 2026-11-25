@@ -89,9 +89,9 @@ async fn an_index_that_does_not_match_the_log_or_its_config_is_discarded_and_reb
         ("history.retention changed", |_, _| {}, shorter, "pruned under a retention of"),
         (
             "the index has the previous schema version",
-            |_, index| sql(index, "PRAGMA user_version = 1"),
+            |_, index| sql(index, "PRAGMA user_version = 2"),
             RETENTION,
-            "history schema 1",
+            "history schema 2",
         ),
         (
             "the host added a trigger",

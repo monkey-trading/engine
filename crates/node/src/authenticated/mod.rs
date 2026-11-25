@@ -16,6 +16,8 @@ mod batch;
 mod blobs;
 mod codec;
 mod db;
+mod fields;
+pub(crate) use fields::Fields;
 mod geometry;
 mod reader;
 mod receipts;
@@ -26,12 +28,15 @@ pub use versions::{Lease, Session};
 mod gc;
 pub use gc::{COMPLETE_RECEIPT_BUDGET, GcReport};
 
-/// The exact packed representation and upstream proof interpretation bound by cache signatures. Packed format
-/// 2 stores each node as its JSON or as upstream's compact borsh form, and logical format 2 each value as a
+/// The packed representation and upstream proof interpretation bound by cache signatures. Packed format 2
+/// stores each node as its JSON or as upstream's compact borsh form, and logical format 2 each value as a
 /// descriptor and chunks or, up to one chunk, whole in its own leaf; a first byte tells each pair apart, and
-/// this release reads all four. A release before compact nodes and values stored whole reads JSON nodes and
-/// descriptors alone, so it refuses a store holding either at the first one it meets, and its recovery falls
-/// back as for any unreadable cache.
+/// this release reads all four. How a file keys its rows and encodes its retirement receipts is its schema
+/// version (`db`), which every open checks: a release refuses a file of another schema version, or a node or
+/// value form it does not read at the first one it meets, and its recovery falls back as for any unreadable
+/// cache, rebuilding from the log. A schema version leaves the codec as it is, so a cache signed by a release
+/// of another schema version still names the stores it keeps, and either release starts over the other's
+/// cache directory and retires those stores as it prunes the caches.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Codec {
@@ -115,6 +120,10 @@ struct Runtime {
     /// The namespaces whose new nodes are written compact, and their values of up to one chunk whole.
     compact: BTreeSet<[u8; 32]>,
     poisoned: bool,
+    /// The share of the file's pages a collection leaves free, as `gc::FREE_PAGE_SHARE` gives it, set by a test
+    /// that measures another.
+    #[cfg(test)]
+    free_page_share: Option<i64>,
 }
 
 #[derive(Default)]

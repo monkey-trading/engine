@@ -2,7 +2,7 @@
 //! borsh form, parsing it once.
 
 use anyhow::Result;
-use jmt::storage::{NibblePath, Node, NodeKey};
+use jmt::storage::{Node, NodeKey};
 
 use crate::authenticated::blobs::{Points, chunk_key};
 use crate::authenticated::reader::Checked;
@@ -33,7 +33,7 @@ fn every_stored_node_decodes_as_upstream_decodes_it() -> Result<()> {
     let mut internal = 0;
     for row in rows {
         let (version, path, data) = row?;
-        let key = NodeKey::new(u64::try_from(version)?, serde_json::from_slice::<NibblePath>(&path)?);
+        let key = codec::node_key(u64::try_from(version)?, &path)?;
         let upstream: Node = serde_json::from_slice(&data)?;
         internal += usize::from(matches!(upstream, Node::Internal(_)));
         assert_eq!(codec::decode(&key, &data)?, upstream, "{}", String::from_utf8_lossy(&data));
@@ -62,6 +62,29 @@ fn a_child_key_extends_its_parents_path_by_one_nibble() -> Result<()> {
     assert!(codec::child_key(&parent, 0, 9).is_err(), "a full path has no child");
     assert!(codec::child_key(&codec::root_key(9)?, 16, 9).is_err(), "a nibble is below 16");
     assert!(codec::child_key(&codec::root_key(9)?, 0, 10).is_err(), "a child is no newer than its parent");
+    Ok(())
+}
+
+/// A node's path key is its nibble count, then its nibbles packed two to a byte, high first, and reads back to
+/// the same key at every depth; a count past 64, bytes too few or too many, or a nonzero pad is refused.
+#[test]
+fn a_path_key_is_its_nibble_count_then_its_packed_nibbles() -> Result<()> {
+    let mut key = codec::root_key(3)?;
+    assert_eq!(codec::path(&key)?, [0]);
+    for depth in 0..64u8 {
+        let raw = codec::path(&key)?;
+        assert_eq!(raw[0], depth, "the count");
+        let mut wire = serde_json::to_value(key.nibble_path())?;
+        let upstream: Vec<u8> = serde_json::from_value(wire["bytes"].take())?;
+        assert_eq!(raw[1..], upstream, "upstream's packed nibbles at depth {depth}");
+        assert_eq!(codec::node_key(3, &raw)?, key, "depth {depth} reads back");
+        key = codec::child_key(&key, (depth % 16 * 7 + 3) % 16, 3)?;
+    }
+    assert_eq!(codec::path(&codec::child_key(&codec::root_key(1)?, 0xa, 1)?)?, [1, 0xa0]);
+    let malformed: [&[u8]; 6] = [&[], &[65], &[1], &[1, 0xa0, 0], &[1, 0xab], &[2, 0xab, 0]];
+    for malformed in malformed {
+        assert!(codec::node_key(1, malformed).is_err(), "{malformed:?}");
+    }
     Ok(())
 }
 
@@ -94,7 +117,7 @@ fn every_stored_node_reads_back_from_its_compact_form() -> Result<()> {
         rows.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)))?;
     for row in rows {
         let (version, path, data) = row?;
-        let key = NodeKey::new(u64::try_from(version)?, serde_json::from_slice::<NibblePath>(&path)?);
+        let key = codec::node_key(u64::try_from(version)?, &path)?;
         let upstream: Node = serde_json::from_slice(&data)?;
         let compact = codec::encode(&upstream, true)?;
         assert!(COMPACT_TAGS.contains(&compact[0]) && compact.len() < data.len(), "{compact:?}");
@@ -143,7 +166,9 @@ fn a_compactly_written_namespace_stores_compact_nodes_beside_its_json_ones() -> 
     let other = store.update(&Root::empty(json), vec![put(b"c", b"C")])?;
     let conn = raw(&dir)?;
     let starts = |namespace: [u8; 32], version: u64| -> Result<Vec<u8>> {
-        let mut rows = conn.prepare("SELECT data FROM nodes WHERE namespace = ?1 AND version = ?2")?;
+        let mut rows = conn.prepare(
+            "SELECT data FROM nodes WHERE space = (SELECT id FROM spaces WHERE namespace = ?1) AND version = ?2",
+        )?;
         let firsts =
             rows.query_map((&namespace[..], i64::try_from(version)?), |row| Ok(row.get::<_, Vec<u8>>(0)?[0]))?;
         Ok(firsts.collect::<rusqlite::Result<_>>()?)

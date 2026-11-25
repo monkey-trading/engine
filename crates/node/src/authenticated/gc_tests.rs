@@ -3,9 +3,9 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use crate::authenticated::receipts::{queue, receipt_key};
+use crate::authenticated::receipts::{Receipt, RetiredRow, queue, receipt_key};
 use crate::authenticated::tests::{fresh, put, raw, row_count};
-use crate::authenticated::{COMPLETE_RECEIPT_BUDGET, Root, Store};
+use crate::authenticated::{COMPLETE_RECEIPT_BUDGET, Root, Store, codec};
 
 #[test]
 fn authenticated_receipts_reclaim_after_every_reopen_and_bound_residual_storage() -> Result<()> {
@@ -39,6 +39,38 @@ fn authenticated_receipts_reclaim_after_every_reopen_and_bound_residual_storage(
     Ok(())
 }
 
+/// A receipt reads back from exactly its stored bytes, its nodes at every depth and its values; an unknown tag, a
+/// malformed path key, a byte short or a byte past is refused.
+#[test]
+fn a_receipt_reads_back_from_exactly_its_stored_bytes() -> Result<()> {
+    let mut node = codec::root_key(9)?;
+    let mut rows = vec![RetiredRow::Node(node.clone())];
+    for depth in 0..64u8 {
+        node = codec::child_key(&node, depth % 16, node.version().saturating_sub(u64::from(depth % 2)))?;
+        rows.push(RetiredRow::Node(node.clone()));
+    }
+    rows.push(RetiredRow::Value { key: jmt::KeyHash([5; 32]), version: 7 });
+    let receipt = Receipt {
+        old: Root { namespace: [3; 32], version: Some(9), hash: [4; 32] },
+        version: 10,
+        maintenance: true,
+        rows,
+    };
+    let bytes = receipt.encode()?;
+    assert_eq!(Receipt::decode(&bytes)?, receipt);
+    let empty = Receipt { old: Root::empty([6; 32]), version: 0, maintenance: false, rows: Vec::new() };
+    assert_eq!(Receipt::decode(&empty.encode()?)?, empty);
+    assert!(Receipt::decode(&bytes[..bytes.len() - 1]).is_err(), "a byte short");
+    assert!(Receipt::decode(&[bytes.as_slice(), &[0]].concat()).is_err(), "a byte past");
+    let first_row = 32 + 1 + 8 + 32 + 8 + 1 + 4;
+    for (at, value) in [(32, 2), (first_row - 5, 2), (first_row, 2), (first_row + 9, 65)] {
+        let mut forged = bytes.clone();
+        forged[at] = value;
+        assert!(Receipt::decode(&forged).is_err(), "byte {at} set to {value}");
+    }
+    Ok(())
+}
+
 #[test]
 fn forged_receipt_cannot_authorize_a_live_row_deletion() -> Result<()> {
     let (dir, store) = fresh()?;
@@ -47,9 +79,9 @@ fn forged_receipt_cannot_authorize_a_live_row_deletion() -> Result<()> {
     let conn = raw(&dir)?;
     let key = receipt_key(&root.namespace, 1)?;
     let original: Vec<u8> = conn.query_row("SELECT data FROM value_rows WHERE key=?1", [&key.0[..]], |r| r.get(0))?;
-    let mut forged: serde_json::Value = serde_json::from_slice(&original)?;
-    forged["rows"] = serde_json::json!([{"Node":{"version":1,"nibble_path":{"num_nibbles":0,"bytes":[]}}}]);
-    conn.execute("UPDATE value_rows SET data=?1 WHERE key=?2", params![serde_json::to_vec(&forged)?, &key.0[..]])?;
+    let mut forged = Receipt::decode(&original)?;
+    forged.rows = vec![RetiredRow::Node(codec::root_key(1)?)];
+    conn.execute("UPDATE value_rows SET data=?1 WHERE key=?2", params![forged.encode()?, &key.0[..]])?;
     let before = row_count(&conn, "nodes")?;
     assert!(store.gc(&root, COMPLETE_RECEIPT_BUDGET).is_err());
     assert_eq!(row_count(&conn, "nodes")?, before);

@@ -5,10 +5,13 @@ use engine_core::types::Millis;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::authenticated::{Root, Store};
+use crate::history::authenticated::model::Stored;
 use crate::log::{CommandEntry, Offset, command_digest};
 
 pub(super) const STATE_KEY: &[u8] = b"history/v2/state";
-const FORMAT: u32 = 2;
+/// Format 3 stores list and queue headers in their fixed-width form (`model::Stored`), and a queue item without
+/// its event's header, which expiry reads from the lists.
+const FORMAT: u32 = 3;
 
 /// A bounded identity of the complete canonical command and logged events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +49,19 @@ pub(super) struct State {
     pub queue_hi: u64,
     pub next_generation: u64,
     pub retention_ms: Millis,
+}
+
+impl Stored for State {
+    /// Its JSON.
+    fn encode(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("a state of plain fields encodes")
+    }
+
+    /// Error cases:
+    /// - the bytes are not one state's JSON
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        Ok(serde_json::from_slice(bytes)?)
+    }
 }
 
 impl CommandId {

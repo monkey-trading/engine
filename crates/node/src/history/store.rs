@@ -1,7 +1,7 @@
 //! The history index on disk: one SQLite file. `events` holds each account event under its place in
 //! the log, `(seq, idx)`, so taking a command twice rewrites the same rows; `progress` holds, in the
-//! same transaction as the events, the last command taken and the retention the rows were pruned
-//! under. The host can rewrite the file, so every connection runs SQLite in defensive mode with
+//! same transaction as the events, the last command taken, its time and the retention the rows were
+//! pruned under. The host can rewrite the file, so every connection runs SQLite in defensive mode with
 //! triggers and views off, and every write and read refuses, inside its own transaction, a schema
 //! this code did not create.
 
@@ -24,8 +24,9 @@ use crate::history::{HistoryEvent, Page, PageQuery, account_of};
 use crate::log::{CommandEntry, Offset};
 use crate::sequencer::{StreamBody, StreamMsg};
 
-/// The schema this code writes, kept in the file's `user_version`.
-const SCHEMA_VERSION: i64 = 2;
+/// The schema this code writes, kept in the file's `user_version`. Schema 3 keeps the last command's time in
+/// `progress`, so a page reads where its history begins without parsing the command.
+const SCHEMA_VERSION: i64 = 3;
 const SCHEMA: &str = "
     CREATE TABLE events (
         seq INTEGER NOT NULL,
@@ -42,6 +43,7 @@ const SCHEMA: &str = "
     CREATE TABLE progress (
         id INTEGER PRIMARY KEY CHECK (id = 0),
         command TEXT NOT NULL,
+        ts INTEGER NOT NULL,
         retention_ms INTEGER NOT NULL
     );
 ";
@@ -244,9 +246,10 @@ impl Writer {
         }
         let taken = serde_json::to_string(last).context("encoding a command")?;
         tx.execute(
-            "INSERT INTO progress (id, command, retention_ms) VALUES (0, ?1, ?2)
-             ON CONFLICT (id) DO UPDATE SET command = excluded.command, retention_ms = excluded.retention_ms",
-            params![taken, self.retention_ms],
+            "INSERT INTO progress (id, command, ts, retention_ms) VALUES (0, ?1, ?2, ?3)
+             ON CONFLICT (id) DO UPDATE
+             SET command = excluded.command, ts = excluded.ts, retention_ms = excluded.retention_ms",
+            params![taken, last.sequenced.ts, self.retention_ms],
         )
         .context("storing history progress")?;
         let horizon = last.sequenced.ts.saturating_sub(self.retention_ms);
@@ -292,6 +295,15 @@ fn read_page(path: &Path, schema: &[SchemaRow], query: &PageQuery) -> anyhow::Re
     // The schema check and the page read see one snapshot of the file.
     let conn = conn.transaction().context("starting a history read")?;
     check_schema(&conn, schema, path)?;
+    // Where the index's history begins: the newest command's time less the retention its rows were pruned
+    // under, as `write_derived` prunes them.
+    let retained_from_ms = conn
+        .query_row("SELECT ts, retention_ms FROM progress WHERE id = 0", [], |row| {
+            Ok((row.get::<_, Millis>(0)?, row.get::<_, Millis>(1)?))
+        })
+        .optional()
+        .context("reading history progress")?
+        .map(|(ts, retention_ms)| ts.saturating_sub(retention_ms));
     let account = &query.account.0[..];
     let (before_seq, before_idx) = bound(query.before, i64::MAX);
     let (after_seq, after_idx) = bound(query.after, -1);
@@ -332,7 +344,7 @@ fn read_page(path: &Path, schema: &[SchemaRow], query: &PageQuery) -> anyhow::Re
     } else {
         None
     };
-    Ok(Page { events, next })
+    Ok(Page { events, next, retained_from_ms })
 }
 
 /// Removes the index at `path`, then the write-ahead log and shared-memory files SQLite keeps beside

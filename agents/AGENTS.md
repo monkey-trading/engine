@@ -1021,6 +1021,7 @@ an index: load only the rule whose hint matches the current action.
   `dev-dashboard-data.sh`, the dashboard data scenario: signed trades both ways in two markets and a
   MONKEY period closing, each new route's figures checked and verified with `engine verify-response`, and
   the series compared across a restart;
+  `dev-history-retention.sh`, the account history index bounded by its retention on a node with `[snapshots]`;
   `dev-snapshot-restart.sh`, the checkpoint snapshot restart and fallback scenario, with a withdrawal
   before the caches it restarts from;
   `dev-ct-watch.sh`, the Certificate Transparency watcher against a mock node and a loopback
@@ -1159,7 +1160,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start and disk alerts), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts and history retention), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1324,6 +1325,11 @@ Run from the repo root:
   the first and last of each run; `--snapshots <dir>` replays a log directory in ranges from a directory of daily
   snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two physical cores,
   `default_jobs`)
+- History retention dev scenario: `./scripts/dev-history-retention.sh` (needs only Cargo; a node with `[snapshots]`
+  and a ten-minute `history.retention` takes deposits for six retentions on a test clock while two recovery caches
+  pin its recent versions; once its first events expire the authenticated index's file stops growing while the log
+  grows, and every history page states where its history begins, `retained_from_ms`, and holds every logged event
+  from then on and none before)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole
@@ -1442,8 +1448,20 @@ Run from the repo root:
   history::authenticated::tests::bench::ingest_and_collection_at_scale -- --ignored --nocapture`, which grows the
   store, or resumes it from `HISTORY_SCALE_HEAD` (the head it saves beside the store, or a history-head
   certificate), to `HISTORY_SCALE_UNTIL`, printing every `HISTORY_SCALE_STEP` (20,480) commands its size,
-  commands a second and indexing's and collection's time a command, then probes `HISTORY_SCALE_PROBE` (10,240)
-  commands at each update size in `HISTORY_SCALE_BATCHES` (8,32,128,512)
+  commands a second and indexing's and collection's time a command, what each command wrote (nodes and values,
+  and their bytes), the events held, the free pages and the bytes an event held, then probes
+  `HISTORY_SCALE_PROBE` (10,240) commands at each update size in `HISTORY_SCALE_BATCHES` (8,32,128,512);
+  `HISTORY_SCALE_PASSES` reads the log that many times, each pass's seqs and times moved past the last's,
+  `HISTORY_SCALE_RETENTION_MS` sets a new store's retention so expiry runs at that window's size, it pins the
+  head as two recovery caches five minutes apart do (`HISTORY_SCALE_CACHE_INTERVAL_MS`,
+  `HISTORY_SCALE_CACHE_RETAIN`), `HISTORY_SCALE_FREE_SHARE` sets the share of pages collection keeps free,
+  `HISTORY_SCALE_GROW_BATCH` the commands an update takes before the probes, `HISTORY_SCALE_ROLLOVER_ROWS` and
+  `HISTORY_SCALE_ROLLOVER_EVERY_MS` synthesise a rollover's financing rows, and `HISTORY_SCALE_BREAKDOWN` prints
+  each table's pages and the values and nodes by kind at the end; and the size of the index without
+  `[snapshots]` on a recorded log: `HISTORY_BENCH_LOG=<log dir> HISTORY_LEGACY_STORE=<new index file>
+  HISTORY_LEGACY_RETENTION_MS=<ms> cargo test -p engine-node --lib history::store::tests::index_size_on_a_recorded_log
+  -- --ignored --nocapture`, reading the log `HISTORY_LEGACY_PASSES` (1) times and printing every
+  `HISTORY_LEGACY_STEP` (204,800) commands its rate, events held, bytes and bytes an event held
 - A drained stop's final capture with the history index lagging at a multi-GB size:
   `FINAL_CAPTURE_BENCH_DIR=<dir> cargo test -p engine-node --lib
   sequencer::recovery_scale::final_capture::final_capture_bench -- --ignored --nocapture` writes into `<dir>`, new

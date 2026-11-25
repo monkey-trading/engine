@@ -9,7 +9,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::authenticated::reader::{Checked, Reader};
-use crate::authenticated::{INTERNAL, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, Root, codec, key_hash};
+use crate::authenticated::{Fields, INTERNAL, MAX_RECEIPT_BYTES, MAX_RECEIPT_ROWS, Root, codec, key_hash};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,8 +20,8 @@ pub(super) struct Queue {
     pub floor: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// A version's retired rows, stored in its fixed-width form (`Receipt::encode`), a few bytes a node.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Receipt {
     pub old: Root,
     pub version: u64,
@@ -29,8 +29,7 @@ pub(super) struct Receipt {
     pub rows: Vec<RetiredRow>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) enum RetiredRow {
     Node(NodeKey),
     Value { key: KeyHash, version: u64 },
@@ -96,12 +95,85 @@ pub(super) fn receipt(conn: &Connection, root: &Root, version: u64) -> Result<Re
     let raw = point(conn, root, receipt_key(&root.namespace, version)?)?
         .ok_or_else(|| anyhow::anyhow!("missing authenticated retirement receipt"))?;
     ensure!(raw.len() <= MAX_RECEIPT_BYTES, "oversized receipt encoding");
-    let receipt: Receipt = serde_json::from_slice(&raw)?;
+    let receipt = Receipt::decode(&raw)?;
     receipt.validate(root, version)?;
     Ok(receipt)
 }
 
 impl Receipt {
+    /// Its stored form: the old root's namespace, its version (0, or 1 and the version) and hash, the version
+    /// the receipt retires for, whether a collection wrote it (0 or 1) and its row count, then each row, a node
+    /// (0, its version and its path key, `codec::path`) or a value (1, its key and version); every integer is
+    /// big-endian.
+    /// Error cases:
+    /// - a node's path key cannot be formed, or the rows are too many to count
+    pub(super) fn encode(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(96 + self.rows.len() * 41);
+        bytes.extend_from_slice(&self.old.namespace);
+        match self.old.version {
+            None => bytes.push(0),
+            Some(version) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&version.to_be_bytes());
+            }
+        }
+        bytes.extend_from_slice(&self.old.hash);
+        bytes.extend_from_slice(&self.version.to_be_bytes());
+        bytes.push(u8::from(self.maintenance));
+        bytes.extend_from_slice(&u32::try_from(self.rows.len())?.to_be_bytes());
+        for row in &self.rows {
+            match row {
+                RetiredRow::Node(key) => {
+                    bytes.push(0);
+                    bytes.extend_from_slice(&key.version().to_be_bytes());
+                    bytes.extend_from_slice(&codec::path(key)?);
+                }
+                RetiredRow::Value { key, version } => {
+                    bytes.push(1);
+                    bytes.extend_from_slice(&key.0);
+                    bytes.extend_from_slice(&version.to_be_bytes());
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    /// The receipt whose stored form (`encode`) is exactly `raw`, its fields unchecked against any root.
+    /// Error cases:
+    /// - an unknown tag, a malformed path key, a count past the bytes, or a byte past the receipt
+    pub(super) fn decode(raw: &[u8]) -> Result<Self> {
+        let mut fields = Fields::new(raw);
+        let namespace = fields.take::<32>()?;
+        let old_version = match fields.byte()? {
+            0 => None,
+            1 => Some(fields.u64()?),
+            _ => anyhow::bail!("invalid receipt root version tag"),
+        };
+        let old = Root { namespace, version: old_version, hash: fields.take()? };
+        let version = fields.u64()?;
+        let maintenance = match fields.byte()? {
+            0 => false,
+            1 => true,
+            _ => anyhow::bail!("invalid receipt maintenance flag"),
+        };
+        let count = u32::from_be_bytes(fields.take()?);
+        ensure!(count as usize <= MAX_RECEIPT_ROWS, "receipt outside its row envelope");
+        let rows = (0..count)
+            .map(|_| match fields.byte()? {
+                0 => {
+                    let version = fields.u64()?;
+                    let nibbles = fields.byte()?;
+                    let packed = fields.slice(usize::from(nibbles).div_ceil(2))?;
+                    Ok(RetiredRow::Node(codec::node_key(version, &[&[nibbles], packed].concat())?))
+                }
+                1 => Ok(RetiredRow::Value { key: KeyHash(fields.take()?), version: fields.u64()? }),
+                _ => anyhow::bail!("invalid retired row tag"),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        fields.end()?;
+        Ok(Self { old, version, maintenance, rows })
+    }
+
     /// Checks representability and validates paths before upstream key ordering can inspect them.
     /// Error cases:
     /// - wrong version/namespace, excessive targets, invalid paths or duplicate/future rows
