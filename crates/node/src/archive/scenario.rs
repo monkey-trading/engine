@@ -1,6 +1,6 @@
 //! The log archive's dev scenario (`scripts/dev-log-archive.sh`): a dev node uploads its log's ranges to a loopback
-//! stand-in for the bucket as the vault finalizes them, through an outage, a member's differently cut copy and a
-//! restart, until a read-back differs.
+//! stand-in for the bucket as a stand-in vault finalizes them, through an outage, a member's differently cut copy, a
+//! copy the vault's history superseded and a restart, until a read-back differs.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -11,7 +11,7 @@ use engine_core::command::Command;
 use tokio::time::{Instant, sleep, timeout};
 
 use crate::archive::range::tests::resegmented;
-use crate::archive::stand_in::{StandIn, Vault, test_log};
+use crate::archive::stand_in::{StandIn, Vault, checkpoint_past, checkpoints, test_log};
 use crate::archive::{RANGE_SEQS, Uploader, holds, range_bytes, range_key, whole_ranges};
 use crate::log::{LogEntry, Manifest};
 use crate::metrics::Metrics;
@@ -21,6 +21,8 @@ use crate::test_support::{
 
 /// How long the scenario waits for any one step.
 const WAIT: Duration = Duration::from_secs(60);
+/// A root no log of the scenario's has.
+const OTHER_ROOT: &str = "0xabababababababababababababababababababababababababababababababab";
 
 #[tokio::test]
 async fn dev_scenario_log_archive() {
@@ -37,75 +39,104 @@ async fn dev_scenario_log_archive() {
     until("the whole ranges counted", || metrics.archive.pending_ranges.get() >= 4).await;
     sleep(Duration::from_millis(200)).await;
     assert_eq!(bucket.with(|b| b.created), 0, "nothing goes up before the vault finalizes a checkpoint");
-    *vault.0.lock().unwrap() = Some(3 * RANGE_SEQS);
-    until("three ranges confirmed", || metrics.archive.confirmed_ranges.get() == 3).await;
-    *vault.0.lock().unwrap() = Some(u64::MAX - 1);
-    let whole = confirmed_through(&node, &metrics).await;
+    let first = vault.finalize_past(&node, &dir, 3).await;
+    until("the ranges below it confirmed", || metrics.archive.confirmed_ranges.get() as u64 == first / RANGE_SEQS)
+        .await;
+    sleep(Duration::from_millis(200)).await;
+    assert_eq!(bucket.with(|b| b.created), first / RANGE_SEQS, "no range past the vault's checkpoint goes up");
+    let whole = finalize_all(&node, &dir, &vault, &metrics).await;
     check_objects(&bucket, &dir, &node.manifest.borrow().clone(), whole);
     let (raw, stored) = (metrics.archive.confirmed_bytes.get(), metrics.archive.stored_bytes.get());
-    println!("    3 ranges below the checkpoint first, then {whole}; {raw} bytes stored as {stored}");
+    println!("    {} ranges below seq {first} first, then {whole}; {raw} bytes stored as {stored}", first / RANGE_SEQS);
 
     println!("==> 2. the bucket goes down: sequencing goes on, the backlog grows and archive_upload_lagging fires");
+    quiet(&mut alerts, &mut resolved).await;
     bucket.with(|b| b.down = true);
     ticks_until(&node, whole + 4).await;
-    expect(&mut alerts, "archive_upload_lagging").await;
+    let past = finalize_all_after(&node, &dir, &vault, whole + 4).await;
+    let alert = expect(&mut alerts, "archive_upload_lagging").await;
+    assert!(alert["message"].contains("whole ranges"), "{alert:?}");
     until("the outage's ranges counted", || metrics.archive.pending_ranges.get() >= 4).await;
     let pending = metrics.archive.pending_ranges.get();
+    assert!(metrics.archive.failures.get() > 0, "the uploads failed");
     bucket.with(|b| b.down = false);
     expect(&mut resolved, "archive_upload_lagging").await;
-    let whole = confirmed_through(&node, &metrics).await;
+    until("the outage's ranges confirmed", || metrics.archive.confirmed_ranges.get() as u64 >= past).await;
+    let whole = past;
     println!("    {pending} ranges waited through the outage; caught up through {whole}");
 
-    println!("==> 3. a member's copy, cut into other segments, uploads the same ranges and changes no object");
+    println!(
+        "==> 3. the node's uploader stops, and a member's copy, cut into other segments, uploads the ranges after"
+    );
+    running.abort();
+    ticks_until(&node, whole + 2).await;
+    let target = finalize_all_after(&node, &dir, &vault, whole + 2).await;
     let copy = scratch_dir("archive-scenario-copy");
-    let entries = log_entries(&dir);
-    let seal_after = (entries.len() / 2..entries.len() - 1)
-        .find(|n| matches!(entries[n + 1], LogEntry::Command(_)))
-        .expect("a command past the middle");
-    resegmented(&entries, &copy, 5, Some(seal_after));
+    copy_of(&node, &dir, &copy, target).await;
     let held = bucket.with(|b| b.objects.clone());
     let (member, member_sources, member_metrics) = uploading(&bucket, &copy, lag, &vault);
     member_sources.send_replace(Some(published_manifest(&copy)));
     let member_running = tokio::spawn(member.run());
-    let copied = whole_ranges(&published_manifest(&copy).borrow()).unwrap();
-    let found = || member_metrics.archive.confirmed_ranges.get() as u64 >= copied;
-    until("the member's copy found in the bucket", found).await;
+    let found = || member_metrics.archive.confirmed_ranges.get() as u64 >= target;
+    until("the member's ranges confirmed", found).await;
     member_running.abort();
-    assert_eq!(bucket.with(|b| b.objects.clone()), held, "the bucket is as it was");
-    assert_eq!(member_metrics.archive.objects_created.get(), 0);
-    println!("    the member's {copied} ranges are all in the bucket already, byte for byte");
+    let objects = bucket.with(|b| b.objects.clone());
+    assert!(held.iter().all(|(key, object)| objects.get(key) == Some(object)), "every earlier object is as it was");
+    assert_eq!(
+        member_metrics.archive.objects_created.get(),
+        target - whole,
+        "the member uploads what the bucket lacks"
+    );
+    check_objects(&bucket, &dir, &node.manifest.borrow().clone(), target);
+    println!("    the member uploaded ranges {whole} to {} from its own cut, the bytes the node builds", target - 1);
 
-    println!("==> 4. the node restarts, and its uploader resumes at the first missing range");
-    running.abort();
+    println!("==> 4. a copy the vault's history superseded uploads nothing past it, and archive_copy_superseded fires");
+    ticks_until(&node, target + 2).await;
+    let (seq, _) = checkpoint_past(&node, &dir, target).await;
+    vault.finalize(seq, OTHER_ROOT);
+    let (stale, stale_sources, stale_metrics) = uploading(&bucket, &dir, lag, &vault);
+    stale_sources.send_replace(Some(node.manifest.clone()));
+    let stale_running = tokio::spawn(stale.run());
+    let alert = expect(&mut alerts, "archive_copy_superseded").await;
+    assert_eq!(alert["finalized_seq"], seq.to_string(), "{alert:?}");
+    sleep(Duration::from_millis(200)).await;
+    stale_running.abort();
+    assert_eq!(stale_metrics.archive.objects_created.get(), 0, "nothing past the vault's other history goes up");
+    assert_eq!(bucket.with(|b| b.objects.len() as u64), target);
+    println!("    the vault's checkpoint at seq {seq} names another root, and the copy uploaded nothing");
+
+    println!("==> 5. the node restarts, and its uploader resumes at the first missing range");
     node.stop().await;
     let node = TestSequencer::start(&dir, 256);
-    ticks_until(&node, whole + 2).await;
+    ticks_until(&node, target + 2).await;
+    vault.finalize_past(&node, &dir, target).await;
     let (asked, read) = bucket.with(|b| (b.asked, b.read));
     let (uploader, sources, metrics) = uploading(&bucket, &dir, lag, &vault);
     sources.send_replace(Some(node.manifest.clone()));
     running = tokio::spawn(uploader.run());
-    let now = confirmed_through(&node, &metrics).await;
+    let now = finalize_all(&node, &dir, &vault, &metrics).await;
     let (asked, read) = bucket.with(|b| (b.asked - asked, b.read - read));
     assert!(asked <= u64::from(u64::BITS - now.leading_zeros()) + 1, "{asked} existence checks for {now}");
-    assert_eq!(read, 1 + now - whole, "the range before the new ones, and each new one, read back");
+    assert_eq!(read, 1 + now - target, "the range before the new ones, and each new one, read back");
     check_objects(&bucket, &dir, &node.manifest.borrow().clone(), now);
     println!("    resumed with {asked} existence checks and {read} reads, and confirmed through {now}");
 
-    println!("==> 5. the bucket serves other bytes for the next range: the Warning fires, and the uploads stop there");
+    println!("==> 6. the bucket serves other bytes for the next range: the Warning fires, and the uploads stop there");
     let key = range_key(&test_log(), now);
     bucket.with(|b| b.served.insert(key.clone(), b"other bytes".to_vec()));
-    ticks_until(&node, now + 1).await;
+    finalize_all_after(&node, &dir, &vault, now + 1).await;
     let alert = expect(&mut alerts, "archive_object_mismatch").await;
     assert_eq!(alert["object"], key);
     let created = bucket.with(|b| b.created);
-    ticks_until(&node, now + 4).await;
+    finalize_all_after(&node, &dir, &vault, now + 4).await;
     until("the ranges after it counted", || metrics.archive.pending_ranges.get() >= 4).await;
+    sleep(Duration::from_millis(200)).await;
     assert_eq!(bucket.with(|b| b.created), created, "no range goes up past the mismatch");
     assert_eq!(metrics.archive.confirmed_ranges.get() as u64, now);
     println!("    {key} reported, and nothing past it went up while the node sequenced on");
     running.abort();
     node.stop().await;
-    println!("PASS: the bucket holds every finalized range through an outage, a member's copy and a restart");
+    println!("PASS: the bucket holds every finalized range through an outage, two copies and a restart");
 }
 
 /// Checks that the bucket holds each of the first `whole` ranges of the log in `dir`, compressed.
@@ -125,11 +156,39 @@ async fn ticks_until(node: &TestSequencer, ranges: u64) {
     }
 }
 
-/// Waits until `metrics` confirm every range `node` has made whole, and returns how many that is.
-async fn confirmed_through(node: &TestSequencer, metrics: &Metrics) -> u64 {
-    let whole = whole_ranges(&node.manifest.borrow()).unwrap();
-    until("the whole ranges confirmed", || metrics.archive.confirmed_ranges.get() as u64 >= whole).await;
+/// Has `vault` finalize a checkpoint past every range `node` has made whole, ticking until one is, waits until
+/// `metrics` confirm the ranges below it, and returns how many.
+async fn finalize_all(node: &TestSequencer, dir: &Path, vault: &Vault, metrics: &Metrics) -> u64 {
+    let whole = finalize_all_after(node, dir, vault, 0).await;
+    until("the finalized ranges confirmed", || metrics.archive.confirmed_ranges.get() as u64 >= whole).await;
     whole
+}
+
+/// Ticks `node` until a checkpoint it wrote to a completed segment of `dir` lies past every range it has made
+/// whole, and at least `ranges` of them, has `vault` finalize it, and returns how many ranges are below it.
+async fn finalize_all_after(node: &TestSequencer, dir: &Path, vault: &Vault, ranges: u64) -> u64 {
+    loop {
+        let completed = node.manifest.borrow().unlisted_from().unwrap();
+        let whole = completed / RANGE_SEQS;
+        let last = checkpoints(dir).into_iter().rfind(|(seq, _)| *seq < completed);
+        if let Some((seq, root)) = last.filter(|(seq, _)| whole >= ranges && *seq >= whole * RANGE_SEQS) {
+            vault.finalize(seq, &root);
+            return whole;
+        }
+        node.submit(Command::Tick).await;
+    }
+}
+
+/// Writes a copy of the log in `dir` to `copy` in segments of five commands, sealed early once past its middle as
+/// a handover seals one, after ticking `node` until the copy's completed segments hold the checkpoint past range
+/// `ranges`.
+async fn copy_of(node: &TestSequencer, dir: &Path, copy: &Path, ranges: u64) {
+    ticks_until(node, ranges + 2).await;
+    let entries = log_entries(dir);
+    let seal_after = (entries.len() / 2..entries.len() - 1)
+        .find(|n| matches!(entries[n + 1], LogEntry::Command(_)))
+        .expect("a command past the middle");
+    resegmented(&entries, copy, 5, Some(seal_after));
 }
 
 /// An uploader of `dir` to `bucket` below `vault`'s finality, warning after `lag`, its sources and its metrics.
@@ -152,6 +211,15 @@ async fn until(what: &str, mut done: impl FnMut() -> bool) {
         assert!(started.elapsed() < WAIT, "timed out waiting for {what}");
         sleep(Duration::from_millis(10)).await;
     }
+}
+
+/// Drops what the alerts and resolutions collected so far hold, once a moment has passed for the last to arrive.
+async fn quiet(
+    alerts: &mut tokio::sync::mpsc::UnboundedReceiver<Alert>,
+    resolved: &mut tokio::sync::mpsc::UnboundedReceiver<Alert>,
+) {
+    sleep(Duration::from_millis(100)).await;
+    while alerts.try_recv().is_ok() || resolved.try_recv().is_ok() {}
 }
 
 /// The next alert, or resolution, named `name`.

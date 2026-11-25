@@ -10,6 +10,8 @@ use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_a
 /// How long a test waits for the uploader before it fails.
 const WAIT: Duration = Duration::from_secs(30);
 
+mod finality;
+
 #[tokio::test]
 async fn every_whole_range_is_confirmed_in_its_object() {
     let (bucket, dir) = (StandIn::start().await, scratch_dir("archive-every-range"));
@@ -25,30 +27,6 @@ async fn every_whole_range_is_confirmed_in_its_object() {
     }
     assert_eq!(bucket.with(|b| b.created), whole, "one object a range");
     assert_eq!(metrics.archive.mismatches.get(), 0);
-    running.abort();
-    node.stop().await;
-}
-
-/// A range goes up only once its last seq is below the vault's finalized checkpoint: none before the vault's
-/// first, the ranges below it once it is read, and the rest as it moves on.
-#[tokio::test]
-async fn a_range_waits_for_the_vaults_finalized_checkpoint() {
-    let (bucket, dir) = (StandIn::start().await, scratch_dir("archive-finality"));
-    let node = node_with(&dir, 4).await;
-    let vault = Vault::default();
-    let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault.clone()));
-    sources.send_replace(Some(node.manifest.clone()));
-    let running = tokio::spawn(uploader.run());
-    until("the whole ranges counted", || metrics.archive.pending_ranges.get() >= 4).await;
-    tokio::time::sleep(10 * FINALITY_EVERY).await;
-    assert_eq!(bucket.with(|b| b.created), 0, "nothing goes up before the vault's first finalized checkpoint");
-    // A checkpoint at the second range's last seq: the first range ends below it, the second does not.
-    *vault.0.lock().unwrap() = Some(2 * RANGE_SEQS - 1);
-    until("the first range confirmed", || metrics.archive.confirmed_ranges.get() == 1).await;
-    tokio::time::sleep(10 * FINALITY_EVERY).await;
-    assert_eq!(bucket.with(|b| b.objects.keys().cloned().collect::<Vec<_>>()), [range_key(&test_log(), 0)]);
-    *vault.0.lock().unwrap() = Some(u64::MAX - 1);
-    confirmed_through(&node, &metrics).await;
     running.abort();
     node.stop().await;
 }
@@ -213,6 +191,27 @@ async fn a_mismatch_stays_the_end_across_a_change_of_writer() {
     until("the new source's resume", || bucket.with(|b| b.asked) > asked).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!((metrics.archive.confirmed_ranges.get(), bucket.with(|b| b.created)), (1, created));
+    running.abort();
+    node.stop().await;
+}
+
+/// An object served longer than any frame of the range could be is never read past the bound, counts as a mismatch,
+/// and stops the uploads there.
+#[tokio::test]
+async fn an_object_past_the_read_bound_is_a_mismatch() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("archive-oversized"));
+    let node = node_with(&dir, 3).await;
+    let raw = range_bytes(&dir, &node.manifest.borrow().clone(), 1).unwrap();
+    let oversized = vec![0; usize::try_from(2 * stored_bound(&raw)).unwrap() + 1];
+    bucket.with(|b| b.served.insert(range_key(&test_log(), 1), oversized));
+    let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), None);
+    sources.send_replace(Some(node.manifest.clone()));
+    let running = tokio::spawn(uploader.run());
+    let alert = recv(&mut alerts, "archive_object_mismatch").await;
+    assert_eq!(alert["object"], range_key(&test_log(), 1));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!((metrics.archive.confirmed_ranges.get(), bucket.with(|b| b.created)), (1, 2), "nothing past range 1");
     running.abort();
     node.stop().await;
 }

@@ -86,6 +86,18 @@ async fn an_object_is_created_once_and_never_replaced() {
     assert!(!store.holds("log/b.zst").await.unwrap());
 }
 
+/// A key already taken is answered `412` by a bucket that checks the condition first, and `409` by one that meets a
+/// concurrent upload; either way the object at the key is the one counted, and it stays.
+#[tokio::test]
+async fn a_conflicting_upload_counts_the_object_already_there() {
+    let bucket = StandIn::start().await;
+    let store = bucket.store();
+    assert_eq!(store.create("log/a.zst", b"first".to_vec(), ZSTD).await.unwrap(), Created::New);
+    bucket.with(|b| b.conflict = true);
+    assert_eq!(store.create("log/a.zst", b"second".to_vec(), ZSTD).await.unwrap(), Created::Existing);
+    assert_eq!(bucket.with(|b| (b.refused, b.objects["log/a.zst"].clone())), (1, b"first".to_vec()));
+}
+
 #[tokio::test]
 async fn an_upload_signed_with_another_key_is_refused() {
     let bucket = StandIn::start().await;

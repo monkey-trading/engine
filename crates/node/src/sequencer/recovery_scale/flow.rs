@@ -35,10 +35,10 @@ use crate::snapshot::sealing::Endpoint;
 use crate::tee::EnclaveKey;
 use crate::test_support::{sample_around, sequencer_config, stats};
 
-/// The template's `[node]` cadences (`ops/runbooks/production-node.toml`): a checkpoint and a
-/// segment every 1,000 commands, and a tick every 250 ms.
+/// The template's `[node]` cadences (`ops/runbooks/production-node.toml`): a checkpoint every 1,000
+/// commands, a segment every 10,000, and a tick every 250 ms.
 pub(super) const CHECKPOINT_EVERY: u64 = 1_000;
-pub(super) const SEGMENT_COMMANDS: u64 = 1_000;
+pub(super) const SEGMENT_COMMANDS: u64 = 10_000;
 const TICK_US: u64 = 250_000;
 const DAY_US: u64 = 86_400_000_000;
 /// How often trusted time is sampled, as the node's Roughtime client does.

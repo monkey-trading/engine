@@ -24,7 +24,8 @@ impl ArchiveMetrics {
     pub(super) fn register(&self, r: &mut Registry) {
         r.register(
             "archive_confirmed_ranges",
-            "Ranges of the log, from the first, that the archive's bucket holds as this node's copy does",
+            "Ranges of the log, from the first, found in the archive's bucket when the uploader resumed or confirmed \
+             there since as this node's copy holds them",
             self.confirmed_ranges.clone(),
         );
         r.register(

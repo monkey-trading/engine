@@ -5,9 +5,12 @@
 #      finalized a checkpoint past it, and not before;
 #   2. with the bucket down, the node keeps sequencing, its waiting ranges grow and `archive_upload_lagging` fires;
 #      with it back, the node catches up and the alert clears;
-#   3. a member's copy of the log, cut into other segments, uploads the same ranges and changes no object;
-#   4. the node restarts, and its uploader resumes at the first missing range, reading back only the one before;
-#   5. a range whose object reads back other than the node's copy raises `archive_object_mismatch`, and nothing
+#   3. with the node's uploader stopped, a member's copy of the log, cut into other segments, uploads the ranges the
+#      bucket lacks, as the node builds them, and changes no object already there;
+#   4. a copy that holds the vault's finalized checkpoint at another root, as a superseded tail does, raises
+#      `archive_copy_superseded` and uploads nothing;
+#   5. the node restarts, and its uploader resumes at the first missing range, reading back only the one before;
+#   6. a range whose object reads back other than the node's copy raises `archive_object_mismatch`, and nothing
 #      past it goes up while the node sequences on.
 # Passes with `PASS: the bucket holds every finalized range ...`.
 set -euo pipefail

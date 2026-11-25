@@ -747,9 +747,10 @@ first sequence number, so no two logs share a key. A range holds the lines of ev
 sequence number it covers, in log order, so every node builds the same bytes for it, however its own
 segment files are cut; a read-back that spells the same entries otherwise, as a copy backfilled from
 another archive may, counts as the same range. The trading server uploads a range
-only once the vault has finalized a checkpoint past its last sequence number, since nothing at or
-below that checkpoint is ever rewritten, and builds it only from segments checked against the
-listing its log writer publishes. It counts the range as archived only once a read of its object
+only once the vault has finalized a checkpoint past its last sequence number that its own copy of the
+log holds at the vault's root, since nothing at or below that checkpoint is ever rewritten in the
+vault's history, and a copy that holds another history after an earlier checkpoint uploads none of
+it. It builds a range only from segments checked against the listing its log writer publishes. It counts the range as archived only once a read of its object
 from the bucket's public origin, over TLS that ends in the enclave, decompresses to those entries.
 Every upload is create-only, and the bucket's lock keeps each object under `log/` from being
 replaced or deleted, whoever holds the keys. The bucket is not trusted: a reader replays what it
@@ -763,11 +764,11 @@ Known limits:
 - The endpoint, the bucket and the public origin are in the attested configuration, so the host
   cannot point uploads or their read-backs elsewhere. The trading server signs uploads at the host's
   clock, so a skewed clock only makes the bucket refuse them.
-- The trading server takes the vault's finalized checkpoint from the checkpoint endpoint, which it
-  trusts for the vault's state, as the checkpoint poster does. An endpoint that names a later
-  checkpoint than the vault has finalized can have a range uploaded that a takeover then rewrites;
-  every node then stops at that range with `archive_object_mismatch`, and none uploads a second
-  version of it.
+- The trading server takes the vault's finalized checkpoint, its sequence number and root, from the
+  checkpoint endpoint, which it trusts for the vault's state, as the checkpoint poster does. An
+  endpoint that names a checkpoint the vault has not finalized, at the root a node's own copy holds,
+  can have a range uploaded that a takeover then rewrites; every node then stops at that range with
+  `archive_object_mismatch`, and none uploads a second version of it.
 - A holder of the bucket's keys can create an object at a key the trading server has yet to write.
   The lock then keeps it there: the trading server never counts that range as archived, pages
   `archive_object_mismatch`, uploads nothing past it, and keeps the log on its host; readers refuse

@@ -9,14 +9,14 @@ use crate::log::{LogEntry, SegmentedLog};
 use crate::test_support::{TestSequencer, log_entries, published_manifest, scratch_dir};
 
 /// A range is the same bytes from every copy of the log, however its segments are cut: the sequencer's own,
-/// one cut every five commands, and one whose open segment was sealed early, as a handover seals the
-/// predecessor's. Each range starts at its first seq's command, and the ranges together are the log's lines
+/// one cut every five commands, one whose open segment was sealed early, as a handover seals the
+/// predecessor's, and one whose single completed segment spans every range. Each range starts at its first seq's command, and the ranges together are the log's lines
 /// up to the last whole one.
 #[tokio::test]
 async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
     let dir = scratch_dir("archive-range-written");
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().unwrap() < 7 * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().unwrap() < 10 * RANGE_SEQS {
         node.submit(Command::Tick).await;
     }
     node.stop().await;
@@ -28,8 +28,10 @@ async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
         .find(|n| matches!(entries[n + 1], LogEntry::Command(_)))
         .expect("a command past the middle");
     resegmented(&entries, &sealed, 4, Some(seal_after));
-    let views: Vec<Manifest> =
-        [&dir, &fives, &sealed].iter().map(|dir| published_manifest(dir).borrow().clone()).collect();
+    let long = scratch_dir("archive-range-long");
+    resegmented(&entries, &long, u64::MAX, Some(seal_after));
+    let copies = [&dir, &fives, &sealed, &long];
+    let views: Vec<Manifest> = copies.iter().map(|dir| published_manifest(dir).borrow().clone()).collect();
     // Each copy's last segment is open, so each makes a different number of ranges whole.
     let whole = views.iter().map(|view| whole_ranges(view).unwrap()).min().unwrap();
     assert!(whole >= 4, "{whole} whole ranges");
@@ -43,13 +45,11 @@ async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
         .collect();
     let mut joined = Vec::new();
     for index in 0..whole {
-        let ranges: Vec<Vec<u8>> = [&dir, &fives, &sealed]
-            .iter()
-            .zip(&views)
-            .map(|(dir, view)| range_bytes(dir, view, index).unwrap())
-            .collect();
+        let ranges: Vec<Vec<u8>> =
+            copies.iter().zip(&views).map(|(dir, view)| range_bytes(dir, view, index).unwrap()).collect();
         assert_eq!(ranges[0], ranges[1], "range {index}, cut every five commands");
         assert_eq!(ranges[0], ranges[2], "range {index}, sealed early");
+        assert_eq!(ranges[0], ranges[3], "range {index}, read a line at a time from one long segment");
         let first: LogEntry = serde_json::from_slice(ranges[0].split(|byte| *byte == b'\n').next().unwrap()).unwrap();
         assert!(
             matches!(&first, LogEntry::Command(command) if command.sequenced.seq == index * RANGE_SEQS),
@@ -81,6 +81,34 @@ async fn a_range_not_yet_whole_or_read_from_a_changed_segment_is_refused() {
     raw[1] ^= 1;
     std::fs::write(dir.join(&listed.file), raw).unwrap();
     assert!(range_bytes(&dir, &view, 0).is_err(), "a segment the host changed");
+    node.stop().await;
+}
+
+/// A copy's checkpoint at a seq is read from its completed segments: its root where the copy holds one, none at a
+/// seq it holds no checkpoint for, and an error for a seq no completed segment holds yet.
+#[tokio::test]
+async fn a_copys_checkpoint_is_read_from_its_completed_segments() {
+    let dir = scratch_dir("archive-range-checkpoint");
+    let node = TestSequencer::start(&dir, 256);
+    while node.manifest.borrow().unlisted_from().unwrap() < 3 * RANGE_SEQS {
+        node.submit(Command::Tick).await;
+    }
+    let view = node.manifest.borrow().clone();
+    let completed = view.unlisted_from().unwrap();
+    let written: Vec<(u64, String)> = log_entries(&dir)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) if checkpoint.seq < completed => Some((checkpoint.seq, checkpoint.root)),
+            _ => None,
+        })
+        .collect();
+    assert!(written.len() >= 2, "{written:?}");
+    for (seq, root) in &written {
+        assert_eq!(checkpoint_root(&dir, &view, *seq).unwrap().as_ref(), Some(root), "the checkpoint at seq {seq}");
+    }
+    let bare = (0..completed).find(|seq| written.iter().all(|(at, _)| at != seq)).unwrap();
+    assert_eq!(checkpoint_root(&dir, &view, bare).unwrap(), None, "seq {bare} has no checkpoint");
+    assert!(checkpoint_root(&dir, &view, completed).is_err(), "the open segment is not read");
     node.stop().await;
 }
 

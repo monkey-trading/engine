@@ -9,19 +9,20 @@
 //! starts at `k * RANGE_SEQS`, so the keys need no manifest to list them. Every object is created once and never
 //! replaced: uploads are create-only, and the bucket's lock refuses overwrites and deletes.
 //!
-//! A range goes up only once its last seq is below the vault's finalized checkpoint, which no takeover, promotion
-//! or rollback of the log rewrites. The uploader (`uploader`) runs for the node's life beside whichever log writer
+//! A range goes up only once its last seq is below a finalized checkpoint of the vault's that the copy holds at the
+//! vault's root: no takeover, promotion or rollback rewrites the vault's history below it, and a copy that holds
+//! another history past an earlier checkpoint, as a returning operator's does, uploads none of it. The uploader (`uploader`) runs for the node's life beside whichever log writer
 //! is in use, the serving sequencer's or a following member's copy's, whose published manifest is the authority on
 //! what each segment holds. It builds a range only from segments checked against that listing, and counts the range
 //! as archived only once a read of its object from the bucket's public origin, over TLS that ends in the enclave,
-//! decompresses to exactly those bytes. A store or network outage leaves ranges unconfirmed and raises
+//! decompresses to those entries. A store or network outage leaves ranges unconfirmed and raises
 //! `archive_upload_lagging`; the writer and the sequencer never wait on it.
 
 mod backlog;
 mod finality;
-pub(crate) use finality::Finality;
+pub(crate) use finality::{Finality, same_root};
 mod range;
-pub(crate) use range::{RANGE_SEQS, log_prefix, range_bytes, range_key, whole_ranges};
+pub(crate) use range::{RANGE_SEQS, checkpoint_root, log_prefix, range_bytes, range_key, whole_ranges};
 mod store;
 pub(crate) use store::{Created, Object, Store};
 mod uploader;

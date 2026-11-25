@@ -1,10 +1,12 @@
 //! A loopback stand-in for the archive's bucket, behind TLS from a test CA: its S3 API takes create-only
 //! uploads whose AWS Signature Version 4 it checks against its own copy of the keys, over the headers the
 //! request carries, and its public origin serves each object at its key. Switches make it answer every
-//! request with `503`, refuse every upload, and serve other bytes for an object than the bucket holds. Beside it
-//! stands a vault whose finalized checkpoint a test sets.
+//! request with `503`, refuse every upload, answer an upload to a key already taken with `409` in place of `412`,
+//! and serve other bytes for an object than the bucket holds. Beside it stands a vault whose finalized checkpoint a
+//! test sets, and whose reads it can fail.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -16,18 +18,83 @@ use reqwest::Url;
 use tokio::net::TcpListener;
 use tokio::task::AbortHandle;
 
-use crate::archive::{Finality, Store};
+use engine_core::command::Command;
+
+use crate::archive::{Finality, RANGE_SEQS, Store};
 use crate::config::{ArchiveSection, SecretValue};
 use crate::feeds::tests::rwa_support::TlsFront;
+use crate::log::LogEntry;
+use crate::test_support::{TestSequencer, log_entries};
 
-/// A vault whose finalized checkpoint a test sets.
+/// A vault whose finalized checkpoint a test sets, and whose next reads it can fail.
 #[derive(Clone, Default)]
-pub(crate) struct Vault(pub Arc<Mutex<Option<u64>>>);
+pub(crate) struct Vault(Arc<Mutex<VaultState>>);
+
+#[derive(Default)]
+struct VaultState {
+    finalized: Option<(u64, String)>,
+    failing: u32,
+    reads: u32,
+}
 
 impl Finality for Vault {
-    async fn finalized(&self) -> anyhow::Result<Option<u64>> {
-        Ok(*self.0.lock().expect("the stand-in vault"))
+    async fn finalized(&self) -> anyhow::Result<Option<(u64, String)>> {
+        let mut vault = self.0.lock().expect("the stand-in vault");
+        vault.reads += 1;
+        if vault.failing > 0 {
+            vault.failing -= 1;
+            anyhow::bail!("the stand-in vault is unreachable");
+        }
+        Ok(vault.finalized.clone())
     }
+}
+
+impl Vault {
+    /// Finalizes the checkpoint at `seq`, rooted at `root`.
+    pub(crate) fn finalize(&self, seq: u64, root: &str) {
+        self.0.lock().expect("the stand-in vault").finalized = Some((seq, root.to_owned()));
+    }
+
+    /// Fails the next `reads` reads of the vault.
+    pub(crate) fn fail_next(&self, reads: u32) {
+        self.0.lock().expect("the stand-in vault").failing = reads;
+    }
+
+    /// How many times the vault has been read.
+    pub(crate) fn reads(&self) -> u32 {
+        self.0.lock().expect("the stand-in vault").reads
+    }
+
+    /// Finalizes the checkpoint `checkpoint_past` finds, at the root `node` wrote, and returns its seq.
+    pub(crate) async fn finalize_past(&self, node: &TestSequencer, dir: &Path, ranges: u64) -> u64 {
+        let (seq, root) = checkpoint_past(node, dir, ranges).await;
+        self.finalize(seq, &root);
+        seq
+    }
+}
+
+/// Sequences ticks on `node`, writing the log in `dir`, until a completed segment holds a checkpoint at or past range
+/// `ranges`' first seq, and returns that checkpoint's seq and root.
+pub(crate) async fn checkpoint_past(node: &TestSequencer, dir: &Path, ranges: u64) -> (u64, String) {
+    loop {
+        let completed = node.manifest.borrow().unlisted_from().expect("the writer's listing");
+        let past = checkpoints(dir).into_iter().find(|(seq, _)| (ranges * RANGE_SEQS..completed).contains(seq));
+        if let Some(checkpoint) = past {
+            return checkpoint;
+        }
+        node.submit(Command::Tick).await;
+    }
+}
+
+/// Each checkpoint of the log in `dir`, its seq and root.
+pub(crate) fn checkpoints(dir: &Path) -> Vec<(u64, String)> {
+    log_entries(dir)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            LogEntry::Checkpoint(checkpoint) => Some((checkpoint.seq, checkpoint.root)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The key prefix of the test sequencer's log: its chain and vault.
@@ -61,6 +128,8 @@ pub(crate) struct Bucket {
     pub down: bool,
     /// Every upload answered `403 AccessDenied`, with a long answer, while set, as a token without write access is.
     pub refuse_uploads: bool,
+    /// An upload to a key already taken answered `409 Conflict`, as a concurrent upload may be, while set.
+    pub conflict: bool,
     /// Uploads it took, and those it refused because an object stood at the key.
     pub created: u64,
     pub refused: u64,
@@ -156,7 +225,10 @@ async fn answer(
             }
             if bucket.objects.contains_key(key) {
                 bucket.refused += 1;
-                return error(StatusCode::PRECONDITION_FAILED, "PreconditionFailed");
+                return match bucket.conflict {
+                    true => error(StatusCode::CONFLICT, "ConditionalRequestConflict"),
+                    false => error(StatusCode::PRECONDITION_FAILED, "PreconditionFailed"),
+                };
             }
             bucket.created += 1;
             bucket.objects.insert(key.to_owned(), body.to_vec());

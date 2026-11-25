@@ -10,6 +10,7 @@ segment. Commands, configuration keys and their output call a running trading se
 - [Check the uploads](#check-the-uploads)
 - [When `archive_upload_lagging` fires](#when-archive_upload_lagging-fires)
 - [When `archive_object_mismatch` fires](#when-archive_object_mismatch-fires)
+- [When `archive_copy_superseded` fires](#when-archive_copy_superseded-fires)
 - [How the archive works](#how-the-archive-works)
 
 The steps use the shell variables that [Variables](reference.md#variables) sets up, and the ones
@@ -164,6 +165,28 @@ holder of the bucket's keys or by Cloudflare. Treat it as an incident.
    member, as step 6 of [Set up the bucket](#set-up-the-bucket) describes.
 3. Tell the owner, with the evidence. Readers of the archive check a range by replaying it.
 
+## When `archive_copy_superseded` fires
+
+**What is happening.** The vault has finalized a checkpoint that this trading server's copy of the log
+holds at another root, or does not hold at its sequence number. The copy's history differs from the
+vault's after an earlier checkpoint. This is expected for an operator that failed and comes back as
+a member: its log holds an unconfirmed tail that a promoted successor's history replaced. The node
+uploads none of the copy's ranges past the last finalized checkpoint the copy holds, so the
+superseded tail never reaches the archive. The trading server keeps following, and its host keeps the
+log.
+
+1. Read the alert's `finalized_seq`, `finalized_root` and `copy_root` fields, and the console lines
+   around it.
+2. If the node is a member that was the operator before a promotion, wait. As it follows the operator
+   in effect, it sets the superseded tail aside and rebuilds its copy from the operator's log, as
+   [A replaced operator coming back](operator-candidate.md#a-replaced-operator-coming-back) describes. The alert resolves once the
+   rebuilt copy holds the vault's checkpoint.
+3. If the node is the operator in effect, or the alert does not resolve within an hour, keep the
+   evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and tell the
+   owner. A copy that the vault's history superseded while it was in office is an incident.
+
+**How to tell it is resolved.** The alert resolves, and `engine_archive_confirmed_ranges` rises again.
+
 ## How the archive works
 
 - **What the bucket holds.** The log in ranges of 10,000 sequence numbers. Each object holds the
@@ -175,9 +198,13 @@ holder of the bucket's keys or by Cloudflare. Treat it as an incident.
   range, and a node counts an object that spells the same entries otherwise, as a copy backfilled
   from another archive may, as its own.
 - **When a range goes up.** Once a completed segment holds the range's last sequence number, and the
-  vault has finalized a checkpoint past it. Nothing at or below the vault's finalized checkpoint is
-  ever rewritten: a takeover cuts the log back to it at most. The node reads the vault's finality
-  through `checkpoints.rpc_url` at most once a minute while a range waits for it.
+  vault has finalized a checkpoint past it that the node's own copy holds at the vault's root. Nothing
+  at or below the vault's finalized checkpoint is ever rewritten in the vault's history: a takeover
+  cuts the log back to it at most. A copy can still hold another history after an earlier checkpoint,
+  as a failed operator's does until it rebuilds its copy, and checking the copy against the vault's
+  root keeps that history out of the archive. The node reads the vault's finality through
+  `checkpoints.rpc_url` at most once a minute while a range waits for it, and checks a checkpoint
+  against its copy once a completed segment holds it.
 - **What the node counts as archived.** The node uploads each range create-only, so an object
   already at the key is left as it is. It counts the range as archived only once a read from the
   public URL, over TLS that ends in the enclave, decompresses to its own copy of the range.

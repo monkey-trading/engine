@@ -1,6 +1,8 @@
 //! The archive's uploader: for the node's life, it follows the manifest of the log writer in use and puts each
 //! whole range below the vault's finalized checkpoint into the bucket in order, confirming each by a read from the
-//! bucket's public origin. A failure is retried with backoff at the same range, so the bucket's ranges stay a
+//! bucket's public origin. It takes a finalized checkpoint as a bound only once the writer's copy holds it at the
+//! vault's root, so a copy that holds another history past an earlier checkpoint uploads none of it, and raises
+//! Warning `archive_copy_superseded`. A failure is retried with backoff at the same range, so the bucket's ranges stay a
 //! prefix of the log. A range whose object reads back as other bytes than the node's copy builds is never
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
 //! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise.
@@ -14,12 +16,12 @@ use anyhow::{Context, anyhow};
 use tokio::sync::watch;
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep};
-use tracing::{Instrument, debug, info, info_span, warn};
+use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, compress, holds, log_prefix, range_bytes, range_key,
-    stored_bound, whole_ranges,
+    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes,
+    range_key, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, Values};
@@ -57,13 +59,27 @@ struct Work<F> {
     backlog: Backlog,
     /// The vault's finality; without a vault, every whole range may go up.
     finality: Option<F>,
-    /// The last finalized checkpoint read, and when it was read.
-    finalized: Option<u64>,
+    /// The finalized checkpoints the current copy is checked against.
+    anchor: Anchor,
+    /// When the vault's finality was last read.
     read_at: Option<Instant>,
     /// The ranges already reported as mismatched.
     mismatched: BTreeSet<u64>,
     /// The first range whose object reads back otherwise: the uploads stop there whatever source follows.
     stalled_at: Option<u64>,
+}
+
+/// The vault's finalized checkpoints, as the copy in use holds them.
+#[derive(Default)]
+struct Anchor {
+    /// The newest finalized checkpoint the copy holds at the vault's root: ranges below it may go up.
+    held: Option<(u64, String)>,
+    /// A newer finalized checkpoint, read from the vault, that the copy's completed segments do not hold yet.
+    pending: Option<(u64, String)>,
+    /// A finalized checkpoint the copy holds otherwise, or not at all: nothing past `held` goes up from it.
+    differs: Option<u64>,
+    /// Whether `archive_copy_superseded` is raised, for this copy or an earlier one.
+    raised: bool,
 }
 
 /// What a read of a range's object found.
@@ -109,8 +125,8 @@ impl<F: Finality> Uploader<F> {
     ) -> (Self, Sources) {
         let (sources, handed) = watch::channel(None);
         let backlog = Backlog::new(lag_alert);
-        let (finalized, read_at, mismatched, stalled_at) = (None, None, BTreeSet::new(), None);
-        let work = Work { store, prefix, dir, metrics, backlog, finality, finalized, read_at, mismatched, stalled_at };
+        let (anchor, read_at, mismatched, stalled_at) = (Anchor::default(), None, BTreeSet::new(), None);
+        let work = Work { store, prefix, dir, metrics, backlog, finality, anchor, read_at, mismatched, stalled_at };
         (Self { sources: handed, work }, sources)
     }
 
@@ -143,6 +159,9 @@ impl<F: Finality> Work<F> {
             return;
         }
         let mut retry = FIRST_RETRY;
+        // Another copy is checked afresh, first against the checkpoint the last one held.
+        self.anchor = Anchor { pending: self.anchor.held.take(), raised: self.anchor.raised, ..Anchor::default() };
+        self.read_at = None;
         self.backlog.resuming();
         let mut next = loop {
             let view = manifest.borrow().clone();
@@ -174,18 +193,20 @@ impl<F: Finality> Work<F> {
                 }
                 continue;
             }
-            let step = match self.below_finality(next).await {
-                Ok(below) if next < below => {
-                    let span = info_span!("archive_range", id = %range_key(&self.prefix, next));
-                    self.range(&view, next).instrument(span).await.map(|found| {
-                        if found == Found::Confirmed {
-                            next += 1;
-                        }
-                    })
-                }
+            let span = info_span!("archive_range", id = %range_key(&self.prefix, next));
+            let step = match self.below_finality(&view, next).instrument(span.clone()).await {
+                Ok(below) if next < below => self.range(&view, next).instrument(span.clone()).await.map(|found| {
+                    if found == Found::Confirmed {
+                        next += 1;
+                    }
+                }),
                 Ok(_) => {
-                    // The range waits for the vault: read its finality again when due, or take the writer's change.
-                    let due = self.read_at.map_or(Duration::ZERO, |at| FINALITY_EVERY.saturating_sub(at.elapsed()));
+                    // The range waits for the vault, read again when due, or for the copy to complete the segment
+                    // holding the vault's checkpoint, or for another copy; the writer's change comes first.
+                    let due = match self.anchor.pending.is_some() || self.anchor.differs.is_some() {
+                        true => RECHECK_EVERY,
+                        false => self.read_at.map_or(Duration::ZERO, |at| FINALITY_EVERY.saturating_sub(at.elapsed())),
+                    };
                     if !wait(&mut manifest, due).await {
                         return;
                     }
@@ -197,7 +218,7 @@ impl<F: Finality> Work<F> {
                 Ok(()) => retry = FIRST_RETRY,
                 Err(e) => {
                     self.backlog.check(&self.metrics);
-                    self.failed(&e, &mut retry).await;
+                    self.failed(&e, &mut retry).instrument(span).await;
                 }
             }
         }
@@ -226,20 +247,61 @@ impl<F: Finality> Work<F> {
         }
     }
 
-    /// How many ranges, from the first, end below the vault's finalized checkpoint, reading it again when range
-    /// `next` is past the last read and a read is due; every range without a vault.
+    /// How many ranges, from the first, end below the newest finalized checkpoint that `view`'s copy holds at the
+    /// vault's root, every range without a vault. Once range `next` reaches that bound, a newer finalized checkpoint
+    /// is read from the vault when a read is due, and taken as the bound once the copy's completed segments hold it
+    /// at the vault's root; held otherwise, or not at all, it raises `archive_copy_superseded` and the bound stays.
     /// Error cases:
-    /// - the vault cannot be read
-    async fn below_finality(&mut self, next: u64) -> anyhow::Result<u64> {
-        let below = |finalized: Option<u64>| finalized.map_or(0, |seq| seq / RANGE_SEQS);
+    /// - the vault cannot be read, or the copy's segment holding the checkpoint cannot be
+    async fn below_finality(&mut self, view: &Manifest, next: u64) -> anyhow::Result<u64> {
         let Some(finality) = &self.finality else { return Ok(u64::MAX) };
-        if next < below(self.finalized) || self.read_at.is_some_and(|at| at.elapsed() < FINALITY_EVERY) {
-            return Ok(below(self.finalized));
+        let below = |anchor: &Anchor| anchor.held.as_ref().map_or(0, |(seq, _)| seq / RANGE_SEQS);
+        if next < below(&self.anchor) || self.anchor.differs.is_some() {
+            return Ok(below(&self.anchor));
         }
-        self.read_at = Some(Instant::now());
-        let finalized = finality.finalized().await.context("reading the vault's finalized checkpoint")?;
-        self.finalized = self.finalized.max(finalized);
-        Ok(below(self.finalized))
+        if self.anchor.pending.is_none() && self.read_at.is_none_or(|at| at.elapsed() >= FINALITY_EVERY) {
+            self.read_at = Some(Instant::now());
+            let finalized = finality.finalized().await.context("reading the vault's finalized checkpoint")?;
+            let held = self.anchor.held.as_ref().map(|(seq, _)| *seq);
+            self.anchor.pending = finalized.filter(|(seq, _)| Some(*seq) > held);
+        }
+        let Some((seq, root)) = self.anchor.pending.clone() else { return Ok(below(&self.anchor)) };
+        if seq >= view.unlisted_from()? {
+            return Ok(below(&self.anchor));
+        }
+        let (dir, read) = (self.dir.clone(), view.clone());
+        let copy = spawn_blocking(move || checkpoint_root(&dir, &read, seq)).await??;
+        match copy.as_deref().is_some_and(|copy| same_root(copy, &root)) {
+            true => {
+                self.anchor.held = self.anchor.pending.take();
+                if std::mem::take(&mut self.anchor.raised) {
+                    info!(
+                        alert_resolved = "archive_copy_superseded",
+                        finalized_seq = seq,
+                        "this node's copy of the log holds the vault's finalized checkpoint"
+                    );
+                }
+            }
+            false => self.superseded(seq, &root, copy.as_deref()),
+        }
+        Ok(below(&self.anchor))
+    }
+
+    /// Reports the copy in use as holding the vault's finalized checkpoint at `seq`, rooted at `root`, otherwise
+    /// (`copy`), and keeps its uploads below the checkpoint it last held.
+    fn superseded(&mut self, seq: u64, root: &str, copy: Option<&str>) {
+        (self.anchor.differs, self.anchor.raised) = (Some(seq), true);
+        let held = self.anchor.held.as_ref().map(|(seq, _)| *seq);
+        warn!(
+            alert = "archive_copy_superseded",
+            finalized_seq = seq,
+            finalized_root = root,
+            copy_root = copy.unwrap_or("none"),
+            held_seq = ?held,
+            "this node's copy of the log holds the vault's finalized checkpoint otherwise, or not at all, so it \
+             uploads none of its ranges past the last finalized checkpoint it holds: a member sets a superseded tail \
+             aside as it follows the operator, and the uploads go on from the copy it rebuilds"
+        );
     }
 
     /// Uploads range `index`, and reads it back.
@@ -260,7 +322,7 @@ impl<F: Finality> Work<F> {
         if found == Found::Confirmed {
             self.metrics.archive.confirmed_bytes.inc_by(bytes);
             self.backlog.passed();
-            debug!(object = %key, ?created, bytes, stored = length, "confirmed in the archive");
+            info!(?created, bytes, stored = length, "confirmed in the archive");
         }
         Ok(found)
     }

@@ -216,7 +216,8 @@ an index: load only the rule whose hint matches the current action.
   the log in fixed ranges of 10,000 seqs, each built from the copy's checked segments however they are cut
   (`archive/range.rs`), compressed with zstd and uploaded create-only to an S3-compatible bucket, Cloudflare R2 in
   production, with delivered keys, at `log/<chain id>/<vault>/<first seq>.jsonl.zst`, once the vault has finalized a checkpoint past it
-  (`archive/finality.rs`), and counted as archived only once a read from the bucket's public origin gives back the same
+  that the copy holds at the vault's root, read from its completed segments, a copy holding it otherwise uploading
+  nothing past the last it held under Warning `archive_copy_superseded` (`archive/finality.rs`), and counted as archived only once a read from the bucket's public origin gives back the same
   entries, spelt as `standby::chain::spelt` reads them; a restart resumes at the first range the bucket lacks; a range that reads back otherwise stops that node's
   uploads, across a change of writer; Warning `archive_upload_lagging` and `archive_object_mismatch`; never waited on by the sequencer; the
   loopback bucket and vault stand-ins in `archive/stand_in.rs`), `engine
@@ -1175,7 +1176,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts, history retention and log archive), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts and history retention), the log archive's on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1347,9 +1348,10 @@ Run from the repo root:
   from then on and none before)
 - Log archive dev scenario: `./scripts/dev-log-archive.sh` (needs only Cargo; a dev node uploads its log's ranges to a
   loopback S3 stand-in behind TLS that checks each upload's signature, as a stand-in vault finalizes checkpoints past
-  them, through an outage that raises and clears `archive_upload_lagging`, a member's differently cut copy that creates
-  nothing, a restart that resumes at the first missing range, and an object that reads back otherwise
-  (`archive_object_mismatch`), past which nothing goes up)
+  them, through an outage that raises and clears `archive_upload_lagging`, a member's differently cut copy that uploads
+  the ranges the bucket lacks as the node builds them, a copy whose finalized checkpoint the vault holds at another root
+  (`archive_copy_superseded`), which uploads nothing, a restart that resumes at the first missing range, and an object
+  that reads back otherwise (`archive_object_mismatch`), past which nothing goes up)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole
