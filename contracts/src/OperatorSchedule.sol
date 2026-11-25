@@ -45,18 +45,19 @@ import {Vault} from "./Vault.sol";
 /// even while heads post. The rule and the window in force always leave the first skip's member a take
 /// before that promotion (`_skipsFirst`).
 /// @notice The key holder is the candidate whose enclave holds the signer epoch's keys, as
-/// `LogHeads.keyHolder` names it from this schedule's turns: the candidate whose assignment, release move
-/// or naming as a draw's source recorded the release that signed the epoch's newest head, when that head
-/// was signed since `registryTurn` began, which no release move of its own changes. Otherwise no member has
-/// taken the keys in the epoch since then, so they are where it found them: walking back from the turn in
-/// effect over turns that no head took and no promotion reached, the member of the latest turn one did; in
-/// a turn the epoch began in, the member the vault's timelock installed; else the source of
-/// `registryTurn`, as the first turn and the first after an installation are. A skip never names the key
-/// holder, and records a skipped member that holds the keys as having held them. A promotion names a member
-/// that never held the turn's keys, by position, whether or not it held an assignment of the turn, since
-/// whether an assignment's member took the keys is the key holder's choice, and names the key holder
-/// last, so a holder that withholds the keys can neither choose whom a promotion names nor take the turn
-/// itself. Only a member that held the keys under an assignment of the turn is never named again in it.
+/// `LogHeads.keyHolder` names it from this schedule's turns: the candidate the registry binds the release
+/// that signed the epoch's newest head to (`OperatorRegistry.releaseOwner`), when that head was signed since
+/// `registryTurn` began, which no release move changes. Otherwise no member has taken the keys in the epoch
+/// since then, so they are where it found them: walking back from the turn in effect over turns that no head
+/// took and no promotion reached, the member of the latest turn one did; in a turn the epoch began in, the
+/// member the vault's timelock installed; else the source of `registryTurn`, as the first turn and the first
+/// after an installation are. While that head's release belongs to no candidate, the key holder is unknown
+/// and skips and promotions are refused. A skip never names the key holder, and records a skipped member
+/// that holds the keys as having held them. A promotion names a member that never held the turn's keys, by
+/// position, whether or not it held an assignment of the turn, since whether an assignment's member took the
+/// keys is the key holder's choice, and names the key holder last, so a holder that withholds the keys can
+/// neither choose whom a promotion names nor take the turn itself. Only a member that held the keys under an
+/// assignment of the turn is never named again in it.
 /// Skips and promotions search past the current position through the whole scan, continued from its start
 /// past its end, so every member stays in reach and each assignment of a turn takes a later position.
 /// @notice Every assignment of a turn, drawn, skipped to or promoted, is kept by its position with its
@@ -219,11 +220,6 @@ contract OperatorSchedule is SeedSchedule {
     /// it moves past (`_promotion`), or a skipped member that held the keys (`skip`).
     mapping(uint64 turn => mapping(address candidate => uint8 held)) private held;
 
-    /// @notice The candidate whose assignment or release move last recorded `release`, or the operator a
-    /// draw found the registry naming on it; zero for a release never recorded. Each release belongs to
-    /// one candidate (`OperatorRegistry.releaseOwner`), so no candidate moves another's entry.
-    mapping(bytes32 release => address candidate) public releaseCandidate;
-
     /// @notice The latest turn drawn while the registry named its own operator, with no turn naming one:
     /// the first turn, or the first after an installation, whose source holds the keys from before it.
     /// A head posted before its boundary names no key holder, and the key holder walk stops at it.
@@ -321,6 +317,7 @@ contract OperatorSchedule is SeedSchedule {
     error NoTurn();
     error PromotionNotDue(uint64 dueAt);
     error NoQualifiedPosition(uint64 turn);
+    error KeyHolderUnknown();
     error NotRegistered();
     error InvalidStandbyKey(address key);
     error VouchExpired(uint64 expiry);
@@ -454,9 +451,6 @@ contract OperatorSchedule is SeedSchedule {
         candidate = member.candidate;
         bytes32 release = _releaseOf(candidate);
         OperatorRegistry.Operator memory named = registry.namedOperator();
-        // The source holds the keys under the release the registry names it on, which no assignment
-        // may have recorded.
-        releaseCandidate[named.release] = named.candidate;
         if (_noTurn()) registryTurn = turn;
         uint64 generation = _generation(candidate, release, named);
         turns[turn] = Turn(candidate, position, DRAWN, setId, generation, lastDrawnTurn, seed, named.candidate);
@@ -464,8 +458,7 @@ contract OperatorSchedule is SeedSchedule {
         _assign(turn, position, _drawn(member, setId), release, generation);
     }
 
-    /// @notice Records `candidate`'s new release as its own (`releaseCandidate`), whatever turn names it,
-    /// and gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
+    /// @notice Gives the turn in effect, and the last drawn turn, a new generation where `candidate` is
     /// their latest assignment's member, recording it as a revision of that assignment with the
     /// candidate's new release: the registry calls it when the candidate's release moves. Both share
     /// one. A move that leaves the candidate a promotable standby key, back to the release it was
@@ -475,7 +468,6 @@ contract OperatorSchedule is SeedSchedule {
         (uint64 inEffect, Turn memory current) = turnAt(uint64(block.timestamp));
         uint64 last = lastDrawnTurn;
         bytes32 release = _releaseOf(candidate);
-        releaseCandidate[release] = candidate;
         uint64 generation = 0;
         if (inEffect != 0 && current.candidate == candidate) {
             generation = _reserve();
@@ -547,9 +539,9 @@ contract OperatorSchedule is SeedSchedule {
     /// (`heldKeys`), becomes the turn's assignment in a new generation, fixing the outgoing epoch's
     /// latest head and the vault's latest accepted checkpoint, and consumes the standby record.
     /// Refused while no turn names the operator
-    /// (`NoTurn`), before `promotionDueAt` (`PromotionNotDue`), when no position qualifies
-    /// (`NoQualifiedPosition`), and by the vault once its exit has started or while the guardian has
-    /// retired the signer.
+    /// (`NoTurn`), before `promotionDueAt` (`PromotionNotDue`), while the key holder is unknown
+    /// (`KeyHolderUnknown`), when no position qualifies (`NoQualifiedPosition`), and by the vault once its
+    /// exit has started or while the guardian has retired the signer.
     /// @dev On the missed-head path a head included before it in the same block restarts the count, so
     /// it reverts `PromotionNotDue`; one included after it is signed for the old epoch and fails.
     /// @return turn The turn promoted in.
@@ -564,7 +556,7 @@ contract OperatorSchedule is SeedSchedule {
         Turn storage named = turns[turn];
         Member memory member;
         address key;
-        (address holder,) = logHeads.keyHolder();
+        (address holder,) = _keyHolder();
         (position, member, key) = _promotion(turn, named, holder);
         Assignment memory promoted = _promoted(vault, epoch, member, named.setId, key);
         _reassign(turn, named, position, promoted, standbyOf[member.candidate].release);
@@ -617,10 +609,10 @@ contract OperatorSchedule is SeedSchedule {
     /// generation when it names the same member, or takes a new one when it continued the skipped
     /// assignment's. Refused while no turn names the operator (`NoTurn`), before `skipDueAt`, which never
     /// passes once a head latched the current assignment, while it is a promotion, or while the guardian
-    /// has retired the signer, when no head can latch (`SkipNotDue`), and
-    /// when no position qualifies (`NoQualifiedPosition`). A head included before it in the same block
-    /// latches the assignment, so the skip reverts; one included after binds a superseded assignment and
-    /// latches nothing.
+    /// has retired the signer, when no head can latch (`SkipNotDue`), while the key holder is unknown
+    /// (`KeyHolderUnknown`), and when no position qualifies (`NoQualifiedPosition`). A head included
+    /// before it in the same block latches the assignment, so the skip reverts; one included after binds a
+    /// superseded assignment and latches nothing.
     /// @return turn The turn skipped in.
     /// @return position The skip's assignment's position.
     function skip() external returns (uint64 turn, uint16 position) {
@@ -631,7 +623,7 @@ contract OperatorSchedule is SeedSchedule {
         if (block.timestamp < dueAt) revert SkipNotDue(dueAt);
         Member memory member;
         bool found;
-        (address holder, uint64 epoch) = logHeads.keyHolder();
+        (address holder, uint64 epoch) = _keyHolder();
         (found, position, member,) = _next(turn, named, false, holder, 1);
         if (!found) revert NoQualifiedPosition(turn);
         // A skipped member whose enclave holds the keys withheld them under its own assignment.
@@ -950,10 +942,17 @@ contract OperatorSchedule is SeedSchedule {
         _recordKeys(turn, member.candidate);
     }
 
-    /// @dev Records `candidate` as having held `turn`'s keys, unless it is zero, as the key holder is when
-    /// nothing names one.
+    /// @dev Records `candidate` as having held `turn`'s keys.
     function _recordKeys(uint64 turn, address candidate) private {
-        if (candidate != address(0)) held[turn][candidate] |= KEYS;
+        held[turn][candidate] |= KEYS;
+    }
+
+    /// @dev The key holder and the signer epoch, as `LogHeads.keyHolder` names them. Reverts
+    /// `KeyHolderUnknown` when it names none: the epoch's newest head names a release that belongs to no
+    /// candidate, so no member can be ranked as the key holder.
+    function _keyHolder() private view returns (address holder, uint64 epoch) {
+        (holder, epoch) = logHeads.keyHolder();
+        if (holder == address(0)) revert KeyHolderUnknown();
     }
 
     /// @dev The release the registry records for `candidate`.
@@ -1005,7 +1004,6 @@ contract OperatorSchedule is SeedSchedule {
         assignments[turn][position] = assignment;
         revisions[turn][position].push(Revision(release, generation));
         held[turn][assignment.candidate] |= ASSIGNED;
-        releaseCandidate[release] = assignment.candidate;
         emit TurnAssigned(
             turn,
             assignment.setId,

@@ -136,9 +136,9 @@ abstract contract FirstTurnTest is SkipTest {
 }
 
 /// The first turn's source is the key holder: before the signer epoch's first head, while no member has
-/// taken the turn and no promotion has moved its keys; and through any release move, which records its new
-/// release for it. A skip never names it, and a promotion names it only after every member that never held
-/// the turn's keys.
+/// taken the turn and no promotion has moved its keys; and through any release move, since both the release
+/// it leaves and the one it takes belong to it. A skip never names it, and a promotion names it only after
+/// every member that never held the turn's keys.
 contract FirstTurnHolderTest is FirstTurnTest {
     /// The order names alice after bob. Alice upgrades after the draw and refuses bob's take: no skip
     /// names her, since her enclave holds the keys on the release her move recorded.
@@ -182,7 +182,7 @@ contract FirstTurnHolderTest is FirstTurnTest {
         _poll();
         vm.warp(block.timestamp + 30);
         _aliceBeats();
-        assertEq(schedule.releaseCandidate(holderRelease), alice);
+        assertEq(registry.releaseOwner(holderRelease), alice);
         uint64 epoch = vault.signerEpoch();
         for (uint256 slots = 0; slots < 12 && vault.signerEpoch() == epoch; ++slots) {
             _slotOn();
@@ -202,7 +202,7 @@ contract FirstTurnHolderTest is FirstTurnTest {
         _poll();
         vm.warp(block.timestamp + 30);
         _aliceBeats();
-        assertEq(schedule.releaseCandidate(holderRelease), alice);
+        assertEq(registry.releaseOwner(holderRelease), alice);
         uint64 epoch = vault.signerEpoch();
         for (uint256 slots = 0; slots < 12 && vault.signerEpoch() == epoch; ++slots) {
             _slotOn();
@@ -210,6 +210,30 @@ contract FirstTurnHolderTest is FirstTurnTest {
         }
         assertEq(vault.signerEpoch(), epoch + 1, "a promotion happened");
         assertTrue(vault.checkpointSigner() != aliceKey);
+    }
+
+    /// The same upgrade before the draw, but the enclave on the release alice left keeps the keys and refuses
+    /// every take: its heads name a release no draw or assignment named, which still belongs to her, so no
+    /// skip names her and the promotion names a member she kept out, on its own standby key.
+    function test_ASourceThatUpgradedBeforeTheDrawIsPassedOverOnTheReleaseItLeft() public {
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (bob, alice);
+        _aliceIsTheSource(order, true, false);
+        holderRelease = _release(1);
+        assertTrue(registry.candidateOf(alice).release != holderRelease, "alice moved off the release");
+        address aliceKey = schedule.promotable(alice);
+        _poll();
+        vm.warp(block.timestamp + 30);
+        _aliceBeats();
+        assertEq(_holderNow(), alice, "the release alice left names her");
+        uint64 epoch = vault.signerEpoch();
+        for (uint256 slots = 0; slots < 12 && vault.signerEpoch() == epoch; ++slots) {
+            _slotOn();
+            assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the key holder");
+        }
+        assertEq(vault.signerEpoch(), epoch + 1, "a promotion happened");
+        assertTrue(vault.checkpointSigner() != aliceKey, "not the source's own standby key");
+        assertTrue(schedule.heldKeys(turn, alice), "the promotion moved past alice as the key holder");
     }
 
     /// No upgrade, and alice's host drops every head and refuses bob's take. Her signer epoch was started
@@ -250,20 +274,26 @@ contract FirstTurnHolderTest is FirstTurnTest {
         assertTrue(schedule.heldKeys(turn, alice), "the promotion moved past alice as the key holder");
     }
 
-    /// Every release move records the new release for the candidate that moved, whether or not a turn
-    /// names it: dave, in no turn, and alice, the source of a turn drawn for bob, before any boundary.
-    function test_EveryReleaseMoveRecordsItsCandidate() public {
+    /// Both releases of every move, the one it leaves and the one it takes, name the candidate that moved as
+    /// the key holder, whether or not a turn names it: dave, in no turn, and alice, the source of the turn
+    /// drawn for bob. A head on either release, binding no assignment, names the mover.
+    function test_EveryReleaseAMoveLeavesOrTakesNamesItsCandidate() public {
         address[] memory order = new address[](1);
         order[0] = bob;
         _aliceIsTheSource(order, false, false);
         address[2] memory movers = [dave, alice];
         for (uint256 i = 0; i < 2; ++i) {
+            bytes32 left = registry.candidateOf(movers[i]).release;
             vm.prank(address(governance));
             registry.setReleaseApproval(movers[i], _digest(80 + i), CONFIG, true);
-            assertEq(schedule.releaseCandidate(_release(80 + i)), address(0));
             vm.prank(movers[i]);
             registry.setRelease(_digest(80 + i), CONFIG);
-            assertEq(schedule.releaseCandidate(_release(80 + i)), movers[i]);
+            bytes32[2] memory releases = [left, _release(80 + i)];
+            for (uint256 j = 0; j < 2; ++j) {
+                holderRelease = releases[j];
+                _aliceBeats();
+                assertEq(_holderNow(), movers[i], j == 0 ? "the release the move left" : "the release it took");
+            }
         }
     }
 
@@ -629,5 +659,116 @@ contract FirstTurnHolderTest is FirstTurnTest {
         vault.setSigner(installed);
         assertEq(vault.signerEpoch(), epoch + 1);
         assertEq(logHeads.headRelease(epoch + 1), bytes32(0));
+    }
+}
+
+/// The deployment's operator holds the keys before the first turn, on the release the registry was deployed
+/// with, under no assignment of the schedule. It registers as a candidate and a close adopts it with alice;
+/// the first turn is drawn for alice, with the operator as its source and next in its order. Its enclave
+/// refuses alice's take and beats at the boundary, binding no assignment.
+contract DeploymentOperatorHolderTest is SkipTest {
+    function setUp() public {
+        _deployLiveness();
+    }
+
+    /// @dev Registers the deployment's operator on the deployment release and alice; when `moved`, the
+    /// operator then moves its candidacy to release 77, which the timelock approved for it, and registers a
+    /// standby key there, so the close adopts it. Adopts both, draws the first turn for alice with the
+    /// operator next, and posts at the boundary a head from the enclave on `release`.
+    function _operatorRefusesTheFirstTurn(bool moved, bytes32 release) internal {
+        _candidate(deployerKey, 30_000e18, 0);
+        _delegate(deployerKey, deployerKey);
+        if (moved) {
+            vm.prank(address(governance));
+            registry.setReleaseApproval(deployerKey, _digest(77), CONFIG, true);
+            vm.prank(deployerKey);
+            registry.setRelease(_digest(77), CONFIG);
+            _registerStandby(deployerKey);
+        }
+        _candidate(alice, 30_000e18, 1);
+        _delegate(alice, alice);
+        _setRotation(true);
+        _closeNext();
+        setId = schedule.pendingSetId();
+        (, uint64 effectiveAt,,) = schedule.setOf(setId);
+        vm.warp(effectiveAt);
+        turn = _nextTurn() + 1;
+        address[] memory order = new address[](2);
+        (order[0], order[1]) = (alice, deployerKey);
+        seed = _relayOrder(turn, order);
+        _draw(turn);
+        assertEq(schedule.turnOf(turn).candidate, alice);
+        assertEq(schedule.sourceOf(turn), deployerKey, "the deployment's operator is the source");
+        vm.warp(schedule.boundary(turn));
+        LogHeads.HeadV2 memory head = _nextHead();
+        (head.turn, head.position, head.release, head.generation) = (0, 0, release, 0);
+        _post(head);
+    }
+
+    /// The operator moved off the deployment release before the draw, and its enclave there refuses the
+    /// take: that release still names it as the key holder, so the skip, which names neither alice, who
+    /// holds the turn's assignment, nor the key holder, names no one.
+    function test_ASkipNeverNamesADeploymentOperatorBeatingOnTheReleaseItMovedOffBeforeTheDraw() public {
+        _operatorRefusesTheFirstTurn(true, _release(0));
+        assertTrue(registry.candidateOf(deployerKey).release != _release(0), "the operator moved off the release");
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, deployerKey, "the release the operator left names it");
+        _marked(TAKE);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoQualifiedPosition.selector, turn));
+        schedule.skip();
+    }
+
+    /// The same move and refusal: the missed-head promotion names alice, whom the draw assigned, on her own
+    /// standby key, and moves past the operator as the key holder, not onto its standby key.
+    function test_APromotionNamesTheDrawnMemberPastADeploymentOperatorBeatingOnTheReleaseItMovedOff() public {
+        _operatorRefusesTheFirstTurn(true, _release(0));
+        address operatorKey = schedule.promotable(deployerKey);
+        address aliceKey = schedule.promotable(alice);
+        assertTrue(operatorKey != address(0) && aliceKey != address(0), "both hold promotable standby keys");
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, alice, "the member the draw assigned");
+        assertEq(vault.checkpointSigner(), aliceKey, "alice's standby key, not the operator's");
+        assertTrue(schedule.heldKeys(turn, deployerKey), "the promotion moved past the operator");
+    }
+
+    /// With no move, the deployment release is the operator's own: the skip names no one.
+    function test_WithoutAMoveASkipNeverNamesTheDeploymentOperator() public {
+        _operatorRefusesTheFirstTurn(false, _release(0));
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, deployerKey, "the deployment release names the operator");
+        _marked(TAKE);
+        vm.expectRevert(abi.encodeWithSelector(OperatorSchedule.NoQualifiedPosition.selector, turn));
+        schedule.skip();
+    }
+
+    /// With no move, the missed-head promotion names alice on her own standby key.
+    function test_WithoutAMoveAPromotionNamesTheDrawnMember() public {
+        _operatorRefusesTheFirstTurn(false, _release(0));
+        address aliceKey = schedule.promotable(alice);
+        _lapse();
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, alice, "the operator is passed over");
+        assertEq(vault.checkpointSigner(), aliceKey);
+    }
+
+    /// While rotation is off the timelock names release 99 on the vault and binds it to no candidate, and the
+    /// enclave on it keeps the keys into the first turn. Its heads name a release that belongs to no one, so
+    /// the key holder is unknown, and neither a skip nor a promotion may rank anyone as it.
+    function test_SkipsAndPromotionsAreRefusedWhileTheNewestHeadsReleaseBelongsToNoCandidate() public {
+        _govern(address(vault), abi.encodeCall(Vault.setCurrentRelease, (_digest(99), CONFIG)));
+        assertEq(registry.releaseOwner(_release(99)), address(0), "release 99 belongs to no candidate");
+        _operatorRefusesTheFirstTurn(false, _release(99));
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, address(0), "the key holder is unknown");
+        _marked(TAKE);
+        assertLe(schedule.skipDueAt(), block.timestamp);
+        vm.expectRevert(OperatorSchedule.KeyHolderUnknown.selector);
+        schedule.skip();
+        _lapse();
+        assertLe(schedule.promotionDueAt(), block.timestamp);
+        vm.expectRevert(OperatorSchedule.KeyHolderUnknown.selector);
+        schedule.promote();
+        assertEq(schedule.turnOf(turn).candidate, alice, "the turn stays with its drawn member");
     }
 }

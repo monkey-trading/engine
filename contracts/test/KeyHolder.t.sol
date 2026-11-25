@@ -167,8 +167,8 @@ contract KeyHolderTest is SkipTest {
         assertTrue(vault.checkpointSigner() != aliceKey);
     }
 
-    /// The key holder is the candidate whose assignment recorded the release that signed the newest head,
-    /// not whichever candidate registers that release now. Alice's release-1 enclave holds the keys and
+    /// The key holder is the candidate the release that signed the newest head belongs to, not whichever
+    /// candidate registers that release now. Alice's release-1 enclave holds the keys and
     /// beats; after the boundary of bob's turn she moves her candidacy to another approved release, which
     /// withdraws release 1's approval, and the turn's order names her next. No skip names her.
     function test_ASkipNeverNamesTheMemberWhoseEnclaveHoldsTheKeys() public {
@@ -184,7 +184,7 @@ contract KeyHolderTest is SkipTest {
         vm.warp(block.timestamp + 30);
         _aliceBeats();
         assertEq(logHeads.headRelease(vault.signerEpoch()), holding.release, "the keys are on alice's release 1");
-        assertEq(schedule.releaseCandidate(holding.release), alice);
+        assertEq(registry.releaseOwner(holding.release), alice);
         for (uint256 slots = 0; slots < 6; ++slots) {
             _slotOn(true);
             assertTrue(schedule.turnOf(turn).candidate != alice, "a skip named the key holder");
@@ -206,7 +206,7 @@ contract KeyHolderTest is SkipTest {
         vm.prank(dave);
         registry.setRelease(_digest(1), CONFIG);
         assertTrue(registry.candidateOf(dave).release != holding.release, "dave runs alice's release");
-        assertEq(schedule.releaseCandidate(holding.release), alice);
+        assertEq(registry.releaseOwner(holding.release), alice);
         _poll();
         vm.warp(block.timestamp + 30);
         _aliceBeats();

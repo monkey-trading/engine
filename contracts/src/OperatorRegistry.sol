@@ -211,10 +211,10 @@ contract OperatorRegistry {
 
     /// @notice The candidate each release belongs to, for good: the first the timelock approved it for
     /// or installed on it, or the deployment's operator for its own; zero for a release it never
-    /// approved or installed. Every candidate the schedule records for a release (`releaseCandidate`,
-    /// which the key holder lookup reads) was approved for it, installed on it or is the deployment's
-    /// operator, so it is this one. A registration binds nothing, so registering a release first holds
-    /// no one else off it, and a candidate registered on another's release is never approved for it.
+    /// approved or installed. The key holder lookup (`LogHeads.keyHolder`) and `holdsTurn` name a
+    /// head's release by it, so a release its candidate moved off still names that candidate. A
+    /// registration binds nothing, so registering a release first holds no one else off it, and a
+    /// candidate registered on another's release is never approved for it.
     mapping(bytes32 release => address candidate) public releaseOwner;
 
     /// @dev A rotation set a close is choosing: its first `count` members, their admin keys and weights.
@@ -753,15 +753,15 @@ contract OperatorRegistry {
     /// @notice Whether `candidate` holds a turn of the schedule, or may hold the keys the turn in
     /// effect's member takes; `deregister` refuses such a member while turns run. Before any turn
     /// starts, a member of the last drawn turn holds one. From then on, a member that held any
-    /// assignment of the turn in effect or of the last drawn turn; the candidate whose release signed
-    /// the newest head of the vault's signer epoch, whose enclave holds the keys; and, walking back from
-    /// the turn in effect, the members of the turn drawn before each turn that may hold the keys: once a
-    /// head latched that earlier turn's latest assignment, or it is a promotion, only its member, and the
-    /// walk ends; otherwise any member that held an assignment of it, which a take before a skip leaves
-    /// the keys with, the later turn's source among them, and the walk goes on to it, since no member
-    /// took the keys from its source. The walk stops, and the source of the last turn it reached may hold
-    /// the keys, at the first drawn turn, where the registry named an operator of its own after the
-    /// earlier turn ended, by an installation or an election while rotation was off, and
+    /// assignment of the turn in effect or of the last drawn turn; the candidate the release that signed
+    /// the newest head of the vault's signer epoch belongs to (`releaseOwner`), whose enclave holds the
+    /// keys; and, walking back from the turn in effect, the members of the turn drawn before each turn that
+    /// may hold the keys: once a head latched that earlier turn's latest assignment, or it is a promotion,
+    /// only its member, and the walk ends; otherwise any member that held an assignment of it, which a take
+    /// before a skip leaves the keys with, the later turn's source among them, and the walk goes on to it,
+    /// since no member took the keys from its source. The walk stops, and the source of the last turn it
+    /// reached may hold the keys, at the first drawn turn, where the registry named an operator of its own
+    /// after the earlier turn ended, by an installation or an election while rotation was off, and
     /// `HOLDER_LOOKBACK` turns back. False without a schedule.
     function holdsTurn(address candidate) public view returns (bool) {
         OperatorSchedule turns = schedule;
@@ -771,8 +771,8 @@ contract OperatorRegistry {
         if (turn == 0) return false;
         if (_held(turns, turn, candidate)) return true;
         LogHeads heads = turns.logHeads();
-        bytes32 release = candidates[candidate].release;
-        if (release != 0 && release == heads.headRelease(vault.signerEpoch())) return true;
+        bytes32 release = heads.headRelease(vault.signerEpoch());
+        if (release != 0 && releaseOwner[release] == candidate) return true;
         for (uint256 back = 0;; ++back) {
             turn = named.prior;
             // Short of a stop, the registry named the earlier turn's member at the draw, so the source

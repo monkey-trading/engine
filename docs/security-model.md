@@ -1552,9 +1552,11 @@ Whether a drawn or skipped-to member received the keys is the key holder's choic
 refusals never move one member ahead of another. The search runs from the current position through
 every member of the set, so a promotion is refused only when no member qualifies.
 
-The key holder is the candidate whose assignment, release move or naming as a turn's source recorded
-the release that signed the signer epoch's newest head, which no later release move of its own
-changes. Each release belongs to one candidate, so no other candidate's record moves it.
+The key holder is the candidate that owns the release which signed the signer epoch's newest head.
+The registry binds each release to one candidate for good. The deployment's release belongs to the
+deployment's operator, and any other release belongs to the first candidate that the timelock
+approves it for or installs on it. A release that its candidate has moved off therefore still names
+that candidate, and no other candidate can take the release.
 A head counts only if its enclave signed it since the latest turn drawn while the registry
 named its own operator began: the first turn, or the first after an installation. Without one, no
 member has taken the keys in the epoch since then, so they are where the epoch found them. They are
@@ -1691,6 +1693,11 @@ Known limits:
 - A standby key's registration is sent by the candidate's own account, so a candidate that does not
   send it is not promotable. The operator nonetheless counts that member's confirmations on the key
   once its enclave has verified the key's attestation.
+- A newest head whose release belongs to no candidate leaves the key holder unknown. Skips and
+  promotions are then refused with `KeyHolderUnknown` until a member takes the keys, or until the
+  timelock approves that release for the candidate whose enclave runs it. Only the timelock can cause
+  this, by naming on the vault, while rotation is off, a release it never approved or installed for a
+  candidate, whose enclave then keeps the keys into the turns.
 
 ## Fault proofs
 

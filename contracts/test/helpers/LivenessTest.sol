@@ -106,7 +106,7 @@ abstract contract LivenessTest is ScheduleTest {
     /// @dev The key holder the rule names, restated over the schedule's and the log heads' public reads (it
     /// restates `LogHeads.keyHolder`, so the suites that use it check the order a promotion walks, and
     /// `FirstTurnHolder.t.sol` checks the holder itself): while the epoch's newest head is a v2 head signed
-    /// since `registryTurn` began, the one whose assignment recorded its release; else, walking back from
+    /// since `registryTurn` began, the candidate its release belongs to; else, walking back from
     /// the turn in effect over turns whose latest assignment is neither latched nor a promotion, the member
     /// of the first that is; in a turn the signer epoch began in, the member a skip passed holding the keys,
     /// or its member; else the source of `registryTurn`.
@@ -116,7 +116,7 @@ abstract contract LivenessTest is ScheduleTest {
         bytes32 release = logHeads.headRelease(epoch);
         (,, uint64 signedAt,,) = logHeads.heads(epoch);
         if (release != 0 && signedAt >= uint256(schedule.boundary(first)) * 1000) {
-            return schedule.releaseCandidate(release);
+            return registry.releaseOwner(release);
         }
         uint64 since = vault.signerSince();
         (uint64 at, OperatorSchedule.Turn memory walked) = schedule.turnAt(uint64(block.timestamp));
