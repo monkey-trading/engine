@@ -171,6 +171,7 @@ impl Replay {
         self.access_alerts = crate::sequencer::access::AccessAlerts::resumed(carried.access_failed_since);
         let mut prefix_ring = PrefixRing::default();
         carried.links.iter().for_each(|link| prefix_ring.record(link.seq, link.link));
+        self.carried_links = carried.links.clone();
         self.last_marks = engine.markets().iter().filter_map(|(id, market)| Some((*id, market.mark?))).collect();
         self.last_checkpoint_ts = Some(engine.now());
         if let Some(parent) = self.recovery_origin.filter(|parent| parent.has_checkpoint) {

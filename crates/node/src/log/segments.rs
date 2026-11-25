@@ -39,7 +39,8 @@ pub struct Manifest {
     /// `None` before the first. Only the writer's copy carries it: the file lists segments alone.
     pub flushed: Option<Offset>,
     /// The first seq this node's start verified, with no signed catalog: one that went on from a daily snapshot
-    /// read nothing before the command after its checkpoint, so the segments before it are the host's word, and
+    /// replayed nothing before its checkpoint and checked only the commands before it whose links the snapshot carries
+    /// (`sequencer::replay::verified_back`), so the segments before those are the host's word, and
     /// no answer the enclave vouches for, a stream's backfill or a re-derivation, reads them (`ensure_served`); the
     /// archive, whose answers are not signed, serves them as the host holds them. Zero for a start that read every
     /// segment, or one whose catalog vouches for them.

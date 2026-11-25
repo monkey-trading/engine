@@ -23,7 +23,8 @@ use crate::log::CheckpointDomain;
 pub(crate) struct Finalized {
     pub seq: u64,
     pub root: String,
-    /// The key that signs the vault's checkpoints there: the signer of the finalized checkpoint, or the vault's.
+    /// The key that signed the finalized checkpoint, where it is known, as a takeover's is, or else the vault's signer:
+    /// a snapshot of an earlier checkpoint rests on it.
     pub signer: AccountId,
 }
 
@@ -34,8 +35,8 @@ impl AcceptedRoots for Finalized {
         (seq == self.seq).then(|| self.root.parse().ok()).flatten()
     }
 
-    /// `signer` at every seq: a snapshot an earlier signer signed is passed over, and the copy replays from an
-    /// earlier one, or whole.
+    /// `signer` at every seq: a snapshot another key signed is passed over, after a signer change before the
+    /// finalized checkpoint too, and the copy replays from an earlier one, or whole.
     async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
         Some(self.signer)
     }

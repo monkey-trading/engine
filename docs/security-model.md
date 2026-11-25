@@ -526,18 +526,23 @@ as it rebuilds the account history index from the whole log, which must index on
 verified; with `[daily_snapshots]` too, a start takes only a recovery cache that carries the replay
 state, so the daily snapshots go on after it.
 
-The segments before the snapshot's checkpoint stay what the host says they are: a start from the
-snapshot verified none of them, and without `[snapshots]` no signed catalog vouches for them. So nothing
-the trading server vouches for is read from them: a stream's backfill from before the instruction after
-the checkpoint is refused with 400, naming the public archive, as one from before the log's first
-segment on the host is; and a financing charge's rows are re-derived, or checked against their file,
-only from there on. A rotation member or a standby whose copy trails that seq is refused too: it then
-fetches the completed segments past its copy's head from the public archive and its mirrors, takes
-each entry after the head only once its seal and link continue the copy, as a streamed entry's must,
-a member's replica applying it first, and follows the stream again from the new head. The archive, whose answers are not signed, serves the segments as the host holds
-them, which anyone checks by a replay. A rotation member's or a
-standby's copy fetched from an archive mirror may hold altered segments before its snapshot. It never
-serves them, and a whole replay of the copy, as when no snapshot passes, refuses them.
+The segments before the snapshot's checkpoint are what the host says they are, but for those the
+start checks: a replay from the snapshot reads none of them, and without `[snapshots]` no signed
+catalog vouches for them. The start checks the instructions before the checkpoint whose links the
+snapshot carries, the last 65,536, that the log on the host holds: each must extend the link before
+it as the snapshot says, and each checkpoint and withdrawal entry among them must be signed by a
+recorded signer. Nothing the trading server vouches for is read from before the first instruction it
+checked: a stream's backfill from earlier is refused with 400, naming the public archive, as one from
+before the log's first segment on the host is, and a financing charge's rows are re-derived, or
+checked against their file, only from there on. A rotation member or a standby whose copy trails that
+instruction is refused too: it then fetches the completed segments past its copy's head from the
+public archive and its mirrors, takes each entry after the head only once its seal and link continue
+the copy, as a streamed entry's must, a member's replica applying it first, and follows the stream
+again from the new head, which a segment of 10,000 instructions brings within the checked range. The
+archive, whose answers are not signed, serves the segments as the host holds them, which anyone
+checks by a replay. A rotation member's or a standby's copy fetched from an archive mirror may hold
+altered segments before its snapshot. It never serves them, and a whole replay of the copy, as when no
+snapshot passes, refuses them.
 
 What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
 signer it pins, the attested signers, or the vault's signer history, and computes everything else

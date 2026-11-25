@@ -29,12 +29,16 @@ impl<C: CheckpointChain> AcceptedRoots for VaultRoots<'_, C> {
         accepted.into_iter().find(|checkpoint| checkpoint.seq == seq)?.root.parse().ok()
     }
 
-    /// The signer of the checkpoint the vault accepted at `seq`, or the vault's signer at `at` where it accepted none;
-    /// none where the read fails, which leaves the candidate to the signers the start was given.
+    /// The signer of the checkpoint the vault accepted at `seq`, or, where it accepted none, of its finalized one, which
+    /// a snapshot before it rests on, or the vault's signer at `at`; none where the read fails, which leaves the
+    /// candidate to the signers the start was given.
     async fn signer_at(&self, seq: u64) -> Option<AccountId> {
-        let accepted = self.vault.accepted_checkpoints(self.at, &[seq]).await.ok()?;
-        let at_seq = accepted.into_iter().find(|checkpoint| checkpoint.seq == seq);
-        Some(at_seq.map_or(self.at.state.signer, |checkpoint| checkpoint.signer))
+        let anchor = self.at.state.checkpoint.as_ref().map(|(anchor, _)| *anchor);
+        let seqs: Vec<u64> = std::iter::once(seq).chain(anchor.filter(|anchor| *anchor != seq)).collect();
+        let accepted = self.vault.accepted_checkpoints(self.at, &seqs).await.ok()?;
+        let signer_of =
+            |at: u64| accepted.iter().find(|checkpoint| checkpoint.seq == at).map(|checkpoint| checkpoint.signer);
+        Some(signer_of(seq).or_else(|| anchor.and_then(signer_of)).unwrap_or(self.at.state.signer))
     }
 }
 

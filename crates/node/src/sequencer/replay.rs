@@ -96,6 +96,9 @@ pub(super) struct Replay {
     /// Every checkpoint's signer, those a recovery passes over as superseded included, as a daily snapshot
     /// carries them.
     signers_seen: BTreeSet<AccountId>,
+    /// For a replay that went on from a daily snapshot, the links its carried state names for the commands
+    /// through its checkpoint's, by which a start checks the log before the checkpoint (`verified_back`).
+    carried_links: Vec<live::Link>,
     /// Set for a replay from a recovery cache, which holds only part of what the log before it folds to, so
     /// it gives no fold (`Fold::of`) unless the cache carries the rest (`cached`).
     partial: bool,
@@ -399,6 +402,7 @@ impl Replay {
             takings: self.takings,
             checkpoint_roots: self.payout_checkpoints,
             fold,
+            carried_links: self.carried_links,
         }
     }
 }

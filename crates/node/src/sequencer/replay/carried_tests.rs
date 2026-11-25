@@ -165,6 +165,55 @@ async fn a_recovery_anchored_at_or_after_the_snapshot_ends_as_a_whole_one() {
     assert!(refused.contains("is before the snapshot's"), "{refused}");
 }
 
+/// A start from a snapshot checks the log before the snapshot's checkpoint against the links it carries: on a log that
+/// holds it all, from the command after the first link on; one whose command there differs from the one the links name
+/// checks nothing; and a log whose earlier segments are elsewhere, from the first command it holds.
+#[tokio::test]
+async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
+    let dir = scratch_dir("carried-back");
+    crate::sequencer::fixture_tests::write_funded_log(&dir, 4);
+    let entries = log_entries(&dir);
+    let at = *snapshot_starts(&entries).last().unwrap();
+    let carried = whole_carried(&entries).remove(&at).unwrap();
+    let signers = carried.checkpoint_signers.clone();
+    let first = carried.links.first().unwrap().seq + 1;
+    let back = |dir: &Path| super::verified_back(dir, &carried.links, DOMAIN, &signers);
+    assert_eq!(back(&dir), Some(first), "the whole log checks from the command after the first link");
+
+    let held = scratch_dir("carried-back-held");
+    crate::standby::tests::copy_log(&dir, &held);
+    super::remove_segments_before(&held, carried.links.last().unwrap().seq);
+    let first_held = log_entries(&held).iter().find_map(|entry| match entry {
+        LogEntry::Command(command) => Some(command.sequenced.seq),
+        _ => None,
+    });
+    assert_eq!(back(&held), first_held.map(|seq| seq.max(first)), "from the first command this host holds");
+
+    let altered = scratch_dir("carried-back-altered");
+    crate::standby::tests::copy_log(&dir, &altered);
+    let segment = std::fs::read_dir(&altered)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension().is_some_and(|ext| ext == "jsonl") && path.file_name().unwrap() != "manifest.jsonl"
+        })
+        .min()
+        .unwrap();
+    let text = std::fs::read_to_string(&segment).unwrap();
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let line = lines.iter().position(|line| line.contains("\"Tick\"")).expect("a tick in the first segment");
+    let mut entry: LogEntry = serde_json::from_str(&lines[line]).unwrap();
+    if let LogEntry::Command(command) = &mut entry {
+        command.sequenced.ts += 1;
+    }
+    lines[line] = serde_json::to_string(&entry).unwrap();
+    let bytes = lines.join("\n") + "\n";
+    std::fs::write(&segment, &bytes).unwrap();
+    relist(&altered, segment.file_name().unwrap().to_str().unwrap(), bytes.as_bytes());
+    let in_window = first <= entry_seq(&entry);
+    assert_eq!(back(&altered).is_none(), in_window, "an altered command in the window checks nothing");
+}
+
 /// A carried state that does not stand for its snapshot's engine and checkpoint is refused before any entry
 /// after it is replayed, each at the check it names; and an engine whose root is not its checkpoint's is refused.
 #[tokio::test]
@@ -344,4 +393,31 @@ fn signer() -> AccountId {
 fn writer(dir: &Path) -> LogWriter {
     let (manifest, _) = watch::channel(Manifest::default());
     SegmentedLog::open(dir, |_| Ok(())).unwrap().into_writer(SEGMENT_COMMANDS, manifest).unwrap()
+}
+
+/// The seq of `entry`'s command, which it is or follows.
+fn entry_seq(entry: &LogEntry) -> u64 {
+    match entry {
+        LogEntry::Command(command) => command.sequenced.seq,
+        LogEntry::Checkpoint(checkpoint) => checkpoint.seq,
+        LogEntry::Withdrawal(_) => u64::MAX,
+    }
+}
+
+/// Lists `bytes` as the segment `file` of the log in `dir`, as a host that altered it would.
+fn relist(dir: &Path, file: &str, bytes: &[u8]) {
+    use sha2::Digest;
+    let manifest = crate::log::Manifest::load(dir).unwrap();
+    let text: String = manifest
+        .segments
+        .iter()
+        .cloned()
+        .map(|mut listed| {
+            if listed.file == file {
+                (listed.bytes, listed.sha256) = (bytes.len() as u64, hex::encode(sha2::Sha256::digest(bytes)));
+            }
+            serde_json::to_string(&listed).unwrap() + "\n"
+        })
+        .collect();
+    std::fs::write(dir.join(crate::log::MANIFEST), text).unwrap();
 }

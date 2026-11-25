@@ -64,3 +64,66 @@ impl Replay {
         Ok((replay, log))
     }
 }
+
+/// The first seq from which the log in `dir` holds, checked, the entries before a daily snapshot's checkpoint that a
+/// replay going on from it did not read: those of the commands whose links its carried state names, `links`, ending
+/// at the checkpoint's command, from the one after the first link, or after the first segment on this host. Each
+/// command's link must extend the one before it as `links` says, so its bytes are those the snapshot's signer
+/// sequenced, and each checkpoint's and withdrawal's signature must be by one of `signers` in `domain`. None when the
+/// links name too few commands, or the log holds none of them, or a read or check fails: the start then vouches only
+/// for what it replayed.
+pub(crate) fn verified_back(
+    dir: &std::path::Path,
+    links: &[crate::sequencer::replay::live::Link],
+    domain: crate::log::CheckpointDomain,
+    signers: &std::collections::BTreeSet<engine_core::types::AccountId>,
+) -> Option<u64> {
+    let (first, last) = (links.first()?.seq.checked_add(1)?, links.last()?.seq);
+    let linked: std::collections::BTreeMap<u64, [u8; 32]> = links.iter().map(|link| (link.seq, link.link.0)).collect();
+    let from = match crate::log::ensure_local(dir, first) {
+        Ok(()) => first,
+        Err(e) => e.downcast_ref::<crate::log::NotLocal>()?.first_local?.max(first),
+    };
+    let (mut at, mut verified) = (None, None);
+    let signed_by =
+        |signer: Option<engine_core::types::AccountId>| signer.is_some_and(|signer| signers.contains(&signer));
+    let read = SegmentedLog::read_span_ahead(dir, from, |entry| {
+        if let LogEntry::Command(command) = &entry {
+            at = Some(command.sequenced.seq);
+        }
+        let Some(seq) = at.filter(|seq| *seq >= from) else { return Ok(()) };
+        ensure!(seq <= last, crate::log::Stop);
+        match &entry {
+            LogEntry::Command(command) => {
+                let previous = linked.get(&(seq - 1)).context("no carried link before the command")?;
+                let digest = crate::log::command_digest(command)?;
+                ensure!(
+                    Some(&crate::log::extend_command_prefix(*previous, digest)) == linked.get(&seq),
+                    "the command at seq {seq} is not the one the snapshot's links name"
+                );
+                verified.get_or_insert(seq);
+            }
+            LogEntry::Checkpoint(checkpoint) => {
+                crate::checkpoints::signature::verify_domain(checkpoint, domain)?;
+                ensure!(signed_by(checkpoint.signer.parse().ok()), "the checkpoint at seq {seq} is by another signer");
+            }
+            LogEntry::Withdrawal(withdrawal) => {
+                let verifies = |signer: &engine_core::types::AccountId| {
+                    crate::checkpoints::signature::verify_withdrawal(withdrawal, Some(domain), Some(*signer)).is_ok()
+                };
+                ensure!(signers.iter().any(verifies), "the withdrawal entry at seq {seq} is by another signer");
+            }
+        }
+        Ok(())
+    });
+    match read {
+        Err(e) if e.is::<crate::log::Stop>() => verified,
+        Ok(()) => verified,
+        Err(e) => {
+            tracing::warn!(
+                "the log before the daily snapshot's checkpoint does not check, so none of it is served: {e:#}"
+            );
+            None
+        }
+    }
+}

@@ -60,8 +60,9 @@ async fn an_archive_segment_that_does_not_extend_the_copy_is_refused() {
     copy_log(&operator, &copy);
     let held = log_entries(&copy).len();
     ticks(&operator, 12).await;
-    let next = Manifest::load(&operator).unwrap().segments.iter().find(|listed| listed.first_seq > last_seq(&copy));
-    reseal(&operator, &next.expect("a completed segment past the copy").file);
+    let manifest = Manifest::load(&operator).unwrap();
+    let next = manifest.segments.iter().find(|listed| listed.first_seq > last_seq(&copy));
+    reseal(&operator, &next.expect("a completed segment past the copy").file.clone());
     let followed = refusing_operator(&operator).await;
     let (mut writer, mut copied) = open_copy(&copy, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
     let client = crate::standby::archive::archive_client(false).unwrap();

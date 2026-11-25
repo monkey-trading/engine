@@ -47,7 +47,7 @@ pub(crate) async fn catch_up(
     mut take: impl FnMut(Option<Offset>, &[u8]) -> anyhow::Result<Option<Offset>>,
 ) -> anyhow::Result<Option<Offset>> {
     let (listings, from) = (fetch_manifest(archive, origins).await.context("fetching the published manifest")?, head);
-    for listed in listings.iter().filter(|listed| head.is_none_or(|head| listed.last_seq >= head.seq)) {
+    for listed in listings.iter().filter(|listed| from.is_none_or(|from| listed.last_seq >= from.seq)) {
         validate_listing(listed)?;
         let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
         let (mut at, mut after) = (None, Vec::new());

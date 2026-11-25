@@ -34,6 +34,9 @@ pub struct Replayed {
     /// The replay state the replay folded, from which the stats worker folds on for the daily snapshots; none
     /// for a replay of one range of a log, or of a log whose commands carry no events.
     pub(crate) fold: Option<crate::sequencer::replay::Fold>,
+    /// For a replay that went on from a daily snapshot, the links its carried state names, through its checkpoint's
+    /// command (`replay::verified_back`).
+    pub(crate) carried_links: Vec<crate::sequencer::replay::live::Link>,
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<Work>,
     pub(crate) recovery_anchor_work: Option<Work>,
