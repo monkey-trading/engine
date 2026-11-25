@@ -193,10 +193,11 @@ impl Store {
     /// commit writes nodes at its version, so a store with none after `root` is left untouched;
     /// otherwise the nodes go by a range delete, and each value written after `root` by the leaf node
     /// its write gave it at its own version (`batch::persist`), which names its key. A later node that does
-    /// not decode names no key, so the later values then go by a scan of every value. A host that rewrites a
-    /// later node into another that decodes can hide a value from the discard; the value is never served, as
-    /// every read proves what it finds against its root, and the next write at its version fails on it, every
-    /// commit writing its receipt there, which a history owner answers by rebuilding from the log.
+    /// not decode, or is no BLOB, names no key, so the later values then go by a scan of every value. A host
+    /// that rewrites a later node into another that decodes can hide a value from the discard; the value is
+    /// never served, as every read proves what it finds against its root, and the next write at its version
+    /// fails on it, every commit writing its receipt there, which a history owner answers by rebuilding from
+    /// the log.
     /// Error cases:
     /// - writes are unauthorized, another in-process head exists, or storage or durability fails
     pub fn discard_after(&self, root: &Root) -> Result<()> {
@@ -229,7 +230,8 @@ impl Store {
             let mut delete =
                 tx.prepare_cached("DELETE FROM value_rows WHERE space = ?1 AND key = ?2 AND version > ?3")?;
             while let Some(row) = rows.next()? {
-                match codec::leaf_key(row.get_ref(0)?.as_blob()?) {
+                // Bytes that are no node, or no BLOB, name no key.
+                match row.get_ref(0)?.as_blob().map_err(anyhow::Error::from).and_then(codec::leaf_key) {
                     Ok(Some(key)) => {
                         delete.execute(rusqlite::params![space, &key[..], after])?;
                     }

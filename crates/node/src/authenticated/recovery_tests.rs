@@ -105,27 +105,33 @@ fn discarding_unsigned_versions_resumes_writes_from_the_signed_root() -> Result<
     Ok(())
 }
 
-/// A later node the host damaged names no key, so the discard falls back to a scan of every value and still
-/// leaves nothing after the signed root, rather than refusing the start.
+/// A later node the host damaged, in bytes that are no node or in a value that is no BLOB, names no key, so the
+/// discard falls back to a scan of every value and still leaves nothing after the signed root, rather than
+/// refusing the start.
 #[test]
 fn discarding_unsigned_versions_survives_a_damaged_later_node() -> Result<()> {
-    let (dir, store) = fresh()?;
-    let signed = store.update(&Root::empty([23; 32]), vec![put(b"a", b"signed")])?;
-    store.update(&signed, vec![put(b"a", b"unsigned"), put(b"b", b"unsigned")])?;
-    drop(store);
-    let after = signed.version.map_or(-1, |v| v as i64);
-    raw(&dir)?.execute("UPDATE nodes SET data = x'ff' WHERE version > ?1", [after])?;
-    let reopened = Store::open_existing(dir.path.join("store.sqlite"))?;
-    reopened.enable_writes()?;
-    reopened.discard_after(&signed)?;
-    let later = |table: &str| -> Result<i64> {
-        let sql = format!("SELECT COUNT(*) FROM {table} WHERE version > ?1");
-        Ok(raw(&dir)?.query_row(&sql, [after], |row| row.get(0))?)
-    };
-    assert_eq!((later("nodes")?, later("value_rows")?), (0, 0), "nothing after the signed root is left");
-    assert_eq!(reopened.read(&signed, b"a")?, Some(b"signed".to_vec()));
-    let next = reopened.update(&signed, vec![put(b"b", b"resumed")])?;
-    assert_eq!(reopened.read(&next, b"b")?, Some(b"resumed".to_vec()));
+    for damaged in ["x'ff'", "'text'", "7"] {
+        let (dir, store) = fresh()?;
+        let signed = store.update(&Root::empty([23; 32]), vec![put(b"a", b"signed")])?;
+        store.update(&signed, vec![put(b"a", b"unsigned"), put(b"b", b"unsigned")])?;
+        drop(store);
+        let after = signed.version.map_or(-1, |v| v as i64);
+        let host = raw(&dir)?;
+        host.execute_batch("PRAGMA ignore_check_constraints = ON")?;
+        host.execute(&format!("UPDATE nodes SET data = {damaged} WHERE version > ?1"), [after])?;
+        drop(host);
+        let reopened = Store::open_existing(dir.path.join("store.sqlite"))?;
+        reopened.enable_writes()?;
+        reopened.discard_after(&signed)?;
+        let later = |table: &str| -> Result<i64> {
+            let sql = format!("SELECT COUNT(*) FROM {table} WHERE version > ?1");
+            Ok(raw(&dir)?.query_row(&sql, [after], |row| row.get(0))?)
+        };
+        assert_eq!((later("nodes")?, later("value_rows")?), (0, 0), "{damaged}: nothing after the root is left");
+        assert_eq!(reopened.read(&signed, b"a")?, Some(b"signed".to_vec()));
+        let next = reopened.update(&signed, vec![put(b"b", b"resumed")])?;
+        assert_eq!(reopened.read(&next, b"b")?, Some(b"resumed".to_vec()));
+    }
     Ok(())
 }
 
