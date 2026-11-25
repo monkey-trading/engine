@@ -136,6 +136,25 @@ fn a_directory_that_cannot_be_listed_is_a_failure_and_its_store_keeps_its_last_s
 }
 
 #[test]
+fn a_store_whose_directory_cannot_be_walked_still_names_and_sizes_its_volume() {
+    let root = scratch_dir("storage-unwalkable-naming");
+    let dirs = Dirs::new(&root);
+    write(&dirs.history.join(INDEX_FILE), 2 << 20);
+    // A file where the log directory should be: its walk fails, and the log is the volume's first store.
+    fs::remove_dir_all(&dirs.log).unwrap();
+    write(&dirs.log, 10);
+    let reading = dirs.layout().read();
+    assert_eq!(reading.failures.len(), 1, "{:?}", reading.failures);
+    assert_eq!(reading.failures[0].0, Store::Log);
+    let [volume] = reading.volumes.as_slice() else { panic!("{:?}", reading.volumes) };
+    assert_eq!(volume.name, "log");
+    assert_eq!(volume.stores.first(), Some(&Store::Log));
+    assert!(0 < volume.total_bytes, "the volume is still sized");
+    assert!(volume.holds.iter().all(|(store, _)| *store != Store::Log), "{:?}", volume.holds);
+    assert!(volume.holds.iter().any(|(store, _)| *store == Store::HistoryIndex), "{:?}", volume.holds);
+}
+
+#[test]
 fn volumes_are_named_by_their_first_store_whatever_else_is_on_them() {
     let device =
         |stores: &[Store]| Device { stores: stores.to_vec(), holds: vec![], space: Some((100 * GIB, 50 * GIB)) };

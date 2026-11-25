@@ -48,7 +48,8 @@ pub(super) struct Device {
 
 impl Layout {
     /// Reads every store and volume. A store whose directory does not exist yet holds nothing. A store with a
-    /// directory that cannot be read has no size in the reading, so its metric keeps the last size read. A volume
+    /// directory that cannot be walked has no size in the reading, so its metric keeps the last size read, and no entry
+    /// in its volume's `holds`, but still names and sizes the volume it is on. A volume
     /// whose size cannot be read is left out, and a directory whose device cannot be found leaves out every volume,
     /// since its store might name one.
     pub fn read(&self) -> Reading {
@@ -62,15 +63,18 @@ impl Layout {
             // they are on.
             for (index, (dir, pick)) in dirs.into_iter().enumerate() {
                 let walked = if store == Store::Log { self.walk_log(dir) } else { walk(dir, pick, true) };
+                // A failed walk leaves out the store's bytes only: its volume is still named and judged.
                 let found = match walked {
-                    Ok(found) => found,
+                    Ok(found) => {
+                        bytes = bytes.saturating_add(found);
+                        Some(found)
+                    }
                     Err(error) => {
                         readable = false;
                         reading.failures.push((store, format!("reading {}: {error}", dir.display())));
-                        continue;
+                        None
                     }
                 };
-                bytes = bytes.saturating_add(found);
                 let device = match device_of(dir) {
                     Ok(device) => devices.entry(device).or_default(),
                     Err(error) => {
@@ -79,9 +83,11 @@ impl Layout {
                         continue;
                     }
                 };
-                match device.holds.iter_mut().find(|(held, _)| *held == store) {
-                    Some((_, held)) => *held = held.saturating_add(found),
-                    None => device.holds.push((store, found)),
+                if let Some(found) = found {
+                    match device.holds.iter_mut().find(|(held, _)| *held == store) {
+                        Some((_, held)) => *held = held.saturating_add(found),
+                        None => device.holds.push((store, found)),
+                    }
                 }
                 if index == 0 {
                     device.stores.push(store);
