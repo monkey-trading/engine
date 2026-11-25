@@ -39,7 +39,7 @@ impl Fold {
     ///   whose commands carry no events
     pub(in crate::sequencer) fn of(replay: &Replay) -> anyhow::Result<Self> {
         ensure!(
-            replay.range.is_none() && (!replay.partial || replay.cached.is_some()),
+            replay.folds(),
             "a replay of one range of a log, or from a recovery cache that carries no replay state, holds no whole fold"
         );
         let (payout_order, signed, authorized) = match &replay.cached {

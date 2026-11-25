@@ -22,6 +22,8 @@ use crate::test_support::{dev_config, sample_around, scratch_dir, sequencer_conf
 
 /// Ten minutes before a UTC midnight, on a minute boundary.
 const START: Millis = 1_792_540_800_000 - 600_000;
+/// A UTC day.
+const DAY_MS: Millis = 86_400_000;
 /// The markets the test prices.
 const MARKETS: [MarketId; 2] = [1, 2];
 
@@ -88,7 +90,150 @@ async fn an_altered_frozen_copy_starts_the_chart_history_at_the_snapshot() {
     }
 }
 
+/// A daily snapshot its signer signed but whose replay state does not stand for its checkpoint, as a writer's fault
+/// would sign it, is paged as Warning `snapshot_start_refused` and the start replays the whole log, re-deriving the
+/// chart history and the dashboard record the snapshot's restore had put in place.
+#[tokio::test]
+async fn a_snapshot_the_start_cannot_go_on_from_gives_way_to_a_whole_replay() {
+    let written = Written::run("snapshot-start-refused").await;
+    let cfg = &written.cfg;
+    resign(&cfg.daily_snapshots.as_ref().unwrap().dir.join(&written.snapshot.file), cfg, |carried| {
+        carried["links"].as_array_mut().unwrap().pop();
+    });
+
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let marks = marks::startup(cfg, written.key.marks_key(), false).unwrap();
+    let metrics = Metrics::new();
+    let recovered = recover(cfg, &written.key, None, &marks, None, &metrics).await.unwrap();
+    let refused =
+        std::iter::from_fn(|| alerts.try_recv().ok()).find(|alert| alert["alert"] == "snapshot_start_refused");
+    assert!(refused.is_some(), "the refusal pages");
+    assert_eq!(recovered.log.snapshot_sequence(), None, "the start went on from the refused snapshot");
+    assert_eq!(metrics.full_replays.get(), 1, "the whole replay is counted");
+    assert_eq!(recovered.stats.dump(), written.stats.dump(), "the dashboard record");
+    let (_store, reader, ..) = marks.activate().unwrap();
+    assert_eq!(pages(&reader).await, written.pages, "the chart history");
+}
+
+/// With `[snapshots]` and no cache to take, the start replays the log after the daily snapshot into the dashboard
+/// record it carries, which answers as the node's did.
+#[tokio::test]
+async fn a_paired_start_from_a_daily_snapshot_keeps_the_dashboard_record() {
+    let mut written = Written::run("snapshot-start-paired").await;
+    let root = written.cfg.node.log_dir.parent().unwrap().to_owned();
+    written.cfg.snapshots = Some(crate::config::SnapshotSection {
+        dir: root.join("snapshots"),
+        retain: 4.try_into().unwrap(),
+        interval: Duration::ZERO,
+        max_bytes: (16 * 1024 * 1024).try_into().unwrap(),
+        trusted_signers: Vec::new(),
+    });
+    let cfg = &written.cfg;
+    let marks = marks::startup(cfg, written.key.marks_key(), false).unwrap();
+    let recovered = recover(cfg, &written.key, None, &marks, None, &Metrics::new()).await.unwrap();
+    assert_eq!(recovered.log.snapshot_sequence(), Some(written.snapshot.seq), "the start went on from the snapshot");
+    assert_eq!(recovered.stats.dump(), written.stats.dump(), "the dashboard record");
+}
+
+/// A node started again from its daily snapshot publishes, at the next day's first checkpoint, a snapshot whose
+/// replay state, folded on from the one the start took, is the one a whole replay of its log carries there.
+#[tokio::test]
+async fn a_snapshot_written_after_a_start_from_a_snapshot_carries_what_the_whole_log_folds() {
+    let written = Written::run("snapshot-start-next-day").await;
+    let cfg = &written.cfg;
+    let marks = marks::startup(cfg, written.key.marks_key(), false).unwrap();
+    let recovered = recover(cfg, &written.key, None, &marks, None, &Metrics::new()).await.unwrap();
+    assert_eq!(recovered.log.snapshot_sequence(), Some(written.snapshot.seq), "the start went on from the snapshot");
+    let clock = Arc::new(TestClock::at(recovered.log.replayed.engine.now() + 1_000));
+    let daily = cfg.daily_snapshots.as_ref().unwrap().dir.clone();
+    let (manifest, _) = watch::channel(Manifest::default());
+    let seq_cfg = SequencerConfig {
+        clock: clock.clone(),
+        genesis: genesis_commands(&cfg.genesis),
+        daily_snapshots: Some(daily.clone()),
+        ..sequencer_config(&cfg.node.log_dir, manifest)
+    };
+    let (stream, withdrawals) = (broadcast::channel(16).0, mpsc::unbounded_channel().0);
+    let mut seq = Sequencer::recover_from(recovered.log, seq_cfg, written.key.clone(), stream, withdrawals).unwrap();
+    seq.track_stats(recovered.stats.clone());
+    seq.pipeline_log_syncs().unwrap();
+    seq.trust(sample_around(clock.as_ref())).unwrap();
+    let (tx, rx) = mpsc::channel(64);
+    let sequencer = tokio::spawn(seq.run(rx));
+    // Past the next midnight, the first checkpoint takes the day's snapshot.
+    let to_midnight = Duration::from_millis(u64::try_from(DAY_MS - clock.now_ms().rem_euclid(DAY_MS)).unwrap());
+    let two = Duration::from_secs(2);
+    for by in [Duration::from_secs(61), to_midnight, two, two, two] {
+        clock.advance(by);
+        tx.send(Request::TimeSample(sample_around(clock.as_ref()))).await.unwrap();
+        for market in MARKETS {
+            submit(&tx, prices(market, clock.now_ms(), 67_500)).await;
+        }
+    }
+    let listed = wait_for("the next day's snapshot", async {
+        loop {
+            let listed = read_manifest(&daily).unwrap();
+            if listed.len() == 3 {
+                return listed;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    drop(tx);
+    sequencer.await.unwrap().unwrap();
+
+    let newest = &listed[2];
+    let offset = crate::log::Offset { seq: newest.seq, index: newest.index };
+    let domain =
+        crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
+    let signers = [AccountId(written.key.address())].into();
+    let whole: serde_json::Value = serde_json::from_str(
+        &crate::sequencer::replay::carried_at(&cfg.node.log_dir, offset, (domain, signers)).unwrap(),
+    )
+    .unwrap();
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(daily.join(&newest.file)).unwrap()).unwrap();
+    assert_eq!(snapshot["carried"], whole, "the replay state the whole log folds at the snapshot's checkpoint");
+}
+
 // ── Helpers ──
+
+/// Signs the daily snapshot at `path` again, with `alter` applied to the replay state it carries, under the test
+/// enclave's key in `cfg`'s deployment, its other parts as written.
+fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serde_json::Value)) {
+    use crate::daily_snapshots::{Covered, Signing, sha256};
+    use serde_json::value::RawValue;
+    #[derive(serde::Deserialize)]
+    struct Parts {
+        offset: crate::log::Offset,
+        checkpoint: Checkpoint,
+        engine: Box<RawValue>,
+        carried: serde_json::Value,
+        history: Box<RawValue>,
+    }
+    let mut parts: Parts = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    alter(&mut parts.carried);
+    let carried = serde_json::to_string(&parts.carried).unwrap();
+    let (engine, history) = (parts.engine.get(), parts.history.get());
+    let covered = Covered {
+        state: sha256(engine.as_bytes()),
+        carried: sha256(carried.as_bytes()),
+        history: sha256(history.as_bytes()),
+    };
+    let domain =
+        crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
+    let signing = Signing { key: Arc::new(EnclaveKey::test_key()), domain };
+    let signature = signing.sign(parts.offset, parts.checkpoint.root.parse().unwrap(), covered);
+    let (offset, checkpoint) =
+        (serde_json::to_string(&parts.offset).unwrap(), serde_json::to_string(&parts.checkpoint).unwrap());
+    let state = hex::encode(covered.state);
+    let text = format!(
+        r#"{{"schema":{},"offset":{offset},"checkpoint":{checkpoint},"engine":{engine},"state":"{state}","carried":{carried},"history":{history},"signature":"{signature}"}}"#,
+        crate::daily_snapshots::SCHEMA
+    );
+    std::fs::write(path, text).unwrap();
+}
 
 /// A node's log with a daily snapshot after marks in both markets, and what the node answered once it stopped.
 struct Written {

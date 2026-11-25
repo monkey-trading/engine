@@ -22,9 +22,10 @@ use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
 use tracing::{debug, info, warn};
 
+use crate::daily_snapshots::fetch::EarlierFormat;
 use crate::daily_snapshots::fetch::{download, offered};
 use crate::daily_snapshots::writer::write_manifest;
-use crate::daily_snapshots::{Listed, SCHEMA, Signed, open_signed, read_manifest};
+use crate::daily_snapshots::{FORMAT_BYTES, Listed, Signed, earlier_format, open_signed, read_manifest};
 use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 
 /// How many of the newest offsets are tried, each from every source that lists it, before the start replays the
@@ -143,6 +144,10 @@ pub(crate) async fn snapshot_start_against(
                 }
                 return Some(signed);
             }
+            // As one this node holds, a snapshot of an earlier format carries no replay state, and is passed over.
+            Err(e) if e.is::<EarlierFormat>() => {
+                debug!(seq = listing.seq, "daily snapshot {} offered: {e:#}", listing.file);
+            }
             Err(e) => warn!(
                 alert = "snapshot_start_refused",
                 seq = listing.seq,
@@ -154,14 +159,14 @@ pub(crate) async fn snapshot_start_against(
     None
 }
 
-/// Whether the held snapshot at `path` is of the format that carries the replay state, read from its first bytes,
-/// as the writer puts its format first; one that cannot be read is left for its check to refuse.
+/// Whether the held snapshot at `path` may carry the replay state: its first bytes, where every writer puts its
+/// format, name no earlier format (`earlier_format`); one that cannot be read, or names none, is left for its
+/// check to refuse.
 fn carries_state(path: &Path) -> bool {
-    let mut head = [0u8; 32];
+    let mut head = [0u8; FORMAT_BYTES];
     let read = File::open(path).and_then(|mut file| file.read(&mut head));
     let Ok(read) = read else { return true };
-    let prefix = format!("{{\"schema\":{SCHEMA},");
-    let carries = head[..read].starts_with(prefix.as_bytes());
+    let carries = !earlier_format(&head[..read]);
     if !carries {
         debug!(snapshot = %path.display(), "a daily snapshot of an earlier format carries no replay state for a start");
     }

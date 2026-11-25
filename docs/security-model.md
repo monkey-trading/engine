@@ -489,9 +489,14 @@ the checkpoint accounting. A snapshot crafted so that building its indexes or it
 engine's arithmetic stops the replay with a panic rather than an error; it never passes.
 
 A trading server starts from its newest usable daily snapshot and the log's segments on its host
-after the snapshot's checkpoint, and reads none of the log before it, so the host need keep only the
-segments after that checkpoint; so does a rotation member's replica, a standby's copy, a handover
-successor's copy, and the derivations of history the log's replay feeds. A usable snapshot is one
+after the snapshot's checkpoint, and reads none of the log before it; nor does a rotation member's
+replica, a standby's copy, a handover successor's copy, or the re-derivation of a rollover's financing
+rows. Two reads still need older segments: a posted log head older than the last 65,536 instructions
+before the snapshot's checkpoint, whose links the snapshot carries, is checked by hashing the log's
+instructions from the head onto the checkpoint, and a rebuild or repair of the account history index
+reads the log from its start. So the host keeps the segments from the earlier of the posted head and
+the snapshot's checkpoint, and every segment while the history index may need rebuilding. A usable
+snapshot is one
 that carries the replay state, whose signature is by its checkpoint's signer, one of the signers the
 vault recorded (under mock custody, the trading server's own key), whose checkpoint is at or before
 the checkpoint the vault finalized and, where the vault accepted one at that sequence number, has the
@@ -505,13 +510,19 @@ pinned to the vault's signer history, a checkpoint before the snapshot that such
 names is taken from the vault. What the start takes on trust is the state and the replay state at
 the snapshot's checkpoint, on the word of the key that signed that checkpoint; the log after it is
 checked as before, and a posted log head at or below the checkpoint is bound to the running digest
-the snapshot carries. A snapshot that fails any check is passed over, with Warning
-`snapshot_start_refused`, for the next newest, three at most, and the start replays the whole log
-when none passes. Its dashboard record continues from the one the snapshot carries, and its chart
+the snapshot carries. A snapshot whose signature, root or checkpoint does not pass is passed over for
+the next newest, three at most; one whose state's root or replay state then does not check gives way
+to a whole replay, as does the start when none passes; each is paged with Warning
+`snapshot_start_refused`. Its dashboard record continues from the one the snapshot carries, and its chart
 history from a frozen copy of the cache the marks task wrote at the snapshot's checkpoint, which the
 start takes only when every row authenticates under the cache's key and every chain matches the
 anchors the snapshot carries; a copy that does not is set aside with Warning `marks_cache_rebuilt`,
 and the chart history before the snapshot is then lost until a provider backfill restores what it can.
+The marks task writes the copy after the marks of every instruction through the checkpoint and before
+any later one. With `[snapshots]`, a start with no recovery cache that verifies replays the log after
+the same snapshot, its dashboard record continuing from the snapshot's and its chart history the cache
+on disk, as after a start from a recovery cache; with `[daily_snapshots]` too, a start takes only a
+recovery cache that carries the replay state, so the daily snapshots go on after it.
 
 What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
 signer it pins, the attested signers, or the vault's signer history, and computes everything else
@@ -1502,8 +1513,9 @@ Known limits:
   whole, not by the start.
 - The host can withhold the newer snapshots, so a start goes on from an older one and replays more of
   the log, or remove the log's segments before the newest usable snapshot's checkpoint, after which a
-  start with no usable snapshot cannot replay the log and refuses to serve. A start never takes a
-  snapshot the vault has not finalized.
+  start with no usable snapshot, or with a posted head older than the links the snapshot carries, cannot
+  read the log it needs and refuses to serve, as does a rebuild of the account history index. A start
+  never takes a snapshot the vault has not finalized.
 - A trading server or a member that started from a daily snapshot did not replay the log before the
   snapshot's checkpoint, so its own check at a handover or a promotion counts only for a range that
   starts after that checkpoint, and a member answers another's question only for a range that starts

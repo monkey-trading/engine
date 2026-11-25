@@ -39,13 +39,18 @@ their output call a running trading server a node.
   of loading and checking the snapshot, about 40 CPU-seconds at 100,000 accounts. These figures are
   projected from the whole replay's rate, not measured at launch scale. The start's time does not grow
   with the log's age. The chart history and the dashboard figures continue from what the snapshot
-  carries, so they answer as before the restart.
+  carries, so they answer as before the restart. The start still reads the log from the posted log
+  head when the head is older than the snapshot's last 65,536 instructions, and a rebuild of the
+  account history index (below) reads the whole log, so the host keeps every segment while either can
+  happen.
 - **Some starts replay much more.** A start that finds no usable daily snapshot (`snapshot_start_refused`,
   or none written yet, as in a log's first day) replays every instruction in the log: 30 days of launch
   flow, about 246 million instructions, take about 11 hours, and the log's segments before the newest
   snapshot must all be on the host. With `[snapshots]`, a start that finds no usable cache
   (`snapshot_rejected`) starts from a daily snapshot in the same way, or replays the whole log, and also
-  rebuilds the history index from it, which takes longer still. Plan a restart's downtime from these.
+  rebuilds the history index from the whole log, which takes longer still. With `[daily_snapshots]`
+  too, it rejects a cache that carries no replay state, as one from an earlier release or taken while
+  the stats worker was stopped, so its daily snapshots go on. Plan a restart's downtime from these.
 - **A restart keeps the keys.** With `[tee.sealing]`, the same image and configuration on the same
   chip open the same sealed keys. The enclave address, the signer epoch, the TLS key and therefore
   `$PIN`, the certificate, and the outstanding withdrawal authorisations are unchanged. A restart
@@ -294,7 +299,9 @@ affected.
    history index is in `snapshots/`: remove `snapshots/` and `history/`, and nothing else. The
    recovery caches go with them, so this start replays the whole log.
 
-3. Start the VM. The rebuild is a replay, so allow time in proportion to the length of the log.
+3. Start the VM. The rebuild is a replay, so allow time in proportion to the length of the log. The
+   account history index is rebuilt from the log's start, so every segment of the log must be on the
+   host; bring back any moved off it first, from the archive.
 
 **How to tell it is resolved.** The console reaches `history index holds the log's tip`.
 
@@ -315,7 +322,9 @@ host.
 
 The trading server keeps every day's snapshot, so the directory grows without a bound, by about
 420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old
-snapshots off the host, as step 4 describes.
+snapshots off the host, as step 4 describes. Beside the marks cache in `history/`, the marks task
+keeps a frozen copy of the cache at each of the three newest snapshots' checkpoints, from which a
+start restores the chart history, so `history/` holds up to four times the cache's size.
 
 1. Read what the trading server lists:
 
@@ -331,8 +340,9 @@ snapshots off the host, as step 4 describes.
    start, the writer was still writing the last snapshot, or the state could not be encoded or
    written. The trading server tries again at the next UTC day's first checkpoint, and the alert
    resolves when a snapshot is published. Check the free space and the permissions of the
-   snapshot directory on the data disk. A writer that did not start publishes nothing until the
-   trading server restarts.
+   snapshot directory on the data disk. A writer that did not start, and a stats worker that stopped
+   or stopped folding the replay state, which the message names, publish nothing until the trading
+   server restarts.
 
    **Changes the live system.** The owner must approve the restart, as
    [Restart a healthy trading server](#restart-a-healthy-trading-server) describes. The alert alone

@@ -76,6 +76,33 @@ impl Captures {
         });
         Self { daily, fold, ..Self::default() }
     }
+
+    /// Folds `entry`, which the sequencer logged before the stats worker started, into the replay state recovery
+    /// folded, which the worker then folds on from: the checkpoints and withdrawal authorizations a recovery
+    /// writes before it attaches the worker. A command, which reaches the fold only through the worker, or an
+    /// entry the fold refuses leaves no state to seed the worker with, paged as Warning `daily_snapshot_failed`
+    /// under `[daily_snapshots]`, whose snapshots alone need it.
+    pub(super) fn fold_before_worker(&mut self, entry: &crate::log::LogEntry) {
+        use crate::log::LogEntry;
+        let Some(fold) = self.fold.as_mut() else { return };
+        let folded = match entry {
+            LogEntry::Withdrawal(withdrawal) => fold.withdrawal(withdrawal),
+            LogEntry::Checkpoint(checkpoint) => fold.checkpoint(checkpoint),
+            LogEntry::Command(command) => Err(anyhow::anyhow!(
+                "the command at seq {} was logged before the stats worker started",
+                command.sequenced.seq
+            )),
+        };
+        if let Err(e) = folded {
+            self.fold = None;
+            if self.daily.is_some() {
+                warn!(
+                    alert = "daily_snapshot_failed",
+                    "no replay state for the daily snapshots until a restart: {e:#}"
+                );
+            }
+        }
+    }
 }
 
 impl Sequencer {

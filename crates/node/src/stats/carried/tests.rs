@@ -183,3 +183,57 @@ fn answers(stats: &Stats, engine: &Engine) -> Vec<serde_json::Value> {
         monkey,
     ]
 }
+
+/// The sequencer thread's cost of a daily snapshot's capture of the dashboard record (`Stats::capture`, taken at the
+/// day's first checkpoint), every series full at the default retentions (two days of minutes, 90 days of hours and
+/// three years of days) for 34 markets, against #904's 500 ms bar for what a price may wait behind a daily event.
+/// Run it in a quiet CPU window: `cargo test -p engine-node --lib stats::carried::tests::capture_cost -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore = "a benchmark"]
+fn capture_cost() {
+    use crate::stats::series::{Bucket, Metric};
+    const MARKETS: u32 = 34;
+    let stats = stats();
+    let level = Bucket::Level { open: Amount::ZERO, high: Amount::ZERO, low: Amount::ZERO, close: Amount::ZERO };
+    let global = [
+        Metric::Nav,
+        Metric::Cash,
+        Metric::WithdrawalQueue,
+        Metric::TotalStaked,
+        Metric::TotalAllocated,
+        Metric::CumulativeDistributed,
+        Metric::Volume,
+        Metric::MonkeyPerLoss,
+        Metric::DistributedPerEpoch,
+    ];
+    let per_market = (1..=MARKETS)
+        .flat_map(|market| [Metric::Long, Metric::Short, Metric::Volume].map(|metric| (metric, Some(market))));
+    let keys: Vec<_> = global.into_iter().map(|metric| (metric, None)).chain(per_market).collect();
+    {
+        let mut inner = stats.lock();
+        for key in &keys {
+            let buckets = inner.series.series.entry(*key).or_default();
+            buckets[0] = (0..2_880).map(|minute: Millis| (minute * 60_000, level)).collect();
+            buckets[1] = (0..2_160).map(|hour: Millis| (hour * 3_600_000, level)).collect();
+            buckets[2] = (0..1_095).map(|day: Millis| (day * 86_400_000, level)).collect();
+        }
+    }
+    let mut taken: Vec<Duration> = (0..10)
+        .map(|_| {
+            let started = std::time::Instant::now();
+            let capture = stats.capture();
+            let took = started.elapsed();
+            drop(capture);
+            took
+        })
+        .collect();
+    taken.sort();
+    let buckets = keys.len() * (2_880 + 2_160 + 1_095);
+    println!(
+        "STATS_CAPTURE series={} buckets={buckets} median_ms={:.1} max_ms={:.1}",
+        keys.len(),
+        taken[taken.len() / 2].as_secs_f64() * 1e3,
+        taken[taken.len() - 1].as_secs_f64() * 1e3
+    );
+}

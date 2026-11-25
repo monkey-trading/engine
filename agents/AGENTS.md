@@ -335,12 +335,16 @@ an index: load only the rule whose hint matches the current action.
   and the log after it (`node/recovery/snapshot.rs`, `daily_snapshots/start.rs`, `Replay::replay_after` in
   `sequencer/replay/resumed.rs`: schema 3, signed by its checkpoint's vault-recorded signer, at or before the vault's
   finalized checkpoint with the vault's root there, its checkpoint held by the local log; the three newest tried,
-  Warning `snapshot_start_refused` for each refused, a whole replay with none), which a node's start, a member's
+  Warning `snapshot_start_refused` for each refused, a whole replay with none, or once the chosen one's root or carried
+  state does not check, `SnapshotRefused`), which a node's start, a member's
   replica, a standby's open, cold start and takeover, and a handover successor's copy (`handover/copy.rs`,
   `replay_copy_from`) take, with signer history from its checkpoint (`checkpoints/history.rs`), a posted head under
   it bound to the prefix it carries (`log_heads/prefix.rs`), the takeover cut read from the vault's checkpoint on,
   derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
-  dashboard record restored from the snapshot and the marks cache from the frozen copy its anchors match, a member
+  dashboard record restored from the snapshot (a `[snapshots]` fallback's too) and the marks cache from the frozen copy
+  its anchors match, written by the marks task between the marks before the checkpoint and those after, synced in steps,
+  a `[snapshots]` start under `[daily_snapshots]` taking only a recovery cache that carries its replay state, the entries
+  a recovery logs before the stats worker starts folded into its seed (`Captures::fold_before_worker`), a member
   answering a log-check question only for a range that starts after its snapshot (`Checked::from`), and the log's
   readers pairing manifest lines with segment files by name (`log/local.rs`), a read before the first local segment
   refused with `log::NotLocal`, which names the archive (the stream's backfill answers 400);

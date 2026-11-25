@@ -43,6 +43,16 @@ pub(crate) const MANIFEST: &str = "manifest.jsonl";
 /// The snapshot format this build writes: signed over its state, the replay state it carries and its history
 /// anchors. A start takes only this format; a replay in ranges reads the two before it too.
 pub(crate) const SCHEMA: u32 = 3;
+
+/// How many of a snapshot's first bytes name its format, as every writer puts it first (`{"schema":N,`).
+const FORMAT_BYTES: usize = 12;
+
+/// Whether `head`, a snapshot's first bytes, names a format before the one this build writes, which carries no
+/// replay state: what a start reads to pass over such a snapshot before it decodes or fetches the rest. Any other
+/// head is left for the snapshot's checks to refuse.
+fn earlier_format(head: &[u8]) -> bool {
+    (UNSIGNED_SCHEMA..SCHEMA).any(|schema| head.starts_with(format!("{{\"schema\":{schema},").as_bytes()))
+}
 /// The format signed over its state alone, which carries no replay state.
 const STATE_SCHEMA: u32 = 2;
 /// The format before signatures.

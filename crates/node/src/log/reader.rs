@@ -94,9 +94,8 @@ impl LogReader {
                 let path = self.dir.join(&info.file);
                 // A listed segment the host no longer holds is the archive's to serve.
                 if !path.try_exists().with_context(|| format!("probing {}", path.display()))? {
-                    return Err(
-                        crate::log::NotLocal { seq: info.first_seq.max(self.from.seq), first_local: None }.into()
-                    );
+                    let not_local = crate::log::NotLocal { seq: info.first_seq.max(self.from.seq), first_local: None };
+                    return Err(anyhow::Error::new(not_local).context(format!("segment {}", info.file)));
                 }
                 let hashes = match segment.verified.take() {
                     Some((known, was_complete, hashes, progress)) if known == info && was_complete == complete => {

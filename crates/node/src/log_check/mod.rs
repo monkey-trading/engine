@@ -74,7 +74,8 @@ pub(crate) struct Due {
     /// The turn's member, whose node asks and is never asked.
     pub candidate: AccountId,
     pub head: VerifiedHead,
-    /// The first seq of the range the check covers: the one after the last verified head.
+    /// The first seq of the range the check covers, the one `excluded` attributes: the one after the last
+    /// verified head, or, with none, the latest `TurnTaken` at or before `head` (`Takings::first`).
     pub from: u64,
     pub excluded: Sequencers,
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use engine_core::types::AccountId;
-use tracing::error;
+use tracing::{error, warn};
 
 use crate::checkpoints::setup::Setup;
 use crate::config::NodeConfig;
@@ -17,6 +17,7 @@ use crate::metrics::Metrics;
 use crate::node::marks;
 use crate::node::member::Replica;
 use crate::node::ready::Ready;
+use crate::sequencer::replay::SnapshotRefused;
 use crate::sequencer::{ReplayedLog, Sequencer};
 use crate::stats::Stats;
 use crate::tee::EnclaveKey;
@@ -147,7 +148,8 @@ fn from_replica(
 /// evidence, from the daily snapshot's offset and checkpoint when one is taken, awaited only for a replay of the
 /// log. The on-chain posted log head is read before the log replays: the rollback check binds to the link the
 /// replay captures at the posted seq, never a second pass over the host's files, or, for a head at or under the
-/// daily snapshot's checkpoint, to the history the snapshot carries.
+/// daily snapshot's checkpoint, to the history the snapshot carries. A daily snapshot the replay cannot go on from at
+/// all (`SnapshotRefused`) is paged as Warning `snapshot_start_refused`, and the whole log replays instead.
 /// Error cases:
 /// - history, log, authenticated signer history, the posted-head read or its binding, or the marks cache fails
 pub(super) async fn read_log_and_history_authorities(
@@ -157,7 +159,7 @@ pub(super) async fn read_log_and_history_authorities(
         Option<crate::log::CheckpointParent>,
         impl Future<Output = Option<crate::daily_snapshots::Signed>>,
     ),
-    authorities: impl AsyncFnOnce(
+    authorities: impl AsyncFn(
         Option<(crate::log::Offset, crate::log::Checkpoint)>,
     ) -> anyhow::Result<crate::checkpoints::SignerHistory>,
     marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
@@ -194,15 +196,85 @@ pub(super) async fn read_log_and_history_authorities(
                 if let Some(start) = start.take() {
                     chosen = start.await;
                 }
-                let authorities = authorities(from(&chosen)).await?;
+                let file = chosen.as_ref().map(|start| (start.path.clone(), start.snapshot.offset.seq));
+                let evidence = authorities(from(&chosen)).await?;
                 let stats = Some(stats.clone());
-                Sequencer::replay_paired_log(cfg, signer, parent, authorities, stats, capture, chosen, observe)
-                    .inspect_err(recovery_failed)?
+                let read = Sequencer::replay_paired_log(
+                    cfg,
+                    signer,
+                    parent,
+                    evidence,
+                    stats.clone(),
+                    capture,
+                    chosen,
+                    &mut observe,
+                );
+                match read {
+                    // Refused before any entry is read: the whole replay starts the record over.
+                    Err(refused) if refused.is::<SnapshotRefused>() => {
+                        let (file, seq) = file.expect("only a replay from a daily snapshot is refused");
+                        warn!(
+                            alert = "snapshot_start_refused",
+                            seq,
+                            "the start does not go on from daily snapshot {}: {refused:#}; the whole log replays",
+                            file.display()
+                        );
+                        let evidence = authorities(None).await?;
+                        Sequencer::replay_paired_log(cfg, signer, parent, evidence, stats, capture, None, observe)
+                    }
+                    read => read,
+                }
+                .inspect_err(recovery_failed)?
             }
         };
         return Ok((log, HistoryPlan::authenticated(plan)?, pending));
     }
     let start = start.await;
+    let file = start.as_ref().map(|start| (start.path.clone(), start.snapshot.offset.seq));
+    let trust = (signer, parent, capture);
+    let (log, check) = match replay(cfg, trust, start, &authorities, marks, stats, &mut observe).await {
+        // A snapshot the replay cannot go on from at all leaves the record, the marks cache and the history plan as
+        // they were before the replay read any entry: the whole replay starts the record over and re-derives the
+        // cache's log-derived rows.
+        Err(refused) if refused.is::<SnapshotRefused>() => {
+            let (file, seq) = file.expect("only a start from a daily snapshot is refused");
+            warn!(
+                alert = "snapshot_start_refused",
+                seq,
+                "the start does not go on from daily snapshot {}: {refused:#}; the whole log replays",
+                file.display()
+            );
+            replay(cfg, trust, None, &authorities, marks, stats, &mut observe).await?
+        }
+        read => read?,
+    };
+    Ok((log, check, pending))
+}
+
+/// The log replayed without `[snapshots]`, from the daily snapshot `start` when one is given or else from its start,
+/// against the signer evidence `authorities` gives from there, with the history plan checked against it; the marks
+/// cache's log-derived rows extended from the snapshot's or re-derived from the log's start through `marks`, and the
+/// dashboard record `stats` going on from where the caller put it at the snapshot or started over.
+/// Error cases:
+/// - the snapshot cannot be gone on from at all (`SnapshotRefused`), before any entry is read
+/// - the posted head's binding to the snapshot's history, the signer evidence, the history plan, the replay or the
+///   marks cache fails, each but the first paged as it fails
+async fn replay(
+    cfg: &NodeConfig,
+    (signer, parent, capture): (
+        Option<AccountId>,
+        Option<crate::log::CheckpointParent>,
+        Option<crate::log_heads::Head>,
+    ),
+    start: Option<crate::daily_snapshots::Signed>,
+    authorities: &impl AsyncFn(
+        Option<(crate::log::Offset, crate::log::Checkpoint)>,
+    ) -> anyhow::Result<crate::checkpoints::SignerHistory>,
+    marks: &std::rc::Rc<std::cell::RefCell<crate::history::marks::Store>>,
+    stats: &Stats,
+    mut observe: impl FnMut(&crate::log::LogEntry),
+) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    let from = start.as_ref().map(|start| (start.snapshot.offset, start.snapshot.checkpoint.clone()));
     // A head at or under the snapshot's checkpoint, which the replay after it never reaches, is bound to the history
     // the snapshot carries.
     let posted_ts = match &start {
@@ -210,7 +282,7 @@ pub(super) async fn read_log_and_history_authorities(
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?,
         None => None,
     };
-    let authorities = authorities(from(&start)).await?;
+    let authorities = authorities(from).await?;
     let history_failed = |e: &anyhow::Error| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}");
     let mut check = HistoryPlan::open(&cfg.history).inspect_err(history_failed)?;
     // From a daily snapshot, the replay extends the cache its frozen copy started; from the log's start, it
@@ -252,7 +324,11 @@ pub(super) async fn read_log_and_history_authorities(
             workers,
         ),
     }
-    .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    .inspect_err(|e| {
+        if !e.is::<SnapshotRefused>() {
+            error!(alert = "log_recovery_failed", "refusing to serve: {e:#}");
+        }
+    })?;
     log.replayed.ts_at = log.replayed.ts_at.or(posted_ts);
     if let Some(seq) = start_seq {
         check.observe_before(dir, seq);
@@ -262,7 +338,7 @@ pub(super) async fn read_log_and_history_authorities(
         marks.borrow_mut().reset_log_derived().context("resetting the marks cache for re-derivation")?;
     }
     anyhow::ensure!(!seeding.get(), "seeding the marks cache from the log failed");
-    Ok((log, check, pending))
+    Ok((log, check))
 }
 
 mod snapshot;

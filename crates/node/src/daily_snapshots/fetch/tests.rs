@@ -50,7 +50,8 @@ async fn a_member_hears_the_snapshots_its_origins_list_within_the_bound() {
 }
 
 /// A member fetches a listed snapshot byte for byte, unlisted, into its directory; one whose bytes differ from its
-/// listing is refused, and nothing of it stays.
+/// listing is refused, as is one whose first bytes name an earlier format, before the rest is read, and nothing of
+/// either stays.
 #[tokio::test]
 async fn a_member_fetches_a_snapshot_whole_or_not_at_all() {
     let origin = scratch_dir("fetch-origin");
@@ -63,14 +64,24 @@ async fn a_member_fetches_a_snapshot_whole_or_not_at_all() {
     assert_eq!(std::fs::read(&path).unwrap(), std::fs::read(origin.join(&listing.file)).unwrap());
     assert!(!member.join(MANIFEST).exists(), "the caller lists it once it passes");
 
-    let mut bytes = std::fs::read(origin.join(&listing.file)).unwrap();
-    bytes[10] ^= 1;
-    std::fs::write(origin.join(&listing.file), bytes).unwrap();
-    let damaged = scratch_dir("fetch-damaged-member");
-    let error = download(&client, &url, &damaged, &listing).await.unwrap_err();
-    assert!(format!("{error:#}").contains("differs from its listing"), "{error:#}");
-    let held: Vec<_> = std::fs::read_dir(&damaged).unwrap().map(|entry| entry.unwrap().file_name()).collect();
-    assert!(held.is_empty(), "{held:?}");
+    let written = std::fs::read(origin.join(&listing.file)).unwrap();
+    let mut damaged = written.clone();
+    damaged[40] ^= 1;
+    let mut earlier = written.clone();
+    let prefix = format!("{{\"schema\":{},", crate::daily_snapshots::SCHEMA).into_bytes();
+    assert!(earlier.starts_with(&prefix), "the writer puts the format first");
+    earlier[prefix.len() - 2] = b'2';
+    for (name, bytes) in [("damaged", damaged), ("earlier", earlier)] {
+        std::fs::write(origin.join(&listing.file), bytes).unwrap();
+        let member = scratch_dir(&format!("fetch-{name}-member"));
+        let error = download(&client, &url, &member, &listing).await.unwrap_err();
+        match name {
+            "damaged" => assert!(format!("{error:#}").contains("differs from its listing"), "{error:#}"),
+            _ => assert!(error.is::<EarlierFormat>(), "{error:#}"),
+        }
+        let held: Vec<_> = std::fs::read_dir(&member).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+        assert!(held.is_empty(), "{name}: {held:?}");
+    }
 }
 
 // ── Helpers ──

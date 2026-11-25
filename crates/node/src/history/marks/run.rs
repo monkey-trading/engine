@@ -40,8 +40,9 @@ pub(crate) struct Live {
     pub buffered: Vec<MarkSample>,
     /// When the buffer last flushed; a backfill keeps this deadline between pages.
     pub flushed_at: Instant,
-    /// The freezes the task writes once it next can, each after the samples buffered with it (`frozen`).
-    pub freezes: Vec<Freeze>,
+    /// The freezes the task writes once it next can, in order, each after the samples buffered before it and with
+    /// the samples received after it and before the next, which are written only once it is (`frozen`).
+    pub freezes: Vec<(Freeze, Vec<MarkSample>)>,
 }
 
 /// What a member's start leaves its marks cache to take once the node sequences: the cache its earlier
@@ -150,12 +151,12 @@ async fn caught_up(mut store: Store, work: CatchUp, live: &mut Live) -> anyhow::
     Ok(store)
 }
 
-/// Writes the frozen copy each freeze in `live` asks for (`Store::freeze`), once the samples buffered with it
-/// are written, and hands the cache's committed anchors then to the freeze's end. A copy may also hold marks of
-/// commands after its checkpoint that were buffered with it, during a backfill or a catch-up, which a start from it
-/// merges again to the buckets they are in. The copy is written on a blocking thread, the queue received into the
-/// buffer meanwhile, so the sequencer's queue never fills and drops a sample. A copy that cannot be written is
-/// logged, and its end gets nothing: the snapshot carries no marks anchors.
+/// Writes the frozen copy each freeze in `live` asks for (`Store::freeze`), once the samples buffered before it are
+/// written and before any received after it is, and hands the cache's committed anchors then to the freeze's end:
+/// the copy holds the marks of the commands through its checkpoint and none after, however long a backfill or a
+/// catch-up held the samples. The copy is written on a blocking thread, the queue received into the buffer
+/// meanwhile, so the sequencer's queue never fills and drops a sample. A copy that cannot be written is logged, and
+/// its end gets nothing: the snapshot carries no marks anchors.
 /// Error cases:
 /// - the buffered samples cannot be written, or the copy's thread panics
 async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
@@ -163,18 +164,19 @@ async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
     live.flushed_at = Instant::now();
     let freezes = std::mem::take(&mut live.freezes);
     let mut job = tokio::task::spawn_blocking(move || {
-        for Freeze { offset, reply } in freezes {
+        for (Freeze { offset, reply }, mut after) in freezes {
             match store.freeze(offset) {
                 Ok(frozen) => drop(reply.try_send(frozen)),
                 Err(e) => warn!(seq = offset.seq, "no frozen marks cache for the daily snapshot at {offset}: {e:#}"),
             }
+            write(&mut store, &mut after)?;
         }
-        store
+        anyhow::Ok(store)
     });
     let mut open = true;
     loop {
         tokio::select! {
-            done = &mut job => return done.context("the marks freeze stopped"),
+            done = &mut job => return done.context("the marks freeze stopped")?,
             report = live.samples.recv(), if open => match report {
                 Some(report) => live.take(report),
                 None => open = false,
@@ -189,11 +191,13 @@ impl Live {
         Self { samples, buffered: Vec::new(), flushed_at: Instant::now(), freezes: Vec::new() }
     }
 
-    /// Buffers `report`'s sample, or keeps its freeze for the task to write after the samples buffered before it.
+    /// Buffers `report`'s sample, held behind the last freeze kept, if any, or keeps its freeze for the task to write
+    /// after the samples received before it and before those after it.
     pub(crate) fn take(&mut self, report: Report) {
-        match report {
-            Report::Sample(sample) => self.buffered.push(sample),
-            Report::Freeze(freeze) => self.freezes.push(freeze),
+        match (report, self.freezes.last_mut()) {
+            (Report::Sample(sample), Some((_, after))) => after.push(sample),
+            (Report::Sample(sample), None) => self.buffered.push(sample),
+            (Report::Freeze(freeze), _) => self.freezes.push((freeze, Vec::new())),
         }
     }
 }

@@ -99,11 +99,13 @@ impl Sequencer {
 
     /// The replay a paired recovery falls back to when no cache verifies, planning a strict log-derived
     /// migration without any persisted mutation: of the log after `daily`'s checkpoint, a signed daily
-    /// snapshot at or under the vault's finalized checkpoint, when one is given, or else of the whole log.
+    /// snapshot at or under the vault's finalized checkpoint, when one is given, into the dashboard record `stats`
+    /// restored from the one it carries, or else of the whole log, into `stats` started over.
     /// `capture` is as `read_paired_cache`'s; a head posted at or under the daily snapshot's checkpoint is
     /// bound to the history it carries (`prefix::under_daily`) before the replay.
     /// Error cases:
     /// - snapshots are absent, or the replay cannot verify the authoritative log
+    /// - the replay cannot go on from the daily snapshot at all (`SnapshotRefused`), before it reads an entry
     /// - the posted head is not in the daily snapshot's history (`prefix::under_daily`)
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn replay_paired_log(
@@ -113,7 +115,7 @@ impl Sequencer {
         authorities: crate::checkpoints::SignerHistory,
         stats: Option<crate::stats::Stats>,
         capture: Option<crate::log_heads::Head>,
-        daily: Option<Signed>,
+        mut daily: Option<Signed>,
         mut observe: impl FnMut(&LogEntry),
     ) -> Result<(ReplayedLog, Plan)> {
         let snapshots = cfg.snapshots.as_ref().context("paired recovery requires snapshots config")?;
@@ -127,8 +129,18 @@ impl Sequencer {
         if let Some(posted) = capture {
             replay.capture_link_at(posted.seq);
         }
-        if let Some(stats) = stats {
-            replay.record_stats_with(stats);
+        // From a daily snapshot, the record goes on from the one it carries, as a start from one without
+        // `[snapshots]` does, or starts over there when it carries none.
+        match (stats, daily.as_mut()) {
+            (Some(stats), Some(daily)) => {
+                match crate::daily_snapshots::History::read(daily.snapshot.history.take().as_deref()).stats {
+                    Some(record) => stats.restore(record),
+                    None => stats.restart(),
+                }
+                replay.record_stats_continuing(stats);
+            }
+            (Some(stats), None) => replay.record_stats_with(stats),
+            (None, _) => {}
         }
         let (dir, seals) = (&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
         let posted_ts = match &daily {
@@ -290,6 +302,12 @@ fn candidate(
     let boundary = pair.catalog.clone();
     let mut chain = AnchorChain::new(&snapshot.checkpoint, parent)?;
     let mut replay = Replay::from_snapshot(engine, snapshot, domain, signer, parent)?;
+    // A start from a cache with no replay state of its own would fold none, so it would publish no daily snapshot,
+    // and no later cache would carry the state either: a start that is not from such a cache seeds the fold again.
+    ensure!(
+        cfg.daily_snapshots.is_none() || replay.folds(),
+        "the cache carries no replay state of its own, which the daily snapshots need"
+    );
     if let Some(posted) = capture {
         replay.capture_link_at(posted.seq);
     }

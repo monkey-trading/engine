@@ -196,9 +196,10 @@ fn opening_refuses_a_segment_that_differs_from_its_manifest_entry() {
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
     assert!(format!("{err:#}").contains(&format!("does not match its listing in {MANIFEST}")), "{err:#}");
 
+    // Without its first segment, a whole read finds the log's start only in the archive.
     fs::remove_file(&path).unwrap();
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
-    assert!(format!("{err:#}").contains(&format!("does not match its listing in {MANIFEST}")), "{err:#}");
+    assert!(err.downcast_ref::<crate::log::NotLocal>().is_some(), "{err:#}");
 }
 
 #[test]
@@ -244,7 +245,7 @@ fn opening_refuses_a_log_missing_its_newest_listed_segment() {
     fs::remove_file(dir.join(SEG_4)).unwrap();
     fs::remove_file(dir.join(SEG_2)).unwrap();
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
-    assert!(format!("{err:#}").contains(&format!("{MANIFEST} lists 2 segments but 1 are")), "{err:#}");
+    assert!(format!("{err:#}").contains(&format!("{MANIFEST} lists 1 segments past the last of the 1")), "{err:#}");
 }
 
 #[test]

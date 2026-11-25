@@ -97,7 +97,7 @@ impl RowsStore {
     /// engine applies, or a derivation `stop` ended.
     /// Error cases:
     /// - the log cannot be read, from where the engine starts included (`log::NotLocal` before the first segment
-    ///   on this host), a command does not apply, or its logged events differ from the engine's
+    ///   on this host), a command does not apply, or logs no events, or its logged events differ from the engine's
     /// - a command's rows are not those its events' aggregates cover
     pub(crate) fn derive_through(&self, dir: &Path, through: u64, stop: &AtomicBool) -> anyhow::Result<Option<u64>> {
         let stamped = match self.snapshots {
@@ -124,6 +124,9 @@ impl RowsStore {
             if engine.last_seq().is_none() && seq != 0 {
                 return Err(Stop.into());
             }
+            // The rows are kept as a whole replay would leave them only from a log whose every command gives the
+            // events it logged, as the engine, from a snapshot the host keeps, is checked by them alone.
+            ensure!(command.events.is_some(), "seq {seq} logs no events, against which its rows are checked");
             let events = apply_logged(&mut engine, &command)?;
             if let Some(derived) = Derived::of(seq, &events, engine.take_derived())? {
                 self.keep(seq, command.sequenced.ts, &derived.rows);

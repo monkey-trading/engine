@@ -1,6 +1,6 @@
 //! Frozen copies of the marks cache at a daily snapshot's checkpoint. The marks task writes one once the cache
 //! holds the marks of every command the checkpoint covers (`Store::freeze`): a copy of the file beside it
-//! (`VACUUM INTO`), named for the checkpoint's offset, of which the newest `KEPT` stay, and the cache's committed
+//! (`VACUUM INTO`, synced in steps as it is written), named for the checkpoint's offset, of which the newest `KEPT` stay, and the cache's committed
 //! chain anchors as they stand then (`Frozen`), which the snapshot carries under its signature. A start from the
 //! snapshot takes the copy in place of the cache (`Store::import_frozen`) only once every pair's chain in it is
 //! the one those anchors name, so a copy the host rolled back, or altered in any row, is refused whole.
@@ -8,6 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use engine_core::types::{MarketId, Millis};
@@ -21,12 +23,16 @@ use crate::history::marks::store::chain::{anchor_updates, verify_row};
 use crate::history::marks::store::setup::read_epoch;
 use crate::history::marks::store::{ChainAnchor, ChainHead, SCHEMA_VERSION, SnapRow, Store, read_only, store, tag};
 use crate::log::Offset;
+use crate::paced::STEP;
 
 /// How many frozen copies stay beside the cache: a start takes the newest snapshot it can, and the copies of the
 /// days before it serve a start that passes the newest over.
 pub(crate) const KEPT: usize = 3;
 /// What a frozen copy's name starts with; its checkpoint's offset follows, as a daily snapshot's name gives it.
 const PREFIX: &str = "marks-frozen-";
+
+/// How often the copy SQLite writes is checked for a step of bytes written since its last sync (`paced`).
+const PACE_POLL: Duration = Duration::from_millis(10);
 
 /// The cache's committed chain anchors as a frozen copy holds the cache: the copy's run nonce and each pair's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,8 +76,8 @@ struct Walk {
 }
 
 impl Store {
-    /// Writes a frozen copy of the cache beside it for the checkpoint at `offset`, synced, removing the copies past
-    /// the newest `KEPT`, and gives the committed anchors it holds. The cache's writes all run on this store, so
+    /// Writes a frozen copy of the cache beside it for the checkpoint at `offset`, synced as it is written (`paced`)
+    /// and at its end, removing the copies past the newest `KEPT`, and gives the committed anchors it holds. The cache's writes all run on this store, so
     /// nothing commits between the copy and the anchors read after it.
     /// Error cases:
     /// - the copy cannot be written, synced or renamed into place, or its directory listed
@@ -81,7 +87,7 @@ impl Store {
         let staged = path.with_extension("tmp");
         store::discard(&staged)?;
         let target = staged.to_str().context("the frozen copy's path is not UTF-8")?;
-        self.conn.execute("VACUUM INTO ?1", [target]).context("copying the marks cache")?;
+        paced(&staged, || self.conn.execute("VACUUM INTO ?1", [target])).context("copying the marks cache")?;
         File::open(&staged).and_then(|file| file.sync_all()).context("syncing the frozen marks cache")?;
         fs::rename(&staged, &path).with_context(|| format!("publishing {}", path.display()))?;
         File::open(dir).and_then(|opened| opened.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
@@ -299,6 +305,34 @@ fn copy_markers(from: &rusqlite::Connection, tx: &rusqlite::Transaction<'_>) -> 
 /// Where the frozen copy for the checkpoint at `offset` is kept in `dir`, the cache's directory.
 pub(crate) fn frozen_path(dir: &Path, offset: Offset) -> PathBuf {
     dir.join(format!("{PREFIX}{:020}-{:010}.sqlite", offset.seq, offset.index))
+}
+
+/// Runs `write`, which writes the file at `path`, while syncing the file's data each time it has grown a step
+/// (`paced::STEP`) past its last sync, as found every `PACE_POLL`: SQLite writes the copy itself, so the syncs a
+/// `Paced` writer makes between its steps are made beside it, and what is dirty stays within a step and what one
+/// poll's writing adds, never the whole copy behind the log's syncs. A sync that fails is left to the copy's own
+/// at its end.
+fn paced<T>(path: &Path, write: impl FnOnce() -> T) -> T {
+    let done = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let (mut file, mut synced) = (None, 0u64);
+            while !done.load(Ordering::Acquire) {
+                std::thread::sleep(PACE_POLL);
+                if file.is_none() {
+                    file = File::open(path).ok();
+                }
+                let Some(opened) = &file else { continue };
+                let Ok(len) = opened.metadata().map(|metadata| metadata.len()) else { continue };
+                if len >= synced + STEP as u64 && opened.sync_data().is_ok() {
+                    synced = len;
+                }
+            }
+        });
+        let written = write();
+        done.store(true, Ordering::Release);
+        written
+    })
 }
 
 /// Removes the frozen copies in `dir` past the newest `KEPT`, and any a crash left staged.

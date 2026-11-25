@@ -84,6 +84,13 @@ impl Sequencer {
         self.outbox.push(message.clone());
         let stamped = Stamped(Some(message));
         self.report_stats(&stamped);
+        // Before the stats worker starts, no fold takes the command, so the one recovery folded no longer stands.
+        if self.marks.stats().is_none()
+            && self.captures.fold.is_some()
+            && let Some(entry) = stamped.entry().cloned()
+        {
+            self.captures.fold_before_worker(&LogEntry::Command(entry));
+        }
         Ok(stamped)
     }
 
@@ -95,8 +102,9 @@ impl Sequencer {
         if matches!(entry, LogEntry::Withdrawal(_)) {
             self.captures.uncaptured = None;
         }
-        if let Some(stats) = self.marks.stats() {
-            stats.follow_entry(&entry);
+        match self.marks.stats() {
+            Some(stats) => stats.follow_entry(&entry),
+            None => self.captures.fold_before_worker(&entry),
         }
         let offset = self.log.append(&entry)?;
         self.outbox.push(Arc::new(StreamMsg::new(offset, entry)));

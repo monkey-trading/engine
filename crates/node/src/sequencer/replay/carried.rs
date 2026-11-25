@@ -126,6 +126,12 @@ impl Carried {
 }
 
 impl Replay {
+    /// Whether this replay folds the whole log's replay state (`Fold::of`), as a replay from a recovery cache does
+    /// only when the cache carries its own.
+    pub(in crate::sequencer) fn folds(&self) -> bool {
+        self.range.is_none() && (!self.partial || self.cached.is_some())
+    }
+
     /// What this replay holds after the entry it applied last, which must be a checkpoint, for a daily
     /// snapshot to carry or to compare with one's.
     /// Error cases:

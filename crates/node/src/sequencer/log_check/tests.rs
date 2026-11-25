@@ -55,6 +55,9 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     let excluded = Sequencers { candidates: BTreeSet::from([CANDIDATE]), releases, in_office: (turn, CANDIDATE) };
     assert_eq!((due.turn, due.excluded.clone()), (turn, excluded));
     assert_eq!(head, node.checkpoint_head(head.seq));
+    // With nothing verified, the range is the holding the records attribute, from the `TurnTaken`, so a member
+    // whose replica applied it from a snapshot before it can answer.
+    assert_eq!(due.from, taken_seq, "the question names the range its exclusions attribute");
 
     // Posted and healthy, the approval still waits for the check, and the payouts read names its boundary.
     node.release();

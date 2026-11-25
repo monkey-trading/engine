@@ -1,8 +1,8 @@
 //! Where a replay that derives a command's rows again starts: from the newest daily snapshot the node holds that
 //! is early enough, its engine at the snapshot's checkpoint, or from genesis, with an empty engine, when none is.
 //! The replay reads only the log after where it starts, so the segments before that need not be on this host.
-//! A snapshot's file is the host's, of any format: the replay takes the rows it derives only once every command
-//! it applies gives its logged events, among them each rollover's `financing_applied` and its root over the rows.
+//! A snapshot's file is the host's, of any format: each command's logged events must be the ones it gives, among
+//! them each rollover's `financing_applied` and its root over the rows, against which a read checks the rows.
 
 use std::path::Path;
 

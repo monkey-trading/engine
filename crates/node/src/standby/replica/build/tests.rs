@@ -242,21 +242,24 @@ async fn a_replica_from_a_snapshot_is_rebuilt_after_an_unaccepted_tail_is_cut() 
     assert_eq!(engine_json(&follower), engine_json(&whole));
 }
 
-/// A replica from a snapshot records no checkpoint it verified, so it answers no member's log check, whose range may
-/// start before its snapshot; a whole replay records them.
+/// A replica from a snapshot records each checkpoint it verifies with the first command it applied, the one after the
+/// snapshot's checkpoint, so it answers a member's log check only for a range that starts there or later; a whole
+/// replay records them from the copy's first command.
 #[tokio::test]
-async fn a_replica_from_a_snapshot_answers_no_log_check() {
+async fn a_replica_from_a_snapshot_answers_a_log_check_only_after_its_snapshot() {
     let (dir, snapshots) = (scratch_dir("build-snapshot-checked"), scratch_dir("build-snapshot-checked-daily"));
     write_log(&dir).await;
     publish_middle(&dir, &snapshots, &recorded());
     let signed = usable(&snapshots, &dir, &[signer()].into(), u64::MAX).await.expect("a usable snapshot");
+    let snapshot_seq = signed.snapshot.offset.seq;
     let (from, whole) = (CheckedHeads::default(), CheckedHeads::default());
     let follower = open_with(&dir, Some(signed), [signer()].into(), Some(from.clone()));
     let last = follower.replica().last_checkpoint().expect("a checkpoint").seq;
     assert_eq!(follower.replays(), 0);
-    assert!(from.at(last).is_none(), "the replica from the snapshot verified no range from the copy's start");
+    let checked = from.at(last).expect("the replica from the snapshot verified the copy's last checkpoint");
+    assert_eq!(checked.from, snapshot_seq + 1, "from the command after the snapshot's checkpoint");
     open_with(&dir, None, [signer()].into(), Some(whole.clone()));
-    assert!(whole.at(last).is_some(), "a whole replay verified every checkpoint");
+    assert_eq!(whole.at(last).map(|checked| checked.from), Some(0), "a whole replay verified from the start");
 }
 
 // ── Helpers ──
