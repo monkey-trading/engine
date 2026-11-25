@@ -67,9 +67,15 @@ fn dev_scenario_snapshot_start() {
         flow.run(&mut node, FLOW, 1.0, |_, _, _| {});
     }
     node.checkpoint_now();
-    // Dropping the node joins the writer, which publishes what it holds first.
+    // The writer publishes the last day's snapshot once the stats worker has encoded what it carries, which the
+    // node's drop would wait for only so long.
+    let published = std::time::Instant::now() + Duration::from_secs(120);
+    let listed = || daily_snapshots::read_manifest(&snapshots).expect("the manifest");
+    while listed().len() < 3 && std::time::Instant::now() < published {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     drop(node);
-    let listed = daily_snapshots::read_manifest(&snapshots).expect("the manifest");
+    let listed = listed();
     assert_eq!(listed.len(), 3, "a snapshot at the first checkpoint and past each midnight: {listed:?}");
     let newest = listed[2].clone();
     let at = Offset { seq: newest.seq, index: newest.index };
