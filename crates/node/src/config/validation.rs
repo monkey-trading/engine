@@ -142,6 +142,7 @@ impl NodeConfig {
     /// - `[api.tls.acme]` fails validation (see `AcmeSection::validate`)
     /// - `[api.proxy_protocol]` fails validation (see `ProxyProtocolSection::validate`)
     /// - `[tee.sealing]` fails validation (see `validate_sealing`)
+    /// - `[archive]` fails validation (see `ArchiveSection::validate`)
     /// - a field names a secret no listener can receive (see `validate_secrets`)
     pub(super) fn validate(&self) -> anyhow::Result<()> {
         if let Some(access) = &self.access {
@@ -152,6 +153,9 @@ impl NodeConfig {
         }
         if let Some(benchmarks) = &self.benchmarks {
             benchmarks.validate(self)?;
+        }
+        if let Some(archive) = &self.archive {
+            archive.validate(self.tee.provider == TeeProvider::Mock)?;
         }
         self.tee.validate()?;
         self.validate_sealing()?;

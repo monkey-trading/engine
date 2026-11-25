@@ -33,7 +33,7 @@ const MEASUREMENT: &str = r#"{
   "vmm_type": "QEMU"
 }"#;
 /// The values each deployment sets for itself: its chain, contracts, accounts, providers and domain.
-const DEPLOYMENT: [&str; 35] = [
+const DEPLOYMENT: [&str; 38] = [
     "api.allowed_origins",
     "api.tls.acme.domain",
     "api.tls.acme.contact",
@@ -69,6 +69,9 @@ const DEPLOYMENT: [&str; 35] = [
     "seed_relay.l2_max_fee_per_gas",
     "access.source",
     "access.endpoint",
+    "archive.endpoint",
+    "archive.bucket",
+    "archive.public_url",
 ];
 /// Values each deployment sets for itself when its config holds them: a later release's recovery caches
 /// pin the enclave its own running release attests.

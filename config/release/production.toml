@@ -31,7 +31,8 @@
 # The guest address the host forwards port 443 to. The CA validates on it too.
 listen = "0.0.0.0:8080"
 log_dir = "/data/log"
-segment_commands = 1000
+# About 5.5 MB of launch flow a segment.
+segment_commands = 10000
 # A ceiling: at most one checkpoint is in flight, so the cadence follows the chain's finality.
 checkpoint_every = 1000
 tick = "250ms"
@@ -491,6 +492,18 @@ public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 # About 420 MB a day at 100k accounts; every day's is kept.
 [daily_snapshots]
 dir = "/data/daily-snapshots"
+
+# The bucket in object storage that keeps the log for good, in zstd-compressed ranges of 10,000 sequence
+# numbers (log-archive.md). The node uploads each range create-only with the delivered keys once the vault
+# has finalized a checkpoint past it, and counts it as archived only once a read from the public URL gives
+# back its bytes. The bucket's lock keeps every object under log/ from being replaced or deleted.
+[archive]
+endpoint = "https://r2-account.example.com" # REPLACE: https://<account id>.r2.cloudflarestorage.com
+bucket = "engine-log" # REPLACE: the bucket's name
+region = "auto"
+public_url = "https://archive.example.com" # REPLACE: the bucket's custom domain
+access_key_id_secret = "archive_access_key_id"
+secret_access_key_secret = "archive_secret_access_key"
 
 # Account history keeps 30 days, counted back from the newest command; older events stay in the public
 # log and its archive. A change of retention makes the node discard the index and rebuild it from the log.

@@ -1,8 +1,8 @@
 //! Running the node for the process: its delivered secrets, its alert routing, and, for a
 //! rotation-set member, the wait for each holding between runs (`member`). Beside them run the
 //! process's own tasks, one each for its life, while a member follows as well as while it holds a
-//! turn: the metrics listener, bound once, the disk watcher, and the seed relayer with `[seed_relay]`;
-//! any of them stopping ends the process.
+//! turn: the metrics listener, bound once, the disk watcher, the seed relayer with `[seed_relay]`, and
+//! the archive's uploader with `[archive]`; any of them stopping ends the process.
 
 use std::sync::Arc;
 
@@ -52,6 +52,10 @@ pub(crate) async fn run_with_cpu(
     // The disks fill while a member follows too, so one watcher keeps its samples across the member's turns.
     let storage = crate::storage::run(crate::storage::Layout::of(&cfg), cfg.alerts.storage.clone(), metrics.clone());
     process.spawn(async move { ("disk watcher", storage.await) });
+    if let Some((uploader, sources)) = crate::archive::Uploader::for_config(&cfg, &delivered.values, &metrics)? {
+        delivered.archive = Some(sources);
+        process.spawn(async move { ("log archive uploader", uploader.run().await) });
+    }
     let sends = Arc::new(crate::liveness::fallback::Sends::default());
     if let Some(fixer) = crate::liveness::fallback::Fixer::for_config(&cfg, sends.clone())? {
         process.spawn(async move { ("fallback fixer", fixer.run().await) });

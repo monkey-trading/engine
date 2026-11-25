@@ -6,12 +6,14 @@
 
 use std::sync::atomic::AtomicU64;
 
+mod archive;
 pub(crate) mod latency;
 mod listener;
 mod reasons;
 mod roots;
 mod storage;
 use crate::metrics::reasons::prices_reject_reason;
+pub use archive::ArchiveMetrics;
 pub use latency::{LATENCY_BUCKETS, LatencyMetrics};
 pub use listener::router;
 pub(crate) use listener::{alongside, bind};
@@ -124,6 +126,7 @@ pub struct Metrics {
     pub batch_seconds: Histogram,
     pub state_root: RootMetrics,
     pub latency: LatencyMetrics,
+    pub archive: ArchiveMetrics,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
@@ -167,6 +170,7 @@ impl Metrics {
             batch_seconds: Histogram::new(exponential_buckets(0.000_05, 2.0, 16)),
             state_root: RootMetrics::default(),
             latency: LatencyMetrics::default(),
+            archive: ArchiveMetrics::default(),
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
@@ -216,6 +220,7 @@ impl Metrics {
         r.register("sequencer_queue_depth", "Requests waiting for the sequencer", metrics.queue_depth.clone());
         metrics.state_root.register(r);
         metrics.latency.register(r);
+        metrics.archive.register(r);
         r.register(
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",

@@ -211,7 +211,15 @@ an index: load only the rule whose hint matches the current action.
   its slots at a time per account, one slot per signed request, and a production floor of 68 slots a second
   of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
-  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), `engine
+  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), the log's archive in object storage (`archive/`,
+  `[archive]`: for the process's life, beside the log writer in use, the serving sequencer's or a following member's copy's,
+  the log in fixed ranges of 10,000 seqs, each built from the copy's checked segments however they are cut
+  (`archive/range.rs`), compressed with zstd and uploaded create-only to an S3-compatible bucket, Cloudflare R2 in
+  production, with delivered keys, at `log/<chain id>/<vault>/<first seq>.jsonl.zst`, once the vault has finalized a checkpoint past it
+  (`archive/finality.rs`), and counted as archived only once a read from the bucket's public origin gives back the same
+  entries, spelt as `standby::chain::spelt` reads them; a restart resumes at the first range the bucket lacks; a range that reads back otherwise stops that node's
+  uploads, across a change of writer; Warning `archive_upload_lagging` and `archive_object_mismatch`; never waited on by the sequencer; the
+  loopback bucket and vault stand-ins in `archive/stand_in.rs`), `engine
   replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
   one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
   catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at
@@ -706,6 +714,9 @@ an index: load only the rule whose hint matches the current action.
   `[stats]` tunes the dashboard record's retention (1m ~48h, 1h ~90d, 1d unbounded by default), its
   activity length, the closed epochs it keeps (`distribution_limit`) and its close-out and profit buckets;
   unknown keys are refused. `api.operators_interval` (default 60 s) spaces the operator list's reads.
+  The optional `[archive]` names the log archive's bucket: its S3 API endpoint, name, region and public origin, and the
+  delivered secrets that hold its keys; the release configs name a bucket per deployment with markers, and segments of
+  10,000 commands, the size of an archive range (`ops/runbooks/log-archive.md`).
   The optional `[daily_snapshots]` names a directory of its own, apart from the log, the history index, the alert
   outbox and the recovery caches, where the node keeps a daily snapshot of each UTC day for
   `engine replay --snapshots`.
@@ -1132,7 +1143,8 @@ an index: load only the rule whose hint matches the current action.
   indexes them): deploy and rollback, reduce-only, restart and recovery, key recovery, corporate
   actions, incident response, withdrawal stalls and `checkpoint_backlog`, feed, custody and
   checkpoint-endpoint failures including a crypto venue outage, certificate renewal failure, the
-  `unattested_certificate` alert, operator candidates and standbys, the seed relay, and an SEV-SNP host (ordering
+  `unattested_certificate` alert, operator candidates and standbys, the seed relay, the log archive's bucket and its
+  alerts (`log-archive.md`), and an SEV-SNP host (ordering
   the server, enabling SEV-SNP, booting three guests against a local chain, verifying their attestations and
   measuring the engine inside a guest against the host, `sev-snp-host.md`), and the move to a new vault at launch
   (`vault-move.md`: the alpha's wind-down, the carry, the launch log's carried genesis, each step's approval and
@@ -1163,7 +1175,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts and history retention), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, disk alerts, history retention and log archive), with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1333,6 +1345,11 @@ Run from the repo root:
   pin its recent versions; once its first events expire the authenticated index's file stops growing while the log
   grows, and every history page states where its history begins, `retained_from_ms`, and holds every logged event
   from then on and none before)
+- Log archive dev scenario: `./scripts/dev-log-archive.sh` (needs only Cargo; a dev node uploads its log's ranges to a
+  loopback S3 stand-in behind TLS that checks each upload's signature, as a stand-in vault finalizes checkpoints past
+  them, through an outage that raises and clears `archive_upload_lagging`, a member's differently cut copy that creates
+  nothing, a restart that resumes at the first missing range, and an object that reads back otherwise
+  (`archive_object_mismatch`), past which nothing goes up)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole

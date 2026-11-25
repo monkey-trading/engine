@@ -72,11 +72,13 @@ touches a live system, but a tag and a published release need the owner's approv
    file in `config/release/`, an operator candidate's included. For a first deployment, the
    contracts' addresses are the ones that [Deploy the contracts](#deploy-the-contracts) plans. CI
    loads each configuration as a production build does. It also holds staging to production's
-   values, apart from its chain, its contracts, accounts and providers, and its domain. It holds
-   production to [production-node.toml](production-node.toml) in the same way, apart from the host's
-   product names, the rotation contracts and `[snapshots]`. A value decided for every operator, such
-   as `confirmations`, therefore changes in `production-node.toml` too, where it keeps its marker
-   until every operator has set it. Confirm that no marker is left on `main`:
+   values, apart from its chain, its contracts, accounts and providers, its archive's bucket and its
+   domain. It holds production to [production-node.toml](production-node.toml) in the same way, apart
+   from the host's product names, the rotation contracts and `[snapshots]`. A value decided for every
+   operator, such as `confirmations`, therefore changes in `production-node.toml` too, where it keeps
+   its marker until every operator has set it. The `[archive]` values name a bucket that the owner
+   sets up first, as [Log archive](log-archive.md) describes. Confirm that no marker is left on
+   `main`:
 
    ```shell
    grep -nE '# (OWNER|REPLACE)' config/release/*.toml

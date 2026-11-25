@@ -128,6 +128,11 @@ impl Follower {
         Self::open_starting(copy, ids, fresh, &records, (posted, keep), snapshot, observe)
     }
 
+    /// The manifest the copy's writer publishes.
+    pub(crate) fn manifest(&self) -> tokio::sync::watch::Receiver<Manifest> {
+        self.manifest.clone()
+    }
+
     /// Drops the entries the copy held when it was opened, once the copy may take others the link has not
     /// recorded: a link given them would serve a ring with a hole in it.
     fn forget_opened(&mut self) {

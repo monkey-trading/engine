@@ -58,6 +58,7 @@ rcgen.workspace = true
 reqwest.workspace = true
 ring.workspace = true
 rusqlite.workspace = true
+rusty-s3.workspace = true
 rustls.workspace = true
 rustls-webpki.workspace = true
 serde.workspace = true
@@ -74,6 +75,7 @@ tracing-subscriber.workspace = true
 webpki-root-certs.workspace = true
 webpki-roots.workspace = true
 x509-parser.workspace = true
+zstd.workspace = true
 
 # `statvfs` reads each data volume's free space; the `sched` feature the workspace sets is Linux's.
 [target.'cfg(unix)'.dependencies]
@@ -87,6 +89,7 @@ engine-verify = { workspace = true, features = ["test-fixtures"] }
 
 chrono.workspace = true
 chrono-tz.workspace = true
+jiff.workspace = true
 loom.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["io-util", "process", "test-util"] }
