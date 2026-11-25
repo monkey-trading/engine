@@ -32,11 +32,18 @@ use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 /// whole log.
 const ATTEMPTS: usize = 3;
 
-/// The roots of the checkpoints the vault accepted, as a start reads them.
+/// The roots of the checkpoints the vault accepted, as a start reads them, and the key it names at a seq.
 pub(crate) trait AcceptedRoots {
     /// The root of the checkpoint the vault accepted at `seq`; none where it accepted none there, or the read
     /// fails, which leaves the candidate to the checks after it.
     async fn root_at(&self, seq: u64) -> Option<B256>;
+
+    /// The key the checkpoint at `seq`, and so its snapshot, must be signed by: the signer of the checkpoint the vault
+    /// accepted there, or, where it accepted none, the vault's signer now; none where the start reads no vault, which
+    /// leaves the snapshot to the signers it is given.
+    async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
+        None
+    }
 }
 
 /// No vault read: each candidate rests on the checks after it.
@@ -177,7 +184,8 @@ fn carries_state(path: &Path) -> bool {
 /// `dir` first, and its file removed when it is refused.
 /// Error cases:
 /// - the copy at `copy` holds no checkpoint at its offset with the listed root
-/// - `roots` names another root at its seq
+/// - `roots` names another root at its seq, or the checkpoint's signature does not verify, or it is signed by another
+///   key than the one `roots` names at its seq
 /// - the fetch fails (`download`), or the snapshot is refused (`open_signed`)
 /// - its checkpoint is not the one the copy holds, or its state is stamped at or after `before`
 async fn candidate(
@@ -201,6 +209,16 @@ async fn candidate(
             listed == accepted,
             "the vault accepted root {accepted} at seq {}, not the listed {listed}",
             listing.seq
+        );
+    }
+    // Only the key the vault names at the checkpoint's seq vouches for the state a snapshot of it carries, and the
+    // snapshot is signed by the key its checkpoint names (`open_signed`): that checkpoint must be one it signed.
+    crate::checkpoints::signature::verify_domain(&held, domain).context("the checkpoint the copy holds there")?;
+    if let Some(required) = roots.signer_at(listing.seq).await {
+        let named: AccountId = held.signer.parse().context("the checkpoint's signer")?;
+        ensure!(
+            named == required,
+            "its checkpoint is signed by {named}, not {required}, the vault's signer at its seq"
         );
     }
     let path = match source {

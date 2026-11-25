@@ -53,6 +53,7 @@ impl std::error::Error for ReplicaRefused {}
 /// across stints.
 /// Error cases:
 /// - the connection fails, a frame fails verification, or the copy cannot be written
+/// - the operator serves its stream only from after the copy's head (`BeforeServed`)
 /// - the operator's log no longer extends the copy (a `Rollback`); nothing more is appended
 /// - the replica refuses an entry (`ReplicaRefused`), which the copy then does not take
 pub(super) async fn follow(
@@ -98,8 +99,19 @@ pub(super) async fn follow_until(
         },
         None => connect.await,
     };
-    let (mut stream, _) =
-        connected.context("connecting to the stream timed out")?.with_context(|| format!("connecting to {url}"))?;
+    let (mut stream, _) = match connected.context("connecting to the stream timed out")? {
+        Ok(connected) => connected,
+        // An operator that started from a daily snapshot serves its stream only from after it, naming the archive
+        // for what is before: the follower catches up from the archive (`catch_up`).
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status().as_u16() == 400 => {
+            let body = response.body().as_deref().map(String::from_utf8_lossy).unwrap_or_default();
+            match body.contains("public archive") {
+                true => return Err(super::catch_up::BeforeServed(body.into_owned()).into()),
+                false => anyhow::bail!("connecting to {url}: the operator refused the stream: {body}"),
+            }
+        }
+        Err(e) => return Err(e).with_context(|| format!("connecting to {url}")),
+    };
     let mut verifier = engine_wire::FrameVerifier::new(
         followed.enclave.0,
         engine_wire::Deployment {

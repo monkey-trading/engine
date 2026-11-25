@@ -28,6 +28,14 @@ impl<C: CheckpointChain> AcceptedRoots for VaultRoots<'_, C> {
         let accepted = self.vault.accepted_checkpoints(self.at, &[seq]).await.ok()?;
         accepted.into_iter().find(|checkpoint| checkpoint.seq == seq)?.root.parse().ok()
     }
+
+    /// The signer of the checkpoint the vault accepted at `seq`, or the vault's signer at `at` where it accepted none;
+    /// none where the read fails, which leaves the candidate to the signers the start was given.
+    async fn signer_at(&self, seq: u64) -> Option<AccountId> {
+        let accepted = self.vault.accepted_checkpoints(self.at, &[seq]).await.ok()?;
+        let at_seq = accepted.into_iter().find(|checkpoint| checkpoint.seq == seq);
+        Some(at_seq.map_or(self.at.state.signer, |checkpoint| checkpoint.signer))
+    }
 }
 
 /// The daily snapshot this start of `cfg`'s log takes, with `key`, under the vault `setup` reads, if any: none

@@ -497,8 +497,10 @@ instructions from the head onto the checkpoint, and a rebuild or repair of the a
 reads the log from its start. So the host keeps the segments from the earlier of the posted head and
 the snapshot's checkpoint, and every segment while the history index may need rebuilding. A usable
 snapshot is one
-that carries the replay state, whose signature is by its checkpoint's signer, one of the signers the
-vault recorded (under mock custody, the trading server's own key), whose checkpoint is at or before
+that carries the replay state, whose checkpoint the log holds signed, its signature verified, by the
+key the vault names at its sequence number (the signer of the checkpoint the vault accepted there, or
+else the vault's signer now; under mock custody, the trading server's own key), whose own signature is
+by that key, so a key the vault has since retired vouches for none, whose checkpoint is at or before
 the checkpoint the vault finalized and, where the vault accepted one at that sequence number, has the
 root the vault accepted, and whose checkpoint the log on the host holds at the snapshot's offset. The
 signature is checked before the state or the replay state is decoded. The start then computes the
@@ -529,7 +531,10 @@ snapshot verified none of them, and without `[snapshots]` no signed catalog vouc
 the trading server vouches for is read from them: a stream's backfill from before the instruction after
 the checkpoint is refused with 400, naming the public archive, as one from before the log's first
 segment on the host is; and a financing charge's rows are re-derived, or checked against their file,
-only from there on. The archive, whose answers are not signed, serves the segments as the host holds
+only from there on. A rotation member or a standby whose copy trails that seq is refused too: it then
+fetches the completed segments past its copy's head from the public archive and its mirrors, takes
+each entry after the head only once its seal and link continue the copy, as a streamed entry's must,
+a member's replica applying it first, and follows the stream again from the new head. The archive, whose answers are not signed, serves the segments as the host holds
 them, which anyone checks by a replay. A rotation member's or a
 standby's copy fetched from an archive mirror may hold altered segments before its snapshot. It never
 serves them, and a whole replay of the copy, as when no snapshot passes, refuses them.

@@ -158,7 +158,7 @@ fn finalized(operator: &Path) -> Finalized {
         _ => None,
     });
     let last = last.expect("the log holds a checkpoint");
-    Finalized { seq: last.seq, root: last.root }
+    Finalized { seq: last.seq, root: last.root, signer: last.signer.parse().expect("the checkpoint's signer") }
 }
 
 /// The last checkpoint the segment `bytes` holds.

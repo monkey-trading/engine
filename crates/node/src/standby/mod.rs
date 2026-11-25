@@ -37,6 +37,7 @@ use crate::checkpoints::Takeover;
 
 pub(crate) mod archive;
 mod backfill;
+pub(crate) mod catch_up;
 pub(crate) mod chain;
 mod cut;
 pub(crate) use cut::{cut_marked, finish as finish_cut};
@@ -206,6 +207,27 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
         // The copy's last command is the resume point, so an error mid-stint never duplicates
         // appends: the next stint re-requests from it.
         let followed = follow(&mut writer, &mut copied, cfg, &operator, STINT, None, None).await;
+        if let Err(e) = &followed
+            && catch_up::before_served(e)
+        {
+            match catch_up_copy(&archive, &operator, (&mut writer, &mut copied)).await {
+                Ok(()) => {}
+                Err(e) if rollback_of(&e).is_some() => {
+                    if rolled_back.is_none() {
+                        error!(alert = "operator_log_rollback", operator = %operator.origin, "{e:#}; the copy takes nothing more");
+                        rolled_back = Some(operator.origin.clone());
+                    }
+                }
+                Err(e) => {
+                    if follow_failed.is_none() {
+                        error!(alert = "standby_follow_failed", operator = %operator.origin, "catching up failed: {e:#}");
+                        follow_failed = Some(operator.origin.clone());
+                    }
+                }
+            }
+            sleep(Duration::from_secs(1)).await;
+            continue;
+        }
         // The stream itself worked: what it carried is another matter.
         match stint_action(&followed, rolled_back.is_some(), copied.confirmed()) {
             StintAction::FollowFailed => {
@@ -340,7 +362,8 @@ async fn finalize(
     mut copied: Chain,
 ) -> anyhow::Result<()> {
     // The snapshot is of the copy the stream gave, which the refresh only extends and its undo restores.
-    let finalized = crate::handover::Finalized { seq: takeover.seq, root: takeover.root.clone() };
+    let finalized =
+        crate::handover::Finalized { seq: takeover.seq, root: takeover.root.clone(), signer: takeover.signer };
     let start = crate::handover::copy_start(snapshots, dir, (domain, &signers), Some(&finalized)).await;
     // The refresh adds archive bytes no check has replayed yet: until the replay commits them, what the
     // copy held before is recorded, and any start drops what the refresh added.
@@ -418,6 +441,24 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
     })?;
     ensure!(found_anchor, "the copy holds no checkpoint at the vault's latest seq {}", takeover.seq);
     Ok(tip.expect("the anchor set the tip"))
+}
+
+/// Catches the copy open in `writer`, with its chain `copied`, up from `operator`'s archive origins when the operator
+/// serves its stream only from after the copy's head (`catch_up`), each entry checked against the copy before it is
+/// appended.
+/// Error cases:
+/// - as `catch_up::catch_up`
+async fn catch_up_copy(
+    archive: &reqwest::Client,
+    operator: &Followed,
+    (writer, copied): (&mut LogWriter, &mut Chain),
+) -> anyhow::Result<()> {
+    info!(operator = %operator.origin, "the operator serves its stream from after the copy's head: catching up from the archive");
+    let head = copied.head();
+    let take = |after, bytes: &[u8]| catch_up::take_into(writer, copied, after, bytes);
+    let caught = catch_up::catch_up(archive, &operator.origins(), head, take).await?;
+    info!(head = ?caught, "the copy caught up from the archive; the stream resumes from it");
+    Ok(())
 }
 
 /// The WebSocket URL for the stream: the operator's origin with an `http(s)` scheme rewritten to

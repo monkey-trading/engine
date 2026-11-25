@@ -23,6 +23,8 @@ use crate::log::CheckpointDomain;
 pub(crate) struct Finalized {
     pub seq: u64,
     pub root: String,
+    /// The key that signs the vault's checkpoints there: the signer of the finalized checkpoint, or the vault's.
+    pub signer: AccountId,
 }
 
 impl AcceptedRoots for Finalized {
@@ -31,12 +33,18 @@ impl AcceptedRoots for Finalized {
     async fn root_at(&self, seq: u64) -> Option<B256> {
         (seq == self.seq).then(|| self.root.parse().ok()).flatten()
     }
+
+    /// `signer` at every seq: a snapshot an earlier signer signed is passed over, and the copy replays from an
+    /// earlier one, or whole.
+    async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
+        Some(self.signer)
+    }
 }
 
 impl Finalized {
     /// The checkpoint the vault's finalized `state` names; none before the vault has accepted one.
     pub(crate) fn of(state: &VaultState) -> Option<Self> {
-        state.checkpoint.as_ref().map(|(seq, root)| Self { seq: *seq, root: root.clone() })
+        state.checkpoint.as_ref().map(|(seq, root)| Self { seq: *seq, root: root.clone(), signer: state.signer })
     }
 }
 

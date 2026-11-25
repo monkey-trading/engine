@@ -14,6 +14,7 @@ use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 
+use super::catch_up::before_served;
 use super::chain::{Chain, Step, rollback_of};
 use super::follow::{ReplicaRefused, follow, follow_until};
 use super::operator::Followed;
@@ -187,9 +188,11 @@ impl Follower {
     }
 
     /// Follows `followed` for one stint of up to `budget`, its enclave admitted as one that may seal
-    /// the copy's next commands (see `follow`).
+    /// the copy's next commands (see `follow`). An operator that serves its stream only from after the copy's
+    /// head, past a daily snapshot it started from, has the copy catch up from its archive origins instead
+    /// (`catch_up`), and the next stint resumes from the copy's new head.
     /// Error cases:
-    /// - as `follow`; after `ReplicaRefused` the follower must be opened again
+    /// - as `follow` or `catch_up`; after `ReplicaRefused` the follower must be opened again
     pub(crate) async fn stint(
         &mut self,
         cfg: &NodeConfig,
@@ -202,7 +205,10 @@ impl Follower {
         self.replica.admit(followed.enclave);
         self.forget_opened();
         let link = self.link.as_ref();
-        follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await
+        match follow(&mut self.writer, &mut self.copied, cfg, followed, budget, Some(&mut self.replica), link).await {
+            Err(e) if before_served(&e) => self.catch_up(followed).await,
+            followed => followed,
+        }
     }
 
     /// Follows `followed` while `work` runs, a stint at a time for at most `budget` in all, so what the
@@ -255,6 +261,13 @@ impl Follower {
                     Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() || rollback_of(&e).is_some() => {
                         return Err(e);
                     }
+                    Err(e) if before_served(&e) => match self.catch_up(followed).await {
+                        Ok(_) => reached = true,
+                        Err(e) if e.downcast_ref::<ReplicaRefused>().is_some() || rollback_of(&e).is_some() => {
+                            return Err(e);
+                        }
+                        Err(e) => failure = Some(e),
+                    },
                     Err(e) => {
                         tracing::debug!("following while waiting failed, following again: {e:#}");
                         failure = Some(e);
@@ -359,6 +372,22 @@ impl Follower {
             link.durable(head, sealer);
         }
         Ok(taken)
+    }
+
+    /// Catches the copy up from `operator`'s archive origins when the operator serves its stream only from after the
+    /// copy's head (`standby::catch_up`): each entry after the head is taken as a tail's is (`take_entries`), its seal
+    /// and link checked and the replica applying it before the copy takes it. The copy's new head.
+    /// Error cases:
+    /// - as `standby::catch_up::catch_up`, or the replica refuses an entry (`ReplicaRefused`)
+    async fn catch_up(&mut self, operator: &Followed) -> anyhow::Result<Option<Offset>> {
+        tracing::info!(operator = %operator.origin, "the operator serves its stream from after the copy's head: catching up from the archive");
+        let archive = super::archive::archive_client(operator.danger_accept_invalid_certs)?;
+        let head = self.head();
+        let take = |after, bytes: &[u8]| {
+            self.take_entries(after, bytes)?;
+            Ok(self.head())
+        };
+        super::catch_up::catch_up(&archive, &operator.origins(), head, take).await
     }
 
     /// Flushes and syncs the copy.
