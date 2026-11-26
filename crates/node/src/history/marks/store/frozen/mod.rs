@@ -2,27 +2,35 @@
 //! holds the marks of every command the checkpoint covers (`Store::freeze`): a copy of the file beside it
 //! (`VACUUM INTO`, synced in steps as it is written), named for the checkpoint's offset, of which those of the newest
 //! `KEPT` listed snapshots and of the one being written stay (`Store::freeze_keeping`), and the cache's committed
-//! chain anchors as they stand then (`Frozen`), which the snapshot carries under its signature. A start from the
-//! snapshot takes the copy in place of the cache (`Store::import_frozen`) only once every pair's chain in it is
-//! the one those anchors name, so a copy the host rolled back, or altered in any row, is refused whole.
+//! chain anchors as they stand then with the root over the copy's rows (`Frozen`), which the freeze finds by reading
+//! the copy back under the key that wrote it (`walk`, `root`). The snapshot carries both under its signature. A start
+//! from the snapshot takes the copy in place of the cache (`Store::import_frozen`) only once every pair's chain in it
+//! is the one those anchors name and its rows, read in order, give that root. The check needs no key, so a start
+//! under keys sealed afresh takes the copy as a start under the keys that wrote it does. A copy the host rolled back,
+//! or altered in any row, is refused whole. A snapshot written before it carried the root is taken only under the key
+//! that wrote its copy, every row's tag checked.
 
-use std::collections::{BTreeMap, BTreeSet};
+mod root;
+mod walk;
+
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
+use engine_core::eip712::B256;
 use engine_core::types::{MarketId, Millis};
 use rusqlite::{TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use crate::history::marks::Resolution;
-use crate::history::marks::store::auth::{Epoch, Pins, run_mac};
-use crate::history::marks::store::chain::{anchor_updates, verify_row};
+use crate::history::marks::store::auth::{Epoch, Row, run_mac};
+use crate::history::marks::store::chain::anchor_updates;
+use crate::history::marks::store::frozen::walk::{Passed, open_copy, walk};
 use crate::history::marks::store::setup::read_epoch;
-use crate::history::marks::store::{ChainAnchor, ChainHead, SCHEMA_VERSION, SnapRow, Store, read_only, store, tag};
+use crate::history::marks::store::{ChainHead, Store, store, tag};
 use crate::log::Offset;
 use crate::paced::STEP;
 
@@ -35,13 +43,18 @@ const PREFIX: &str = "marks-frozen-";
 /// How often the copy SQLite writes is checked for a step of bytes written since its last sync (`paced`).
 const PACE_POLL: Duration = Duration::from_millis(10);
 
-/// The cache's committed chain anchors as a frozen copy holds the cache: the copy's run nonce and each pair's.
+/// The cache's committed chain anchors as a frozen copy holds the cache: the copy's run nonce and each pair's, and the
+/// root over the copy's rows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Frozen {
     #[serde(with = "hex16")]
     pub epoch: Epoch,
     pub pairs: Vec<FrozenPair>,
+    /// The root over the copy's rows (`root`), which a start under any key checks them against; none in a snapshot
+    /// written before it was carried, whose copy a start takes only under the key that wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<B256>,
 }
 
 /// One pair's committed anchor: its floor and head, and the rows pinned at their committed tags.
@@ -65,17 +78,6 @@ pub(crate) struct FrozenRow {
     pub tag: [u8; 16],
 }
 
-/// What the walk of one pair's rows in a frozen copy has passed: the pair's anchor, the last row read, its tag as
-/// imported, and the pins it met.
-struct Walk {
-    pair: (MarketId, Resolution),
-    anchor: ChainAnchor,
-    pins: Pins,
-    last: SnapRow,
-    imported: [u8; 16],
-    pinned: usize,
-}
-
 impl Store {
     /// `freeze_keeping` with no daily snapshots' directory, which keeps the newest `KEPT` copies.
     /// Error cases:
@@ -86,13 +88,16 @@ impl Store {
     }
 
     /// Writes a frozen copy of the cache beside it for the checkpoint at `offset`, synced as it is written (`paced`)
-    /// and at its end, and gives the committed anchors it holds. The cache's writes all run on this store, so nothing
-    /// commits between the copy and the anchors read after it. It removes the other copies but, with `snapshots`, the
-    /// directory of the daily snapshots, those of the newest `KEPT` snapshots it lists and this one, whose snapshot is
-    /// not listed yet, or without it the newest `KEPT`: a copy whose snapshot was never published, as when its writing
-    /// failed, then takes no place a published one needs.
+    /// and at its end, and gives the committed anchors it holds with the root over its rows, read from the copy once
+    /// it is synced and before it takes its name, each row's tag checked under this cache's run key and each pair's
+    /// chain against the anchors (`walk`): the root covers only rows this node wrote, as the anchors name them. The
+    /// cache's writes all run on this store, so nothing commits between the copy and the anchors read after it. It
+    /// removes the other copies but, with `snapshots`, the directory of the daily snapshots, those of the newest
+    /// `KEPT` snapshots it lists and this one, whose snapshot is not listed yet, or without it the newest `KEPT`: a
+    /// copy whose snapshot was never published, as when its writing failed, then takes no place a published one needs.
     /// Error cases:
     /// - the copy cannot be written, synced or renamed into place, or its directory listed
+    /// - the copy does not read back as the cache's rows under its anchors
     pub(crate) fn freeze_keeping(&self, offset: Offset, snapshots: Option<&Path>) -> anyhow::Result<Frozen> {
         let dir = self.path.parent().context("the marks cache has no directory")?;
         let path = frozen_path(dir, offset);
@@ -101,10 +106,20 @@ impl Store {
         let target = staged.to_str().context("the frozen copy's path is not UTF-8")?;
         paced(&staged, || self.conn.execute("VACUUM INTO ?1", [target])).context("copying the marks cache")?;
         File::open(&staged).and_then(|file| file.sync_all()).context("syncing the frozen marks cache")?;
+        let mut frozen = self.anchored(read_epoch(&self.conn)?);
+        let copy = open_copy(&staged, &self.schema, &frozen).context("reading the frozen marks cache back")?;
+        let (_, root) = walk(&copy, &frozen, Some(&self.mac), |passed| Ok(passed.row.tag))
+            .context("reading the frozen marks cache back")?;
+        drop(copy);
+        frozen.root = Some(root);
         fs::rename(&staged, &path).with_context(|| format!("publishing {}", path.display()))?;
         File::open(dir).and_then(|opened| opened.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
         prune(dir, snapshots.and_then(|snapshots| listed_copies(dir, snapshots, offset)))?;
-        let epoch = read_epoch(&self.conn)?;
+        Ok(frozen)
+    }
+
+    /// The committed anchors of every pair as they stand, under the run nonce `epoch`, with no root yet.
+    fn anchored(&self, epoch: Epoch) -> Frozen {
         let anchors = self.prior_anchors();
         let pairs = anchors
             .iter()
@@ -121,26 +136,25 @@ impl Store {
                 }
             })
             .collect();
-        Ok(Frozen { epoch, pairs })
+        Frozen { epoch, pairs, root: None }
     }
 
     /// Imports the frozen copy at `copy` into this cache, which holds nothing yet, once its every pair's chain is
-    /// the one `frozen` names: each row authenticates under the copy's run nonce, which is `frozen`'s, names the row
-    /// below it and binds the tag that row carries, unless that row is pinned, every pinned row carries its pin, and
-    /// each pair's floor and head are its anchor's, with no pair more or fewer. Each row is re-tagged under this
-    /// cache's run key as it is taken, as a prior cache is (`import_prior`), with the backfill markers. One
-    /// transaction, which a refusal rolls back; the copy is opened read-only and never modified.
+    /// the one `frozen` names and its rows are the ones `frozen`'s root covers: each row names the row below it and
+    /// binds the tag that row carries, unless that row is pinned, every pinned row carries its pin, each pair's floor
+    /// and head are its anchor's, with no pair more or fewer, and the root over the rows read, in order, is
+    /// `frozen`'s. That holds under any key, so a start under keys sealed afresh takes the copy. For a snapshot that
+    /// carries no root, each row's tag must instead authenticate under the copy's run nonce, `frozen`'s, and this
+    /// cache's marks key, as the key that wrote it. Each row is re-tagged under this cache's run key as it is taken,
+    /// as a prior cache is (`import_prior`), with the backfill markers. One transaction, which a refusal rolls back,
+    /// so a row that fails leaves nothing imported; the copy is opened read-only and never modified.
     /// Error cases:
     /// - the copy cannot be read, holds another schema or another run nonce, or a row or pair fails the check
+    /// - the rows read are not the ones `frozen`'s root covers
     /// - the import cannot be written
     pub(crate) fn import_frozen(&mut self, copy: &Path, frozen: &Frozen) -> anyhow::Result<usize> {
-        let from = read_only(copy)?;
-        let version: i64 = from.pragma_query_value(None, "user_version", |row| row.get(0)).context("reading it")?;
-        ensure!(version == SCHEMA_VERSION, "it holds marks schema {version}, not {SCHEMA_VERSION}");
-        store::check_schema(&from, &self.schema, copy)?;
-        let epoch = read_epoch(&from)?;
-        ensure!(epoch == frozen.epoch, "its run nonce is not the one the daily snapshot names");
-        let (copy_mac, mut anchors) = (run_mac(&self.mac_key, &epoch), anchored(frozen)?);
+        let from = open_copy(copy, &self.schema, frozen)?;
+        let tags = frozen.root.is_none().then(|| run_mac(&self.mac_key, &frozen.epoch));
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting the import")?;
         store::check_schema(&tx, &self.schema, &self.path)?;
         let held: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM marks)", [], |row| row.get(0)).context("reading")?;
@@ -151,59 +165,29 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )
             .context("preparing the frozen marks import")?;
-        let mut read = from
-            .prepare(
-                "SELECT market, resolution, bucket, open, high, low, close, provenance, prev_bucket, tag, prev_tag
-                 FROM marks ORDER BY market, resolution, bucket",
-            )
-            .context("reading the frozen marks")?;
-        let mut rows = read.query([]).context("reading the frozen marks")?;
-        let (mut walk, mut pairs, mut imported): (Option<Walk>, BTreeSet<_>, usize) = (None, BTreeSet::new(), 0);
-        while let Some(row) = rows.next().context("reading the frozen marks")? {
-            let (market, resolution) = (row.get::<_, MarketId>(0)?, row.get::<_, i64>(1)?);
-            let resolution = u8::try_from(resolution).ok().and_then(Resolution::from_tag).context("a resolution")?;
-            let pair = (market, resolution);
-            let row = SnapRow::from_row(row, 2).context("reading a frozen mark")?;
-            verify_row(&copy_mac, market, resolution, &row)?;
-            let below = match walk.take() {
-                Some(walking) if walking.pair == pair => Some(walking),
-                passed => {
-                    passed.map(Walk::end).transpose()?;
-                    None
-                }
-            };
-            let (next, prev_tag) = match below {
-                Some(below) => below.step(row)?,
-                None => {
-                    let (anchor, pins) = anchors.remove(&pair).with_context(|| format!("no anchor names {pair:?}"))?;
-                    ensure!(pairs.insert(pair), "the {pair:?} rows are not in order");
-                    Walk::start(pair, anchor, pins, row)?
-                }
-            };
-            let last = &next.last;
-            let fields = crate::history::marks::store::Row { prev_tag, ..last.fields() };
-            let retagged = tag(&self.mac, market, resolution, last.bucket, &fields);
+        let (mac, mut imported) = (&self.mac, 0);
+        let (pairs, root) = walk(&from, frozen, tags.as_ref(), |Passed { market, resolution, row, prev_tag }| {
+            let retagged = tag(mac, market, resolution, row.bucket, &Row { prev_tag, ..row.fields() });
             insert
                 .execute(params![
                     i64::from(market),
                     resolution as i64,
-                    last.bucket,
-                    last.open,
-                    last.high,
-                    last.low,
-                    last.close,
-                    last.provenance,
-                    last.prev,
+                    row.bucket,
+                    row.open,
+                    row.high,
+                    row.low,
+                    row.close,
+                    row.provenance,
+                    row.prev,
                     retagged,
                     prev_tag
                 ])
-                .with_context(|| format!("importing the frozen {market} {resolution:?} bucket at {}", last.bucket))?;
+                .with_context(|| format!("importing the frozen {market} {resolution:?} bucket at {}", row.bucket))?;
             imported += 1;
-            walk = Some(Walk { imported: retagged, ..next });
-        }
-        walk.map(Walk::end).transpose()?;
-        if let Some(pair) = anchors.keys().next() {
-            bail!("the {pair:?} chain the daily snapshot anchors holds no row");
+            Ok(retagged)
+        })?;
+        if let Some(signed) = frozen.root {
+            ensure!(root == signed, "its rows are not the ones the daily snapshot's root covers");
         }
         drop(insert);
         copy_markers(&from, &tx)?;
@@ -213,87 +197,6 @@ impl Store {
         committed.apply(updates);
         Ok(imported)
     }
-}
-
-impl Walk {
-    /// The walk of `pair`'s chain from its first row, `row`, which must be the floor `anchor` names, with the tag
-    /// the import binds it to.
-    /// Error cases:
-    /// - the row is not the anchored floor, or names a row below it
-    fn start(
-        pair: (MarketId, Resolution),
-        anchor: ChainAnchor,
-        pins: Pins,
-        row: SnapRow,
-    ) -> anyhow::Result<(Self, Option<[u8; 16]>)> {
-        ensure!(
-            (row.bucket, row.tag) == (anchor.floor.bucket, anchor.floor.tag),
-            "the {pair:?} chain's floor is not the one the daily snapshot anchors"
-        );
-        ensure!(row.prev.is_none() && row.prev_tag.is_none(), "the {pair:?} chain's floor names a row below it");
-        let walk = Self { pair, anchor, pins, last: row, imported: [0; 16], pinned: 0 };
-        Ok((walk.pinning()?, None))
-    }
-
-    /// The walk on to `row`, the next row of its pair, which must name the last one and bind the tag it carries,
-    /// unless that one is pinned, with the tag the import binds it to: the last one's as imported.
-    /// Error cases:
-    /// - the row's link names another bucket, or binds another version of the row below it
-    fn step(self, row: SnapRow) -> anyhow::Result<(Self, Option<[u8; 16]>)> {
-        let pair = self.pair;
-        ensure!(row.prev == Some(self.last.bucket), "the {pair:?} chain is broken at {}", row.bucket);
-        ensure!(
-            self.pins.contains_key(&self.last.bucket) || row.prev_tag == Some(self.last.tag),
-            "the {pair:?} bucket at {} binds another version of the one below it",
-            row.bucket
-        );
-        let imported = Some(self.imported);
-        Ok((Self { last: row, ..self }.pinning()?, imported))
-    }
-
-    /// This walk, its last row counted if it is pinned.
-    /// Error cases:
-    /// - the row is pinned at another tag
-    fn pinning(mut self) -> anyhow::Result<Self> {
-        if let Some(pinned) = self.pins.get(&self.last.bucket) {
-            ensure!(
-                *pinned == self.last.tag,
-                "the {:?} bucket at {} is not its pinned version",
-                self.pair,
-                self.last.bucket
-            );
-            self.pinned += 1;
-        }
-        Ok(self)
-    }
-
-    /// Ends the walk of its pair at its last row, which must be the head its anchor names, every pin met.
-    /// Error cases:
-    /// - the last row is not the anchored head, or a pinned row was not met
-    fn end(self) -> anyhow::Result<()> {
-        let pair = self.pair;
-        ensure!(
-            (self.last.bucket, self.last.tag) == (self.anchor.head.bucket, self.anchor.head.tag),
-            "the {pair:?} chain's head is not the one the daily snapshot anchors"
-        );
-        ensure!(self.pinned == self.pins.len(), "the {pair:?} chain lacks a row the daily snapshot pins");
-        Ok(())
-    }
-}
-
-/// Each pair's anchor and pins `frozen` names.
-/// Error cases:
-/// - a pair names a resolution this build does not keep, or is named twice
-fn anchored(frozen: &Frozen) -> anyhow::Result<BTreeMap<(MarketId, Resolution), (ChainAnchor, Pins)>> {
-    let mut anchors = BTreeMap::new();
-    for pair in &frozen.pairs {
-        let resolution = Resolution::from_tag(pair.resolution).context("a resolution this build does not keep")?;
-        let head = |row: FrozenRow| ChainHead { bucket: row.bucket, tag: row.tag };
-        let anchor = ChainAnchor { floor: head(pair.floor), head: head(pair.head) };
-        let pins = pair.pins.iter().map(|row| (row.bucket, row.tag)).collect();
-        ensure!(anchors.insert((pair.market, resolution), (anchor, pins)).is_none(), "a pair is named twice");
-    }
-    Ok(anchors)
 }
 
 /// Copies the backfill markers of the copy `from` into the import `tx`.

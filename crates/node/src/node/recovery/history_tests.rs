@@ -90,6 +90,46 @@ async fn an_altered_frozen_copy_starts_the_chart_history_at_the_snapshot() {
     }
 }
 
+/// A start under keys sealed afresh on the same host, as `--new-key` seals them, opens the marks cache under the new
+/// key's marks secret and goes on from the snapshot its predecessor's key signed, as the vault's record of that signer
+/// admits: the frozen copy written under the earlier key imports on the root the snapshot carries, so the chart
+/// history before the snapshot is served as the node served it, with no whole replay and nothing paged. A snapshot
+/// written before the root was carried, re-signed without it, starts the chart history at the snapshot and pages
+/// `marks_cache_rebuilt`, as before.
+#[tokio::test]
+async fn a_start_under_new_keys_keeps_the_chart_history_before_the_snapshot() {
+    let written = Written::run("snapshot-start-new-key").await;
+    let (snapshot, cfg) = (written.snapshot.clone(), &written.cfg);
+    let sealed = EnclaveKey::generate();
+    assert_ne!(sealed.marks_key(), written.key.marks_key());
+
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let marks = marks::startup(cfg, sealed.marks_key(), false).unwrap();
+    let metrics = Metrics::new();
+    let recovered = recover(cfg, &written.key, None, &marks, None, &metrics).await.unwrap();
+    assert_eq!(recovered.log.snapshot_sequence(), Some(snapshot.seq), "the start went on from the snapshot");
+    assert_eq!(metrics.full_replays.get(), 0, "the start replayed the whole log");
+    let (store, reader, ..) = marks.activate().unwrap();
+    assert_eq!(pages(&reader).await, written.pages, "the chart history");
+    assert!(written.pages.iter().any(|page| page.entries.iter().any(|entry| entry.ts < snapshot.ts)));
+    let rebuilt = |alerts: &mut mpsc::UnboundedReceiver<crate::test_support::Alert>| {
+        std::iter::from_fn(|| alerts.try_recv().ok()).filter(|alert| alert["alert"] == "marks_cache_rebuilt").count()
+    };
+    assert_eq!(rebuilt(&mut alerts), 0, "the start paged a rebuilt cache");
+    drop((store, reader));
+
+    let file = cfg.daily_snapshots.as_ref().unwrap().dir.join(&snapshot.file);
+    resign(&file, cfg, |_, history| history.marks.as_mut().unwrap().root = None);
+    let marks = marks::startup(cfg, sealed.marks_key(), false).unwrap();
+    let recovered = recover(cfg, &written.key, None, &marks, None, &Metrics::new()).await.unwrap();
+    assert_eq!(recovered.log.snapshot_sequence(), Some(snapshot.seq), "the start went on from the snapshot");
+    assert_eq!(rebuilt(&mut alerts), 1, "the copy an earlier snapshot names is taken under new keys");
+    let (_store, reader, ..) = marks.activate().unwrap();
+    for page in pages(&reader).await {
+        assert!(page.entries.iter().all(|entry| entry.ts >= Resolution::D1.bucket(snapshot.ts)), "{page:?}");
+    }
+}
+
 /// A daily snapshot its signer signed but whose replay state does not stand for its checkpoint, as a writer's fault
 /// would sign it, is paged as Warning `snapshot_start_refused` and the start replays the whole log, re-deriving the
 /// chart history and the dashboard record the snapshot's restore had put in place.
@@ -97,7 +137,7 @@ async fn an_altered_frozen_copy_starts_the_chart_history_at_the_snapshot() {
 async fn a_snapshot_the_start_cannot_go_on_from_gives_way_to_a_whole_replay() {
     let written = Written::run("snapshot-start-refused").await;
     let cfg = &written.cfg;
-    resign(&cfg.daily_snapshots.as_ref().unwrap().dir.join(&written.snapshot.file), cfg, |carried| {
+    resign(&cfg.daily_snapshots.as_ref().unwrap().dir.join(&written.snapshot.file), cfg, |carried, _| {
         carried["links"].as_array_mut().unwrap().pop();
     });
 
@@ -200,9 +240,9 @@ async fn a_snapshot_written_after_a_start_from_a_snapshot_carries_what_the_whole
 
 // ── Helpers ──
 
-/// Signs the daily snapshot at `path` again, with `alter` applied to the replay state it carries, under the test
-/// enclave's key in `cfg`'s deployment, its other parts as written.
-fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serde_json::Value)) {
+/// Signs the daily snapshot at `path` again, with `alter` applied to the replay state and the history it carries,
+/// under the test enclave's key in `cfg`'s deployment, its other parts as written.
+fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serde_json::Value, &mut History)) {
     use crate::daily_snapshots::{Covered, Signing, sha256};
     use serde_json::value::RawValue;
     #[derive(serde::Deserialize)]
@@ -211,12 +251,13 @@ fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serd
         checkpoint: Checkpoint,
         engine: Box<RawValue>,
         carried: serde_json::Value,
-        history: Box<RawValue>,
+        history: History,
     }
     let mut parts: Parts = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    alter(&mut parts.carried);
+    alter(&mut parts.carried, &mut parts.history);
     let carried = serde_json::to_string(&parts.carried).unwrap();
-    let (engine, history) = (parts.engine.get(), parts.history.get());
+    let history = serde_json::to_string(&parts.history).unwrap();
+    let (engine, history) = (parts.engine.get(), history.as_str());
     let covered = Covered {
         state: sha256(engine.as_bytes()),
         carried: sha256(carried.as_bytes()),

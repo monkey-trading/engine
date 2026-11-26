@@ -20,6 +20,7 @@ alloy = { version = "2.5", default-features = false, features = ["std", "rpc-cli
 # Enable HTTP/TLS on the components without the aggregate provider feature forwarding.
 alloy-rpc-client = { version = "2.5", default-features = false, features = ["reqwest"] }
 alloy-transport-http = { version = "2.5", default-features = false, features = ["reqwest", "reqwest-rustls-tls"] }
+alloy-trie = { version = "0.9.8", default-features = false, features = ["std"] }
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 # Without `simd-unsafe`, its only source of `unsafe` code.

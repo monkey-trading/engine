@@ -25,6 +25,7 @@ engine-wire.workspace = true
 alloy.workspace = true
 alloy-rpc-client.workspace = true
 alloy-transport-http.workspace = true
+alloy-trie.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 base64.workspace = true
