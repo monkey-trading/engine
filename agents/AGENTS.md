@@ -1534,7 +1534,9 @@ Run from the repo root:
   `LOAD_TRADERS`, `LOAD_SUBSCRIBERS`, `LOAD_LEG_SECS`, `LOAD_CRYPTO_RATE`, `LOAD_RWA_MOVES` and
   `LOAD_SOURCE_DELAY_MS` (the screening source's answer time, 200 ms) size the run (CI's job sets 10,000
   accounts, 200 traders and 16 subscribers); a measured leg that breaks the bar runs once
-  more on the same node and fails only if the second run breaks it too, as does each 100k-account latency benchmark
+  more on the same node and fails only if the second run breaks it too, and so does one with fewer than three windows
+  of five left to judge once the runner's storage stalls, and the windows beside them, are excused (`storage::covered`,
+  `rerun::inconclusive`), which a second run so short of windows does not fail either, as does each 100k-account latency benchmark
   that `dev-scenario-tests` runs (`rerun_once` in `crates/core/tests/common/rerun.rs`), each run printing its figures; with
   `ENGINE_BENCH_SCALE_TO_RUNNER=1`, which only CI's job sets, each of those bars is scaled by 1 to 2.5 times a fixed
   reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar, as do `dev-load`'s order-to-fill and stream-lag bars

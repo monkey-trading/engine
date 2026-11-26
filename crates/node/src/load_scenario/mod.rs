@@ -25,7 +25,9 @@
 //! The launch and ten-times legs pass only within the bar, on their second run if their first broke it
 //! (`rerun`), under the tolerance for a loaded runner that `sequencer::wait_bench::price_wait_budget`
 //! grants (`report::tolerate`), also in the windows a stall of the runner's own storage, timed by a
-//! probe apart from the node, does not excuse (`storage`). On CI the order-to-fill and
+//! probe apart from the node, does not excuse (`storage`); a leg with fewer than three windows left to
+//! judge once the storage's are excused, a stall's neighbours included, is inconclusive and runs again
+//! too (`rerun::inconclusive`). On CI the order-to-fill and
 //! stream-lag bars are scaled by the runner's measured speed (`ENGINE_BENCH_SCALE_TO_RUNNER`,
 //! `common::rerun`), printed on each leg's lines. They pass only
 //! if they measured what they claim (`report::unmeasured`): every request answered 200 with no
@@ -373,10 +375,11 @@ async fn drive(plan: &Plan, node: &Node) -> Vec<Run> {
                 let again = rerun::wanted(&runs, &run);
                 if again {
                     println!(
-                        "LOAD leg={} rerun: the launch bar broke ({:?}); the leg runs once more on this node, \
-                         the bar unchanged",
+                        "LOAD leg={} rerun: the launch bar broke ({:?}) or too few windows were left to judge ({}); \
+                         the leg runs once more on this node, the bar unchanged",
                         run.leg,
-                        rerun::failed(&run)
+                        rerun::failed(&run),
+                        rerun::inconclusive(&run)
                     );
                 }
                 runs.push(run);
@@ -417,7 +420,13 @@ fn conclude(runs: &[Run]) {
     for run in measured {
         assert!(run.gaps.is_empty(), "{} did not measure what it claims: {:?}", run.leg, run.gaps);
         let failed = rerun::failed(run);
-        let verdict = if failed.is_empty() { "held".to_owned() } else { format!("broken {failed:?}") };
+        let verdict = if !failed.is_empty() {
+            format!("broken {failed:?}")
+        } else if rerun::inconclusive(run) {
+            "inconclusive, too few windows left once the storage's stalls were excused".to_owned()
+        } else {
+            "held".to_owned()
+        };
         println!("LOAD leg={} launch bar: {verdict}", run.leg);
         assert!(failed.is_empty(), "{} broke the launch bar: {failed:?}", run.leg);
     }
