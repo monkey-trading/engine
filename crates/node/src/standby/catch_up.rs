@@ -73,7 +73,7 @@ pub(crate) async fn catch_up(
 /// Appends to a standby's copy, open in `writer` with its chain `copied`, the entries `bytes` holds after the copy's
 /// entry at `after`, each checked as a stream's entry is (`Chain::check`) and, as no frame signature vouches for an
 /// archive's bytes, each checkpoint and withdrawal entry signed by one of `signers`, the vault's recorded signers, in
-/// `domain`, before it is appended; syncs the copy and gives its new head.
+/// `domain`, before any is appended; syncs the copy and gives its new head.
 /// Error cases:
 /// - a line does not parse, an entry does not extend the copy (a `Rollback`), a checkpoint or withdrawal entry is not
 ///   signed by one of `signers`, or the copy cannot be written or synced
@@ -83,15 +83,19 @@ pub(super) fn take_into(
     after: Option<Offset>,
     bytes: &[u8],
 ) -> anyhow::Result<Option<Offset>> {
-    if let Some(after) = after {
-        copied.begin_after(after);
-    }
     let mut previous = after;
+    let mut entries = Vec::new();
     for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
         let entry: LogEntry = serde_json::from_slice(line).context("an archive line is not a log entry")?;
         let offset = offset_of(previous, &entry)?;
         previous = Some(offset);
         signed_by(&entry, domain, signers).with_context(|| format!("the archive's entry at {offset}"))?;
+        entries.push((offset, entry));
+    }
+    if let Some(after) = after {
+        copied.begin_after(after);
+    }
+    for (offset, entry) in entries {
         if let Step::Extends(link) = copied.check(offset, &entry)? {
             writer.append(&entry).context("appending an archive entry to the copy")?;
             copied.extend(offset, entry, link);

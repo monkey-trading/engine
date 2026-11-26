@@ -1,6 +1,7 @@
 //! A log whose oldest listed segments are not on this host, kept only in the public archive: reads from the
 //! first segment here on open it, and a read that reaches before it is refused naming the archive.
 
+use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -53,6 +54,36 @@ fn a_log_without_its_oldest_segments_opens_from_the_first_segment_here() {
     assert_eq!(seqs(&read), [2, 3, 4, 5], "a span reads from the segment holding its command");
     let mut reader = LogReader::open(&dir, Offset::start_of(2), published.clone()).unwrap();
     assert_eq!(reader.next_entry().unwrap().map(|(offset, _)| offset.seq), Some(2));
+}
+
+/// A read from an offset hands on every entry after the first at or after it, one that names an earlier offset
+/// included, for the reader's own checks to refuse, as a whole read hands it on.
+#[test]
+fn a_read_from_an_offset_hands_on_an_entry_after_it_that_goes_back() {
+    let dir = scratch_dir("local-open-from-back");
+    let (manifest, _) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest).unwrap();
+    for seq in 0..5 {
+        writer.append(&cmd(seq)).unwrap();
+    }
+    writer.flush().unwrap();
+    let line = serde_json::to_string(&cmd(1)).unwrap() + "\n";
+    fs::OpenOptions::new().append(true).open(dir.join(SEG_4)).unwrap().write_all(line.as_bytes()).unwrap();
+    let seqs = |read: &[LogEntry]| read.iter().filter_map(command_seq).collect::<Vec<_>>();
+    let mut read = Vec::new();
+    SegmentedLog::open_from(&dir, Offset::start_of(4), |entry| {
+        read.push(entry);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(seqs(&read), [4, 1], "the entry that goes back is handed on");
+    let mut read = Vec::new();
+    SegmentedLog::open_ahead_from(&dir, Offset::start_of(3), |entry| {
+        read.push(entry);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(seqs(&read), [3, 4, 1], "and read ahead");
 }
 
 /// A whole read, a read from before the first segment here, the scan and the reader refuse a log whose oldest

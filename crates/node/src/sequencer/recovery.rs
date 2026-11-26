@@ -195,7 +195,7 @@ impl Sequencer {
     ///   give, or one other than the config's (see `GenesisProgress::ensure_matches`)
     /// - the log cannot be opened for appending, or written
     pub fn recover_from(
-        log: ReplayedLog,
+        mut log: ReplayedLog,
         cfg: SequencerConfig<'_>,
         key: Arc<EnclaveKey>,
         stream: broadcast::Sender<Arc<StreamMsg>>,
@@ -203,20 +203,18 @@ impl Sequencer {
     ) -> anyhow::Result<Self> {
         log.validate_recovery(&cfg, AccountId(key.address()))?;
         let log_check = log_check::LogCheck::recovered(cfg.log_check, cfg.operator.address, &log.replayed);
-        // A replay that went on from a daily snapshot verified only the log after its checkpoint, and the start the
-        // commands before it whose links the snapshot carries, which a follower that trails it resumes among.
-        // It is checked against the descriptors the node serves those segments by.
-        let verified_from = log.replayed.takings.applied_from().map(|applied| {
+        // A replay that went on from a daily snapshot verified only the log after its checkpoint. The commands before
+        // it whose links the snapshot carries, which a follower that trails it resumes among, are checked on a thread
+        // of their own after the start, against the descriptors the node serves those segments by, so nothing the log
+        // sets runs before the first command.
+        let verified_from = log.replayed.takings.applied_from();
+        let back = verified_from.filter(|_| log.log.manifest_view().catalog.is_none()).map(|_| {
             let domain = crate::log::CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
-            let (held, replayed) = (log.log.manifest_view(), &log.replayed);
-            let behind = crate::sequencer::replay::Behind {
-                links: &replayed.carried_links,
-                activations: &replayed.activations,
-                roots: &replayed.checkpoint_roots,
-            };
-            let trust = (domain, &replayed.checkpoint_signers);
-            let back = crate::sequencer::replay::verified_back(cfg.log_dir, behind, &held, trust);
-            back.map_or(applied, |back| back.min(applied))
+            let replayed = &mut log.replayed;
+            let links = std::mem::take(&mut replayed.carried_links);
+            let (activations, roots) = (&replayed.activations, &replayed.checkpoint_roots);
+            let trust = (domain, replayed.checkpoint_signers.clone());
+            crate::sequencer::replay::Back::new(cfg.log_dir, links, activations, roots, log.log.manifest_view(), trust)
         });
         let ReplayedLog { log, replayed, snapshot_seq, legacy_authorizations } = log;
         let Replayed {
@@ -348,6 +346,16 @@ impl Sequencer {
         };
         if let Some(seq) = verified_from {
             sequencer.log.verified_from(seq);
+        }
+        if let Some(back) = back {
+            let lower = sequencer.log.lowers_verified_from();
+            let checking = std::thread::Builder::new().name("verified-back".into());
+            let check = move || {
+                if let Some(seq) = back.check() {
+                    lower(seq);
+                }
+            };
+            checking.spawn(check).context("starting the check of the log before the daily snapshot")?;
         }
         sequencer.marks.take_recovered(replayed_last_marks);
         {

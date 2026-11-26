@@ -90,7 +90,8 @@ pub(crate) struct Behind<'a> {
 /// so what is checked is what is served; each command's link must extend the one before it as `behind` says, so its
 /// bytes, events and seal are those the snapshot's signer sequenced; each checkpoint must follow its own command,
 /// with the root `behind` holds for it, and none `behind` holds may be missing; and each withdrawal must follow its
-/// approval and the checkpoint its authorization names, with that checkpoint's root. Each checkpoint's and
+/// approval and the checkpoint its authorization names, with that checkpoint's root, where they are among the commands
+/// checked. Each checkpoint's and
 /// withdrawal's signature must be by one of `signers` in `domain`. None when the links name too few commands, `held`
 /// lists none of them, or a read or check fails: the start then vouches only for what it replayed.
 pub(crate) fn verified_back(
@@ -140,6 +141,42 @@ pub(crate) fn verified_back(
         })
         .ok()
         .flatten()
+}
+
+/// A check of the log before a daily snapshot's checkpoint (`verified_back`) that owns what it reads, to run on a
+/// thread of its own after the start.
+pub(crate) struct Back {
+    dir: std::path::PathBuf,
+    links: Vec<Link>,
+    activations: Vec<(ProtocolVersion, u64)>,
+    /// The roots of the checkpoints from the first link's command on, the only ones the check reads.
+    roots: BTreeMap<u64, B256>,
+    held: crate::log::Manifest,
+    trust: (crate::log::CheckpointDomain, BTreeSet<AccountId>),
+}
+
+impl Back {
+    /// A check of the log in `dir` before a daily snapshot's checkpoint, against `links`, `activations` and `roots`,
+    /// what the replay from it holds of the log before the checkpoint, the descriptors `held` and the signers `trust`
+    /// names in its domain.
+    pub(crate) fn new(
+        dir: &std::path::Path,
+        links: Vec<Link>,
+        activations: &[(ProtocolVersion, u64)],
+        roots: &BTreeMap<u64, B256>,
+        held: crate::log::Manifest,
+        trust: (crate::log::CheckpointDomain, BTreeSet<AccountId>),
+    ) -> Self {
+        let from = links.first().map_or(u64::MAX, |link| link.seq);
+        let roots = roots.range(from..).map(|(seq, root)| (*seq, *root)).collect();
+        Self { dir: dir.to_owned(), links, activations: activations.to_vec(), roots, held, trust }
+    }
+
+    /// The first seq the check verified, as `verified_back` gives it.
+    pub(crate) fn check(self) -> Option<u64> {
+        let behind = Behind { links: &self.links, activations: &self.activations, roots: &self.roots };
+        verified_back(&self.dir, behind, &self.held, (self.trust.0, &self.trust.1))
+    }
 }
 
 /// The entries of the log before a daily snapshot's checkpoint checked so far, from the first command checked.
@@ -214,8 +251,8 @@ impl<'a> Window<'a> {
                 );
                 let named = auth.checkpoint_seq;
                 ensure!(
-                    self.roots.get(&named) == Some(&auth.checkpoint_root)
-                        && (self.from.is_none_or(|from| named < from) || self.checkpoints.contains(&named)),
+                    self.from.is_none_or(|from| named < from)
+                        || (self.checkpoints.contains(&named) && self.roots.get(&named) == Some(&auth.checkpoint_root)),
                     "the withdrawal entry at seq {seq} names a checkpoint at {named} the log does not hold before it"
                 );
             }

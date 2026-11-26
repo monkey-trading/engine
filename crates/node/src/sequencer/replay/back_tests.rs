@@ -18,22 +18,19 @@ use crate::test_support::{log_entries, scratch_dir};
 #[tokio::test]
 async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     let (dir, carried) = funded("back");
-    let first = first_checked(&carried);
+    let (first, last) = (first_checked(&carried), carried.links.last().unwrap().seq);
     assert_eq!(back(&dir, &carried), Some(first), "the whole log checks from the command after the first link");
 
     let held = copied(&dir, "back-held");
-    super::remove_segments_before(&held, carried.links.last().unwrap().seq);
-    let first_held = log_entries(&held).iter().find_map(|entry| match entry {
-        LogEntry::Command(command) => Some(command.sequenced.seq),
-        _ => None,
-    });
+    super::remove_segments_before(&held, last);
+    let first_held = segments(&held).into_iter().flat_map(|(_, lines)| lines).find_map(|line| command_seq(&line));
     assert_eq!(back(&held, &carried), first_held.map(|seq| seq.max(first)), "from the first command this host holds");
 
     let altered = copied(&dir, "back-altered");
     // The descriptors the node serves by, read at its start, before the host alters a segment and its listing.
     let served = held_manifest(&altered, &carried);
-    let seq = rewrite(&altered, |lines| {
-        let line = lines.iter().position(|line| line.contains("\"Tick\""))?;
+    let seq = edit(&altered, (last, "a tick"), |lines| {
+        let line = lines.iter().position(|line| line.contains(r#""type":"tick""#))?;
         let mut entry: LogEntry = serde_json::from_str(&lines[line]).unwrap();
         let LogEntry::Command(command) = &mut entry else { return None };
         command.sequenced.ts += 1;
@@ -48,44 +45,48 @@ async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     assert_eq!(against_served.is_none(), in_window, "bytes that differ from the descriptor served by check nothing");
 }
 
-/// The window's checkpoints and withdrawals hold their places: a log whose checkpoint the host moved before its own
-/// command, or removed, or whose withdrawal it moved before the checkpoint the withdrawal's authorization names,
-/// checks nothing, though every command's bytes are the ones the links name; so does a log the snapshot names no
-/// version for that keeps every approval in the engine.
+/// The window's checkpoints and withdrawals hold their places: a log where the host put a checkpoint after a command
+/// other than its own, or removed one, or put a withdrawal before the checkpoint its authorization names, checks
+/// nothing, though every command's bytes are the ones the links name; so does a log the snapshot names no version for
+/// that keeps every approval in the engine.
 #[tokio::test]
 async fn the_log_before_a_snapshot_is_checked_for_its_checkpoints_and_withdrawals() {
     let (dir, carried) = funded("back-places");
-    let first = first_checked(&carried);
-    let in_window = |seq: u64| first < seq && seq < carried.links.last().unwrap().seq;
+    let (first, last) = (first_checked(&carried), carried.links.last().unwrap().seq);
+    let in_window = |seq: u64| first < seq && seq < last;
+
+    let entries = segments(&dir).into_iter().flat_map(|(_, lines)| lines).collect::<Vec<_>>();
+    let checkpoint = entries.iter().find(|line| checkpoint_seq(line).is_some_and(in_window)).unwrap().clone();
+    let typed = entries.iter().find_map(|line| {
+        let LogEntry::Withdrawal(withdrawal) = serde_json::from_str(line).ok()? else { return None };
+        let named = withdrawal.authorization?.checkpoint_seq;
+        Some((line.clone(), withdrawal.approved_seq?, named)).filter(|_| in_window(named))
+    });
+    let (withdrawal, approved, named) = typed.expect("a typed withdrawal naming a checkpoint in the window");
 
     let moved = copied(&dir, "back-moved-checkpoint");
-    let seq = rewrite(&moved, |lines| {
-        let line = (1..lines.len()).find(|line| {
-            checkpoint_seq(&lines[*line]).is_some_and(in_window) && lines[line - 1].contains("\"sequenced\"")
-        })?;
-        lines.swap(line - 1, line);
-        checkpoint_seq(&lines[line - 1])
+    let at = edit(&moved, (last, "a command other than the checkpoint's"), |lines| {
+        let elsewhere = |seq: u64| in_window(seq) && Some(seq) != checkpoint_seq(&checkpoint);
+        let after = lines.iter().position(|line| command_seq(line).is_some_and(elsewhere))?;
+        lines.insert(after + 1, checkpoint.clone());
+        command_seq(&lines[after])
     });
-    assert!(in_window(seq), "a checkpoint moved before its command at seq {seq}");
-    assert_eq!(back(&moved, &carried), None, "a checkpoint before its own command checks nothing");
+    assert!(in_window(at), "a checkpoint after the command at seq {at}");
+    assert_eq!(back(&moved, &carried), None, "a checkpoint after another command than its own checks nothing");
 
     let removed = copied(&dir, "back-removed-checkpoint");
-    rewrite(&removed, |lines| {
+    edit(&removed, (last, "a checkpoint"), |lines| {
         let line = lines.iter().position(|line| checkpoint_seq(line).is_some_and(in_window))?;
         checkpoint_seq(&lines.remove(line))
     });
     assert_eq!(back(&removed, &carried), None, "a log missing a checkpoint checks nothing");
 
     let early = copied(&dir, "back-early-withdrawal");
-    rewrite(&early, |lines| {
-        let (line, named) = lines.iter().enumerate().find_map(|(line, text)| {
-            let LogEntry::Withdrawal(withdrawal) = serde_json::from_str(text).ok()? else { return None };
-            Some((line, withdrawal.authorization?.checkpoint_seq)).filter(|(_, named)| in_window(*named))
-        })?;
-        let checkpoint = lines[..line].iter().position(|text| checkpoint_seq(text) == Some(named))?;
-        let withdrawal = lines.remove(line);
-        lines.insert(checkpoint, withdrawal);
-        Some(named)
+    edit(&early, (last, "a command after the approval and before the checkpoint it names"), |lines| {
+        let unchecked = |seq: u64| in_window(seq) && approved <= seq && seq <= named;
+        let after = lines.iter().position(|line| command_seq(line).is_some_and(unchecked))?;
+        lines.insert(after + 1, withdrawal.clone());
+        command_seq(&lines[after])
     });
     assert_eq!(back(&early, &carried), None, "a withdrawal before the checkpoint it names checks nothing");
 
@@ -150,27 +151,34 @@ fn checkpoint_seq(line: &str) -> Option<u64> {
     }
 }
 
-/// Edits the first segment of the log in `dir`, in file order, whose lines `edit` changes, and relists it as a host
-/// that altered it would; what `edit` gives.
-fn rewrite(dir: &Path, mut edit: impl FnMut(&mut Vec<String>) -> Option<u64>) -> u64 {
-    let mut segments: Vec<PathBuf> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "jsonl") && path.file_name().unwrap() != crate::log::MANIFEST
-        })
-        .collect();
-    segments.sort();
-    for segment in segments {
-        let mut lines: Vec<String> = std::fs::read_to_string(&segment).unwrap().lines().map(str::to_owned).collect();
-        if let Some(found) = edit(&mut lines) {
+/// Each segment of the log in `dir` this host holds, in the manifest's order, with its lines.
+fn segments(dir: &Path) -> Vec<(crate::log::SegmentInfo, Vec<String>)> {
+    let listed = Manifest::load(dir).unwrap().segments.to_vec();
+    let held = listed.into_iter().filter_map(|info| Some((std::fs::read_to_string(dir.join(&info.file)).ok()?, info)));
+    held.map(|(text, info)| (info, text.lines().map(str::to_owned).collect())).collect()
+}
+
+/// Edits the first segment of the log in `dir`, in the manifest's order, whose lines `change` changes, of those that
+/// end before `before`, the snapshot's command, so a start still opens the log from the snapshot; relists it as a host
+/// that altered it would; and gives what `change` gives. `what` names what `change` looks for.
+fn edit(dir: &Path, (before, what): (u64, &str), mut change: impl FnMut(&mut Vec<String>) -> Option<u64>) -> u64 {
+    for (info, mut lines) in segments(dir).into_iter().filter(|(info, _)| info.last_seq < before) {
+        if let Some(found) = change(&mut lines) {
             let bytes = lines.join("\n") + "\n";
-            std::fs::write(&segment, &bytes).unwrap();
-            relist(dir, segment.file_name().unwrap().to_str().unwrap(), bytes.as_bytes());
+            std::fs::write(dir.join(&info.file), &bytes).unwrap();
+            relist(dir, &info.file, bytes.as_bytes());
             return found;
         }
     }
-    panic!("no segment of the log holds what the edit looks for")
+    panic!("no segment of the log before seq {before} holds {what}")
+}
+
+/// The seq of the command `line` holds, if it holds one.
+fn command_seq(line: &str) -> Option<u64> {
+    match serde_json::from_str(line).ok()? {
+        LogEntry::Command(command) => Some(command.sequenced.seq),
+        _ => None,
+    }
 }
 
 /// Lists `bytes` as the segment `file` of the log in `dir`, as a host that altered it would.

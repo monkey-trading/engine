@@ -95,7 +95,8 @@ impl SegmentedLog {
     /// As `open`, over segment files listed before the manifest is read, handing `visit` each entry with
     /// the index in `files` of the segment it is in; `writing` drops manifest entries beyond those files.
     /// With `from`, the segments before the one holding its command are not read, and `visit` takes the
-    /// entries from `from` on; without it, every segment is read, and the log's oldest may not be absent.
+    /// entries from the first at or after `from` on, each after it whatever offset it names, so a reader's own
+    /// checks see one that goes back; without it, every segment is read, and the log's oldest may not be absent.
     /// Error cases:
     /// - as `open`; the files do not pair with the listings (`pair`)
     /// - the log's oldest listed segments are absent without `from`, or the segments here start after `from`
@@ -110,14 +111,15 @@ impl SegmentedLog {
         let (mut manifest, manifest_len) = Manifest::read(dir)?;
         let files = pair(dir, &mut manifest, files, writing)?;
         let first = first_read(&manifest, &files, from.map(|from| from.seq))?;
-        let (mut last, mut open, mut cursor) = (None, None, None);
+        let (mut last, mut open, mut cursor, mut reached) = (None, None, None, from.is_none());
         for (i, (first_seq, path, listed)) in files.iter().enumerate().skip(first) {
             let mut visit = |entry: LogEntry| {
                 let at = crate::log::offset_of(cursor, &entry)?;
                 cursor = Some(at);
-                match from {
-                    Some(from) if at < from => Ok(()),
-                    _ => visit(i, entry),
+                reached |= from.is_some_and(|from| at >= from);
+                match reached {
+                    false => Ok(()),
+                    true => visit(i, entry),
                 }
             };
             let segment = Segment::read(*first_seq, path, listed.as_ref(), &mut last, &mut visit)

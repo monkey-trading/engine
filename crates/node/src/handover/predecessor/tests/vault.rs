@@ -74,6 +74,23 @@ impl CheckpointChain for Vault {
         Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
     }
 
+    /// The checkpoint `finalized` holds, signed in the earlier epoch by the test sequencer's key, which signed it; any
+    /// other seq is one it accepted none at.
+    async fn accepted_checkpoints(
+        &self,
+        at: &Observation,
+        sequences: &[u64],
+    ) -> anyhow::Result<Vec<crate::checkpoints::AcceptedCheckpoint>> {
+        ensure!(at.view == View::Finalized, "checkpoint history is read at finality");
+        let finalized = self.finalized.lock().unwrap().clone();
+        let signer = AccountId(crate::tee::EnclaveKey::test_key().address());
+        let accepted = |seq: &u64| {
+            let (_, root) = finalized.clone().filter(|(at, _)| at == seq).context("checkpoint was not accepted")?;
+            anyhow::Ok(crate::checkpoints::AcceptedCheckpoint { seq: *seq, root, signer, signer_epoch: 1 })
+        };
+        sequences.iter().map(accepted).collect()
+    }
+
     async fn epoch_signers(&self, at: &Observation, _epochs: &[u64]) -> anyhow::Result<Vec<AccountId>> {
         ensure!(at.view == View::Finalized, "signer history is read at finality");
         Ok(vec![AccountId(crate::tee::EnclaveKey::test_key().address())])

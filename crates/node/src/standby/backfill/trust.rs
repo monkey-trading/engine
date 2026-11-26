@@ -25,8 +25,8 @@ pub(in crate::standby) struct Trust {
 
 /// What a check of the copy in `dir` trusts, read from `chain` for `operator`: the signers, and the daily
 /// snapshot under `snapshots`, `[daily_snapshots]`, that `copy_start` gives at or before the vault's finalized
-/// checkpoint. A finalized checkpoint that cannot be read is paged as Warning `snapshot_start_refused`, and the
-/// whole copy is checked.
+/// checkpoint, by the signer the vault accepted at its seq or at that checkpoint (`Finalized::read`). A finalized
+/// checkpoint that cannot be read is paged as Warning `snapshot_start_refused`, and the whole copy is checked.
 /// Error cases:
 /// - the signers cannot be read (`operator::copy_signers`)
 pub(in crate::standby) async fn read_trust(
@@ -39,8 +39,8 @@ pub(in crate::standby) async fn read_trust(
     let signers = copy_signers(cfg, chain, operator).await?;
     let finalized = match snapshots {
         None => None,
-        Some(_) => match chain.state(View::Finalized).await {
-            Ok(state) => Finalized::of(&state),
+        Some(_) => match chain.observe(View::Finalized, &[]).await {
+            Ok(at) => Finalized::read(chain, &at, snapshots).await,
             Err(e) => {
                 warn!(alert = "snapshot_start_refused", "the vault's finalized checkpoint cannot be read: {e:#}");
                 None
