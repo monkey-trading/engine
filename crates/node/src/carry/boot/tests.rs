@@ -15,12 +15,20 @@ const OPERATOR: Address = Address::repeat_byte(0x33);
 const ROOT: B256 = B256::repeat_byte(0x44);
 const TOKEN: Address = Address::repeat_byte(0x55);
 const REGISTRY: Address = Address::repeat_byte(0x77);
+const MINTER: Address = Address::repeat_byte(0x88);
+/// The staking contract the registry deployed.
+const STAKING: Address = Address::repeat_byte(0x99);
 
 /// A condition a test unmeets, named by the text its sentence holds.
 type Unmet = (&'static str, fn(&mut MoveState));
 
 fn expected() -> Expected {
     Expected { chain_id: 42_161, vault: VAULT, source: SOURCE, operator: OPERATOR }
+}
+
+/// The contracts a config names for the move: the ones it keeps.
+fn kept() -> MoveContracts {
+    MoveContracts { source: SOURCE, registry: REGISTRY, minter: MINTER, staking: STAKING }
 }
 
 /// The chain once the move is done, at the source's checkpoint 70.
@@ -33,6 +41,7 @@ fn done() -> MoveState {
         registry_vault: VAULT,
         rotation_switch: false,
         admin_key: OPERATOR,
+        registry_staking: STAKING,
         minter_vault: VAULT,
         minter_token: TOKEN,
         staking_token: TOKEN,
@@ -68,26 +77,51 @@ fn every_unmet_condition_of_a_done_move_is_named() {
 
 #[test]
 fn a_registry_the_source_vault_does_not_read_or_a_minter_of_another_token_is_refused() {
-    assert!(check_kept(&done(), REGISTRY).is_ok());
+    assert!(check_kept(&done(), &kept()).is_ok());
     let other = MoveState { minter_token: Address::repeat_byte(0x66), ..done() };
-    assert!(format!("{:#}", check_kept(&other, REGISTRY).unwrap_err()).contains("names another minter"));
-    let refused = check_kept(&done(), Address::repeat_byte(0x78)).unwrap_err();
+    assert!(format!("{:#}", check_kept(&other, &kept()).unwrap_err()).contains("names another minter"));
+    let elsewhere = MoveContracts { registry: Address::repeat_byte(0x78), ..kept() };
+    let refused = check_kept(&done(), &elsewhere).unwrap_err();
     assert!(format!("{refused:#}").contains("the source vault reads registry"), "{refused:#}");
 }
 
-/// A configured registry the source vault does not read, or a minter of another token, is refused at the first read
-/// of a move that is yet to be done, as no wait would end it, and not held under `carry_waiting`.
+/// The carried stakes continue only on the staking contract the registry records as the one it deployed: a config
+/// naming another, which holds the same token and answers `registry()` as that one does, is refused.
+#[test]
+fn a_staking_contract_the_registry_did_not_deploy_is_refused() {
+    let other = MoveContracts { staking: Address::repeat_byte(0x9a), ..kept() };
+    let refused = check_kept(&done(), &other).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains(&format!("the registry deployed staking contract {STAKING}")),
+        "{refused:#}"
+    );
+}
+
+/// A configured registry the source vault does not read, a staking contract that registry did not deploy, or a
+/// minter of another token, is refused at the first read of a move that is yet to be done, as no wait would end it,
+/// and not held under `carry_waiting`.
 #[tokio::test(start_paused = true)]
-async fn a_start_refuses_the_wrong_registry_or_minter_while_it_holds() {
+async fn a_start_refuses_a_contract_the_move_does_not_keep_while_it_holds() {
     let dir = scratch_dir("carry-hold-wrong");
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("carry.json");
     let waiting = MoveState { source_signer: Address::repeat_byte(1), registry_vault: SOURCE, ..done() };
-    let wrong_registry = hold(|| async { Ok(waiting) }, (&expected(), Address::repeat_byte(0x78)), &path).await;
-    assert!(format!("{:#}", wrong_registry.unwrap_err()).contains("the source vault reads registry"));
+    let elsewhere = MoveContracts { registry: Address::repeat_byte(0x78), ..kept() };
+    let wrong_registry = refused_at_once(waiting, &elsewhere, &path).await;
+    assert!(wrong_registry.contains("the source vault reads registry"), "{wrong_registry}");
+    let not_deployed = MoveContracts { staking: Address::repeat_byte(0x9a), ..kept() };
+    let wrong_staking = refused_at_once(waiting, &not_deployed, &path).await;
+    assert!(wrong_staking.contains("the registry deployed staking contract"), "{wrong_staking}");
     let other = MoveState { minter_token: Address::repeat_byte(0x66), ..waiting };
-    let wrong_minter = hold(|| async { Ok(other) }, (&expected(), REGISTRY), &path).await;
-    assert!(format!("{:#}", wrong_minter.unwrap_err()).contains("names another minter"));
+    let wrong_minter = refused_at_once(other, &kept(), &path).await;
+    assert!(wrong_minter.contains("names another minter"), "{wrong_minter}");
+}
+
+/// What `hold` refuses over a chain that reads `state` and a config naming `contracts`, which it must refuse at its
+/// first read: one that waits instead fails the test, rather than holding it for good.
+async fn refused_at_once(state: MoveState, contracts: &MoveContracts, path: &Path) -> String {
+    let held = tokio::time::timeout(RECHECK / 2, hold(|| async { Ok(state) }, (&expected(), contracts), path)).await;
+    format!("{:#}", held.expect("refused at the first read, not held").unwrap_err())
 }
 
 #[test]
@@ -123,7 +157,7 @@ async fn a_start_holds_until_the_move_is_done_and_the_file_is_there() {
         async move { if n == 1 { Err(anyhow!("no quorum")) } else { Ok(state) } }
     };
     let started = tokio::time::Instant::now();
-    let (state, read_back) = hold(read_chain, (&expected(), REGISTRY), &path).await.unwrap();
+    let (state, read_back) = hold(read_chain, (&expected(), &kept()), &path).await.unwrap();
     assert_eq!((state, read_back.source), (done(), source));
     assert_eq!(reads.get(), 4);
     assert_eq!(started.elapsed(), 3 * RECHECK);
@@ -135,7 +169,7 @@ async fn a_start_refuses_a_file_that_is_not_a_carry_file() {
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("carry.json");
     fs::write(&path, b"{}").unwrap();
-    let error = hold(|| async { Ok(done()) }, (&expected(), REGISTRY), &path).await.unwrap_err();
+    let error = hold(|| async { Ok(done()) }, (&expected(), &kept()), &path).await.unwrap_err();
     assert!(format!("{error:#}").contains("is not a carry file"), "{error:#}");
 }
 

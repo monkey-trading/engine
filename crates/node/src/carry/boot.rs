@@ -2,10 +2,10 @@
 //! `carry_waiting` until the chain shows the move done: the source vault's signer retired, with a checkpoint
 //! accepted; the registry following this node's vault with rotation's switch off and the config's operator key in
 //! effect; and MONKEY's minter following this node's vault; and the carry file in place. The configured registry
-//! must then be the one the source vault reads, the minter must mint the token the staking contract holds, the file
-//! must name the source vault's last accepted checkpoint, and the genesis it carries must apply in full on a scratch
-//! engine at the minter's emission budget, or the start stops with Critical `carry_refused` before anything is
-//! written.
+//! must then be the one the source vault reads, the configured staking contract the one that registry deployed, the
+//! minter must mint the token the staking contract holds, the file must name the source vault's last accepted
+//! checkpoint, and the genesis it carries must apply in full on a scratch engine at the minter's emission budget, or
+//! the start stops with Critical `carry_refused` before anything is written.
 //! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
 //! turn's keys or registers its standby key (from the operator's archive while it holds no copy, `archive`), as a
 //! whole-log take does before it confirms the handover.
@@ -74,15 +74,25 @@ pub(crate) fn unmet(state: &MoveState, expected: &Expected) -> Vec<String> {
 }
 
 /// Checks that the configured contracts are the ones the move keeps: the registry is the one the source vault reads,
-/// whose staking contract the source log mirrored, and the minter mints the token the staking contract holds.
+/// the staking contract is the one that registry deployed, whose events the source log mirrored, and the minter mints
+/// the token the staking contract holds.
 /// Error cases:
-/// - the configured registry is not the source vault's, or the tokens differ
-pub(crate) fn check_kept(state: &MoveState, registry: Address) -> anyhow::Result<()> {
+/// - the configured registry is not the source vault's, the staking contract is not the registry's, or the tokens
+///   differ
+pub(crate) fn check_kept(state: &MoveState, contracts: &MoveContracts) -> anyhow::Result<()> {
+    let MoveContracts { registry, staking, .. } = *contracts;
     if state.source_registry != registry {
         bail!(
             "custody.evm.staking.registry is {registry}, but the source vault reads registry {}: the carried stakes \
              mirror that registry's staking contract",
             state.source_registry
+        );
+    }
+    if state.registry_staking != staking {
+        bail!(
+            "custody.evm.staking.contract is {staking}, but the registry deployed staking contract {}: the carried \
+             stakes mirror that one",
+            state.registry_staking
         );
     }
     if state.minter_token != state.staking_token {
@@ -115,10 +125,10 @@ pub(crate) fn check_source(file: &CarryFile, (seq, root): (u64, B256), expected:
 /// to `check_kept` at once, as waiting for a move that the configured contracts can never complete is no wait.
 /// Error cases:
 /// - the file is there but does not read as a carry file
-/// - a read of the chain shows the configured `registry` or minter are not the ones the move keeps (`check_kept`)
+/// - a read of the chain shows the configured `contracts` are not the ones the move keeps (`check_kept`)
 pub(crate) async fn hold<F, R>(
     read_chain: R,
-    (expected, registry): (&Expected, Address),
+    (expected, contracts): (&Expected, &MoveContracts),
     path: &Path,
 ) -> anyhow::Result<(MoveState, CarryFile)>
 where
@@ -129,7 +139,7 @@ where
     loop {
         let waiting = match read_chain().await {
             Ok(state) => {
-                check_kept(&state, registry)?;
+                check_kept(&state, contracts)?;
                 let unmet = unmet(&state, expected);
                 if unmet.is_empty() && path.exists() {
                     let (file, sha256) = read(path)?;
@@ -181,7 +191,7 @@ pub(crate) async fn carried_parts(
     };
     let quorum = ContractQuorum::connect(&cfg.custody, "carry")?;
     let read_chain = || chain::read(quorum.quorum(), contracts, (expected.chain_id, evm.usdc));
-    let (state, file) = hold(read_chain, (&expected, contracts.registry), &carry.file).await.inspect_err(refused)?;
+    let (state, file) = hold(read_chain, (&expected, &contracts), &carry.file).await.inspect_err(refused)?;
     let at = state.source_checkpoint.ok_or_else(|| anyhow!("held until the source vault holds a checkpoint"))?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);

@@ -263,7 +263,8 @@ async fn read_member(cfg: &NodeConfig, signer: AccountId, follower: &Follower) -
 /// genesis's cooldown.
 async fn served_by_contract(mut cfg: NodeConfig, epoch_secs: u64) -> NodeConfig {
     let evm = cfg.custody.evm.as_mut().unwrap();
-    let rpc = crate::test_support::staking_rpc(evm.usdc, epoch_secs, 2_419_200).await;
+    let staking = evm.staking.as_ref().expect("a staking contract").contract;
+    let rpc = crate::test_support::staking_rpc(evm.usdc, staking, epoch_secs, 2_419_200).await;
     for (provider, path) in evm.providers.iter_mut().zip(["a", "b", "c"]) {
         let section = format!("name = '{path}'\nrpc_url = '{rpc}/{path}'");
         provider.rpc_url = toml::from_str::<RpcProviderSection>(&section).unwrap().rpc_url;

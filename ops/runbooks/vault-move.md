@@ -150,8 +150,11 @@ verifier; `LogHeads` for the launch vault; `OperatorSchedule` over the kept regi
 the launch vault. Plan the addresses with `cast compute-address`, and use the constructor values
 that [Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts) and
 [Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts) give. The
-launch vault's signer is a placeholder until step 11. Do not set the launch vault's registry here,
-because batch B sets it after the registry has moved.
+launch vault's signer is a placeholder until step 11, and it must be the keyless `$PLACEHOLDER` that
+[Deploy the contracts](deploy-and-rollback.md#deploy-the-contracts) derives: from batch B until D runs
+in step 11, `MonkeyMinter` mints against the checkpoints that the launch vault's signer posts, and until
+D a key for that signer could also pay itself any USDC deposited to the launch vault. Do not set the
+launch vault's registry here, because batch B sets it after the registry has moved.
 
 Check the pairing that `setCustody` requires:
 
@@ -161,7 +164,13 @@ cast call $SCHEDULE 'logHeads()(address)' --rpc-url $RPC
 cast call $LOG_HEADS 'vault()(address)' --rpc-url $RPC
 ```
 
-The commands print `$REGISTRY`, `$LOG_HEADS` and `$VAULT`.
+The commands print `$REGISTRY`, `$LOG_HEADS` and `$VAULT`. Check the launch vault's signer too:
+
+```shell
+cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC
+```
+
+The command prints `$PLACEHOLDER`. If it prints any other address, deploy the launch vault again.
 
 **Changes the live system.** The owner approves each deployment.
 
@@ -307,8 +316,10 @@ the checkpoint at `$S` would pass. Otherwise it exits non-zero and names the fir
   Check again after the next accepted checkpoint.
 - **The staking mirror's frontier misses a block.** The alpha has mirrored an event from a block
   that its completed scan has not passed. Check again after the next accepted checkpoint.
-- **An award proposal waits to apply.** A carry would lose it. Let it apply first, or have it
-  proposed again in the launch log after the move.
+- **An award proposal waits to apply.** A carry would lose it, so the check refuses until the award
+  applies, seven days after the alpha logged its vote. Keep the alpha frozen and running, and check
+  again after the next checkpoint the alpha vault accepts once the award has applied. If the alpha's
+  drawn turns end first, install the alpha's operator again, as **If it fails** describes.
 - **The alpha is before V90.** Step 2 is not done. Stop, and finish step 2.
 
 **If it fails:** restart the alpha's trading server without the `frozen` file. Nothing on chain has
@@ -431,9 +442,9 @@ providers, and holds under the Warning `carry_waiting` until all of these hold:
 - `MonkeyMinter` follows the launch vault;
 - the carry file is at `[genesis.carry] file`.
 
-At every read, before it waits, it checks that the configuration's registry is the one the alpha vault reads, whose staking
-contract the alpha mirrored, and that the minter mints the token the staking contract holds, so a wrong address
-refuses at once instead of waiting. Once every condition holds it checks that the carry file's
+At every read, before it waits, it checks that the configuration's registry is the one the alpha vault reads, that
+the configuration's staking contract is the one that registry deployed, whose events the alpha mirrored, and that
+the minter mints the token the staking contract holds, so a wrong address refuses at once instead of waiting. Once every condition holds it checks that the carry file's
 source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
 in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
 is claimable from that checkpoint.
@@ -566,7 +577,8 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   waits on batch B, on the retirement of the alpha's signer or on the carry file resolves when you
   finish the step that it names. The alert resolves by itself once every condition holds.
 - **`carry_refused`** is Critical. The configured registry is not the one the alpha vault reads,
-  the configured minter mints another token than the staking contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
+  the configured staking contract is not the one that registry deployed, the configured minter mints
+  another token than the staking contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does
   not parse or its totals are not what its parts carry, the genesis with the carry does not apply in
   full at the start's time or at the stamp it takes, or the carried emission budget differs from the
   minter's cap. Nothing is written, and the trading server stops. A refusal at the stamp, such as a

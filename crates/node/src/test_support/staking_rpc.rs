@@ -1,4 +1,5 @@
-//! A JSON-RPC stand-in for the custody providers' chain and the staking contract on it.
+//! A JSON-RPC stand-in for the custody providers' chain, the staking contract on it and the registry that deployed
+//! it.
 
 use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::rpc::types::{Block, Transaction};
@@ -14,30 +15,33 @@ sol! {
     function usdc() external view returns (address);
     function epoch() external view returns (uint256);
     function cooldown() external view returns (uint256);
+    function staking() external view returns (address);
 }
 
 /// A JSON-RPC endpoint for any path whose chain is at block 12, final at 7, whose chain id is 31337 (the
-/// Anvil config's), whose USDC is `usdc` and whose staking contract holds the epoch and cooldown given.
-/// Returns its `http://` address.
-pub async fn staking_rpc(usdc: Address, epoch: u64, cooldown: u64) -> String {
+/// Anvil config's), whose USDC is `usdc`, whose registry records `staking` as the staking contract it deployed,
+/// and whose staking contract holds the epoch and cooldown given. Returns its `http://` address.
+pub async fn staking_rpc(usdc: Address, staking: Address, epoch: u64, cooldown: u64) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let app = Router::new().fallback(post(answer)).with_state((usdc, epoch, cooldown));
+    let app = Router::new().fallback(post(answer)).with_state((usdc, staking, epoch, cooldown));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     url
 }
 
-async fn answer(State((usdc, epoch, cooldown)): State<(Address, u64, u64)>, Json(request): Json<Value>) -> Json<Value> {
+async fn answer(
+    State((usdc, staking, epoch, cooldown)): State<(Address, Address, u64, u64)>,
+    Json(request): Json<Value>,
+) -> Json<Value> {
     let one = |request: &Value| {
         let result = match request["method"].as_str().unwrap() {
             "eth_chainId" => json!("0x7a69"),
             "eth_call" => {
                 let input: Bytes = serde_json::from_value(request["params"][0]["input"].clone()).unwrap();
+                let address = |address: &Address| json!({"jsonrpc":"2.0","id":request["id"],"result": Bytes::from(usdcCall::abi_encode_returns(address))});
                 let value = match &input[..4] {
-                    s if s == usdcCall::SELECTOR => {
-                        return json!({"jsonrpc":"2.0","id":request["id"],"result":
-                        Bytes::from(usdcCall::abi_encode_returns(&usdc))});
-                    }
+                    s if s == usdcCall::SELECTOR => return address(&usdc),
+                    s if s == stakingCall::SELECTOR => return address(&staking),
                     s if s == epochCall::SELECTOR => epoch,
                     s if s == cooldownCall::SELECTOR => cooldown,
                     other => panic!("unexpected call {other:?}"),

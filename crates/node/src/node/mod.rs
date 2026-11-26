@@ -89,8 +89,8 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 /// - the engine would reject a genesis command
 /// - with checkpoints configured, the minter's MONKEY cap cannot be read, or it was derived from
 ///   another emission period budget than the one the log records
-/// - with a staking contract configured, it cannot be read, or the log or genesis records another
-///   epoch or cooldown than it holds (see `preflight::staking_preflight`)
+/// - with a staking contract configured, it cannot be read, the configured registry did not deploy it, or the log
+///   or genesis records another epoch or cooldown than it holds (see `preflight::staking_preflight`)
 /// - any supervised task stops or panics, or the sequencer cannot drain in time, none of them, once
 ///   the first read of the chain has set `chain_read`, a delivered key's doing
 #[allow(clippy::too_many_arguments)]

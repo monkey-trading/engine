@@ -242,4 +242,6 @@ fn carried_by(source: CarrySource, parts: &[CarryPart]) -> Option<StateCarried> 
 }
 
 #[cfg(test)]
+mod chain_tests;
+#[cfg(test)]
 mod tests;

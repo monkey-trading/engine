@@ -22,6 +22,8 @@ struct Cli {
 const DEV_KEY: &str = "0x4242424242424242424242424242424242424242424242424242424242424242";
 const ZERO_PIN: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
 const USDC: Address = Address::repeat_byte(0x55);
+/// The staking contract `config_for` names, which its registry deployed.
+const STAKING: Address = Address::with_last_byte(0xdd);
 
 #[tokio::test]
 async fn a_cooldown_or_epoch_that_is_not_the_contracts_is_refused_before_anything_is_signed() {
@@ -30,7 +32,7 @@ async fn a_cooldown_or_epoch_that_is_not_the_contracts_is_refused_before_anythin
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         format!("https://127.0.0.1:{port}")
     };
-    let rpc = staking_rpc(USDC, 86_400, 2_419_200).await;
+    let rpc = staking_rpc(USDC, STAKING, 86_400, 2_419_200).await;
     let config = config_for(&rpc, "chain", false);
     let run = |epoch_ms: &str, cooldown_ms: &str| {
         let argv = [
@@ -72,7 +74,7 @@ fn staking_config(epoch_ms: i64, cooldown_ms: i64) -> StakingConfig {
 
 #[tokio::test]
 async fn providers_that_name_delivered_keys_need_the_secrets_file_and_read_the_contract_with_it() {
-    let rpc = staking_rpc(USDC, 86_400, 2_419_200).await;
+    let rpc = staking_rpc(USDC, STAKING, 86_400, 2_419_200).await;
     let config = config_for(&rpc, "keyed", true);
     let dir = config.parent().unwrap().to_owned();
     let load = || NodeConfig::load(&config).unwrap();

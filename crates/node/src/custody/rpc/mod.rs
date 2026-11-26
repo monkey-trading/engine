@@ -47,11 +47,13 @@ sol! {
     function heads(uint64 epoch) external view returns (uint64 seq, bytes32 link, uint64 signedAt, uint64 boundBlock, uint64 postedAt);
 }
 
-// The staking contract's mirrorable events, and the registry that deployed it, as
-// `contracts/src/Staking.sol` declares them.
+// The staking contract's mirrorable events, as `contracts/src/Staking.sol` declares them, and the getters that
+// bind the mirrored contracts to one another: the registry's staking contract and schedule, and a schedule's
+// registry, as `OperatorRegistry.sol` and `OperatorSchedule.sol` declare them.
 sol! {
     event Staked(address indexed account, uint256 amount);
     event UnstakeCompleted(address indexed account, uint256 amount);
+    function staking() external view returns (address);
     function registry() external view returns (address);
     function schedule() external view returns (address);
 }
@@ -209,23 +211,22 @@ impl VaultReader for VaultRpc {
         Ok(VaultRecord { payer: record.payer, units: U256::from(record.amount.to::<u128>()), account })
     }
 
-    /// The registry the configured staking contract records as its deployer, read in the
-    /// canonical block `at`; `None` where the staking contract has no code yet, before its
-    /// deployment.
+    /// The staking contract the configured registry records as the one it deployed, read in the
+    /// canonical block `at`; `None` where the registry has no code yet, before its deployment.
     /// Error cases:
-    /// - no staking contract is configured, the call fails or times out, or a non-empty answer does
-    ///   not decode as an address
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
-        let staking = self.staking.context("no staking contract is configured")?;
-        let request = TransactionRequest::default().to(staking).input(registryCall {}.abi_encode().into());
+    /// - no registry is configured, the call fails or times out, or a non-empty answer does not
+    ///   decode as an address
+    async fn registry_staking(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+        let registry = self.registry.context("no registry is configured")?;
+        let request = TransactionRequest::default().to(registry).input(stakingCall {}.abi_encode().into());
         let out: Bytes = self
             .deadline("eth_call", self.client.request("eth_call", (request, BlockId::hash_canonical(at.hash))))
             .await
-            .context("reading the staking contract's registry")?;
+            .context("reading the registry's staking contract")?;
         if out.is_empty() {
             return Ok(None);
         }
-        Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the staking contract's registry")?))
+        Ok(Some(stakingCall::abi_decode_returns(&out).context("decoding the registry's staking contract")?))
     }
 
     /// The schedule the configured registry names, read in the canonical block `at`.

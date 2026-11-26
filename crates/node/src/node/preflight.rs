@@ -37,14 +37,14 @@ pub(super) async fn emission_preflight<R: CheckpointChain>(
 }
 
 /// Refuses a log that records, or a config whose genesis would record, a staking config with another
-/// epoch or cooldown than the configured staking contract holds: the engine's epochs would close on a
-/// schedule the contract's cooldown does not cover, and neither side can change. Nothing is read
-/// without a staking contract to compare with or a config to compare. Runs before anything is
-/// written.
+/// epoch or cooldown than the configured staking contract holds, and a configured staking contract the
+/// configured registry did not deploy: the engine's epochs would close on a schedule the contract's
+/// cooldown does not cover, and neither side can change. Nothing is read without a staking contract to
+/// compare with or a config to compare. Runs before anything is written.
 /// Error cases:
 /// - the contract cannot be read (alert `checkpoint_startup_failed`)
-/// - the log's or the genesis's epoch or cooldown differs from the contract's (alert
-///   `staking_terms_mismatch`)
+/// - the configured registry deployed another staking contract, or the log's or the genesis's epoch or
+///   cooldown differs from the contract's (alert `staking_terms_mismatch`)
 pub(super) async fn staking_preflight(
     terms: Option<&StakingTerms>,
     recorded: Option<&StakingConfig>,

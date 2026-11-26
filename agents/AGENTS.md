@@ -262,7 +262,8 @@ an index: load only the rule whose hint matches the current action.
   `carry_waiting` until the custody quorum reads, at a finalized block, the source vault's signer retired, the
   registry following this vault with rotation's switch off and the config's operator in effect, and MONKEY's minter
   following this vault, and Critical `carry_refused` at once, nothing written, unless the registry is the one the source
-  vault reads and the minter mints the staking contract's token (each read of the chain, held or not), or later unless the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
+  vault reads, the staking contract is the one it deployed and the minter mints that contract's token (each read of the
+  chain, held or not), or later unless the file names the source vault's last accepted checkpoint, its totals are what its parts carry, and its
   genesis applies in full at the minter's emission budget, at the start's time and again at the stamp it takes; every
   start refuses a log whose carried source is not the config's, a member refuses such a copy before it takes a
   turn's keys or registers its standby key (over its open copy, or the operator's archived genesis while it holds none, `carry/archive.rs`), and a whole-log take before it confirms the handover), `engine replay --carry-source` (`carry/replay.rs`: the source log's signed

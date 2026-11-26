@@ -1,13 +1,13 @@
 //! The launch deployment's dev scenario on a local Anvil: the vault, the MONKEY minter with its token,
-//! and the staking contract deploy from `ops/runbooks/production-deployment.toml`, at the owner's
-//! decided values, and
+//! and the registry with the staking contract it deploys, from `ops/runbooks/production-deployment.toml`, at the
+//! owner's decided values, and
 //! the node's `InitEmissions` and `InitStaking` checks, reading the deployed contracts, accept them
 //! and refuse a value that is not the contracts'. Run by `scripts/dev-launch-values.sh`.
 
 use std::process::{Command as Process, Stdio};
 use std::time::Duration;
 
-use alloy::primitives::{Address, Bytes, U64, U256};
+use alloy::primitives::{Address, B256, Bytes, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
 use alloy::sol;
@@ -35,6 +35,17 @@ sol! {
     function getMinDelay() external view returns (uint256);
     function epoch() external view returns (uint256);
     function cooldown() external view returns (uint256);
+    function staking() external view returns (address);
+    struct InitialOperator { address adminKey; bytes launchDigest; bytes32 configHash; }
+    struct RegistryParameters {
+        uint64 epochLength;
+        uint64 finalityMargin;
+        uint16 eligibilityBps;
+        uint16 quorumBps;
+        uint16 maxCandidates;
+        uint256 minSelfBond;
+        uint64 livenessTimeout;
+    }
 }
 
 #[tokio::test]
@@ -70,8 +81,8 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
     let accounts: Vec<Address> = provider.request("eth_accounts", ()).await.unwrap();
     let signer = crate::tee::EnclaveKey::generate();
 
-    // The deployment from the inputs. `Staking` is deployed directly with the two values the registry's
-    // constructor passes it, to keep the scenario to the values under test.
+    // The deployment from the inputs. The registry deploys `Staking` with the two values under test, which the node
+    // reads only from the staking contract the registry records; the registry's own parameters are test values.
     let usdc = deploy(&provider, accounts[0], "MockUSDC.sol/MockUSDC.json", &[]).await;
     let mut governance_args = U256::from(min_delay).to_be_bytes::<32>().to_vec();
     governance_args.extend_from_slice(&U256::from(0x80).to_be_bytes::<32>());
@@ -104,8 +115,26 @@ async fn dev_scenario_the_launch_values_deploy_and_the_nodes_initialisations_acc
         }
     };
     let monkey = monkeyCall::abi_decode_returns(&call(minter, monkeyCall {}.abi_encode()).await).unwrap();
-    let staking_args = (monkey, U256::from(cooldown), U256::from(epoch)).abi_encode();
-    let staking = deploy(&provider, accounts[0], "Staking.sol/Staking.json", &staking_args).await;
+    let initial = InitialOperator {
+        adminKey: accounts[1],
+        launchDigest: Bytes::from(vec![0; 48]),
+        configHash: B256::repeat_byte(1),
+    };
+    let parameters = |epoch_length: u64, eligibility: u16, cap: u16, liveness: u64| RegistryParameters {
+        epochLength: epoch_length,
+        finalityMargin: 60,
+        eligibilityBps: eligibility,
+        quorumBps: eligibility,
+        maxCandidates: cap,
+        minSelfBond: U256::from(1_000),
+        livenessTimeout: liveness,
+    };
+    let (held, low, high) =
+        (parameters(3_600, 100, 10, 600), parameters(60, 0, 1, 60), parameters(86_400, 10_000, 100, 3_600));
+    let registry_args =
+        (monkey, U256::from(cooldown), U256::from(epoch), governance, initial, held, low, high).abi_encode_params();
+    let registry = deploy(&provider, accounts[0], "OperatorRegistry.sol/OperatorRegistry.json", &registry_args).await;
+    let staking = stakingCall::abi_decode_returns(&call(registry, stakingCall {}.abi_encode()).await).unwrap();
 
     // The chain holds the decided values.
     let read = |out: Bytes| U256::from_be_slice(&out);
@@ -162,7 +191,7 @@ contract = "{staking:#x}"
 cursor_path = "{dir}/staking-cursor.json"
 
 [evm.staking.registry]
-contract = "0x00000000000000000000000000000000000000ee"
+contract = "{registry:#x}"
 "#,
         dir = dir.display()
     ))
