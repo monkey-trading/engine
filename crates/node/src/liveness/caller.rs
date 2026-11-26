@@ -35,7 +35,7 @@ use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, B256, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
-use alloy::sol_types::{SolCall, SolError};
+use alloy::sol_types::SolCall;
 use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::Context as _;
@@ -44,12 +44,11 @@ use tokio::time::{MissedTickBehavior, interval, interval_at, timeout};
 use tracing::{debug, info, warn};
 
 use crate::config::{CheckpointSection, LivenessSection, redact};
-use crate::liveness::chain::{
-    KeyHolderUnknown, LivenessDomain, View, head_release, promoteCall, skipCall, view, witnessCall,
-};
+use crate::liveness::chain::{LivenessDomain, View, promoteCall, skipCall, view, witnessCall};
 use crate::liveness::fallback::{Account, Sends};
 use crate::liveness::link::Copy;
 use crate::liveness::read_every;
+use crate::liveness::unowned::{KeyHolderRefused, head_release, names_unknown_key_holder};
 use crate::log_heads::{Head, SignedHead};
 use crate::standby_key::chain::StandbyChain;
 
@@ -67,24 +66,6 @@ pub(crate) enum Call {
     Skip,
     /// A signed head, relayed.
     Relay(Box<SignedHead>),
-}
-
-/// A skip or promotion the schedule refused with `KeyHolderUnknown`: the newest head's release belongs to no
-/// candidate, so neither can pass until a member takes the keys or the release is bound to its candidate.
-#[derive(Debug)]
-pub(crate) struct KeyHolderRefused;
-
-impl std::fmt::Display for KeyHolderRefused {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the schedule refused the call: the newest head's release belongs to no candidate")
-    }
-}
-
-impl std::error::Error for KeyHolderRefused {}
-
-/// Whether the revert in `error`, as the endpoint reports it, carries `KeyHolderUnknown`'s selector.
-fn names_unknown_key_holder(error: &str) -> bool {
-    error.to_ascii_lowercase().contains(&alloy::hex::encode(KeyHolderUnknown::SELECTOR))
 }
 
 /// How the caller sends: estimated first, then sent from its own account.

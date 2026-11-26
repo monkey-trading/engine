@@ -9,11 +9,12 @@ use anyhow::{bail, ensure};
 use engine_core::types::AccountId;
 
 use crate::liveness::chain::{
-    LivenessDomain, currentSetIdCall, fallbackBlockCall, fallbackHashCall, headReleaseCall, headsCall, headsReturn,
-    keyHolderCall, latestMarkCall, latestMarkReturn, livenessCall, livenessReturn, pendingSetIdCall,
-    promotionDueAtCall, relayedSeedCall, rotationStateCall, rotationStateReturn, rotationSwitchCall, seedReceiverCall,
-    setOfCall, setOfReturn, skipDueAtCall,
+    LivenessDomain, currentSetIdCall, fallbackBlockCall, fallbackHashCall, headsCall, headsReturn, keyHolderCall,
+    latestMarkCall, latestMarkReturn, livenessCall, livenessReturn, pendingSetIdCall, promotionDueAtCall,
+    relayedSeedCall, rotationStateCall, rotationStateReturn, rotationSwitchCall, seedReceiverCall, setOfCall,
+    setOfReturn, skipDueAtCall,
 };
+use crate::liveness::unowned::headReleaseCall;
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
     heldTurnCall, promotableCall, registryCall, releaseApprovedCall, scheduleCall, signerEpochCall, standbyHolderCall,

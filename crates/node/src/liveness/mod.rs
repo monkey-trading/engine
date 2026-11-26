@@ -32,6 +32,7 @@ pub(crate) mod fallback;
 pub(crate) mod fence;
 pub(crate) mod link;
 pub(crate) mod operator;
+pub(crate) mod unowned;
 
 /// The stop rule's margin: the bound assumed on how far Arbitrum block timestamps lead true time
 /// (10 s, pinned in the runbook), plus the enclave's time to stop (5 s). `OperatorSchedule`'s

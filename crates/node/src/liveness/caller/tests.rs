@@ -479,14 +479,3 @@ async fn a_refusal_for_another_reason_pages_nothing() {
     task.abort();
     assert_eq!(std::iter::from_fn(|| alerts.try_recv().ok()).count(), 0);
 }
-
-#[test]
-fn only_the_key_holder_revert_is_taken_for_an_unowned_release() {
-    let selector = alloy::hex::encode(KeyHolderUnknown::SELECTOR);
-    let refused = format!(
-        "liveness RPC failed: server returned an error response: error code 3: execution reverted, data: \"0x{selector}\""
-    );
-    assert!(names_unknown_key_holder(&refused));
-    assert!(!names_unknown_key_holder("liveness RPC failed: error code 3: execution reverted, data: \"0x4e487b71\""));
-    assert!(!names_unknown_key_holder("liveness RPC failed: execution reverted: not due"));
-}

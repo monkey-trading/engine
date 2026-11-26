@@ -53,10 +53,6 @@ sol! {
     function fallbackHash(uint64 turn) external view returns (bytes32);
     function fallbackBlock(uint64 turn) external view returns (uint256);
     function fixFallback(uint64 turn) external returns (bool ready);
-    function headRelease(uint64 epoch) external view returns (bytes32);
-
-    /// `OperatorSchedule`'s refusal of a skip or promotion while the newest head's release belongs to no candidate.
-    error KeyHolderUnknown();
 }
 
 /// The schedule's heartbeat rule, in its own units.
@@ -451,17 +447,6 @@ pub(crate) fn promotable<'a, B: AgreedBlock>(
         .await?;
         Ok((!key.is_zero()).then_some(AccountId(key.0.0)))
     })
-}
-
-/// The release of the signer epoch's newest v2 head, which `domain`'s `LogHeads` records.
-/// Error cases:
-/// - the call fails, or its return does not decode
-pub(crate) async fn head_release(
-    block: &impl AgreedBlock,
-    domain: &LivenessDomain,
-    epoch: u64,
-) -> anyhow::Result<B256> {
-    call(block, "liveness_head_release", domain.log_heads, headReleaseCall { epoch }).await
 }
 
 /// `request` made at `block` under `operation`, its return decoded.
