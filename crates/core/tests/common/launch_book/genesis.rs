@@ -186,8 +186,22 @@ pub fn price_command_on(engine: &engine_core::Engine, market: MarketId, mid: &st
     Command::Prices { market, quotes }
 }
 
-/// Quotes `market` at `mid` now.
+/// Quotes `market` at `mid` now, and the next contract of a market priced from futures at the same mid,
+/// so the book holds the gap a roll is taken on, as a market whose venues quote both contracts does.
 pub fn price_market(h: &mut Harness, market: MarketId, mid: &str) -> Vec<Event> {
     let cmd = price_command(h, market, mid, h.ts);
-    h.cmd(cmd)
+    let events = h.cmd(cmd);
+    let next = h.engine.markets()[&market].next_contract().map(|next| next.contract.clone());
+    if let Some(next) = next {
+        let quotes = (0..2)
+            .map(|venue| SourceQuote {
+                source: format!("venue{venue}"),
+                mid: mid.parse().unwrap(),
+                ts: h.ts,
+                contract: Some(next.clone()),
+            })
+            .collect();
+        h.cmd(Command::Prices { market, quotes });
+    }
+    events
 }

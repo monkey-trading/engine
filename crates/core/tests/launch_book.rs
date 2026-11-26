@@ -116,3 +116,29 @@ fn the_in_band_orders_are_the_ones_a_price_reaches() {
         assert!(fills > 0 && fills <= expected, "market {market}: {fills} fills of {expected} in-band orders");
     }
 }
+
+/// Gold's `GCG7` and silver's `SIH7` roll at 14:30 UTC on 25 Nov 2026.
+const GOLD_ROLL: engine_core::types::Millis = 1_795_617_000_000;
+
+#[test]
+fn a_book_ten_minutes_before_a_roll_time_holds_the_gap_a_node_started_past_it_rolls_on() {
+    // The load scenarios start a node ten minutes after the book's clock, so one that starts past a
+    // roll time finds the market with no gap recorded, and pages `futures_roll_overdue` until its feeds
+    // quote both contracts, unless the book quoted the next contract as well.
+    let mix = Mix { at: GOLD_ROLL - 5 * 60_000, always_open: true, ..Mix::proposal(200) };
+    let book = build(&mix, NamedCounts { adders: 1, openers: 1, closeouts: 0 });
+    let engine = &book.h.engine;
+    assert!(engine.now() < GOLD_ROLL, "the book ends before the roll time");
+    let mut checked = 0;
+    for (id, market) in engine.markets() {
+        let (Some(futures), Some(next)) = (&market.futures, market.next_contract()) else { continue };
+        checked += 1;
+        assert!(
+            futures.gap.is_some(),
+            "market {id} ({}) has no gap recorded for {}",
+            market.spec.symbol,
+            next.contract
+        );
+    }
+    assert!(checked >= 7, "{checked} futures markets with a next contract");
+}
