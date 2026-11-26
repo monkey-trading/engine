@@ -97,7 +97,7 @@ async fn an_archive_segment_another_key_signed_is_refused() {
         ticks(&operator, 12).await;
         let manifest = Manifest::load(&operator).unwrap();
         let next = manifest.segments.iter().find(|listed| listed.first_seq > last_seq(&copy));
-        forge_segment(&operator, &next.expect("a completed segment past the copy").file.clone(), forge);
+        let _ = forge_segment(&operator, &next.expect("a completed segment past the copy").file.clone(), forge);
         let followed = refusing_operator(&operator).await;
         let (mut writer, mut copied) = open_copy(&copy, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
         let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [enclave()].into());
@@ -111,6 +111,36 @@ async fn an_archive_segment_another_key_signed_is_refused() {
         assert_eq!(kept[..held.len()], held[..], "{case}: the copy keeps what it held");
         assert!(last_seq(&copy) < next_first(&operator, &held), "{case}: the copy took nothing of the forged segment");
     }
+}
+
+/// A standby that missed a signer change, and holds no checkpoint from the key that sealed the commands before its
+/// first checkpoint, takes them once the vault has recorded that key.
+#[tokio::test]
+async fn a_signer_the_copy_holds_no_checkpoint_from_seals_what_the_archive_holds() {
+    let operator = scratch_dir("catch-up-signer-operator");
+    ticks(&operator, 2).await;
+    let copy = scratch_dir("catch-up-signer-copy");
+    copy_log(&operator, &copy);
+    let held = log_entries(&copy);
+    ticks(&operator, 12).await;
+    let next = Manifest::load(&operator)
+        .unwrap()
+        .segments
+        .iter()
+        .find(|listed| listed.first_seq > last_seq(&copy))
+        .unwrap()
+        .file
+        .clone();
+    let intermediate = forge_segment(&operator, &next, Forge::Seals);
+    let followed = refusing_operator(&operator).await;
+    let (mut writer, mut copied) = open_copy(&copy, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
+    let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [enclave(), intermediate].into());
+    let take = |after, bytes: &[u8]| take_into((&mut writer, &mut copied), (DOMAIN, &signers), after, bytes);
+    catch_up(&client, &followed.origins(), copied_head(&copy), take).await.expect("the copy catches up");
+    drop(writer);
+    let kept = log_entries(&copy);
+    assert_eq!(kept[..held.len()], held[..], "the copy keeps what it held");
+    assert!(last_seq(&copy) >= next_first(&operator, &held), "the copy took the intermediate signer's segment");
 }
 
 /// A mirror that stopped at the copy's head, though it answers, gives way to the next origin whose manifest lists
@@ -247,8 +277,8 @@ enum Forge {
 }
 
 /// Forges the segment `file` in `dir` as `forge` says, and lists its new bytes, so the archive serves it whole and
-/// true to its listing.
-fn forge_segment(dir: &Path, file: &str, forge: Forge) {
+/// true to its listing; gives the key that forged it.
+fn forge_segment(dir: &Path, file: &str, forge: Forge) -> engine_core::types::AccountId {
     use crate::log::command_seal::{checkpoint_link, command_link, seal_digest};
     use sha2::Digest;
     let (other, path) = (EnclaveKey::generate(), dir.join(file));
@@ -306,6 +336,7 @@ fn forge_segment(dir: &Path, file: &str, forge: Forge) {
         })
         .collect();
     std::fs::write(dir.join(crate::log::MANIFEST), text).unwrap();
+    engine_core::types::AccountId(other.address())
 }
 
 /// The first seq of the operator's segment in `dir` after the last command `held` holds.
