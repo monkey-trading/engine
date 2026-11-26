@@ -41,6 +41,28 @@ fn a_commands_rows_are_derived_again_from_the_newest_snapshot_before_it() {
     assert!(error.downcast_ref::<NotLocal>().is_some(), "from the log's start: {error:#}");
 }
 
+/// A snapshot whose file the host no longer holds, as one the archive's bucket keeps in its place, is passed over for
+/// the newest before the command that the host holds, which a replay of the log goes on from.
+#[test]
+fn a_snapshot_the_host_no_longer_holds_is_passed_over_for_the_newest_it_holds() {
+    let (rig, at, kept) = rolled("snapshot-rows-archived");
+    let entries = log_entries(&rig.dir);
+    let snapshots = scratch_dir("snapshot-rows-archived-daily");
+    let [.., older, newer] = checkpoints_before(&entries, at)[..] else {
+        panic!("two checkpoints before the rollover")
+    };
+    let held = publish(&snapshots, &entries, older);
+    let archived = publish(&snapshots, &entries, newer);
+    std::fs::remove_file(snapshots.join(&archived.file)).unwrap();
+    let before = |listing: &crate::daily_snapshots::Listed| listing.seq < at;
+    let engine = crate::history::derived::engine_from(Some(&snapshots), before);
+    assert_eq!(engine.last_seq(), Some(held.seq), "from the snapshot the host holds");
+    assert!(crate::history::derived::goes_on(Some(held.seq), at, Some(&snapshots)), "a replay from it goes on");
+    let gone = watch::channel(DerivedRows::default()).1;
+    let mut deriver = Deriver::new(gone, Some((rig.dir.clone(), rig.manifest.clone()))).with_snapshots(Some(snapshots));
+    assert_eq!(deriver.rows(&command_at(&entries, at)).unwrap(), Some(kept));
+}
+
 /// A command before the first seq this node's start verified, as an index rebuilt after a start from a later snapshot
 /// takes it again, has its rows derived from the host's segments as the index reads it from them, not refused.
 #[test]

@@ -49,6 +49,7 @@ mod orders;
 pub(crate) mod paired;
 mod report;
 mod restart;
+mod snapshot_archive;
 mod snapshot_start;
 #[cfg(test)]
 mod tests;

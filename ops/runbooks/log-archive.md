@@ -1,9 +1,10 @@
 # Log archive
 
-Use this runbook to set up the bucket that keeps the public log for good, to check that the trading
-server uploads to it, and to act when one of the archive's alerts fires. The log must stay public
-and replayable from genesis, and the archive is where it stays once the host no longer holds every
-segment. Commands, configuration keys and their output call a running trading server a node.
+Use this runbook to set up the bucket that keeps the public log and its daily snapshots for good, to
+check that the trading server uploads to it, and to act when one of the archive's alerts fires. The
+log must stay public and replayable from genesis, and the archive is where it stays once the host no
+longer holds every segment. With `[daily_snapshots]`, the host keeps 30 days of daily snapshots, and
+the bucket keeps every one. Commands, configuration keys and their output call a running trading server a node.
 
 - [What a deployment needs](#what-a-deployment-needs)
 - [Set up the bucket](#set-up-the-bucket)
@@ -20,13 +21,13 @@ below.
 
 Each deployment has a bucket of its own: staging's is not production's. Every member of the rotation
 set uploads to the deployment's bucket, with the same keys. Each log's objects sit under its custody
-chain and vault, `log/<chain id>/<vault>/`, so a new log on a new vault, as at the move to the launch
-vault, can share its predecessor's bucket.
+chain and vault, `log/<chain id>/<vault>/`, and its daily snapshots under `snapshots/<chain id>/<vault>/`,
+so a new log on a new vault, as at the move to the launch vault, can share its predecessor's bucket.
 
 | Need | Detail |
 | --- | --- |
 | A Cloudflare R2 bucket | Its name is `archive.bucket`, and its account's S3 API endpoint, `https://<account id>.r2.cloudflarestorage.com`, is `archive.endpoint`. The node signs its uploads with AWS Signature Version 4 for the region `auto`, so another S3-compatible store works with its own endpoint and region. |
-| An indefinite bucket lock on `log/` | Once the lock covers an object, nobody can replace or delete it, whatever keys they hold. Every object the node writes is under `log/`. |
+| Indefinite bucket locks on `log/` and `snapshots/` | Once a lock covers an object, nobody can replace or delete it, whatever keys they hold. Every object the node writes is under one of the two. |
 | A custom domain for public reads | `archive.public_url`. Readers, and the node's own check of each upload, read objects there. Do not use the `r2.dev` address, which Cloudflare rate-limits and does not support for production. |
 | An API token | Object read and write on this bucket only. Its access key id and secret access key are delivered as `archive_access_key_id` and `archive_secret_access_key`. |
 
@@ -39,11 +40,12 @@ owner's approval.
 
 1. Create the bucket on the **R2 object storage** page of the Cloudflare dashboard.
 2. Open the bucket's **Settings** tab. On the **Bucket lock rules** card, select **Add rule**, name
-   it, set the prefix `log/`, keep objects locked indefinitely, and select **Save changes**. See
-   Cloudflare's [bucket locks](https://developers.cloudflare.com/r2/buckets/bucket-locks/).
+   it, set the prefix `log/`, keep objects locked indefinitely, and select **Save changes**. Add a
+   second rule the same way for the prefix `snapshots/`. See Cloudflare's [bucket
+   locks](https://developers.cloudflare.com/r2/buckets/bucket-locks/).
 
    **A rule without the prefix, or with a retention period, does not protect the archive for good.**
-   Check the rule's prefix and its retention before you go on.
+   Check each rule's prefix and its retention before you go on.
 3. On the same tab, under **Custom Domains**, select **Add**, enter the domain, and connect it. Leave
    its caching at the default. If a rule caches every file on the domain, keep it from caching `404`
    answers under `log/`: the node reads each object back as soon as it creates it, and a cached
@@ -96,6 +98,17 @@ first release that names a production bucket.
 
    `zstd -t` passes, which checks the frame's content checksum, and the two `jq` commands print `0`
    and `9999`.
+3. With `[daily_snapshots]`, check that the newest snapshot the trading server lists is in the bucket
+   as it lists it:
+
+   ```shell
+   export SNAPSHOTS=https://<archive.public_url's host>/snapshots/<custody.chain_id>/<custody.vault, lower case>
+   curl -sf $API/v1/archive/snapshots/manifest.jsonl | tail -n 1 | jq -r '.file, .sha256'
+   curl -sf $SNAPSHOTS/<file> | sha256sum
+   ```
+
+   The second command prints the hash the first printed. `engine_archive_snapshots_pending` is at most
+   one or two, and `engine_archive_snapshots_confirmed_total` rises by one a day.
 
 **A first release with the archive uploads the whole log from its first range.**
 `engine_archive_pending_ranges` falls as the backlog uploads, and `archive_upload_lagging` fires if it
@@ -106,8 +119,9 @@ takes longer than `archive.lag_alert`. Nothing needs to be done unless it stops 
 **What is happening.** A whole range of the log has waited longer than `archive.lag_alert`, an hour
 by default, for its upload to be confirmed, or the node has not reached the bucket for that long to
 find where to resume. The wait includes the time the vault takes to finalize a checkpoint past the
-range. The host keeps the whole log, so nothing is lost, and the trading server keeps sequencing.
-Clients see no change.
+range. With the field `objects` set to `daily_snapshots`, a daily snapshot has waited that long
+instead, with no vault to wait for. The host keeps the whole log and every snapshot not yet in the
+bucket, so nothing is lost, and the trading server keeps sequencing. Clients see no change.
 
 1. If `checkpoint_backlog` is open too, the vault has finalized no checkpoint for a while, and ranges
    wait for it. Follow [Withdrawal stalls](withdrawal-stalls.md) first.
@@ -115,6 +129,7 @@ Clients see no change.
 
    ```text
    an upload to the archive failed, and is retried in 300s: ...
+   an upload of a daily snapshot to the archive failed, and is retried in 300s: ...
    ```
 
    The message names the cause:
@@ -129,8 +144,8 @@ Clients see no change.
    | A timeout, or a connection error | The bucket or the host's network is down. Check [Cloudflare's status page](https://www.cloudflarestatus.com) and the host's outbound connections. |
    | `does not match` its listing, or a segment cannot be read | The host changed or removed a segment file. The node uploads nothing past it. Treat it as an incident, as [Incident response](incident-response.md) describes. |
 
-3. Watch `engine_archive_pending_ranges`. Once the cause is fixed, it falls at the next retry, at
-   most five minutes later.
+3. Watch `engine_archive_pending_ranges`, or for the snapshots `engine_archive_snapshots_pending`.
+   Once the cause is fixed, it falls at the next retry, at most five minutes later.
 
 **How to tell it is resolved.** The alert resolves, and `engine_archive_pending_ranges` is back to a
 few.
@@ -150,9 +165,14 @@ has finalized a checkpoint past it, so a range never changes once it is uploaded
 hold different bytes for one finalized range hold different logs, or one object was written by a
 holder of the bucket's keys or by Cloudflare. Treat it as an incident.
 
+When the alert's `object` is under `snapshots/`, with a `seq` field, the object of a daily snapshot
+reads back as other bytes than the snapshot's line in this trading server's manifest. The host keeps
+that snapshot whatever its age and serves it from its disk, and the other days go on. Only the node
+that sequenced a snapshot's checkpoint writes the snapshot, so this is an incident too.
+
 1. Keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes,
-   with the alert's `object` and `first_seq` fields.
-2. Read the object:
+   with the alert's `object` and its `first_seq` or `seq` field.
+2. Read the object. For a range:
 
    ```shell
    curl -sf https://<archive.public_url's host>/<object> -o range.zst
@@ -161,9 +181,17 @@ holder of the bucket's keys or by Cloudflare. Treat it as an incident.
    ```
 
    An object that fails `zstd -t`, or whose first sequence number is not the alert's `first_seq`,
-   was not written by a node. Rotate the bucket's API token and deliver the new keys to every
-   member, as step 6 of [Set up the bucket](#set-up-the-bucket) describes.
-3. Tell the owner, with the evidence. Readers of the archive check a range by replaying it.
+   was not written by a node. For a snapshot, read the object's checkpoint:
+
+   ```shell
+   curl -sf https://<archive.public_url's host>/<object> | jq -c '.checkpoint | {seq, root, signer}'
+   ```
+
+   An object whose checkpoint is not at the alert's `seq`, or is not the one the log holds there, was
+   not written by this deployment's log. Either way, rotate the bucket's API token and deliver the new
+   keys to every member, as step 6 of [Set up the bucket](#set-up-the-bucket) describes.
+3. Tell the owner, with the evidence. Readers of the archive check a range by replaying it, and a
+   snapshot against its signature and its checkpoint's root.
 
 ## When `archive_copy_superseded` fires
 
@@ -253,6 +281,15 @@ for the same object pages again after `alerts.episode_quiet`.
   is taken only if it matches its manifest line, and every copy built from the archive replays before
   a node relies on it. `engine replay`, `engine exit-proof` and `engine carry` take a server's URL
   for `--log`, download the log through the server and the bucket, and read it as a log on disk.
+- **The daily snapshots.** Each goes up as soon as it is published, as the file the node wrote, at
+  `snapshots/<custody chain id>/<vault>/<file>`, uncompressed, so its object is the bytes its manifest
+  line names. The upload is create-only and sends only those bytes: a file that differs from its line
+  creates nothing. The node counts a snapshot as archived once a read of its object from the public URL
+  has its line's length and SHA-256, and only then, once it is stamped more than
+  `daily_snapshots.local_window` before the newest, removes the host's copy, keeping the newest of
+  those. The manifest keeps every line, and `/v1/archive/snapshots/<file>` answers 308 to the object
+  of a snapshot the host no longer holds. `engine replay --snapshots <server URL>` and a member's
+  start from a snapshot follow it; a member follows it only to the bucket its own `[archive]` names.
 - **Size.** At 10,000 sequence numbers a range of launch flow is about 5.5 MB. On 30 minutes of launch
   flow at 10,000 accounts, zstd's level 1 compressed the log about 6.1 times, to under a megabyte a
   range, at over a gigabyte a second. Higher levels up to 15 compressed less, level 19 about 6.8 times

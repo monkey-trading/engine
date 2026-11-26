@@ -428,7 +428,7 @@ async fn serve_node(
         payouts_enabled: mock_custody || cfg.checkpoints.is_some(),
         clock: Arc::new(SystemClock),
         log_dir: cfg.node.log_dir.clone(),
-        daily_snapshots: cfg.daily_snapshots.as_ref().map(|daily| Arc::new(ServedSnapshots::new(daily.dir.clone()))),
+        daily_snapshots: ServedSnapshots::for_config(cfg)?,
         manifest: manifest_rx,
         backfills,
         limits: limits.clone(),

@@ -2,7 +2,8 @@
 //! rotation-set member, the wait for each holding between runs (`member`). Beside them run the
 //! process's own tasks, one each for its life, while a member follows as well as while it holds a
 //! turn: the metrics listener, bound once, the disk watcher, the seed relayer with `[seed_relay]`, and
-//! the archive's uploader with `[archive]`; any of them stopping ends the process.
+//! with `[archive]` the log archive's uploader and, with `[daily_snapshots]`, the daily snapshots'; any of them
+//! stopping ends the process.
 
 use std::sync::Arc;
 
@@ -55,6 +56,9 @@ pub(crate) async fn run_with_cpu(
     if let Some((uploader, sources)) = crate::archive::Uploader::for_config(&cfg, &delivered.values, &metrics)? {
         delivered.archive = Some(sources);
         process.spawn(async move { ("log archive uploader", uploader.run().await) });
+    }
+    if let Some(uploader) = crate::daily_snapshots::SnapshotUploader::for_config(&cfg, &delivered.values, &metrics)? {
+        process.spawn(async move { ("daily snapshot uploader", uploader.run().await) });
     }
     let sends = Arc::new(crate::liveness::fallback::Sends::default());
     if let Some(fixer) = crate::liveness::fallback::Fixer::for_config(&cfg, sends.clone())? {

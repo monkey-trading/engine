@@ -134,11 +134,11 @@ fn the_daily_snapshots_directory_is_one_of_its_own() {
     let (log, history, outbox) = (&cfg.node.log_dir, &cfg.history.dir, &cfg.alerts.outbox.dir);
     let shared = [log.clone(), history.clone(), outbox.clone(), "data/dev/snapshots".into()];
     for dir in shared {
-        cfg.daily_snapshots = Some(DailySnapshotsSection { dir: dir.clone() });
+        cfg.daily_snapshots = Some(DailySnapshotsSection::at(dir.clone()));
         let refused = cfg.validate().expect_err("a shared directory");
         assert!(refused.to_string().contains("[daily_snapshots] dir must be a directory of its own"), "{refused:#}");
     }
-    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: "data/dev/daily-snapshots".into() });
+    cfg.daily_snapshots = Some(DailySnapshotsSection::at("data/dev/daily-snapshots".into()));
     cfg.validate().unwrap();
 
     // A symbolic link to one of them is refused as it is.
@@ -147,9 +147,9 @@ fn the_daily_snapshots_directory_is_one_of_its_own() {
     std::fs::create_dir_all(&log).unwrap();
     std::os::unix::fs::symlink(&log, root.join("alias")).unwrap();
     (cfg.node.log_dir, cfg.alerts.outbox.dir) = (log, root.join("alerts"));
-    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: root.join("alias") });
+    cfg.daily_snapshots = Some(DailySnapshotsSection::at(root.join("alias")));
     let refused = cfg.validate().expect_err("an alias of the log directory");
     assert!(refused.to_string().contains("[daily_snapshots] dir must be a directory of its own"), "{refused:#}");
-    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: root.join("daily-snapshots") });
+    cfg.daily_snapshots = Some(DailySnapshotsSection::at(root.join("daily-snapshots")));
     cfg.validate().unwrap();
 }

@@ -24,7 +24,7 @@ async fn a_member_with_an_empty_copy_starts_its_replica_from_the_newest_snapshot
     let origin = scratch_dir("member-snapshot-origin");
     let [older, newer] = publish(&fixture.log, &origin);
     let daily = scratch_dir("member-snapshot-daily");
-    fixture.cfg.daily_snapshots = Some(DailySnapshotsSection { dir: daily.clone() });
+    fixture.cfg.daily_snapshots = Some(DailySnapshotsSection::at(daily.clone()));
     *fixture.registry.finalized.lock().unwrap() = Some((older.seq, older.root.clone()));
     let followed = followed(archive_with(&fixture.log, &origin).await);
     let member = fixture.member();
@@ -48,7 +48,7 @@ async fn a_member_whose_copy_holds_the_log_starts_its_replica_from_a_snapshot() 
     let origin = scratch_dir("member-snapshot-held-origin");
     let [_, newer] = publish(&fixture.log, &origin);
     let daily = scratch_dir("member-snapshot-held-daily");
-    fixture.cfg.daily_snapshots = Some(DailySnapshotsSection { dir: daily.clone() });
+    fixture.cfg.daily_snapshots = Some(DailySnapshotsSection::at(daily.clone()));
     *fixture.registry.finalized.lock().unwrap() = Some((newer.seq, newer.root.clone()));
     let followed = followed(archive_with(&fixture.log, &origin).await);
     let member = fixture.member();
@@ -75,8 +75,7 @@ async fn a_member_replays_its_whole_copy_when_no_snapshot_start_applies() {
         let origin = scratch_dir("member-snapshot-whole-origin");
         let [older, _] = publish(&fixture.log, &origin);
         if case != "no [daily_snapshots]" {
-            fixture.cfg.daily_snapshots =
-                Some(DailySnapshotsSection { dir: scratch_dir("member-snapshot-whole-daily") });
+            fixture.cfg.daily_snapshots = Some(DailySnapshotsSection::at(scratch_dir("member-snapshot-whole-daily")));
         }
         if case != "no finalized checkpoint" {
             *fixture.registry.finalized.lock().unwrap() = Some((older.seq, older.root.clone()));
@@ -143,7 +142,7 @@ async fn a_member_whose_snapshot_is_refused_replays_its_whole_copy() {
         let (origin, daily) =
             (scratch_dir("member-snapshot-refused-origin"), scratch_dir("member-snapshot-refused-daily"));
         let listing = publish(&fixture.log, &origin, &daily);
-        fixture.cfg.daily_snapshots = Some(DailySnapshotsSection { dir: daily });
+        fixture.cfg.daily_snapshots = Some(DailySnapshotsSection::at(daily));
         *fixture.registry.finalized.lock().unwrap() = Some((listing.seq, listing.root.clone()));
         let followed = followed(archive_with(&fixture.log, &origin).await);
         let member = fixture.member();

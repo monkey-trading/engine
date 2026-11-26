@@ -489,14 +489,16 @@ public_key = "iBVjxg/1j7y1+kQUTBYdTabxCppesU/07D4PMDJk2WA="
 
 # The engine's state at the first checkpoint the node writes on each UTC day, served beside the archive at
 # /v1/archive/snapshots/, from which `engine replay --snapshots` replays the log's days in parallel.
-# About 420 MB a day at 100k accounts; every day's is kept.
+# About 420 MB a day at 100k accounts. Each goes to the [archive] bucket as it is published, and the host
+# keeps a confirmed one for local_window, and the newest before it: about 13 GB at 100k accounts.
 [daily_snapshots]
 dir = "/data/daily-snapshots"
+local_window = "30d"
 
 # The bucket in object storage that keeps the log for good, in zstd-compressed ranges of 10,000 sequence
 # numbers (log-archive.md). The node uploads each range create-only with the delivered keys once the vault
 # has finalized a checkpoint past it, and counts it as archived only once a read from the public URL gives
-# back its bytes. The bucket's lock keeps every object under log/ from being replaced or deleted.
+# back its bytes. The bucket's lock keeps every object under log/ and snapshots/ from being replaced or deleted.
 [archive]
 endpoint = "https://r2-account.example.com" # REPLACE: https://<account id>.r2.cloudflarestorage.com
 bucket = "engine-log" # REPLACE: the bucket's name

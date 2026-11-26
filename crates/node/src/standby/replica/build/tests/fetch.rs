@@ -131,3 +131,27 @@ async fn a_refused_origins_snapshot_gives_way_to_the_next_origins_at_its_offset(
     let kept: Vec<u64> = read_manifest(&member).unwrap().iter().map(|listing| listing.seq).collect();
     assert_eq!(kept, [newer], "the snapshot taken is listed");
 }
+
+/// A snapshot the member's directory lists but its host no longer holds, as one the archive's bucket keeps in its
+/// place, is no candidate of the member's own and is not paged: the member goes on from the newest it holds, or
+/// from an origin's copy of it.
+#[tokio::test]
+async fn a_listed_snapshot_the_host_no_longer_holds_is_passed_over_unpaged() {
+    let (dir, origin) = (scratch_dir("build-snapshot-archived"), scratch_dir("build-snapshot-archived-origin"));
+    write_log(&dir).await;
+    let older = publish_at(&dir, &origin, &recorded(), |held| held / 3);
+    let newer = publish_at(&dir, &origin, &recorded(), |held| 2 * held / 3);
+    let held = scratch_dir("build-snapshot-archived-held");
+    std::fs::create_dir_all(&held).unwrap();
+    let listed = read_manifest(&origin).unwrap();
+    std::fs::copy(origin.join(&listed[0].file), held.join(&listed[0].file)).unwrap();
+    write_listings(&held, &listed);
+    let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [signer()].into());
+    let (_guard, mut alerts) = capture_alerts();
+    let signed = snapshot_start(&client, &[], (&held, &dir), DOMAIN, &signers, (u64::MAX, None)).await;
+    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(older), "the newest the host holds");
+    assert!(alerts.try_recv().is_err(), "the one it no longer holds is not paged");
+    let origins = [serve(&origin).await];
+    let signed = snapshot_start(&client, &origins, (&held, &dir), DOMAIN, &signers, (u64::MAX, None)).await;
+    assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(newer), "an origin's copy of it");
+}

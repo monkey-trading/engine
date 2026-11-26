@@ -314,7 +314,7 @@ an index: load only the rule whose hint matches the current action.
   under a cache bound to it by the commands since the head (`log_heads/prefix.rs`),
   daily snapshots under `[daily_snapshots]` (`daily_snapshots/`: the engine's state at the first checkpoint the node
   writes on each UTC day by sequenced time, encoded by the stats worker's copy once its checkpoint is durable and
-  published by a writer thread, each file synced every 4 MiB as it is written (`paced.rs`, as a recovery cache and a rollover's financing rows are), so no large flush builds up behind the log's syncs, then its manifest line synced, every day's kept, a day the writer is still
+  published by a writer thread, each file synced every 4 MiB as it is written (`paced.rs`, as a recovery cache and a rollover's financing rows are), so no large flush builds up behind the log's syncs, then its manifest line synced, every day's listed, a day the writer is still
   busy on skipped, its drop waiting at most 2 s, Warning `daily_snapshot_failed`; each carrying, beside the engine, the
   replay state a replay of the log holds after its checkpoint (`sequencer/replay/carried.rs`: the command count, prefix
   and latest links, checkpoint accounting, genesis progress, activations, parameters' seq, every checkpoint's signer and
@@ -327,7 +327,16 @@ an index: load only the rule whose hint matches the current action.
   replay state and the anchors as written (`daily_snapshots/signature.rs`, schema 3 in the file, the manifest line
   unchanged, schemas 1 and 2 still read by ranges and passed over by starts); served at
   `/v1/archive/snapshots/{file}`, two checks at once apart from the stream's backfills, Warning
-  `daily_snapshot_unreadable`, `api/archive.rs`) and `engine replay --snapshots <dir> --jobs <n>`
+  `daily_snapshot_unreadable`, `api/archive.rs`; with `[archive]`, `daily_snapshots/upload.rs` puts each into the bucket
+  as it is published, create-only, the file as written at `snapshots/<chain id>/<vault>/<file>` (`daily_snapshots/bucket.rs`),
+  streamed and sending its last chunk only once the whole matches its line, and counts it only once a read from the
+  public origin has its line's length and SHA-256, Warning `archive_upload_lagging` (`objects = "daily_snapshots"`) and
+  `archive_object_mismatch` as the log's ranges; the host's copy goes once confirmed and stamped more than
+  `local_window` (30 days) before the newest, the newest such one kept, the manifest listing every one and the route
+  answering `308` to the object of one the host no longer holds; a member's start follows that redirect only to the
+  bucket its own `[archive]` names, and passes over a listing whose file its host no longer holds) and
+  `engine replay --snapshots <dir or URL> --jobs <n>` (a URL's listed snapshots downloaded through the node and the
+  bucket, `daily_snapshots/published.rs`)
   (`sequencer/replay/ranges/`: the log split at each snapshot's checkpoint the log holds and the ranges replayed at
   once, each from its snapshot, whose resting-order index is rebuilt from its accounts' orders
   (`Engine::rebuild_resting`) and whose root, computed over every key, must be the checkpoint's, through the
@@ -766,7 +775,8 @@ an index: load only the rule whose hint matches the current action.
   10,000 commands, the size of an archive range (`ops/runbooks/log-archive.md`).
   The optional `[daily_snapshots]` names a directory of its own, apart from the log, the history index, the alert
   outbox and the recovery caches, where the node keeps a daily snapshot of each UTC day for
-  `engine replay --snapshots`.
+  `engine replay --snapshots`, and with `[archive]` its `local_window` (30 days by default and in the release
+  configs), how long the host keeps one the bucket holds.
   `[history.marks]` tunes the marks cache's per-resolution retention (1s ~48h, 1m ~60d, 1h ~2y,
   1d unbounded by default) and its optional provider backfill (`enabled`, the venue-domain
   `base_url`, per-resolution `depth`s); only the feed venue's public candles endpoint is
@@ -1226,7 +1236,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload and read on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload and read and the daily snapshots' archive on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1390,7 +1400,8 @@ Run from the repo root:
   the release manifest and requires every checkpoint signer to be the enclave address it names;
   `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
   the first and last of each run; `--snapshots <dir>` replays a log directory in ranges from a directory of daily
-  snapshots, as `/v1/archive/snapshots/` serves them, `--jobs` ranges at once (one per two physical cores,
+  snapshots, as `/v1/archive/snapshots/` serves them, or from a node's URL, whose listed snapshots download into
+  `TMPDIR` through the node and the bucket it redirects to, `--jobs` ranges at once (one per two physical cores,
   `default_jobs`)
 - History retention dev scenario: `./scripts/dev-history-retention.sh` (needs only Cargo; a node with `[snapshots]`
   and a ten-minute `history.retention` takes deposits for six retentions on a test clock while two recovery caches
@@ -1407,6 +1418,12 @@ Run from the repo root:
   same stand-ins and its older segments leave its disk: its archive route redirects them to the bucket, a replay and the
   exit proofs from its URL match the local log's, a member backfills an empty copy from the bucket and the node, and an
   object the bucket serves otherwise is taken from the node, or refused, naming its segment, where the node lacks it)
+- Daily snapshot archive dev scenario: `./scripts/dev-snapshot-archive.sh` (needs only Cargo; a node writing launch
+  flow on a small book across four UTC midnights publishes a snapshot each simulated day, each uploaded to the loopback
+  S3 stand-in and read back; those older than a 36-hour window leave the host but for the newest of them, and the
+  node's archive answers `308` to their objects; `engine replay --snapshots <the node's URL>` downloads them through the
+  node and the bucket and replays in ranges to the whole log's state; a member's start takes one the node no longer
+  holds from the bucket; an altered object is refused by both; then the uploader's, the route's and the fetch's tests)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole

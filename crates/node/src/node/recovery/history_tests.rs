@@ -298,7 +298,7 @@ impl Written {
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
         cfg.history.dir = root.join("history");
-        cfg.daily_snapshots = Some(DailySnapshotsSection { dir: root.join("daily") });
+        cfg.daily_snapshots = Some(DailySnapshotsSection::at(root.join("daily")));
         (cfg.api.stats_interval, cfg.api.stats_light_interval) = (Duration::ZERO, Duration::ZERO);
         let key = Arc::new(EnclaveKey::test_key());
         let clock = Arc::new(TestClock::at(START));

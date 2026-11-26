@@ -1,8 +1,8 @@
 //! Public canonical manifest and authenticated completed-segment bytes, and the daily snapshots beside them. A
-//! listed segment the host no longer holds is redirected to the archive's bucket, whose objects readers read
-//! themselves: the enclave relays none of them.
+//! listed segment or daily snapshot the host no longer holds is redirected to the archive's bucket, whose objects
+//! readers read themselves: the enclave relays none of them.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Seek};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,7 +20,8 @@ use tracing::{Span, error, warn};
 
 use crate::api::{ApiError, ApiState};
 use crate::archive::RANGE_SEQS;
-use crate::daily_snapshots;
+use crate::config::NodeConfig;
+use crate::daily_snapshots::{self, SnapshotBucket};
 use crate::log::{ArchiveReader, MANIFEST, SegmentInfo, open_segment_archive, segment_seq};
 
 const JSON_LINES: &str = "application/x-ndjson";
@@ -30,11 +31,13 @@ const ARCHIVE_CHUNK_BYTES: usize = 64 * 1024;
 /// follow are bounded as the segments' are, by the API's connection limits.
 const SNAPSHOT_CHECKS: usize = 2;
 
-/// The daily snapshots the archive serves: their directory, and the checks of them under way, held apart
-/// from the stream's backfills, since a snapshot's check reads all of a file of hundreds of megabytes.
+/// The daily snapshots the archive serves: their directory, the bucket that keeps those the host no longer holds,
+/// and the checks of them under way, held apart from the stream's backfills, since a snapshot's check reads all of
+/// a file of hundreds of megabytes.
 #[derive(Debug)]
 pub struct ServedSnapshots {
     pub dir: PathBuf,
+    moved: Option<SnapshotBucket>,
     checks: Arc<Semaphore>,
 }
 
@@ -46,9 +49,28 @@ enum Served {
     Moved(reqwest::Url),
 }
 
+/// What the archive serves for the daily snapshots' manifest or a listed snapshot.
+enum Snapshot {
+    /// The file's media type, length and bytes: a snapshot's checked against its listing, read from the handle the
+    /// check read, so a removal after the check leaves the answer whole.
+    Held((&'static str, u64, Body)),
+    /// The bucket's object of a snapshot the host no longer holds.
+    Moved(reqwest::Url),
+}
+
 impl ServedSnapshots {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir, checks: Arc::new(Semaphore::new(SNAPSHOT_CHECKS)) }
+    /// The snapshots in `dir`, those the host no longer holds redirected to `moved` where it names a bucket.
+    pub(crate) fn new(dir: PathBuf, moved: Option<SnapshotBucket>) -> Self {
+        Self { dir, moved, checks: Arc::new(Semaphore::new(SNAPSHOT_CHECKS)) }
+    }
+
+    /// The snapshots `cfg`'s `[daily_snapshots]` writes, those the host no longer holds redirected to the bucket its
+    /// `[archive]` names; none without the section.
+    /// Error cases:
+    /// - the bucket's URL does not form (`SnapshotBucket::for_config`)
+    pub fn for_config(cfg: &NodeConfig) -> anyhow::Result<Option<Arc<Self>>> {
+        let Some(daily) = &cfg.daily_snapshots else { return Ok(None) };
+        Ok(Some(Arc::new(Self::new(daily.dir.clone(), SnapshotBucket::for_config(cfg)?))))
     }
 }
 
@@ -142,51 +164,77 @@ fn chunked(reader: impl Read + Send + 'static, what: &'static str, snapshot: boo
 }
 
 /// Serves the daily snapshots' manifest, or one daily snapshot it lists, once its length and SHA-256 are the
-/// listing's, `SNAPSHOT_CHECKS` checks at a time. A replay checks a snapshot against the checkpoint the log holds and
-/// the replay of the log before it (`daily_snapshots`), so the check here only keeps a damaged file from being
-/// served.
+/// listing's, `SNAPSHOT_CHECKS` checks at a time, or redirects (`308`) one the host no longer holds to the bucket's
+/// object of it. A replay checks a snapshot against the checkpoint the log holds and the replay of the log before it
+/// (`daily_snapshots`), so the check here only keeps a damaged file from being served.
 /// Error cases:
 /// - the node publishes no daily snapshots, or the file is neither the manifest nor a listed snapshot
 /// - the manifest or the file cannot be read, or the file differs from its listing
+/// - the file is not on the host and the node names no bucket
 pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Result<Response, ApiError> {
     Span::current().record("id", display(&file));
     let served = s.daily_snapshots.clone().ok_or(ApiError::NotFound)?;
     let permit = served.checks.clone().acquire_owned().await.map_err(|_| ApiError::Internal)?;
-    let dir = served.dir.clone();
     let opened = spawn_blocking(move || {
         let _held = permit;
+        let dir = &served.dir;
         if file == daily_snapshots::MANIFEST {
             let manifest = std::fs::read(dir.join(&file)).or_else(|e| match e.kind() {
                 io::ErrorKind::NotFound => Ok(Vec::new()),
                 _ => Err(e),
             })?;
-            return anyhow::Ok(Some((JSON_LINES, manifest.len() as u64, Body::from(manifest))));
+            let body = (JSON_LINES, manifest.len() as u64, Body::from(manifest));
+            return anyhow::Ok(Some(Snapshot::Held(body)));
         }
-        let listed = daily_snapshots::read_manifest(&dir)?.into_iter().find(|listed| listed.file == file);
+        let listed = daily_snapshots::read_manifest(dir)?.into_iter().find(|listed| listed.file == file);
         let Some(listed) = listed else { return Ok(None) };
-        let path = dir.join(&listed.file);
-        let (mut reading, mut chunk, mut hash, mut bytes) =
-            (std::fs::File::open(&path)?, vec![0; ARCHIVE_CHUNK_BYTES], Sha256::new(), 0u64);
-        loop {
-            let read = reading.read(&mut chunk)?;
-            if read == 0 {
-                break;
-            }
-            hash.update(&chunk[..read]);
-            bytes += read as u64;
-        }
-        anyhow::ensure!(
-            bytes == listed.bytes && hex::encode(hash.finalize()) == listed.sha256,
-            "daily snapshot {file} differs from its listing"
-        );
-        let body = chunked(std::fs::File::open(&path)?, "daily snapshot", true);
-        Ok(Some((JSON, listed.bytes, body)))
+        checked(&dir.join(&listed.file), &listed, served.moved.as_ref()).map(Some)
     })
     .await
     .map_err(|e| snapshot_unreadable(format!("daily snapshot task: {e}")))?
     .map_err(|e| snapshot_unreadable(format!("daily snapshot: {e:#}")))?;
-    let (kind, bytes, body) = opened.ok_or(ApiError::NotFound)?;
-    Ok(([(CONTENT_TYPE, kind.to_owned()), (CONTENT_LENGTH, bytes.to_string())], body).into_response())
+    match opened.ok_or(ApiError::NotFound)? {
+        Snapshot::Held((kind, bytes, body)) => {
+            Ok(([(CONTENT_TYPE, kind.to_owned()), (CONTENT_LENGTH, bytes.to_string())], body).into_response())
+        }
+        Snapshot::Moved(object) => {
+            Ok((StatusCode::PERMANENT_REDIRECT, [(LOCATION, object.to_string())]).into_response())
+        }
+    }
+}
+
+/// The daily snapshot at `path`, opened and checked against `listed`, its length and SHA-256, and served from the
+/// same handle; or, when the host no longer holds it, its object in `moved`.
+/// Error cases:
+/// - the file is not on the host and `moved` names no bucket, or it cannot be read, or it differs from its listing
+fn checked(
+    path: &std::path::Path,
+    listed: &daily_snapshots::Listed,
+    moved: Option<&SnapshotBucket>,
+) -> anyhow::Result<Snapshot> {
+    let mut reading = match (std::fs::File::open(path), moved) {
+        (Ok(reading), _) => reading,
+        (Err(e), Some(bucket)) if e.kind() == io::ErrorKind::NotFound => {
+            return Ok(Snapshot::Moved(bucket.object(&listed.file)?));
+        }
+        (Err(e), _) => return Err(e.into()),
+    };
+    let (mut chunk, mut hash, mut bytes) = (vec![0; ARCHIVE_CHUNK_BYTES], Sha256::new(), 0u64);
+    loop {
+        let read = reading.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&chunk[..read]);
+        bytes += read as u64;
+    }
+    anyhow::ensure!(
+        bytes == listed.bytes && hex::encode(hash.finalize()) == listed.sha256,
+        "daily snapshot {} differs from its listing",
+        listed.file
+    );
+    reading.rewind()?;
+    Ok(Snapshot::Held((JSON, listed.bytes, chunked(reading, "daily snapshot", true))))
 }
 
 /// Logs an archive integrity or IO failure before returning the existing API error.

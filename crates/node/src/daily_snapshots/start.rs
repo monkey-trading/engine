@@ -1,5 +1,5 @@
-//! The daily snapshot a start takes: the newest, among those in the node's own directory of them and, for a
-//! member whose copy is new, those its origins list, whose checkpoint the log on this host holds and the vault
+//! The daily snapshot a start takes: the newest, among those in the node's own directory of them whose file its host
+//! holds and, for a member whose copy is new, those its origins list, from their disk or the archive's bucket, whose checkpoint the log on this host holds and the vault
 //! has finalized, of the format that carries the replay state, signed over its state and what it carries by
 //! the vault-recorded signer that signed that checkpoint (`open_signed`). Offsets are tried newest first, and at
 //! each the sources that list it in turn: the node's own directory, then each origin's in order. A fetched one
@@ -22,10 +22,11 @@ use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
 use tracing::{debug, info, warn};
 
-use crate::daily_snapshots::fetch::EarlierFormat;
-use crate::daily_snapshots::fetch::{download, offered};
+use crate::daily_snapshots::fetch::{EarlierFormat, Takes, download, offered};
 use crate::daily_snapshots::writer::write_manifest;
-use crate::daily_snapshots::{FORMAT_BYTES, Listed, Signed, earlier_format, open_signed, read_manifest};
+use crate::daily_snapshots::{
+    FORMAT_BYTES, Listed, Signed, SnapshotBucket, earlier_format, open_signed, read_manifest,
+};
 use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 
 /// How many of the newest offsets are tried, each from every source that lists it, before the start replays the
@@ -62,6 +63,15 @@ enum Source {
     Offered(String),
 }
 
+/// Where a start fetches the snapshots its origins list: with `client`, from `origins`, following an origin's
+/// redirect to the archive's bucket only to `bucket`, the one the node's own `[archive]` names, where it names one.
+#[derive(Clone, Copy)]
+pub(crate) struct Fetching<'a> {
+    pub client: &'a reqwest::Client,
+    pub origins: &'a [String],
+    pub bucket: Option<&'a SnapshotBucket>,
+}
+
 /// Where a start looks for its snapshot, and what bounds it.
 #[derive(Clone, Copy)]
 pub(crate) struct Bounds {
@@ -89,14 +99,16 @@ pub(crate) async fn snapshot_start(
     (finalized, before): (u64, Option<Millis>),
 ) -> Option<Signed> {
     let bounds = Bounds { finalized, before, keep_from: None };
-    snapshot_start_against(Some((client, origins)), (dir, copy), (domain, signers), bounds, &NoRoots).await
+    let fetching = Fetching { client, origins, bucket: None };
+    snapshot_start_against(Some(fetching), (dir, copy), (domain, signers), bounds, &NoRoots).await
 }
 
 /// `snapshot_start`, from the node's own directory alone when `fetching` names no origins, refusing a candidate
 /// whose root is not the one the vault accepted at its seq, where `roots` names one, before fetching or decoding
-/// it, and passing over one after `bounds.keep_from`.
+/// it, and passing over one after `bounds.keep_from`. A snapshot the directory lists whose file its host no longer
+/// holds, which the bucket keeps, is a candidate only where an origin lists it.
 pub(crate) async fn snapshot_start_against(
-    fetching: Option<(&reqwest::Client, &[String])>,
+    fetching: Option<Fetching<'_>>,
     (dir, copy): (&Path, &Path),
     (domain, signers): (CheckpointDomain, &BTreeSet<AccountId>),
     bounds: Bounds,
@@ -110,7 +122,9 @@ pub(crate) async fn snapshot_start_against(
         }
     };
     let (offers, answered) = match fetching {
-        Some((client, origins)) if !origins.is_empty() => offered(client, origins, bounds.finalized).await,
+        Some(Fetching { client, origins, .. }) if !origins.is_empty() => {
+            offered(client, origins, bounds.finalized).await
+        }
         _ => (Vec::new(), true),
     };
     if !answered {
@@ -123,16 +137,16 @@ pub(crate) async fn snapshot_start_against(
             && bounds.keep_from.is_none_or(|keep| listing.seq < keep)
     };
     let mut candidates: BTreeMap<(u64, u32), Vec<(Source, Listed)>> = BTreeMap::new();
-    for listing in held.iter().filter(|listing| fits(listing) && carries_state(&dir.join(&listing.file))) {
+    for listing in held.iter().filter(|listing| fits(listing) && carries_state(&dir.join(&listing.file)) == Some(true))
+    {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Held, listing.clone()));
     }
     for (origin, listing) in offers.into_iter().filter(|(_, listing)| fits(listing)) {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Offered(origin), listing));
     }
     let ids = (domain, signers, bounds.before);
-    let client = fetching.map(|(client, _)| client);
     for (source, listing) in candidates.into_values().rev().take(ATTEMPTS).flatten() {
-        match candidate(client, (dir, copy), &source, &listing, ids, roots).await {
+        match candidate(fetching, (dir, copy), &source, &listing, ids, roots).await {
             Ok(signed) => {
                 if matches!(source, Source::Offered(_)) {
                     let offset = (listing.seq, listing.index);
@@ -170,23 +184,27 @@ pub(crate) async fn snapshot_start_against(
 /// tries (`snapshot_start_against`), newest first.
 pub(super) fn candidate_seqs(dir: &Path, finalized: u64) -> Vec<u64> {
     let held = read_manifest(dir).unwrap_or_default();
-    let fits = |listing: &&Listed| listing.seq <= finalized && carries_state(&dir.join(&listing.file));
+    let fits = |listing: &&Listed| listing.seq <= finalized && carries_state(&dir.join(&listing.file)) == Some(true);
     let seqs: BTreeSet<u64> = held.iter().filter(fits).map(|listing| listing.seq).collect();
     seqs.into_iter().rev().take(ATTEMPTS).collect()
 }
 
 /// Whether the held snapshot at `path` may carry the replay state: its first bytes, where every writer puts its
 /// format, name no earlier format (`earlier_format`); one that cannot be read, or names none, is left for its
-/// check to refuse.
-fn carries_state(path: &Path) -> bool {
+/// check to refuse. None when the host no longer holds the file, as once the bucket keeps it.
+fn carries_state(path: &Path) -> Option<bool> {
     let mut head = [0u8; FORMAT_BYTES];
-    let read = File::open(path).and_then(|mut file| file.read(&mut head));
-    let Ok(read) = read else { return true };
+    let read = match File::open(path) {
+        Ok(mut file) => file.read(&mut head),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => Err(e),
+    };
+    let Ok(read) = read else { return Some(true) };
     let carries = !earlier_format(&head[..read]);
     if !carries {
         debug!(snapshot = %path.display(), "a daily snapshot of an earlier format carries no replay state for a start");
     }
-    carries
+    Some(carries)
 }
 
 /// The snapshot `listing` names, from `source`, checked as `snapshot_start` checks it: an offered one fetched into
@@ -198,7 +216,7 @@ fn carries_state(path: &Path) -> bool {
 /// - the fetch fails (`download`), or the snapshot is refused (`open_signed`)
 /// - its checkpoint is not the one the copy holds, or its state is stamped at or after `before`
 async fn candidate(
-    client: Option<&reqwest::Client>,
+    fetching: Option<Fetching<'_>>,
     (dir, copy): (&Path, &Path),
     source: &Source,
     listing: &Listed,
@@ -233,7 +251,9 @@ async fn candidate(
     let path = match source {
         Source::Held => dir.join(&listing.file),
         Source::Offered(origin) => {
-            download(client.context("an offered snapshot needs a client")?, origin, dir, listing).await?
+            let fetching = fetching.context("an offered snapshot needs a client")?;
+            let takes = Takes { bucket: fetching.bucket, this_format: true };
+            download(fetching.client, origin, dir, listing, takes).await?
         }
     };
     let checked = open_signed(&path, domain, signers).and_then(|signed| {

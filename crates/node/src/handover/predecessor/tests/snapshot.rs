@@ -94,7 +94,7 @@ async fn snapshot_of(exchange: &mut Exchange, mirror: &std::path::Path, name: &s
     let snapshots = scratch_dir(&format!("{name}-daily"));
     let signing = Signing { key: Arc::new(crate::tee::EnclaveKey::test_key()), domain: exchange.domain() };
     let listed = publish_daily_snapshot(mirror, &snapshots, signing, |held| held / 2);
-    exchange.successor.daily_snapshots = Some(DailySnapshotsSection { dir: snapshots });
+    exchange.successor.daily_snapshots = Some(DailySnapshotsSection::at(snapshots));
     exchange.successor.tee.sealing = Some(mirrored(exchange, &archive(mirror).await));
     copy_dir(mirror, &exchange.successor_log);
     assert!(remove_segments_before(&exchange.successor_log, listed.seq) > 0, "the copy holds earlier segments");
