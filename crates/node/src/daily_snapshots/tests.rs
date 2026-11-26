@@ -178,6 +178,48 @@ fn load_reads_the_formats_before_and_refuses_one_without_its_fields() {
     }
 }
 
+/// A start refuses a snapshot whose engine's encoding differs by one byte from the one its signature covers, though
+/// the engine it decodes to has the same state root: before `V91` the root leaves out the reference inside a pending
+/// deposit's record, which the signature over the encoding's SHA-256 binds (`open_signed`).
+#[test]
+fn a_start_refuses_an_encoding_changed_by_one_byte_under_the_same_root() {
+    let mut engine = Engine::default();
+    crate::log::read_file(Path::new(BEFORE_RECORDS), |entry| {
+        if let crate::log::LogEntry::Command(command) = entry {
+            engine.apply(&command.sequenced).expect("the reference log replays");
+        }
+        Ok(())
+    })
+    .unwrap();
+    let pending = engine.pending_deposits().keys().find(|reference| engine.recorded_deposit(reference).is_some());
+    let reference = pending.expect("a receipt is pending").clone();
+    let mut job = job(Offset { seq: engine.last_seq().expect("the log applied"), index: 1 }, 0);
+    let signing = job.signing.clone();
+    job.engine = Encoding::Encoded(serde_json::to_string(&engine).unwrap());
+    job.checkpoint.signer = signing.key.address_hex();
+    let dir = scratch_dir("daily-one-byte");
+    let path = dir.join(publish_now(&dir, job).unwrap().file);
+    let signers: std::collections::BTreeSet<AccountId> = [AccountId(signing.key.address())].into();
+    open_signed(&path, signing.domain, &signers).expect("the snapshot as written opens");
+
+    // The last byte of the reference the pending deposit's record names.
+    let mut bytes = std::fs::read(&path).unwrap();
+    let record = format!("\"chain_ref\":\"{reference}\"}}");
+    let found: Vec<usize> = String::from_utf8_lossy(&bytes).match_indices(&record).map(|(at, _)| at).collect();
+    let [at] = found[..] else { panic!("one record names {reference}: {found:?}") };
+    let last = at + record.len() - 3;
+    bytes[last] = if bytes[last] == b'0' { b'1' } else { b'0' };
+    std::fs::write(&path, &bytes).unwrap();
+    let written: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let mut changed: Engine = serde_json::from_value(written["engine"].clone()).unwrap();
+    assert_ne!(changed.pending_deposits()[&reference].chain_ref, reference, "the record names another reference");
+    changed.rebuild_resting();
+    changed.restore_indexes();
+    assert_eq!(changed.state_root(), engine.state_root(), "the engine decoded has the same root");
+    let refused = open_signed(&path, signing.domain, &signers).err().expect("the changed snapshot opened");
+    assert!(format!("{refused:#}").contains("is not the state its signature covers"), "{refused:#}");
+}
+
 /// An engine at `V27` with custody finality that applied commands up to `seq`, the state a range can start from.
 fn finality_engine(seq: u64) -> Engine {
     let mut engine = Engine::new();
@@ -243,6 +285,10 @@ fn a_published_snapshot_resolves_the_alert_its_senders_end_raised() {
 }
 
 // ── Helpers ──
+
+/// The node's reference log through `V90`, before each pending deposit's record had a leaf of its own, which ends
+/// with the `V38` part's house receipt pending.
+const BEFORE_RECORDS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90.jsonl");
 
 /// A change to a daily snapshot's JSON.
 type Alter = fn(&mut serde_json::Value);

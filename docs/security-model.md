@@ -420,8 +420,11 @@ Known limits:
 The trading server sequences instructions, which means that it orders them, stamps them and applies
 them to the engine. It publishes every instruction, together with the events that the instruction
 produced. At regular intervals, called checkpoints, the enclave signs a root over the entire state
-and posts it to the vault. Anyone can replay the log with this repository's code, and check the
-signed root at each checkpoint. Replies, stream entries and signed withdrawals leave the trading
+and posts it to the vault. A log written before protocol `V91` signs a root that leaves out part
+of each receipt-backed pending or held deposit's record: the reference the record names inside it,
+and a held one's screened payer and the reason it is held. The signature over a daily snapshot's
+whole encoding binds them (below). Anyone can replay the log with this repository's code, and check
+the signed root at each checkpoint. Replies, stream entries and signed withdrawals leave the trading
 server only once the batch that holds them is durable on disk.
 
 With `[checkpoints]` configured, the trading server verifies its replayed log at startup against the

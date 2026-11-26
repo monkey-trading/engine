@@ -28,7 +28,8 @@
 //!   (its receipt's UTF-8 reference), ABI-encoded as a pending deposit's leaf is, as a receipt-backed
 //!   held deposit's leaf (33) is too (`credits.rs`). From `V79`, kind 29 is a position's take profit
 //!   and stop loss (`address` account, `uint32` market) (`levels.rs`). From `V89`, kind 37 is an award a vote
-//!   approved (its `uint64` id) (`awards.rs`).
+//!   approved (its `uint64` id) (`awards.rs`). From `V91`, kind 38 is a pending deposit's record and kind 39 a held
+//!   deposit's (its UTF-8 reference), each beside the deposit's own leaf (`records.rs`).
 //! - **Paths.** The key's bits, most significant first, are the path from the root: bit `d`,
 //!   `(uint256(key) >> (255 - d)) & 1`, picks the child at depth `d + 1`, 0 left and 1 right.
 //! - **Leaves.** `keccak256(abi.encodePacked(bytes1(0x00), key, valueHash))`; each kind's
@@ -73,6 +74,8 @@ pub use toxicity::{markout_spread_key, toxicity_score_key};
 mod volume;
 // From `V83`, each account's reversed deposits awaiting repayment.
 mod reversed;
+// From `V91`, each pending and held deposit's record.
+mod records;
 pub use volume::volume_key;
 pub(crate) mod state;
 pub use state::{CommitInputs, RootDelta, RootWork, TreeEvent};

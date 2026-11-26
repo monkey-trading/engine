@@ -116,7 +116,7 @@ fn credit(h: &mut Harness, receipt: &DepositReceipt, payer: AccountId) {
 
 /// Sequences `receipt`, paid by `payer`, on screening evidence that names the payer sanctioned, so it
 /// is held.
-fn hold(h: &mut Harness, receipt: &DepositReceipt, payer: AccountId) {
+pub(crate) fn hold(h: &mut Harness, receipt: &DepositReceipt, payer: AccountId) {
     let deposit = receipt_access_deposit(receipt, Some(payer));
     let mut evidence = evidence(h, eip712::deposit_screening_hash(&deposit), deposit.account, Some(payer));
     let AccessEvidence::Screened(screening) = &mut evidence else { unreachable!("screened evidence") };

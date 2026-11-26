@@ -24,7 +24,8 @@
 //! - **Legacy principal:** the keccak-256 of the `LegacyDeposit` JSON encoding, under the
 //!   kind-12 key made from the historical custody reference's UTF-8 bytes.
 //! - **Pending and held deposits:** the keccak-256 of the record's JSON encoding; from `V38` a
-//!   pending deposit with a custody receipt, and from `V77` a held one, hashes as `exit.rs` says.
+//!   pending deposit with a custody receipt, and from `V77` a held one, hashes as `exit.rs` says, and
+//!   from `V91` each has a record leaf beside it, the keccak-256 of the record's JSON encoding.
 //! - **Queued withdrawal and exit terms:** see `withdrawal.rs` and `exit.rs`.
 //! - **Credited reference:** `keccak256(bytes(reference))`.
 //! - **Markout:** the keccak-256 of its JSON encoding.

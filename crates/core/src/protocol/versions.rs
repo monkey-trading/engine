@@ -539,4 +539,9 @@ pub enum ProtocolVersion {
     /// award, unpaid, from another log's checkpoint root, each proven against it and the sets checked complete. The
     /// staking state holds the total staked, set at activation and kept by every mirrored stake and unstake.
     V90,
+    /// The state root binds each pending and held deposit's whole record: a leaf of its own, keyed by its reference,
+    /// holds the keccak-256 of its JSON encoding, so the root binds what the deposit's exit leaf leaves out, its own
+    /// reference and, for a held one, its payer and the reason it is held. The activation commits every deposit
+    /// then pending or held (`merkle::records`).
+    V91,
 }

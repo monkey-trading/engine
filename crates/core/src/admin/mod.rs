@@ -337,6 +337,10 @@ impl Engine {
                 if self.protocol_version < ProtocolVersion::V77 && *version >= ProtocolVersion::V77 {
                     self.touch_exit_receipts();
                 }
+                // Each pending and held deposit takes its record leaf at the next root.
+                if self.protocol_version < ProtocolVersion::V91 && *version >= ProtocolVersion::V91 {
+                    self.touch_deposit_records();
+                }
                 self.start_rule_sets(*version);
                 let counts_office = self.protocol_version < ProtocolVersion::V50 && *version >= ProtocolVersion::V50;
                 let inherits_office = self.protocol_version < ProtocolVersion::V83 && *version >= ProtocolVersion::V83;
