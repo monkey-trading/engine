@@ -40,22 +40,35 @@ async fn dev_scenario_history_retention() {
     let minutes = RETENTION.as_secs() / MINUTE.as_secs();
     let mut sizes = Vec::new();
     for retention in 0..RETENTIONS {
-        // The clock moves before each minute's deposits, so nothing sequenced after the last of them is later.
+        // The index's file saws between collections: it grows by what each minute adds and drops when a
+        // collection gives back the pages the oldest caches' versions pinned, so one reading at the end of a
+        // retention lands anywhere on the saw, by where scheduling put the collections. The largest it
+        // reaches in the retention is what retention bounds, read once the index holds each minute.
+        let mut peak = 0;
         for minute in 0..minutes {
+            // The clock moves before each minute's deposits, so nothing sequenced after the last of them is later.
             clock.advance(MINUTE);
             for n in 0..PER_MINUTE {
                 node.submit(deposit(1, &format!("r{retention}-m{minute}-{n}"))).await;
             }
+            // A node skips a capture while another is being sealed, and the caches left pin more versions, so
+            // each minute's cache is awaited before the index is read.
+            node.sealing.idle().await;
+            node.history_caught_up().await;
+            if let Some(store) = history_store(&node.cfg) {
+                peak = peak.max(std::fs::metadata(store).unwrap().len());
+            }
         }
-        node.history_caught_up().await;
-        let store = history_store(&node.cfg);
-        sizes.push((std::fs::metadata(&store).unwrap().len(), log_bytes(&node.cfg.node.log_dir)));
-        println!("SCENARIO retention={retention} index_bytes={} log_bytes={}", sizes[retention].0, sizes[retention].1);
+        sizes.push((peak, log_bytes(&node.cfg.node.log_dir)));
+        println!(
+            "SCENARIO retention={retention} index_peak_bytes={} log_bytes={}",
+            sizes[retention].0, sizes[retention].1
+        );
     }
     // The log grows by the same deposits each retention, while the index, once its first events expire, holds
-    // one retention's of them. Its file rises and falls with collection and the free pages it keeps, so the
-    // largest it reaches in the later retentions is held to the largest of the second and third: from the third
-    // retention to the last the log doubles, while the index's high-water mark grows by under a quarter.
+    // one retention's of them. The largest it reaches in the later retentions is held to the largest of the
+    // second and third: from the third retention to the last the log doubles, while the index's high-water
+    // mark grows by under a quarter.
     let high = |range: std::ops::Range<usize>| sizes[range].iter().map(|(index, _)| *index).max().unwrap();
     let (settled, later) = (high(1..3), high(3..RETENTIONS));
     assert!(sizes[RETENTIONS - 1].1 > sizes[2].1 * 3 / 2, "the log keeps growing: {sizes:?}");
@@ -87,15 +100,15 @@ async fn page(node: &Node) -> crate::history::Page {
     }
 }
 
-/// The file of the history index the newest cache pairs with.
-fn history_store(cfg: &NodeConfig) -> PathBuf {
+/// The file of the history index the newest cache pairs with, once a cache exists.
+fn history_store(cfg: &NodeConfig) -> Option<PathBuf> {
     let section = cfg.snapshots.as_ref().unwrap();
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
-    let newest = snapshot::candidates_readonly(section).unwrap().into_iter().next().expect("a cache");
+    let newest = snapshot::candidates_readonly(section).unwrap().into_iter().next()?;
     let (payload, _) = snapshot::read(section, &newest, domain.chain_id, domain.vault).unwrap();
     let pair = payload.pair.expect("a paired cache");
     let statement = snapshot::head::verify_certificate(section, &pair.history, domain).unwrap();
-    statement.store.path(&section.dir)
+    Some(statement.store.path(&section.dir))
 }
 
 /// The bytes of the log's files in `dir`.
