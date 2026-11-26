@@ -179,22 +179,24 @@ async fn a_copy_that_cannot_be_removed_is_removed_later_without_another_read() {
 fn the_uploader_runs_only_with_both_sections_and_both_keys() {
     let mut cfg = crate::test_support::dev_config();
     let metrics = Arc::new(Metrics::new());
-    let section: crate::config::ArchiveSection = toml::from_str(
-        "endpoint = 'https://account.r2.cloudflarestorage.com'\nbucket = 'engine-log'\nregion = 'auto'\n\
-         public_url = 'https://archive.example.com'\naccess_key_id_secret = 'archive_access_key_id'\n\
-         secret_access_key_secret = 'archive_secret_access_key'\n",
-    )
-    .unwrap();
-    let names = (section.access_key_id_secret.clone(), section.secret_access_key_secret.clone());
+    let section = || -> crate::config::ArchiveSection {
+        toml::from_str(
+            "endpoint = 'https://account.r2.cloudflarestorage.com'\nbucket = 'engine-log'\nregion = 'auto'\n\
+             public_url = 'https://archive.example.com'\naccess_key_id_secret = 'archive_access_key_id'\n\
+             secret_access_key_secret = 'archive_secret_access_key'\n",
+        )
+        .unwrap()
+    };
+    let names = (section().access_key_id_secret, section().secret_access_key_secret);
     let value = crate::config::SecretValue::test;
     let one: Values = [(names.0.clone(), value("FAKE-id"))].into();
     let both: Values = [(names.0, value("FAKE-id")), (names.1, value("FAKE-secret"))].into();
     let daily = crate::config::DailySnapshotsSection::at(scratch_dir("snapshot-upload-config"));
     for (archive, daily, keys, runs) in [
-        (Some(section.clone()), None, both.clone(), false),
+        (Some(section()), None, both.clone(), false),
         (None, Some(daily.clone()), both.clone(), false),
-        (Some(section.clone()), Some(daily.clone()), one, false),
-        (Some(section), Some(daily), both, true),
+        (Some(section()), Some(daily.clone()), one, false),
+        (Some(section()), Some(daily), both, true),
     ] {
         (cfg.archive, cfg.daily_snapshots) = (archive, daily);
         let uploader = SnapshotUploader::for_config(&cfg, &keys, &metrics).unwrap();
