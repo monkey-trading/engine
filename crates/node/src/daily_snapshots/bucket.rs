@@ -8,6 +8,7 @@ use engine_core::types::AccountId;
 use reqwest::Url;
 
 use crate::config::NodeConfig;
+use crate::daily_snapshots::offset_named;
 
 /// The public URL of a log's daily snapshots in the archive's bucket.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,10 +40,11 @@ impl SnapshotBucket {
         Ok(Self { base: public.join(prefix).with_context(|| format!("the public URL of {prefix}"))? })
     }
 
-    /// The URL of `file`'s object.
+    /// The URL of `file`'s object, where `file` is a name an offset gives, so no other path.
     /// Error cases:
-    /// - the file name does not join the base
+    /// - the file name is no offset's, or does not join the base
     pub(crate) fn object(&self, file: &str) -> anyhow::Result<Url> {
+        ensure!(offset_named(file).is_some(), "{file:?} is not a daily snapshot's name");
         self.base.join(file).with_context(|| format!("the URL of {file} under {}", self.base))
     }
 
@@ -94,6 +96,25 @@ mod tests {
         let object = bucket("https://archive.example.com").object(FILE).unwrap();
         let vault = format!("0x{}", "ab".repeat(20));
         assert_eq!(object.as_str(), format!("https://archive.example.com/snapshots/31337/{vault}/{FILE}"));
+    }
+
+    /// An object's URL is formed only from a snapshot's name, so no name climbs out of the log's prefix, reaches below
+    /// it or names another origin.
+    #[test]
+    fn an_object_is_formed_only_from_a_snapshots_name() {
+        let bucket = bucket("https://archive.example.com");
+        for file in [
+            format!("../{FILE}"),
+            format!("../../../log/31337/{FILE}"),
+            format!("sub/{FILE}"),
+            format!("//other.example.com/{FILE}"),
+            format!("{FILE}?x=1"),
+            "00000000000000000042-0000000001.jsonl.zst".to_owned(),
+            String::new(),
+        ] {
+            let refused = bucket.object(&file).unwrap_err().to_string();
+            assert!(refused.contains("is not a daily snapshot's name"), "{file}: {refused}");
+        }
     }
 
     /// A redirect is followed only to an object of the file it was asked for, over http, naming nothing else, and

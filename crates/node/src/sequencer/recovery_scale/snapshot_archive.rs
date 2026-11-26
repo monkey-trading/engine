@@ -67,7 +67,7 @@ fn dev_scenario_snapshot_archive() {
     let moved = SnapshotBucket::new(&bucket.plain, &prefix).expect("the bucket's snapshots");
     let metrics = Arc::new(Metrics::new());
     let uploader = SnapshotUploader::new(
-        (bucket.store(), prefix.clone()),
+        bucket.store(&prefix),
         snapshots.clone(),
         (WINDOW, Duration::from_secs(3_600)),
         metrics.clone(),

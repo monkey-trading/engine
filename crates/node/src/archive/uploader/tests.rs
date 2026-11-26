@@ -3,8 +3,11 @@ use super::*;
 use std::path::Path;
 
 use engine_core::command::Command;
+use engine_core::types::AccountId;
+use sha2::{Digest, Sha256};
 
 use crate::archive::stand_in::{StandIn, Vault, test_log};
+use crate::daily_snapshots::{Listed, SnapshotUploader, snapshots_prefix, write_listing};
 use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_and_resolutions, scratch_dir};
 
 /// How long a test waits for the uploader before it fails.
@@ -297,6 +300,34 @@ async fn a_range_whose_segment_differs_from_its_listing_is_never_uploaded() {
     node.stop().await;
 }
 
+/// A daily snapshot the host lists under a name that climbs out of the snapshots' prefix to the log's next range, twice
+/// with different stamps, takes no key: the range stays the log's, and its uploader goes on through it.
+#[tokio::test]
+async fn a_snapshot_listing_cannot_take_the_logs_next_range() {
+    let (_guard, mut alerts) = capture_alerts();
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("archive-snapshot-listing"));
+    let node = node_with(&dir, 2).await;
+    let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), None);
+    sources.send_replace(Some(node.manifest.clone()));
+    let running = tokio::spawn(uploader.run());
+    let whole = confirmed_through(&node, &metrics).await;
+    let next = range_key(&test_log(), whole);
+    let snapshots = scratch_dir("archive-snapshot-listing-host").join("a/b/c");
+    list_twice(&snapshots, &format!("../../../{next}"), b"the host's bytes, at a key of the log");
+    snapshot_uploader(&bucket, &snapshots).pass().await.unwrap();
+    assert!(!bucket.with(|b| b.objects.contains_key(&next)), "the snapshot uploader leaves the log's key alone");
+    more(&node, whole + 2).await;
+    let mut mismatched = false;
+    until("the log's uploads past the range", || {
+        mismatched |= drained(&mut alerts, "archive_object_mismatch");
+        mismatched || metrics.archive.confirmed_ranges.get() as u64 > whole
+    })
+    .await;
+    running.abort();
+    node.stop().await;
+    assert!(!mismatched, "the log's uploads stop at an object the host's listing put at range {whole}");
+}
+
 /// The node's uploader comes from `[archive]` and both of its delivered keys, and with either missing there is
 /// none; without `[checkpoints]` it reads no vault.
 #[test]
@@ -354,8 +385,34 @@ fn uploading(
     vault: Option<Vault>,
 ) -> (Uploader<Vault>, Sources, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::new());
-    let (uploader, sources) = Uploader::new((bucket.store(), test_log()), dir.to_owned(), lag, metrics.clone(), vault);
+    let (uploader, sources) = Uploader::new(bucket.store(&test_log()), dir.to_owned(), lag, metrics.clone(), vault);
     (uploader, sources, metrics)
+}
+
+/// Writes `bytes` where `name` leads from the snapshot directory `dir`, all the host's own disk, and lists `name` twice
+/// in `dir`'s manifest with different stamps.
+fn list_twice(dir: &Path, name: &str, bytes: &[u8]) {
+    let path = dir.join(name);
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    let listing = |ts| Listed {
+        file: name.to_owned(),
+        seq: 0,
+        index: 0,
+        ts,
+        root: String::new(),
+        bytes: bytes.len() as u64,
+        sha256: hex::encode(Sha256::digest(bytes)),
+    };
+    write_listing(dir, &[listing(1), listing(2)]);
+}
+
+/// The daily snapshots' uploader of `dir` to `bucket`, under the stand-in deployment's snapshot prefix.
+fn snapshot_uploader(bucket: &StandIn, dir: &Path) -> SnapshotUploader {
+    let store = bucket.store(&snapshots_prefix(31_337, AccountId([0; 20])));
+    let timing = (Duration::from_secs(86_400), Duration::from_secs(3600));
+    SnapshotUploader::new(store, dir.to_owned(), timing, Arc::new(Metrics::new()))
 }
 
 /// Waits until `done` holds.

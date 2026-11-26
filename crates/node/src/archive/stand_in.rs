@@ -209,16 +209,16 @@ impl StandIn {
         }
     }
 
-    /// A store of the stand-in's bucket with its keys, or with `secret` in place of its secret key.
-    pub(crate) fn store_with(&self, secret: &str) -> Store {
+    /// A store of the stand-in's bucket under key `prefix` with its keys, or with `secret` in place of its secret key.
+    pub(crate) fn store_with(&self, prefix: &str, secret: &str) -> Store {
         let section = self.section(std::time::Duration::from_secs(3600));
         let keys = (&SecretValue::test(KEY_ID), &SecretValue::test(secret));
-        Store::new(&section, keys, self.client.clone()).expect("a store of the stand-in")
+        Store::new(&section, keys, self.client.clone(), prefix.to_owned()).expect("a store of the stand-in")
     }
 
-    /// A store of the stand-in's bucket with its keys.
-    pub(crate) fn store(&self) -> Store {
-        self.store_with(SECRET_KEY)
+    /// A store of the stand-in's bucket under key `prefix` with its keys.
+    pub(crate) fn store(&self, prefix: &str) -> Store {
+        self.store_with(prefix, SECRET_KEY)
     }
 
     /// Runs `change` on what the stand-in holds.

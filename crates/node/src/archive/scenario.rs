@@ -199,7 +199,7 @@ pub(super) fn uploading(
 ) -> (Uploader<Vault>, crate::archive::Sources, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::new());
     let (uploader, sources) =
-        Uploader::new((bucket.store(), test_log()), dir.to_owned(), lag, metrics.clone(), Some(vault.clone()));
+        Uploader::new(bucket.store(&test_log()), dir.to_owned(), lag, metrics.clone(), Some(vault.clone()));
     (uploader, sources, metrics)
 }
 

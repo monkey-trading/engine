@@ -24,7 +24,7 @@ use tokio::time::Instant;
 use tracing::{Instrument, Span, info, info_span, warn};
 
 use crate::archive::uploader::{Found, Source, Work};
-use crate::archive::{Finality, RANGE_SEQS, piece_bytes, range_key, tail_prefix};
+use crate::archive::{Finality, RANGE_SEQS, Store, piece_bytes, range_key, tail_prefix};
 use crate::log::{Checkpoint, LogEntry, LogReader, Manifest, Offset};
 
 /// How many confirmed tails are remembered, so another copy of the same history does not upload them again.
@@ -165,21 +165,30 @@ impl<F: Finality> Work<F> {
             self.confirmed();
             return (Ok(()), Span::none());
         }
-        let key = format!("{}{}", tail_prefix(&self.prefix, seq, &root), range_key("", index));
+        // The tail's own store: its pieces are plain names directly under the tail's prefix, and nowhere else. Its seq
+        // and root are digits and hex, so the tail's prefix is always a directory below the log's.
+        let store = self.store.within(&tail_prefix(self.store.prefix(), seq, &root)).expect("a tail's directory");
+        let key = format!("{}{}", store.prefix(), range_key("", index));
         let span = info_span!("archive_tail", id = %key);
-        let result = self.upload_piece(view, (seq, index), &key).instrument(span.clone()).await;
+        let result = self.upload_piece(view, (seq, index), (&store, &key)).instrument(span.clone()).await;
         (result, span)
     }
 
-    /// Uploads piece `index` of the oldest tail waiting, the checkpoint's at `seq`, at `key`, and reads it back.
+    /// Uploads piece `index` of the oldest tail waiting, the checkpoint's at `seq`, at `key` of the tail's `store`, and
+    /// reads it back.
     /// Error cases:
     /// - the piece cannot be built, or the bucket cannot take or serve it
-    async fn upload_piece(&mut self, view: &Manifest, (seq, index): (u64, u64), key: &str) -> anyhow::Result<()> {
+    async fn upload_piece(
+        &mut self,
+        view: &Manifest,
+        (seq, index): (u64, u64),
+        (store, key): (&Store, &str),
+    ) -> anyhow::Result<()> {
         let (dir, read) = (self.dir.clone(), view.clone());
         let raw = std::sync::Arc::new(spawn_blocking(move || piece_bytes(&dir, &read, index, seq)).await??);
-        let (created, stored) = self.create(key, &raw).await?;
+        let (created, stored) = self.create(store, key, &raw).await?;
         let bytes = raw.len() as u64;
-        match self.found_at(key, raw).await? {
+        match self.found_at(store, key, raw).await? {
             Found::Confirmed => {
                 info!(?created, bytes, stored, "confirmed in the archive");
                 match index == seq / RANGE_SEQS {

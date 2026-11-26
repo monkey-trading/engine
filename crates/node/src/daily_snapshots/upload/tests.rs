@@ -3,7 +3,8 @@
 use std::fs;
 
 use super::*;
-use crate::archive::stand_in::StandIn;
+use crate::archive::range_key;
+use crate::archive::stand_in::{StandIn, test_log};
 use crate::daily_snapshots::{DAY_MS, publish_ticks};
 use crate::test_support::{capture_alerts, capture_alerts_and_resolutions, scratch_dir};
 
@@ -16,7 +17,7 @@ fn prefix() -> String {
 fn uploader(bucket: &StandIn, dir: &Path, lag: Duration) -> (SnapshotUploader, Arc<Metrics>) {
     let metrics = Arc::new(Metrics::new());
     let window = Duration::from_millis(DAY_MS as u64);
-    (SnapshotUploader::new((bucket.store(), prefix()), dir.to_owned(), (window, lag), metrics.clone()), metrics)
+    (SnapshotUploader::new(bucket.store(&prefix()), dir.to_owned(), (window, lag), metrics.clone()), metrics)
 }
 
 /// The object `listing`'s snapshot stands at in `bucket`, if any.
@@ -182,6 +183,48 @@ async fn a_listing_under_another_name_than_its_offsets_is_neither_read_nor_sent(
     assert_eq!(metrics.snapshot_archive.removed.get(), 0);
 }
 
+/// Only a listing under the name its offset gives has a key, however many listings share a name: a name climbing out
+/// of the prefix to a log range's key, listed twice with different stamps as a host could, and a snapshot's own name
+/// listed again under another offset, are neither read nor sent, while the snapshot under its own offset goes up once;
+/// each misnamed name pages `daily_snapshot_unreadable` once.
+#[tokio::test]
+async fn only_a_listing_under_its_offsets_name_has_a_key_however_many_share_the_name() {
+    let (bucket, root) = (StandIn::start().await, scratch_dir("snapshot-upload-shared-names"));
+    let dir = root.join("a/b/c");
+    let climbing = format!("../../../{}", range_key(&test_log(), 7));
+    let bytes = b"the host's bytes";
+    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir.join(&climbing).parent().unwrap()).unwrap();
+    fs::write(dir.join(&climbing), bytes).unwrap();
+    let listing = |ts| Listed {
+        file: climbing.clone(),
+        seq: 0,
+        index: 0,
+        ts,
+        root: String::new(),
+        bytes: bytes.len() as u64,
+        sha256: hex::encode(Sha256::digest(bytes)),
+    };
+    let snapshot = publish_ticks(&dir, 9, 1_000);
+    let mut renumbered = snapshot.clone();
+    renumbered.index += 1;
+    crate::daily_snapshots::write_listing(&dir, &[listing(1), listing(2), snapshot.clone(), renumbered]);
+    let (_guard, mut alerts) = capture_alerts();
+    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    uploader.pass().await.unwrap();
+    uploader.pass().await.unwrap();
+    let keys: Vec<String> = bucket.with(|b| b.objects.keys().cloned().collect());
+    assert_eq!(keys, [format!("{}{}", prefix(), snapshot.file)], "only the snapshot under its own offset");
+    let requests = bucket.with(|b| (b.asked, b.read, b.created, b.unsigned));
+    assert_eq!(requests, (1, 1, 1, 0), "asked for, sent and read back once");
+    assert_eq!(metrics.snapshot_archive.confirmed.get(), 1);
+    let paged: Vec<(String, String)> = std::iter::from_fn(|| alerts.try_recv().ok())
+        .map(|alert| (alert["alert"].clone(), alert["snapshot"].clone()))
+        .collect();
+    let unreadable = |name: &str| ("daily_snapshot_unreadable".to_owned(), name.to_owned());
+    assert_eq!(sorted(paged), sorted(vec![unreadable(&climbing), unreadable(&snapshot.file)]), "once a name");
+}
+
 /// A copy the window no longer keeps that cannot be removed stays confirmed and pages `daily_snapshot_unremovable`, and
 /// goes once removal works, with no second read of its object, which resolves the alert.
 #[cfg(unix)]
@@ -239,7 +282,7 @@ fn the_uploader_runs_only_with_both_sections_and_both_keys() {
         assert_eq!(uploader.is_some(), runs);
         let vault = cfg.custody.vault.parse().unwrap();
         let prefix = snapshots_prefix(cfg.custody.chain_id, vault);
-        assert!(uploader.is_none_or(|uploader| uploader.prefix == prefix && uploader.window_ms == 30 * DAY_MS));
+        assert!(uploader.is_none_or(|uploader| uploader.store.prefix() == prefix && uploader.window_ms == 30 * DAY_MS));
     }
 }
 
@@ -332,7 +375,7 @@ fn resolutions(resolved: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_s
 }
 
 /// `names`, sorted.
-fn sorted(mut names: Vec<String>) -> Vec<String> {
+fn sorted<T: Ord>(mut names: Vec<T>) -> Vec<T> {
     names.sort();
     names
 }

@@ -111,9 +111,11 @@ pub(crate) struct Takes<'a> {
 }
 
 /// Fetches `listing`'s snapshot from `origin`, or from the object its `308` names where `takes` allows it, into
-/// `dir` under its name, unlisted: staged, its first bytes checked not to name an earlier format where `takes` says
-/// so, and each byte against the listing's length and SHA-256, synced, then renamed into place. Its path.
+/// `dir` under its name, which must be the one its offset gives, unlisted: staged, its first bytes checked not to name
+/// an earlier format where `takes` says so, and each byte against the listing's length and SHA-256, synced, then
+/// renamed into place. Its path.
 /// Error cases:
+/// - the listing is under another name than its offset gives, before anything is fetched or written
 /// - its first bytes name an earlier format where `takes` refuses one (`EarlierFormat`), read before the rest is
 ///   fetched
 /// - the listing is over the bound, the fetch fails or takes too long, a redirect is not one `takes` follows, or the
@@ -126,6 +128,7 @@ pub(crate) async fn download(
     listing: &Listed,
     takes: Takes<'_>,
 ) -> anyhow::Result<PathBuf> {
+    ensure!(canonical(listing), "daily snapshot {:?} is listed under another name than its offset gives", listing.file);
     ensure!(listing.bytes <= MAX_SNAPSHOT_BYTES, "daily snapshot {} is longer than the bound", listing.file);
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let url = format!("{}/v1/archive/snapshots/{}", origin.trim_end_matches('/'), listing.file);

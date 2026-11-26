@@ -215,7 +215,8 @@ an index: load only the rule whose hint matches the current action.
   `[archive]`: for the process's life, beside the log writer in use, the serving sequencer's or a following member's copy's,
   the log in fixed ranges of 10,000 seqs, each built from the copy's checked segments however they are cut
   (`archive/range.rs`), compressed with zstd and uploaded create-only to an S3-compatible bucket, Cloudflare R2 in
-  production, with delivered keys, at `log/<chain id>/<vault>/<first seq>.jsonl.zst`, once the vault has finalized a checkpoint past it
+  production, with delivered keys, at `log/<chain id>/<vault>/<first seq>.jsonl.zst`, the bucket's client refusing before any
+  request a key that is not a plain file name directly under its caller's prefix (`archive/store.rs`), once the vault has finalized a checkpoint past it
   that the copy holds at the vault's root, read from its completed segments, a copy holding it otherwise uploading
   nothing past the last it held under Warning `archive_copy_superseded` (`archive/finality.rs`), and counted as archived only once a read from the bucket's public origin gives back the same
   entries, spelt as `standby::chain::spelt` reads them; a restart resumes at the first range the bucket lacks; a range that reads back otherwise stops that node's
@@ -233,8 +234,8 @@ an index: load only the rule whose hint matches the current action.
   finalized one on, the vault's latest being one of them, each as pieces shaped and named as ranges at
   `log/<chain id>/<vault>/tail/<seq>-<root>/`, from the first range the bucket lacks to the checkpoint's own, cut after
   its entry, found by reading the copy's entries, the writer's active prefix included (`log::open_active_archive`), as
-  they are published, and uploaded at once, before the vault finalizes the checkpoint, create-only and read back
-  (`archive/uploader/tails.rs`, `archive_tail_seq`); none from a copy stalled at a range or superseded; so `engine
+  they are published, and uploaded at once, before the vault finalizes the checkpoint, create-only and read back,
+  through a store narrowed to the tail's directory (`Store::within`) (`archive/uploader/tails.rs`, `archive_tail_seq`); none from a copy stalled at a range or superseded; so `engine
   replay` and `engine exit-proof` read a log's URL in the bucket, `.../log/<chain id>/<vault>/`, from the bucket alone
   through the vault's `latestSeq` and `latestRoot`, `--seq` and `--state-root`: its ranges until the first it lacks,
   then the tail's pieces, the checkpoint's entry holding the root (`archive/read/tail.rs`)), `engine
@@ -337,6 +338,7 @@ an index: load only the rule whose hint matches the current action.
   `/v1/archive/snapshots/{file}`, two checks at once apart from the stream's backfills, Warning
   `daily_snapshot_unreadable`, `api/archive.rs`; with `[archive]`, `daily_snapshots/upload.rs` puts each into the bucket
   as it is published, create-only, the file as written at `snapshots/<chain id>/<vault>/<file>` (`daily_snapshots/bucket.rs`),
+  only a listing under the name its offset gives, however many others share its name,
   streamed and sending its last chunk only once the whole matches its line, and counts it only once a read from the
   public origin has its line's length and SHA-256, Warning `archive_upload_lagging` (`objects = "daily_snapshots"`) and
   `archive_object_mismatch` as the log's ranges; the host's copy goes once confirmed and stamped more than
