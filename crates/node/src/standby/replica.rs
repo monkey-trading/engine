@@ -189,7 +189,7 @@ impl Follower {
 
     /// Follows `followed` for one stint of up to `budget`, its enclave admitted as one that may seal
     /// the copy's next commands (see `follow`). An operator that serves its stream only from after the copy's
-    /// head, past a daily snapshot it started from, has the copy catch up from its archive origins instead
+    /// head, past a daily snapshot it started from, has the copy catch up from its archive, bucket first, instead
     /// (`catch_up`), and the next stint resumes from the copy's new head.
     /// Error cases:
     /// - as `follow` or `catch_up`; after `ReplicaRefused` the follower must be opened again
@@ -374,7 +374,7 @@ impl Follower {
         Ok(taken)
     }
 
-    /// Catches the copy up from `operator`'s archive origins when the operator serves its stream only from after the
+    /// Catches the copy up from `operator`'s archive, its bucket first, when the operator serves its stream only from after the
     /// copy's head (`standby::catch_up`): each entry after the head is taken as a tail's is (`take_entries`), its seal
     /// and link checked and the replica applying it before the copy takes it. The copy's new head.
     /// Error cases:
@@ -387,7 +387,7 @@ impl Follower {
             self.take_entries(after, bytes)?;
             Ok(self.head())
         };
-        super::catch_up::catch_up(&archive, &operator.origins(), head, take).await
+        super::catch_up::catch_up(&archive, &operator.archive(), head, take).await
     }
 
     /// Flushes and syncs the copy.
