@@ -15,9 +15,9 @@ abstract contract SkipTest is LivenessTest {
     uint16 internal constant TAKE = 2;
     uint64 internal constant BUDGET = 10;
 
-    /// @dev The release `_incumbentHead` names: by default one no assignment recorded, as an operator
-    /// outside the set runs.
-    bytes32 internal incumbentRelease = keccak256("earlier");
+    /// @dev The release `_incumbentHead` names: by default the deployment release, which the deployment's
+    /// operator runs outside the set.
+    bytes32 internal incumbentRelease = _release(0);
 
     function _newSchedule() internal override returns (OperatorSchedule) {
         return new OperatorSchedule(
@@ -496,6 +496,44 @@ contract SkipScheduleTest is SkipTest {
         vm.prank(alice);
         registry.deregister();
         assertEq(registry.candidateOf(alice).adminKey, address(0));
+    }
+
+    /// Alice takes the first turn and keeps its keys through nine turns drawn for others, none taken, then
+    /// moves her candidacy to another approved release while her enclave beats on the one she left. The walk
+    /// stops seven turns back, short of her turn, yet the release that signed the newest head is hers, so she
+    /// cannot leave.
+    function test_AKeyHolderBeatingOnTheReleaseItMovedOffCannotLeavePastTheWalk() public {
+        address[] memory members = new address[](4);
+        uint256[] memory stakes = new uint256[](4);
+        (members[0], members[1], members[2], members[3]) = (alice, bob, carol, dave);
+        (stakes[0], stakes[1], stakes[2], stakes[3]) = (40_000e18, 30_000e18, 20_000e18, 10_000e18);
+        setId = _rotate(members, stakes);
+        uint64 first = _nextTurn() + 1;
+        _relayPicking(first, setId, alice);
+        address[3] memory others = [bob, carol, dave];
+        for (uint64 next = first + 1; next <= first + 9; ++next) {
+            _relayPicking(next, setId, others[next % 3]);
+        }
+        _draw(first);
+        vm.warp(schedule.boundary(first));
+        LogHeads.HeadV2 memory taken = _beat();
+        for (uint64 next = first + 1; next <= first + 9; ++next) {
+            _draw(next);
+        }
+        vm.warp(schedule.boundary(first + 9));
+        vm.prank(address(governance));
+        registry.setReleaseApproval(alice, _digest(77), CONFIG, true);
+        vm.prank(alice);
+        registry.setRelease(_digest(77), CONFIG);
+        LogHeads.HeadV2 memory head = _nextHead();
+        (head.turn, head.position, head.release, head.generation) =
+        (taken.turn, taken.position, taken.release, taken.generation);
+        _post(head);
+        assertTrue(registry.candidateOf(alice).release != taken.release, "alice moved off the release");
+        assertTrue(registry.holdsTurn(alice), "the release that signed the newest head is alice's");
+        vm.expectRevert(OperatorRegistry.OperatorCannotLeave.selector);
+        vm.prank(alice);
+        registry.deregister();
     }
 
     function test_TheTimelockSetsTheTakeWindowWithinItsBoundsWhileNoTurnNamesTheOperator() public {

@@ -220,21 +220,23 @@ contract LogHeads {
     /// @notice The candidate whose enclave holds the vault's signer epoch's keys while a turn of the registry's
     /// schedule names the operator, zero when nothing says. While the epoch's newest head is a v2 head its
     /// enclave signed since the schedule's `registryTurn` began, however late it was relayed, it is the
-    /// candidate whose assignment, release move or naming as a draw's source last recorded the head's release
-    /// (`releaseCandidate`). Otherwise no member has taken the keys in the epoch since then, so they are where
-    /// it found them: walking back from the turn in effect over turns whose latest assignment no head latched
-    /// and no promotion made, the member of the first turn reached whose latest assignment one did; in a turn
-    /// the epoch began in, the member the vault's timelock installed as the operator the registry named, which
-    /// a skip that moved the turn on since recorded (`skippedHolder`); else the source of `registryTurn`, where
-    /// the walk ends. One step per turn run with no head, each at a cost that does not grow with the turn's
-    /// revisions.
+    /// candidate the registry binds the head's release to for good (`OperatorRegistry.releaseOwner`), so a
+    /// release its candidate moved off still names it; zero for a release the registry binds to none, which
+    /// leaves the holder unknown. Otherwise no member has taken the keys in the epoch since then, so they are
+    /// where it found them: walking back from the turn in effect over turns whose latest assignment no head
+    /// latched and no promotion made, the member of the first turn reached whose latest assignment one did; in
+    /// a turn the epoch began in, the member the vault's timelock installed as the operator the registry named,
+    /// which a skip that moved the turn on since recorded (`skippedHolder`); else the source of `registryTurn`,
+    /// where the walk ends. One step per turn run with no head, each at a cost that does not grow with the
+    /// turn's revisions.
     function keyHolder() external view returns (address holder, uint64 epoch) {
-        OperatorSchedule schedule = vault.registry().schedule();
+        OperatorRegistry registry = vault.registry();
+        OperatorSchedule schedule = registry.schedule();
         epoch = vault.signerEpoch();
         uint64 first = schedule.registryTurn();
         bytes32 release = headRelease[epoch];
         if (release != 0 && heads[epoch].signedAt >= uint256(schedule.boundary(first)) * 1000) {
-            return (schedule.releaseCandidate(release), epoch);
+            return (registry.releaseOwner(release), epoch);
         }
         uint64 since = vault.signerSince();
         (uint64 turn, OperatorSchedule.Turn memory named) = schedule.turnAt(uint64(block.timestamp));

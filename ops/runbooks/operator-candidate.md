@@ -280,7 +280,7 @@ A candidate cannot leave in any of these cases:
 `holdsTurn` names a candidate in any of these cases:
 
 - It has held any assignment of the turn in effect, or of the last drawn turn.
-- Its release signed the newest log head.
+- It owns the release that signed the newest log head, even after it has moved to another release.
 - It may hold the keys that the member of the turn in effect takes. A member of the turn drawn
   before the turn in effect may hold them. Once a head latched that earlier turn, or a promotion
   named its member, only that turn's last member counts. While no member of a turn has taken the
@@ -1198,18 +1198,29 @@ The command prints the window in slots, followed by its minimum and maximum.
 Once the window passes with no latch, anyone's `skip()` names the next listed member in the turn's
 order that has held no assignment of the turn, other than the key holder. The skip creates a new
 generation, with no signer change. The key holder is the candidate whose enclave holds the signer
-epoch's keys. It is the candidate whose assignment, release move or naming as a turn's source recorded
-the release that signed the newest head, whatever release it has moved to since, when that head was
-signed since the latest turn drawn while the registry named its own operator began. Before such a
-head, the keys are where the epoch found them. To read the key holder, and that turn, run:
+epoch's keys. It is the candidate that owns the release which signed the newest head, as the
+registry's `releaseOwner` reads it, whatever release that candidate has moved to since. That head
+counts when it was signed since the latest turn drawn while the registry named its own operator
+began. Before such a head, the keys are where the epoch found them. To read the key holder, and that
+turn, run:
 
 ```shell
 cast call $LOG_HEADS 'keyHolder()(address)' --rpc-url $RPC
 cast call $SCHEDULE 'registryTurn()(uint64)' --rpc-url $RPC
 ```
 
-The first command prints zero when nothing names a holder, as for a newest head whose release no
-candidate recorded.
+The first command prints zero when nothing names a holder. While a turn names the operator, zero
+means that the newest head's release belongs to no candidate, and every skip and promotion then
+reverts with `KeyHolderUnknown`. To read that release and its owner, run:
+
+```shell
+EPOCH=$(cast call $VAULT 'signerEpoch()(uint64)' --rpc-url $RPC)
+RELEASE=$(cast call $LOG_HEADS 'headRelease(uint64)(bytes32)' $EPOCH --rpc-url $RPC)
+cast call $REGISTRY 'releaseOwner(bytes32)(address)' $RELEASE --rpc-url $RPC
+```
+
+The last command prints zero for such a release. The refusal ends when a member takes the keys, or
+when the timelock approves that release for the candidate whose enclave runs it.
 
 - An unwitnessed slot, as during a chain outage, restarts the window.
 - A promotion's assignment is never skipped.
