@@ -64,6 +64,13 @@ impl Schedule {
         self.pending.contains_key(&order)
     }
 
+    /// The seq of the earliest approval due for an authorization that was approved after `after`, or of
+    /// the earliest of all with none.
+    pub(super) fn first_due_after(&self, after: Option<u64>) -> Option<u64> {
+        let from = after.map_or(0, |after| after.saturating_add(1));
+        self.pending.range((from, 0)..).next().map(|(&(seq, _), _)| seq)
+    }
+
     /// Classifies a bounded prefix of an epoch transition.
     pub(super) fn prepare(&mut self, epoch: u64, payouts: &Payouts) {
         if self.epoch != Some(epoch) {
@@ -109,5 +116,31 @@ impl Schedule {
     /// Leaves a due approval unsigned until its holder asks again.
     pub(super) fn dismiss(&mut self, order: Order) {
         self.pending.remove(&order);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The earliest approval due for a signature past a seq: one signed or dismissed is not due, one its
+    /// holder asks for again is, and one at the seq itself is not past it.
+    #[test]
+    fn the_first_due_after_a_seq_is_the_earliest_approval_past_it_that_waits_for_a_signature() {
+        let identity = |byte: u8| (AccountId([byte; 20]), 1);
+        let mut schedule = Schedule::default();
+        schedule.insert((10, 0), identity(1), true);
+        schedule.insert((20, 0), identity(2), false);
+        schedule.insert((20, 1), identity(3), true);
+        schedule.insert((30, 0), identity(4), true);
+        assert_eq!(schedule.first_due_after(None), Some(10));
+        assert_eq!(schedule.first_due_after(Some(10)), Some(20), "an approval at the seq itself");
+        assert_eq!(schedule.first_due_after(Some(20)), Some(30));
+        assert_eq!(schedule.first_due_after(Some(30)), None);
+        schedule.selected((10, 0));
+        schedule.dismiss((20, 1));
+        assert_eq!(schedule.first_due_after(None), Some(30), "a signed or dismissed approval waits for nothing");
+        schedule.request((20, 0));
+        assert_eq!(schedule.first_due_after(Some(19)), Some(20), "its holder asked for a signature");
     }
 }

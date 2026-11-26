@@ -1,10 +1,11 @@
-//! The boundary's log check leg (#594). The fixture's seeds draw A, B and B for the turns before,
-//! at and after `LEG`. A withdrawal approved during A's turn waits for the next boundary's check,
-//! though the vault holds its checkpoint, and pays only once B's handover has verified A's log; a
-//! second, approved during B's turn, waits for the boundary B holds on through, where no handover
-//! checks it. There B's node asks the members of the turn's order: with A, first in it, and C down,
-//! the check stays due, and a verification from B's own release, which sequenced the range, is
-//! refused; once C follows again, its verification releases the withdrawal.
+//! The log check leg (#594, #1079). The fixture's seeds draw A, B and B for the turns before, at and
+//! after `LEG`. A withdrawal approved during A's turn pays within that turn, with no handover, once a
+//! following member verifies the checkpoint A wrote that covers it. A second, approved during B's turn
+//! with A and C stopped, waits for the check of the checkpoint that covers it, though the vault holds
+//! that checkpoint, and a verification from B's own release, which sequenced the range, is refused. At
+//! the boundary B holds on through, the check moves to the checkpoint after B's `TurnTaken`; with A,
+//! first in the turn's order, still down, it stays due until C follows again, and C's verification
+//! releases the withdrawal, with no handover.
 
 use std::time::Duration;
 
@@ -62,11 +63,11 @@ const C: usize = 2;
 /// Each withdrawal, in whole USDC.
 const AMOUNT: i64 = 1_000;
 
-/// The leg's withdrawing account, and the nonces of the withdrawals approved during A's and B's turns.
+/// The leg's withdrawing account, and the nonce of the withdrawal approved during B's turn with the
+/// checkpoint whose check it first waited for.
 pub(super) struct Leg {
     key: SigningKey,
-    first: Option<u64>,
-    second: Option<u64>,
+    second: Option<(u64, u64)>,
 }
 
 impl Leg {
@@ -81,26 +82,29 @@ impl Leg {
             e.accounts().get(&account).is_some_and(|held| held.balance > Fixed::ZERO)
         })
         .await;
-        Self { key, first: None, second: None }
+        Self { key, second: None }
     }
 
     /// Before `turn`'s boundary, whose member is `member`, with `holder` the incumbent: before `LEG`'s,
-    /// during A's turn, a withdrawal is approved that waits for `LEG`'s check; before the boundary B holds
-    /// on through, whose drawn order puts A before C, A and C stop following.
+    /// during A's turn, a withdrawal is approved and pays within the turn once a member verifies the
+    /// checkpoint that covers it; before the boundary B holds on through, the drawn order puts A before C.
     pub(super) async fn before_boundary(
         &mut self,
         chain: &Chain,
         turn: u64,
         (holder, member, members): (&Holder, usize, &[Member]),
-        shared: &Members,
     ) {
         if turn == LEG {
             assert_eq!((holder.member, member), (A, B), "the fixture draws A, then B at turn {LEG}");
             let nonce = self.approve(chain, &holder.node).await;
-            self.waits(chain, &holder.node, nonce, LEG).await;
-            self.first = Some(nonce);
+            let approved = self.approved_seq(&holder.node, nonce).await;
+            self.pays(chain, &holder.node, nonce).await;
+            let verified = holder.store.keys().log_check.expect("A's keys hold no verified head").seq;
+            assert!(verified >= approved, "paid with the verified head {verified} short of the approval at {approved}");
+            let boundary = engine_core::turns::boundary(LEG).unwrap();
+            assert!(holder.node.clock.now_ms() < boundary, "the boundary passed before the withdrawal paid");
             println!(
-                "PASS: turn {}: a withdrawal approved during A's turn waits for turn {LEG}'s check, though the vault holds its checkpoint",
+                "PASS: turn {}: a withdrawal approved during A's turn paid within the turn, with no handover, once a member verified the log through checkpoint {verified}, which covers it",
                 turn - 1
             );
         } else if turn == LEG + 1 {
@@ -111,14 +115,13 @@ impl Leg {
             };
             let a_before_c = matches!((at(A), at(C)), (Some(a), Some(c)) if a < c);
             assert!(a_before_c, "turn {turn}'s order does not put A before C: {order:?}");
-            shared.pause(A);
-            shared.pause(C);
         }
     }
 
-    /// Once `turn`'s boundary has passed, with `holder` the turn's: at `LEG` the first withdrawal pays,
-    /// B's handover having verified A's log, and a second is approved that waits; at the turn after, B
-    /// holds on, refuses a check from its own release, and C's verification releases the second.
+    /// Once `turn`'s boundary has passed, with `holder` the turn's: at `LEG`, A and C stop following and a
+    /// withdrawal approved during B's turn waits for its checkpoint's check, which B's own release cannot
+    /// give; at the turn after, B holds on, the withdrawal waits for the boundary's check, which B's own
+    /// release cannot give either, and C's verification releases it.
     pub(super) async fn after_boundary(
         &mut self,
         chain: &Chain,
@@ -127,21 +130,23 @@ impl Leg {
         shared: &mut Members,
     ) {
         if turn == LEG {
-            let first = self.first.expect("approved during A's turn");
-            self.pays(chain, &holder.node, first).await;
-            println!(
-                "PASS: turn {LEG}: the withdrawal approved during A's turn paid only once B's handover verified A's log"
-            );
+            shared.pause(A);
+            shared.pause(C);
             let second = self.approve(chain, &holder.node).await;
-            self.waits(chain, &holder.node, second, LEG + 1).await;
-            self.second = Some(second);
-            println!("PASS: turn {LEG}: a withdrawal approved during B's turn waits for turn {}'s check", LEG + 1);
+            let within = self.waits(chain, &holder.node, second).await;
+            refuse_own(&holder.node, &members[B]).await;
+            self.unsigned(&holder.node, second).await;
+            self.second = Some((second, within));
+            println!(
+                "PASS: turn {LEG}: with A and C down, a withdrawal approved during B's turn waits for the check of checkpoint {within}, which covers it, though the vault holds that checkpoint, and a verification from B's own release is refused"
+            );
         } else if turn == LEG + 1 {
-            let second = self.second.expect("approved during B's turn");
+            let (second, within) = self.second.expect("approved during B's turn");
+            let held = self.waits_past(chain, &holder.node, second, within).await;
             refuse_own(&holder.node, &members[B]).await;
             self.unsigned(&holder.node, second).await;
             println!(
-                "PASS: turn {}: B holds on; with A and C down the check stays due, and a verification from B's own release is refused",
+                "PASS: turn {}: B holds on; with A and C down the withdrawal waits for the boundary's check of checkpoint {held}, and a verification from B's own release is refused",
                 LEG + 1
             );
             shared.restart(C);
@@ -168,10 +173,18 @@ impl Leg {
         approved.and_then(|event| event["nonce"].as_u64()).unwrap_or_else(|| panic!("no approval: {events}"))
     }
 
+    /// The seq of the command that approved the leg account's withdrawal `nonce` on `node`.
+    async fn approved_seq(&self, node: &Node, nonce: u64) -> u64 {
+        let account = eip712::address(self.key.verifying_key());
+        let approved = node.query(move |engine| engine.withdrawal_approval(account, nonce).map(|at| at.approved_seq));
+        approved.await.expect("the withdrawal is approved")
+    }
+
     /// Waits until the vault holds a checkpoint past approval `nonce`, then requires it still unsigned,
-    /// waiting for the check at `turn`'s boundary, as the account's payouts read names it.
-    async fn waits(&self, chain: &Chain, node: &Node, nonce: u64, turn: u64) {
-        let approved = node.query(|engine| engine.last_seq().unwrap()).await;
+    /// waiting for the check of a checkpoint that covers it, as the account's payouts read names it:
+    /// that checkpoint's seq.
+    async fn waits(&self, chain: &Chain, node: &Node, nonce: u64) -> u64 {
+        let approved = self.approved_seq(node, nonce).await;
         let vault = chain.vault;
         // Each post waits for the one before to be final, two blocks on, which only mined blocks bring.
         wait_for("the vault to hold a checkpoint past the approval", async {
@@ -191,9 +204,32 @@ impl Leg {
         .await;
         node.query(|_| ()).await;
         let payout = self.payout(node, nonce).await;
-        assert_eq!(payout["withdrawal"], Value::Null, "signed before the boundary's check: {payout}");
-        let boundary = engine_core::turns::boundary(turn).unwrap();
-        assert_eq!(payout["check"], json!({ "waits": "boundary", "turn": turn, "boundary_ms": boundary }), "{payout}");
+        assert_eq!(payout["withdrawal"], Value::Null, "signed before a member's check: {payout}");
+        let checkpoint = checked_at(&payout).unwrap_or_else(|| panic!("no checkpoint's check is named: {payout}"));
+        assert!(checkpoint >= approved, "the check of checkpoint {checkpoint} does not cover {approved}: {payout}");
+        checkpoint
+    }
+
+    /// Waits until the account's payouts read names, for approval `nonce`, the check of a checkpoint past
+    /// `after`, as once a boundary's `TurnTaken` moves the check: that checkpoint's seq.
+    async fn waits_past(&self, chain: &Chain, node: &Node, nonce: u64, after: u64) -> u64 {
+        wait_for("the check of a checkpoint past the last one named", async {
+            let mut round = 0_u64;
+            loop {
+                let payout = self.payout(node, nonce).await;
+                assert_eq!(payout["withdrawal"], Value::Null, "signed without a qualifying check: {payout}");
+                if let Some(checkpoint) = checked_at(&payout).filter(|checkpoint| *checkpoint > after) {
+                    break checkpoint;
+                }
+                // Now and then a block, so a checkpoint held back behind the last one's finality is written.
+                round += 1;
+                if round.is_multiple_of(10) {
+                    chain.finalize().await;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
     }
 
     /// Requires approval `nonce` still unsigned on `node`.
@@ -256,8 +292,14 @@ impl Leg {
     }
 }
 
-/// With the check due at the boundary B holds on through, a verification from B's own release is
-/// refused: the operator's admission of a member's answer, and its sequencer, both turn it away.
+/// The checkpoint whose check `payout` waits for, when the payouts read names one.
+fn checked_at(payout: &Value) -> Option<u64> {
+    let check = &payout["check"];
+    check["checkpoint_seq"].as_u64().filter(|_| check["waits"] == "check")
+}
+
+/// With a check due on B's node, a verification from B's own release is refused: the operator's
+/// admission of a member's answer, and its sequencer, both turn it away.
 async fn refuse_own(node: &Node, b: &Member) {
     let (_, due) = node.asking.as_ref().expect("a seat asks for its checks");
     let mut due = due.clone();

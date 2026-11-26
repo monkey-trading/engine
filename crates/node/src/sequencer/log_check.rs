@@ -1,6 +1,7 @@
-//! The sequencer's side of the boundary's log check (`log_check`): the verified head, the log's
-//! `TurnTaken` records that attribute each range, the check due once this node takes a turn its
-//! verified head does not cover, and the gate `release_payouts` applies.
+//! The sequencer's side of the log check (`log_check`): the verified head, the log's `TurnTaken`
+//! records that attribute each range, the check due while this node holds a turn, at its boundary
+//! when the verified head does not reach it and then at each checkpoint that covers an approval
+//! waiting past the verified head, and the gate `release_payouts` applies.
 
 use std::sync::Arc;
 
@@ -39,9 +40,9 @@ pub(super) struct LogCheck {
     /// The releases the sealed keys name as having handed them on past the verified head, which no
     /// check due may come from.
     holders: Vec<Holder>,
-    /// The first checkpoint written at or after the latest `TurnTaken`, the target of a check that
-    /// comes due, fixed once chosen so a check asked for it is still the one due when it arrives; a
-    /// restart takes the last checkpoint the log holds.
+    /// The target of a check that comes due: the latest checkpoint written once one reaches the seq the
+    /// next check must (`reach`), fixed once chosen so a check asked for it is still the one due when it
+    /// arrives; a restart takes the last checkpoint the log holds.
     target: Option<VerifiedHead>,
     /// The latest checkpoint written, which may be at the `TurnTaken` itself when the schedule wrote
     /// one there before the `TurnTaken` was recorded.
@@ -56,6 +57,9 @@ pub(super) struct LogCheck {
     installation_counted: Option<(u64, Millis)>,
     /// Whether the sealed keys hold a verified head, restored or not.
     sealed: bool,
+    /// The seq of the earliest approval due for a signature past the verified head, as the gate's
+    /// schedule showed it at the last refresh (`Sequencer::refresh_log_check`).
+    waiting: Option<u64>,
 }
 
 impl LogCheck {
@@ -109,21 +113,38 @@ impl LogCheck {
         self.retarget();
     }
 
-    /// Takes the latest checkpoint as the target while none at or after the latest `TurnTaken` is.
+    /// Takes the latest checkpoint as the target while the target does not reach the seq the next check
+    /// must (`reach`).
     fn retarget(&mut self) {
-        let taken = self.takings.last().map_or(0, |(seq, _)| seq);
-        if self.target.is_none_or(|target| target.seq < taken) {
+        let reach = self.reach(self.takings.last().map_or(0, |(seq, _)| seq));
+        if self.target.is_none_or(|target| target.seq < reach) {
             self.target = self.latest;
         }
     }
 
-    /// The check this node waits for: with the gate applying, once this release has taken the turn in
-    /// effect at a `TurnTaken` its verified head does not reach, the target checkpoint at or after it,
+    /// The seq the next check must verify the log through, after the latest `TurnTaken` at `taken_seq`
+    /// (`needed`), or, with none needed, that `TurnTaken`.
+    fn reach(&self, taken_seq: u64) -> u64 {
+        self.needed(taken_seq).unwrap_or(taken_seq)
+    }
+
+    /// The seq a check is needed through, after the latest `TurnTaken` at `taken_seq`: that `TurnTaken`
+    /// while the verified head does not reach the command before it, the boundary's check; else the
+    /// earliest approval waiting for a signature past the verified head (`waiting`); else none.
+    fn needed(&self, taken_seq: u64) -> Option<u64> {
+        let verified = self.verified.map(|verified| verified.seq);
+        if verified.is_none_or(|verified| verified.saturating_add(1) < taken_seq) {
+            return Some(taken_seq);
+        }
+        self.waiting.filter(|waiting| verified.is_some_and(|verified| *waiting > verified))
+    }
+
+    /// The check this node waits for: with the gate applying, while this release holds the turn in effect
+    /// and needs a check (`outstanding`), the target checkpoint once it reaches the seq the check needs,
     /// with who sequenced the range since the verified head, the keys' holders included; `None` while no
-    /// checkpoint has followed, or while the records cannot attribute the range (`unattributable`).
+    /// such checkpoint is written, or while the records cannot attribute the range (`unattributable`).
     fn due(&self, engine: &Engine) -> Option<Due> {
-        let (taken_seq, in_effect) = self.outstanding(engine)?;
-        let head = self.target.filter(|head| head.seq >= taken_seq)?;
+        let (head, in_effect) = self.due_head(engine)?;
         let after = self.verified.map(|verified| verified.seq);
         let first = self.takings.first(after, head.seq);
         let excluded = self.takings.sequenced(after, head.seq)?.with_holders(&self.holders, first);
@@ -135,24 +156,36 @@ impl LogCheck {
     /// who sequenced its range, as after a start from a snapshot past the verified head: no member can
     /// be asked.
     fn unattributable(&self, engine: &Engine) -> Option<u64> {
-        let (taken_seq, in_effect) = self.outstanding(engine)?;
-        let head = self.target.filter(|head| head.seq >= taken_seq)?;
+        let (head, in_effect) = self.due_head(engine)?;
         let sequenced = self.takings.sequenced(self.verified.map(|verified| verified.seq), head.seq);
         sequenced.is_none().then_some(in_effect.turn)
     }
 
-    /// The seq of the `TurnTaken` of the turn in effect, and the turn, while the turn is this node's
-    /// operator key's and taken, under this release or an earlier one of the same member before an
-    /// upgrade, the gate applies, and the verified head does not reach the command before it.
+    /// The target checkpoint of the check outstanding, once it reaches the seq the check needs, and the
+    /// turn.
+    fn due_head(&self, engine: &Engine) -> Option<(VerifiedHead, engine_core::turns::TurnAssignment)> {
+        let (reach, in_effect) = self.outstanding(engine)?;
+        Some((self.target.filter(|head| head.seq >= reach)?, in_effect))
+    }
+
+    /// The seq a check is needed through (`needed`), and the turn, while this node holds the turn in
+    /// effect (`held`).
     fn outstanding(&self, engine: &Engine) -> Option<(u64, engine_core::turns::TurnAssignment)> {
+        let (taken_seq, in_effect) = self.held(engine)?;
+        Some((self.needed(taken_seq)?, in_effect))
+    }
+
+    /// The seq of the `TurnTaken` of the turn in effect, and the turn, while the gate applies and the turn
+    /// is this node's operator key's and taken, under this release or an earlier one of the same member
+    /// before an upgrade: this node asks for the turn's checks.
+    fn held(&self, engine: &Engine) -> Option<(u64, engine_core::turns::TurnAssignment)> {
         let operator = self.operator?;
         let turns = engine.daily_turns();
         let (in_effect, taken) = (turns.in_effect?, turns.taken?);
         let (taken_seq, _) = self.takings.last()?;
         let ours =
             (taken.turn, taken.position) == (in_effect.turn, in_effect.position) && in_effect.admin_key == operator;
-        let covered = self.verified.is_some_and(|verified| verified.seq.saturating_add(1) >= taken_seq);
-        (applies(engine) && ours && !covered).then_some((taken_seq, in_effect))
+        (applies(engine) && ours).then_some((taken_seq, in_effect))
     }
 
     /// Whether an approval at `approved_seq` may be signed: always while the gate does not apply,
@@ -171,9 +204,10 @@ impl LogCheck {
     }
 
     /// What will cover an approval at `approved_seq`, while it waits for a check: the turn in effect's
-    /// boundary when nobody has taken it yet, so its member's handover will check this log, or when its
-    /// check is outstanding and will reach the approval, its target not yet written or at or past it;
-    /// else the next turn's boundary, or, after the last drawn turn, the installation.
+    /// boundary when nobody has taken it yet, so its member's handover or `TurnTaken` will check this log;
+    /// a check this node asks for while it holds the turn, naming the checkpoint of the check due when that
+    /// checkpoint covers the approval; else the next turn's boundary, or, after the last drawn turn, the
+    /// installation.
     fn wait(&self, engine: &Engine, approved_seq: u64) -> Option<CheckWait> {
         if self.covers(engine, approved_seq) {
             return None;
@@ -182,14 +216,13 @@ impl LogCheck {
         let in_effect = turns.in_effect?;
         let untaken =
             turns.taken.is_none_or(|taken| (taken.turn, taken.position) != (in_effect.turn, in_effect.position));
-        let this_turn = untaken
-            || self.outstanding(engine).is_some_and(|(taken_seq, _)| {
-                let target = self.target.filter(|target| target.seq >= taken_seq);
-                approved_seq < taken_seq || target.is_none_or(|target| target.seq >= approved_seq)
-            });
-        if this_turn {
+        if untaken {
             let turn = in_effect.turn;
             return Some(CheckWait::Boundary { turn, boundary_ms: engine_core::turns::boundary(turn)? });
+        }
+        if self.held(engine).is_some() {
+            let due = self.due_head(engine).map(|(head, _)| head.seq);
+            return Some(CheckWait::Check { checkpoint_seq: due.filter(|seq| *seq >= approved_seq) });
         }
         if let Some(turn) = self.last_drawn(engine) {
             return Some(CheckWait::Installation { turn });
@@ -240,9 +273,10 @@ impl LogCheck {
 }
 
 impl Sequencer {
-    /// Publishes the check due, when it changed, and raises `log_check_unattributable` while one is
-    /// outstanding that no member can be asked for (`LogCheck::unattributable`), and
-    /// `log_check_awaiting_installation` while approvals wait for the installation that ends the turns.
+    /// Publishes the check due, when it changed, from the earliest approval waiting for a signature past
+    /// the verified head, and raises `log_check_unattributable` while one is outstanding that no member
+    /// can be asked for (`LogCheck::unattributable`), and `log_check_awaiting_installation` while
+    /// approvals wait for the installation that ends the turns.
     pub(super) fn refresh_log_check(&mut self) {
         if self.log_check.carried()
             && !applies(&self.engine)
@@ -250,6 +284,9 @@ impl Sequencer {
         {
             warn!("{e:#}: trying again at the next refresh");
         }
+        let after = self.log_check.verified.map(|head| head.seq);
+        self.log_check.waiting = self.gate.as_ref().and_then(|gate| gate.schedule.first_due_after(after));
+        self.log_check.retarget();
         let due = self.log_check.due(&self.engine);
         if let Some(sender) = &self.log_check.due {
             sender.send_if_modified(|current| {
@@ -264,7 +301,7 @@ impl Sequencer {
             if let Some(turn) = raised {
                 info!(
                     alert_resolved = "log_check_unattributable",
-                    turn, "the boundary's log check can be asked for, or is no longer outstanding"
+                    turn, "the log check can be asked for, or is no longer outstanding"
                 );
             }
             if let Some(turn) = unattributable {
@@ -284,15 +321,12 @@ impl Sequencer {
             if unavailable {
                 warn!(
                     alert = "log_check_unavailable",
-                    "a turn is in effect whose set names two or more members, so withdrawals wait for the \
-                     boundary's log check, but this node runs without operator.rotation_enabled and sealed keys: it \
-                     takes no turn and asks for no check, and signs no withdrawal until it restarts with them"
+                    "a turn is in effect whose set names two or more members, so withdrawals wait for a log \
+                     check, but this node runs without operator.rotation_enabled and sealed keys: it takes no \
+                     turn and asks for no check, and signs no withdrawal until it restarts with them"
                 );
             } else {
-                info!(
-                    alert_resolved = "log_check_unavailable",
-                    "withdrawals no longer wait for the boundary's log check"
-                );
+                info!(alert_resolved = "log_check_unavailable", "withdrawals no longer wait for a log check");
             }
         }
     }
@@ -322,15 +356,16 @@ impl Sequencer {
             warn!(
                 alert = "log_check_awaiting_installation",
                 turn,
-                "{waiting} approved withdrawals wait for the boundary's log check, but rotation is off and no \
-                 turn after the last drawn one is assigned, so no boundary checks them: they are signed once the \
-                 timelock's installation of an operator ends the turns"
+                "{waiting} approved withdrawals wait for a log check, but rotation is off, no turn after the \
+                 last drawn one is assigned, and this node does not hold that turn, so no check it asks for \
+                 covers them: they are signed once the timelock's installation of an operator ends the turns"
             );
         }
     }
 
-    /// Notes the checkpoint just written at `seq` with `root`, which a check that comes due targets
-    /// when it is the first at or after the latest `TurnTaken`.
+    /// Notes the checkpoint just written at `seq` with `root`, the latest, which a check that comes due
+    /// targets when the target falls short of the seq the check needs: at the boundary, the latest
+    /// `TurnTaken`; within the turn, the earliest approval waiting past the verified head.
     pub(super) fn log_check_checkpointed(&mut self, seq: u64, root: [u8; 32]) {
         let link = B256::from(self.command_prefix);
         self.log_check.checkpointed(VerifiedHead { seq, link, root: B256::from(root) });

@@ -1586,7 +1586,7 @@ Known limits:
 ## The log check before withdrawals
 
 While a turn is in effect whose set names two or more members, the enclave signs a withdrawal only
-for an approval at or below the head of the log that the last boundary's check verified. Turning
+for an approval at or below the head of the log that the last check verified. Turning
 rotation off leaves the drawn turns in effect, as the vault's `rotationEnabled()` counts them, so they
 still hand the keys on at their boundaries and the check applies until an installation ends them. A
 check is another member's verification of the log through a checkpoint:
@@ -1595,10 +1595,13 @@ check is another member's verification of the log through a checkpoint:
   handed.
 - At a promotion, the check is the promoted member's replay through the vault's checkpoint that the
   promotion fixed, unless that member sequenced part of the range, as after its own upgrade.
-- At a boundary that its holder holds on through, the check is an attested verification bound to the
-  boundary, the turn's assignment and the vault's signer epoch. The holder's enclave asks the
-  members of the turn's order, first to last, in questions it signs, and a member answers only from
-  the checkpoints it verified under that signer.
+- While a member holds a turn, the check is an attested verification of a checkpoint, bound to the
+  turn's boundary, its assignment and the vault's signer epoch: at a boundary that the holder holds on
+  through, of the first checkpoint after its `TurnTaken`, and within the turn, of the latest checkpoint
+  written once one covers the earliest approval that waits past the verified head. The holder's enclave
+  asks the members of the turn's order, first to last, in questions it signs, and a member answers
+  only from the checkpoints it verified under that signer. These are checkpoints that the trading
+  server writes anyway, so a turn with no withdrawals asks for no check past its boundary's.
 
 A member may answer only if it sequenced none of the instructions since the last verified head,
 under any release, and runs no release that did. The log's `TurnTaken` instructions, the promotions
@@ -1606,11 +1609,14 @@ and skips that the schedule records, and the keys' own record of each release th
 past that head decide this. A member promoted or skipped to after the assignment in office, a member
 with no handover endpoint, and the holder's own candidate are not asked.
 
-An approval made during a turn therefore waits for the next boundary, which takes at most a day plus
-the time a handover takes. Payouts stay anchored to the roots that the vault accepted, and a member
-of the set cannot be paid on a branch that no other member holds. The verified head is sealed with
-the keys while the check applies, so a host that restores an older copy only delays payouts, and the
-next check then covers the holding of the latest `TurnTaken`.
+An approval made during a turn therefore waits for the check of a checkpoint that covers it, the
+latest written when its check comes due. That check usually lands while the checkpoint is on its way
+to finality, so with members answering, a withdrawal is signed as soon as the vault holds its
+checkpoint, as without the check. Payouts stay anchored to the roots that the vault accepted, and a
+member of the set cannot be paid on a branch that no other member holds. The verified head is sealed
+with the keys after every check while the check applies, so a handover carries the latest one, a
+host that restores an older copy only delays payouts, and with none the next check covers the
+holding of the latest `TurnTaken`.
 
 Known limits:
 
@@ -1620,7 +1626,9 @@ Known limits:
   enclave the branch it withholds, and have it verified.
 - The rule bounds neither delay nor censorship. A host that keeps its trading server from asking, or
   members that do not answer, hold payouts until one answers or until the next handover, and
-  `log_check_pending` is raised after 30 minutes.
+  `log_check_pending` is raised after 30 minutes. A check stays on its checkpoint until a member
+  verifies it or the turn changes, so approvals after that checkpoint wait for that check and then
+  for their own.
 - A boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn.
 - A start from a snapshot past the verified head cannot say who sequenced the range. It asks no one,
   and raises `log_check_unattributable` until a full replay or a handover.
@@ -1649,9 +1657,11 @@ Known limits:
   one heartbeat interval past the newest sequence number that another member confirmed.
 - With a one-member set, or with no turn in effect, as once an installation ends the turns, only the
   posted roots gate payouts.
-- After rotation is turned off, no turn is drawn past those already drawn, so an approval made during
-  the last drawn turn waits for the installation that ends the turns, and is then signed with no check
-  of its range. `log_check_awaiting_installation` pages while one waits.
+- After rotation is turned off, no turn is drawn past those already drawn. The holder of the last
+  drawn turn keeps asking for checks within it. An approval that a trading server holds while it does
+  not hold that turn, as before the log mirrors a promotion into it, waits for the installation that
+  ends the turns, and is then signed with no check of its range. `log_check_awaiting_installation`
+  pages while one waits.
 
 ## Liveness and promotion
 
@@ -1786,7 +1796,7 @@ holder, which then serves the member named.
 
 A skip's member is admitted once the holder's log shows the skip's set naming it with notice, before
 the log mirrors the skip at finality. The member's own upgrade to another approved release waits for
-that mirror, so the boundary's log check never counts the member's instructions as another member's
+that mirror, so the log check never counts the member's instructions as another member's
 to check. The member logs `TurnTaken` only once the mirror applies the skip, and the operator's
 share for the time before that goes to stakers.
 

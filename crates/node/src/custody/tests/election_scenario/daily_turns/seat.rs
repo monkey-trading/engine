@@ -175,6 +175,8 @@ pub(super) struct Holder {
     /// The member's index in the scenario's list.
     pub(super) member: usize,
     pub(super) node: Node,
+    /// The keys it holds the turn with, which seal the head the log check last verified.
+    pub(super) store: Arc<KeyStore>,
     listener: JoinHandle<anyhow::Result<Option<crate::handover::assigned::Assigned>>>,
     drains: mpsc::Receiver<DrainReply>,
 }
@@ -242,7 +244,7 @@ impl Holder {
                 .unwrap()
                 .expect("[tee.sealing.handover] binds the listener")
                 .with_engine(&node.state.tx);
-        Self { member, node, listener: tokio::spawn(listener.run()), drains }
+        Self { member, node, store, listener: tokio::spawn(listener.run()), drains }
     }
 
     /// Answers the listener's stop request as a node does — a final checkpoint through the sequencer,

@@ -45,7 +45,7 @@ needs its own approval, and an approval for one step does not cover the next.
   [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
   describes. The handover that follows is the one in
   [Upgrade to a new release](#upgrade-to-a-new-release).
-- **While the boundary's log check applies, the keys carry the head that the check verified.** The
+- **While the log check applies, the keys carry the head that the last check verified.** The
   keys also carry each release that handed them on past that head. A release whose build does not
   carry the log check, or does not record those releases, refuses keys that carry them. Its
   handover stops the running release, and then fails. The check applies only while a turn is in

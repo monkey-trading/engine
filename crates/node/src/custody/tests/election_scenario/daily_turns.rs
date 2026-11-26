@@ -259,7 +259,7 @@ async fn scenario() {
         holder.node.submit(Command::Tick).await;
         let (before, before_at) = office(&holder.node).await;
         let incumbent = holder.member;
-        leg.before_boundary(&chain, turn, (&holder, member, &members), &shared).await;
+        leg.before_boundary(&chain, turn, (&holder, member, &members)).await;
 
         // A minute past the boundary one block past it is mined, and the incumbent's next command
         // hands the operator key to the turn's. The incumbent held the office until its turn ended,

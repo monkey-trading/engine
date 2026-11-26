@@ -17,10 +17,11 @@
 # TurnTaken, it prints and holds to a budget; that the member's first command is TurnTaken and the
 # time in office follows it; and that /v1/operator shows the rotation sets, today's and tomorrow's
 # turns, and every assignment with its TurnTaken. The holders post checkpoints. A withdrawal
-# approved during A's turn waits for the next boundary's log check, though the vault holds its
-# checkpoint, and pays through the vault only once B's handover has verified A's log; a second,
-# approved during B's turn, waits for the boundary B holds on through, where a verification from B's
-# own release is refused and, with A first in the turn's order and C stopped, the check stays due
+# approved during A's turn pays through the vault within that turn, with no handover, once a member
+# verifies the log through the checkpoint that covers it; a second, approved during B's turn with A
+# and C stopped, waits for the check of the checkpoint that covers it, though the vault holds that
+# checkpoint, and a verification from B's own release is refused; at the boundary B holds on through
+# the check moves to B's new checkpoint and, with A first in the turn's order and down, stays due
 # until C follows again and verifies it, releasing the withdrawal with no handover. A stream client
 # follows each holder at its hostname, resuming from its seq against the same enclave address, and
 # the last member's log replays to its roots. Last, governance turns rotation off and, once the last turn ends, installs that turn's

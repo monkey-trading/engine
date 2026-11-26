@@ -66,9 +66,8 @@ pub enum Request {
     },
     /// The parameters and latest checkpoint, answered once every prior request is flushed.
     HouseState(oneshot::Sender<HouseState>),
-    /// A verification of `head` its node admitted for the boundary's log check, by `candidate`'s
-    /// member on `release`: answered whether it was taken as the verified head
-    /// (`Sequencer::log_checked`).
+    /// A verification of `head` its node admitted for the log check, by `candidate`'s member on
+    /// `release`: answered whether it was taken as the verified head (`Sequencer::log_checked`).
     LogChecked {
         head: crate::log_check::VerifiedHead,
         candidate: AccountId,
@@ -207,10 +206,16 @@ pub struct PayoutView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "waits", rename_all = "snake_case")]
 pub enum CheckWait {
-    /// The check at a daily turn's boundary, and when that boundary is.
+    /// The check at a daily turn's boundary, and when that boundary is: nobody has taken the turn in
+    /// effect yet, or this node does not hold it.
     Boundary { turn: u64, boundary_ms: engine_core::types::Millis },
+    /// A check this node asks for within the turn it holds: of the checkpoint at `checkpoint_seq`, which
+    /// covers the approval, while that check is due; `None` while the check of a checkpoint covering it
+    /// is not due yet, as before that checkpoint is written or while an earlier one's check is asked.
+    Check { checkpoint_seq: Option<u64> },
     /// The timelock's installation of an operator, which ends the turns and lifts the gate: rotation
-    /// is off and no turn after `turn`, the last drawn, is assigned, so no boundary checks the approval.
+    /// is off, no turn after `turn`, the last drawn, is assigned, and this node does not hold it, so no
+    /// check it asks for covers the approval.
     Installation { turn: u64 },
 }
 

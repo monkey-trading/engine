@@ -58,7 +58,7 @@ pub(crate) struct KeySet {
     /// segments: inside the ciphertext, the listing binds the raw frames that follow the keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handover_tail: Option<crate::handover::tail::TailListing>,
-    /// The head of the log the last boundary's check verified (`log_check`), which a restart restores
+    /// The head of the log the last check verified (`log_check`), which a restart restores
     /// and an approved upgrade carries to the next release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_check: Option<crate::log_check::VerifiedHead>,

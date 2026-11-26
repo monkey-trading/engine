@@ -2,7 +2,7 @@
 //!
 //! An approval's 24-hour authorization is signed only once the approval is synced and covered by
 //! the finalized checkpoint the vault accepted, while collateral reconciles and the vault halts no
-//! withdrawal claim, and, while the boundary's log check applies, once a check covers it. A logged
+//! withdrawal claim, and, while the log check applies, once a check covers it. A logged
 //! signature is delivery, not payment: the vault's used nonce is. A new signer epoch (a rotation, or
 //! the timelock installing this key again after a retirement) signs again, with no request, each
 //! unpaid approval never signed or whose authorization is still usable; an expired one waits for its
@@ -288,8 +288,8 @@ impl Sequencer {
             if proof.seq > posted || payout.approval.approved_seq > posted {
                 break;
             }
-            // With rotation on and two or more members in the turn's set, a signature waits for the
-            // boundary's log check to verify the log through its approval (`log_check`).
+            // With rotation on and two or more members in the turn's set, a signature waits for a log
+            // check to verify the log through its approval (`log_check`).
             if !self.log_check.covers(&self.engine, payout.approval.approved_seq) {
                 break;
             }

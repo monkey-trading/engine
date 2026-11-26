@@ -56,7 +56,7 @@ pub(super) fn poster(
     }
 }
 
-/// A seat's asking for the boundary's log check: the vault read at the chain's release tag, questions
+/// A seat's asking for the log check: the vault read at the chain's release tag, questions
 /// signed with `key`, quotes verified against the mock TEE's platform `store` seals under, at
 /// `trusted` time.
 pub(super) fn asker(

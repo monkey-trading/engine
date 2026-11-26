@@ -1,10 +1,11 @@
-//! The operator's side of the boundary's log check: once its sequencer publishes a check due, its node
-//! asks the members of the turn's order, first position first, for an attested verification of the
-//! checkpoint, signing each question with its enclave key, skipping its own candidate, each member that
-//! sequenced the covered range under any release, each release that did, each member the schedule
-//! promoted or skipped to in a turn the range spans, and each member with no handover endpoint, and
-//! gives the first it admits to the sequencer. A round that no member answers is
-//! tried again; a check that stays due pages `log_check_pending`.
+//! The operator's side of the log check: once its sequencer publishes a check due, at a boundary it holds
+//! on through or at a checkpoint within its turn that covers a waiting approval, its node asks the
+//! members of the turn's order, first position first, for an attested verification of the checkpoint,
+//! signing each question with its enclave key, skipping its own candidate, each member that sequenced the
+//! covered range under any release, each release that did, each member the schedule promoted or skipped
+//! to in a turn the range spans, and each member with no handover endpoint, and gives the first it admits
+//! to the sequencer. A round that no member answers is tried again for the same checkpoint; a check that
+//! stays due pages `log_check_pending`, and each check the sequencer takes ends the wait.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +38,7 @@ const ASK_TIMEOUT: Duration = if cfg!(test) { Duration::from_secs(5) } else { Du
 const RETRY: Duration = if cfg!(test) { Duration::from_millis(200) } else { Duration::from_secs(60) };
 /// How long a check may stay due before it pages: withdrawals approved since the last verified head
 /// wait for it. Thirty minutes, or half a turn when that is shorter, since the next turn's check
-/// restarts the count.
+/// restarts the count, as each verified check does.
 const PENDING_ALERT_AFTER: Duration = if cfg!(test) {
     Duration::from_millis(600)
 } else if TURN_MS / 2 < 30 * 60_000 {
@@ -81,12 +82,13 @@ impl<C: CheckpointChain> Asker<C> {
     /// Error cases:
     /// - none: a round no member answers is tried again
     pub(crate) async fn run(mut self) -> anyhow::Result<()> {
+        // The turn of the checks due since the instant, unverified, and whether they paged.
         let mut pending: Option<(u64, Instant, bool)> = None;
         loop {
             let due = self.due.borrow_and_update().clone();
             let Some(due) = due else {
                 if let Some((turn, _, true)) = pending.take() {
-                    info!(alert_resolved = "log_check_pending", turn, "the boundary's log check verified the log");
+                    info!(alert_resolved = "log_check_pending", turn, "no log check is due");
                 }
                 if self.due.changed().await.is_err() {
                     return Ok(());
@@ -117,8 +119,10 @@ impl<C: CheckpointChain> Asker<C> {
                                 warn!(
                                     alert = "log_check_pending",
                                     turn = *turn,
-                                    "no member has verified the log at the boundary for {PENDING_ALERT_AFTER:?}: \
-                                     withdrawals approved since the last verified head wait"
+                                    "no member has verified the log through checkpoint {} for \
+                                     {PENDING_ALERT_AFTER:?}: withdrawals approved since the last verified head \
+                                     wait",
+                                    due.head.seq
                                 )
                             });
                         }
@@ -127,7 +131,15 @@ impl<C: CheckpointChain> Asker<C> {
                 }
             };
             match outcome {
-                Ok(true) => continue,
+                // The next check due, in this turn or another, waits from now.
+                Ok(true) => {
+                    if let Some((turn, _, true)) = pending.take() {
+                        span.in_scope(|| {
+                            info!(alert_resolved = "log_check_pending", turn, "a member verified the log")
+                        });
+                    }
+                    continue;
+                }
                 Ok(false) => span.in_scope(|| info!("the sequencer no longer waits for this check")),
                 Err(e) => span.in_scope(|| warn!("no member verified the log this round: {e:#}")),
             }
@@ -169,7 +181,7 @@ impl<C: CheckpointChain> Asker<C> {
             let asked = timeout(ASK_TIMEOUT, self.ask(member, &statement, &due.excluded)).await;
             match asked.unwrap_or_else(|_| Err(anyhow!("no answer in {ASK_TIMEOUT:?}"))) {
                 Ok(release) => {
-                    info!(verifier = %member.candidate, release = %release, "a member verified the log at the boundary");
+                    info!(verifier = %member.candidate, release = %release, "a member verified the log");
                     return self.give(due, member.candidate, release).await;
                 }
                 Err(e) => {

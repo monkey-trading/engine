@@ -517,13 +517,15 @@ an index: load only the rule whose hint matches the current action.
   prefix as the bytes it holds, bounded FIFO reissue scheduling
   (`sequencer/payout_schedule.rs`), public queue/account-position reads, and an account's unpaid
   payouts with their latest authorizations (`api/payouts.rs`, answered from the sequencer's memory).
-  From #594, the boundary's log check (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):
+  From #594, the log check before withdrawals (`log_check/`, `sequencer/log_check.rs`, `node/log_check.rs`):
   while a daily turn is in effect whose set names two or more members, which turning rotation off leaves
   until an installation ends the turns, a withdrawal is signed only for an approval at or below the head the last check verified, #14's posted root still
   applying; at a handover the check is the successor's own, sealed with the keys as its first start
   passes the predecessor's head, unless its member sequenced part of the range, as after its own
-  upgrade, and at a boundary the operator holds on through, its node writes a checkpoint after
-  `TurnTaken` and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
+  upgrade, and while the operator holds a turn, at a boundary it holds on through its node writes a checkpoint after
+  `TurnTaken`, and from #1079 within the turn it takes the latest checkpoint it has written, once one covers
+  the earliest approval waiting past the verified head (`Schedule::first_due_after`; none on a quiet turn),
+  fixed until verified, the refresh following every batch, and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
   for a quote-bound verification of it from a member that sequenced none of the range since the last
   verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands and
   mirrored promotions and skips record, and the keys record of each release that handed them on past
@@ -534,8 +536,11 @@ an index: load only the rule whose hint matches the current action.
   the checkpoints its replica verified under the question's signer; the verified head is sealed with
   the keys while the gate applies, restored only when the log holds its checkpoint, carried by an
   upgrade, and with none the next check covers the latest holding, and `/v1/accounts/{a}/payouts`
-  names the boundary each waiting approval's check is at, or, after the last drawn turn with rotation off,
-  that it waits for the installation, under Warning `log_check_awaiting_installation`.
+  names each waiting approval's check: `check` with the checkpoint of the check due that covers it while
+  this node holds the turn, the boundary of a turn nobody has taken or this node does not hold, or, after
+  the last drawn turn with rotation off and that turn not held here, that it waits for the installation,
+  under Warning `log_check_awaiting_installation`; each check the sequencer takes ends the asker's
+  `log_check_pending` episode.
   With `[log_heads]` (#541), `log_heads/` posts the enclave's newest released `(seq, prefix)` — the
   cumulative command-prefix digest, which checkpoints do not reset, and every post names the
   previously accepted head it extends — the
@@ -1041,9 +1046,11 @@ an index: load only the rule whose hint matches the current action.
   follows it, a stream client resumes on each successor's hostname against the same enclave, the
   member's first command is `TurnTaken` and its time in office starts there, `/v1/operator` shows the
   sets and turns, and the last member's log replays; in between, a withdrawal approved during A's turn
-  pays only once B's handover has verified A's log, and one approved during B's turn, with B drawn
-  again, waits for that boundary's check, where a verification from B's own release is refused and
-  C's, with A first in the turn's order down, releases it with no handover; then an installation of
+  pays within that turn once a member verifies the checkpoint covering it, and one approved during B's
+  turn with A and C stopped waits, its payouts read naming its checkpoint's check, though the vault holds
+  that checkpoint, while a verification from B's own release is refused; with B drawn again it waits
+  for that boundary's check, where C's, with A first in the turn's order down, releases it with no
+  handover; then an installation of
   the last turn's own candidate ends the turns; then the successor-fallback leg (#596) on the liveness
   parts with a two-slot take window: a skip past a stopped member while the holder trades, a late take
   whose head latches nothing once a skip passes over the key holder, a paused chain across a boundary
@@ -1732,7 +1739,7 @@ Run from the repo root:
   the real listener and the member's own wait (`Member::until_turn_answering`), its window printed
   against its budget, the admin keys, `TurnTaken`, the time in office and `/v1/operator` checked at
   each boundary, a stream client following each holder, the holders posting checkpoints and two
-  withdrawals claimed through the vault after the boundary's log check, then the log replayed and the
+  withdrawals claimed through the vault after their log checks, one within a turn, then the log replayed and the
   turns ended by an installation; then the successor-fallback leg on its own Anvil chain, the liveness
   parts' callers, head poster, rule and member links with handovers modelled by moving the keys)
 - Minute-scale liveness dev scenario: `./scripts/dev-liveness.sh` (Anvil, Forge and installed Soldeer

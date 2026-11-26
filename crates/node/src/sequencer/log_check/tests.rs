@@ -1,6 +1,7 @@
 //! The gate on payouts while a turn whose set names two or more members is in effect: a check comes
-//! due once this node holds a turn on that its verified head does not cover, a signature waits for a
-//! member's verification of the log through its approval, one from a member or release that sequenced
+//! due once this node holds a turn on that its verified head does not cover, and within it once a
+//! checkpoint covers an approval past that head, a signature waits for a member's verification of the
+//! log through its approval, one from a member or release that sequenced
 //! the range is refused, a reissue waits as a first signature does, a check no member can be asked for
 //! pages, rotation off leaves the gate while the drawn turn stands, a one-member set or the turns'
 //! end leaves #14's gate alone, and a restart restores the verified head only when the log holds its
@@ -59,11 +60,10 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     // whose replica applied it from a snapshot before it can answer.
     assert_eq!(due.from, taken_seq, "the question names the range its exclusions attribute");
 
-    // Posted and healthy, the approval still waits for the check, and the payouts read names its boundary.
+    // Posted and healthy, the approval still waits for the check, and the payouts read names its checkpoint.
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval was signed before a member verified the log through it");
-    let boundary = engine_core::turns::boundary(turn).unwrap();
-    assert_eq!(node.check_of(1), Some(CheckWait::Boundary { turn, boundary_ms: boundary }));
+    assert_eq!(node.check_of(1), Some(CheckWait::Check { checkpoint_seq: Some(head.seq) }));
 
     // A verification from this release, or this member on another release, which sequenced the
     // range, or of another head, is refused.
@@ -82,16 +82,21 @@ fn a_held_turn_in_a_two_member_set_signs_only_what_a_members_check_verified() {
     assert_eq!(node.signed.try_recv().expect("the verified approval was not signed").nonce, 1);
     assert_eq!(node.check_of(1), None);
 
-    // An approval after the verified head waits for the next boundary's check.
+    // An approval after the verified head waits for a check of the checkpoint that covers it.
     node.approve(2);
+    let next = node.due.borrow().clone().expect("no check came due for an approval past the verified head");
+    assert_eq!((next.turn, next.from), (turn, head.seq + 1), "the range since the verified head");
+    assert_eq!(node.check_of(2), Some(CheckWait::Check { checkpoint_seq: Some(next.head.seq) }));
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval past the verified head was signed");
-    let next = engine_core::turns::boundary(turn + 1).unwrap();
-    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: turn + 1, boundary_ms: next }));
 
-    // Once the next turn, the other member's, applies here, its handover still checks the approval.
+    // Once the next turn, the other member's, applies here, this node asks for nothing, and that turn's
+    // handover checks the approval.
     node.hand_over_turn();
-    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: turn + 1, boundary_ms: next }));
+    node.seq.refresh_log_check();
+    assert!(node.due.borrow().is_none(), "a node that no longer holds the turn asked for a check");
+    let boundary = engine_core::turns::boundary(turn + 1).unwrap();
+    assert_eq!(node.check_of(2), Some(CheckWait::Boundary { turn: turn + 1, boundary_ms: boundary }));
 }
 
 #[test]
@@ -186,18 +191,14 @@ fn a_reissue_on_a_signer_change_waits_for_the_check_as_a_first_signature_does() 
     // Signed before any turn is in effect, under #14's gate alone.
     node.release();
     assert_eq!(node.signed.try_recv().expect("signed before the turn").nonce, 1);
-    let (turn, _) = node.take_turn();
+    node.take_turn();
     let head = node.due.borrow().clone().expect("no check came due").head;
     assert_eq!(node.check_of(1), None, "an approval with a usable signature waits for no check");
 
     node.release_at(2);
     assert!(node.signed.try_recv().is_err(), "a signer change reissued an approval no check covers");
-    let boundary = engine_core::turns::boundary(turn).unwrap();
-    assert_eq!(
-        node.check_of(1),
-        Some(CheckWait::Boundary { turn, boundary_ms: boundary }),
-        "the retired signature's wait"
-    );
+    let wait = Some(CheckWait::Check { checkpoint_seq: Some(head.seq) });
+    assert_eq!(node.check_of(1), wait, "the retired signature's wait");
     assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.release_at(2);
     let reissued = node.signed.try_recv().expect("the covered approval was not reissued");
@@ -313,8 +314,9 @@ impl Node {
         Self::recover(dir, clock, (turn, member), store)
     }
 
-    /// Credits the trader and approves its withdrawal `nonce`, with a checkpoint that covers it, each
-    /// screened by the test access source.
+    /// Credits the trader and approves its withdrawal `nonce`, with a paced checkpoint that covers it,
+    /// which a checkpoint registry holds back while the last signed one is not final, each screened by
+    /// the test access source.
     fn approve(&mut self, nonce: u64) {
         if nonce == 1 {
             self.seq.sequence(crate::test_support::empty_custody_frontier()).unwrap();
@@ -329,7 +331,7 @@ impl Node {
         let events = self.seq.sequence(withdraw).unwrap().expect("admitted");
         let approved = |event: &Event| matches!(event, Event::WithdrawalApproved { nonce: n, .. } if *n == nonce);
         assert!(events.iter().any(approved), "{events:?}");
-        self.seq.checkpoint().unwrap();
+        self.seq.paced_checkpoint().unwrap();
     }
 
     /// Moves past the turn's boundary and sequences its `TurnTaken`: the turn and its seq.
@@ -401,6 +403,15 @@ impl Node {
 
     /// `release`, with the vault in signer epoch `signer_epoch`.
     fn release_at(&mut self, signer_epoch: u64) {
+        let evidence = self.evidence(signer_epoch);
+        self.seq.checkpoint_status(evidence.checkpoint_seq, Some(Health::Healthy)).unwrap();
+        self.seq.release_payouts(&evidence).unwrap();
+        self.seq.flush().unwrap();
+    }
+
+    /// Finalized evidence, in signer epoch `signer_epoch`, that the vault holds the latest checkpoint and
+    /// every loaded approval is unpaid.
+    fn evidence(&self, signer_epoch: u64) -> LifecycleEvidence {
         let approvals = self.seq.gate.as_ref().unwrap().payouts.values().map(|payout| ApprovalStatus {
             approval: ApprovalId {
                 account: payout.approval.account,
@@ -410,7 +421,7 @@ impl Node {
             claimed: false,
         });
         let latest = self.last_checkpoint();
-        let evidence = LifecycleEvidence {
+        LifecycleEvidence {
             height: 10,
             block_hash: B256::repeat_byte(1),
             signer: AccountId(self.seq.key.address()),
@@ -420,10 +431,7 @@ impl Node {
             checkpoint_seq: Some(latest.seq),
             checkpoint_root: Some(latest.root),
             approvals: approvals.collect(),
-        };
-        self.seq.checkpoint_status(evidence.checkpoint_seq, Some(Health::Healthy)).unwrap();
-        self.seq.release_payouts(&evidence).unwrap();
-        self.seq.flush().unwrap();
+        }
     }
 
     /// The test access source's clear screening of the trader's request to reissue approval `nonce`,
@@ -435,7 +443,7 @@ impl Node {
         ReissueScreening { request_hash, evidence }
     }
 
-    /// The boundary the trader's approval `nonce` waits for, as the payouts read says.
+    /// What the trader's approval `nonce`'s next signature waits for, as the payouts read says.
     fn check_of(&self, nonce: u64) -> Option<CheckWait> {
         let page = self.seq.account_payouts(trader(), None, 10);
         page.payouts.into_iter().find(|payout| payout.nonce == nonce).expect("the approval is unpaid").check
@@ -487,4 +495,5 @@ fn head_at(seq: u64) -> VerifiedHead {
 
 mod handover;
 mod holders;
+mod mid_turn;
 mod pages;
