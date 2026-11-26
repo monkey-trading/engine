@@ -101,7 +101,7 @@ async fn a_frozen_copy_with_a_row_deleted_or_restored_is_refused() {
 
 /// A frozen copy imports into a cache under another marks key, as after a start under keys sealed afresh, on the root
 /// the freeze found, its rows tagged under a run nonce the import drew, and the import goes on taking marks as the
-/// cache does. The anchors of a snapshot written before the root was carried, which decode with none, take the copy
+/// cache does, and serves its rows again when its file is reopened under the nonce it stored. The anchors of a snapshot written before the root was carried, which decode with none, take the copy
 /// only under the key that wrote it.
 #[tokio::test]
 async fn a_frozen_copy_imports_under_another_key_on_its_root() {
@@ -121,6 +121,13 @@ async fn a_frozen_copy_imports_under_another_key_on_its_root() {
     imported.observe(&later).unwrap();
     store.observe(&later).unwrap();
     assert_eq!(every_page(&imported).await, every_page(&store).await, "the import goes on as the cache does");
+
+    // A restart reads the nonce the import stored and keys from it, so every imported and later row must carry it.
+    let (stored, path) = (nonce(&imported), imported.path().to_owned());
+    drop(imported);
+    let reopened = Store::open(&path, Retentions::defaults(), [0x24; 32]).unwrap();
+    assert_eq!(nonce(&reopened), stored);
+    assert_eq!(every_page(&reopened).await, every_page(&store).await, "a restart serves the imported rows");
 
     let mut written = serde_json::to_value(&frozen).unwrap();
     assert!(written.as_object_mut().unwrap().remove("root").is_some(), "the root is not written: {written}");
