@@ -19,7 +19,7 @@ use tokio::time::timeout;
 use tracing::{info, warn};
 
 use super::submission::{Reserve, SubmissionStore};
-use super::{Head, HeadV2, HeadsChain, PostOutcome, TurnHeads};
+use super::{HEAD_GAS_FLOOR, Head, HeadV2, HeadsChain, PostOutcome, TurnHeads};
 use crate::config::{CheckpointSection, LogHeadsSection, redact};
 use crate::custody::VaultReader;
 use crate::custody::{Quorum, QuorumBlock, VaultRpc};
@@ -216,13 +216,14 @@ impl HeadsRpc {
         Ok(found.is_some())
     }
 
-    /// Adds the gas margin to the endpoint's estimate.
+    /// Adds the gas margin to the endpoint's estimate, and never less than `floor`.
     /// Error cases:
     /// - the estimate fails or times out
-    async fn with_gas(&self, tx: TransactionRequest) -> anyhow::Result<TransactionRequest> {
+    async fn with_gas(&self, tx: TransactionRequest, floor: u64) -> anyhow::Result<TransactionRequest> {
         let estimate: U64 = self.deadline(self.client.request("eth_estimateGas", (tx.clone(),))).await?;
         let estimate: u64 = estimate.to();
-        Ok(TransactionRequest { gas: Some(estimate.saturating_add(estimate / POST_GAS_MARGIN_DIVISOR)), ..tx })
+        let gas = estimate.saturating_add(estimate / POST_GAS_MARGIN_DIVISOR).max(floor);
+        Ok(TransactionRequest { gas: Some(gas), ..tx })
     }
 
     /// The exact signed call at `nonce`. The endpoint fills the gas price and the poster
@@ -440,7 +441,7 @@ impl HeadsRpc {
                     info!(nonce = pending.nonce, %hash, "replacing the pending heartbeat at its nonce with a fresh head");
                 } else if self.transaction_known(hash).await? {
                     let tx = self.rebroadcast_request(&pending)?;
-                    let tx = self.with_gas(tx).await?;
+                    let tx = self.with_gas(tx, 0).await?;
                     let _: B256 = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
                     *self.pending_since.lock().expect("pending-since lock poisoned") = Some(std::time::Instant::now());
                     pending.stored_at = now;
@@ -471,11 +472,12 @@ impl HeadsRpc {
         reservation.calldata = calldata.clone().map(Into::into);
         reservation.stored_at = now;
         self.persist_update(reservation.clone()).await?;
+        let floor = if calldata.is_some() { HEAD_GAS_FLOOR } else { 0 };
         let tx = match calldata {
             Some(calldata) => raw_call(self.contract, self.relayer, self.domain.chain_id, calldata, reservation.nonce),
             None => self.post_request(head, parent, signature, reservation.nonce)?,
         };
-        let tx = self.with_gas(tx).await?;
+        let tx = self.with_gas(tx, floor).await?;
         let hash: B256 = self.deadline(self.client.request("eth_sendTransaction", (tx,))).await?;
         reservation.tx_hash = Some(hash);
         *self.pending_since.lock().expect("pending-since lock poisoned") = Some(std::time::Instant::now());

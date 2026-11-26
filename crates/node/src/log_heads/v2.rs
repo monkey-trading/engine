@@ -42,6 +42,17 @@ sol! {
     function postV2(HeadV2Call head, bytes signature) external;
 }
 
+/// The least gas limit a v2 head is sent with. A turn's first head writes the latch and `boundUnder` and
+/// costs about 224,000 gas against about 115,000 before its turn is in effect, so an estimate taken on a
+/// block before the boundary and sent after it would run out of gas at the estimate plus its margin. Unused
+/// gas is refunded, so the floor costs nothing on the heads that need less.
+pub(crate) const HEAD_GAS_FLOOR: u64 = 300_000;
+
+/// Whether `data` is a `postV2` call.
+pub(crate) fn is_v2_head_call(data: &[u8]) -> bool {
+    data.starts_with(&postV2Call::SELECTOR)
+}
+
 /// The domain a v2 head's digest starts with.
 const DOMAIN: &[u8] = b"engine.log-head.v2";
 /// The shortest read period a heartbeat interval sets, against a zero interval.

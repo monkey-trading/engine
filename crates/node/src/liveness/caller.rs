@@ -49,7 +49,7 @@ use crate::liveness::fallback::{Account, Sends};
 use crate::liveness::link::Copy;
 use crate::liveness::read_every;
 use crate::liveness::unowned::{KeyHolderRefused, head_release, names_unknown_key_holder};
-use crate::log_heads::{Head, SignedHead};
+use crate::log_heads::{HEAD_GAS_FLOOR, Head, SignedHead, is_v2_head_call};
 use crate::standby_key::chain::StandbyChain;
 
 /// How often the caller reads until a read shows the heartbeat interval: a failed first read must not
@@ -156,7 +156,7 @@ impl Endpoint {
 
 impl Sending for Endpoint {
     async fn send(&self, to: Address, data: Vec<u8>) -> anyhow::Result<Option<B256>> {
-        let tx = TransactionRequest::default().to(to).from(self.caller).input(data.into());
+        let tx = TransactionRequest::default().to(to).from(self.caller).input(data.clone().into());
         let tx = TransactionRequest { chain_id: Some(self.chain_id), ..tx };
         let estimate: U64 = match self.deadline(self.client.request("eth_estimateGas", (tx.clone(),))).await {
             Ok(estimate) => estimate,
@@ -169,7 +169,9 @@ impl Sending for Endpoint {
             Err(e) => return Err(e.context("estimating the liveness call's gas")),
         };
         let estimate: u64 = estimate.to();
-        let tx = TransactionRequest { gas: Some(estimate.saturating_add(estimate / GAS_MARGIN_DIVISOR)), ..tx };
+        let floor = if is_v2_head_call(&data) { HEAD_GAS_FLOOR } else { 0 };
+        let gas = estimate.saturating_add(estimate / GAS_MARGIN_DIVISOR).max(floor);
+        let tx = TransactionRequest { gas: Some(gas), ..tx };
         self.deadline(self.client.request("eth_sendTransaction", (tx,))).await.map(Some)
     }
 

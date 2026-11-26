@@ -268,6 +268,40 @@ async fn a_pending_heartbeat_is_replaced_at_its_nonce_by_the_head_now_being_sent
     assert_eq!(record["head"][1]["seq"], 6, "the record names the call now in flight: {record}");
 }
 
+/// A turn's first head costs about 224,000 gas and a head before its turn about 115,000: a head sent
+/// on an estimate taken before the boundary carries enough for the first head, and a larger estimate
+/// keeps its quarter.
+#[tokio::test]
+async fn a_v2_head_carries_gas_for_a_turns_first_head_whatever_its_estimate() {
+    let dir = crate::test_support::scratch_dir("log-head-gas-floor");
+    std::fs::create_dir_all(&dir).unwrap();
+    let endpoint = Endpoint::start(dir.join("log-head-submission.json")).await;
+    let signature = format!("0x{}", hex::encode([7u8; 65]));
+    let heartbeat = |seq: u64| crate::log_heads::v2::HeadV2 {
+        head: Head { seq, link: B256::from([seq as u8; 32]) },
+        parent: None,
+        turn: 20_400,
+        position: 0,
+        release: B256::repeat_byte(0x33),
+        generation: 5,
+        stamp: 1_800_000_000_000,
+        signed_at: 1_800_000_000_000 + seq,
+        hold: crate::log_heads::v2::Hold::Live,
+        confirmer: Address::ZERO,
+        block_number: 0,
+        block_hash: B256::ZERO,
+    };
+    let rpc = crate::log_heads::tests::heads_rpc(&endpoint.url, &dir);
+    endpoint.estimating(115_000);
+    assert_eq!(rpc.post_v2(1, &heartbeat(5), &signature).await.unwrap(), PostOutcome::Accepted);
+    endpoint.estimating(400_000);
+    let restarted = crate::log_heads::tests::heads_rpc(&endpoint.url, &dir);
+    assert_eq!(restarted.post_v2(1, &heartbeat(6), &signature).await.unwrap(), PostOutcome::Accepted);
+    let gas: Vec<_> = endpoint.sent().iter().map(|tx| tx["gas"].as_str().unwrap().to_string()).collect();
+    assert_eq!(gas, [format!("{HEAD_GAS_FLOOR:#x}"), format!("{:#x}", 500_000)]);
+    assert!(HEAD_GAS_FLOOR >= 224_188, "the floor covers a first head's measured cost");
+}
+
 // ── Helpers ──
 
 /// A loopback endpoint for the post path's RPCs, with the relayer's count at seven.
@@ -287,6 +321,8 @@ struct EndpointState {
     refuse_sends: bool,
     /// Whether `eth_getTransactionByHash` finds the sent transaction.
     known: bool,
+    /// What `eth_estimateGas` answers.
+    estimate: u64,
 }
 
 impl Endpoint {
@@ -297,12 +333,17 @@ impl Endpoint {
             sent: Vec::new(),
             refuse_sends: false,
             known: true,
+            estimate: 200_000,
         }));
         let app = Router::new().route("/", post(answer)).with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self { url, state, task }
+    }
+
+    fn estimating(&self, estimate: u64) {
+        self.state.lock().unwrap().estimate = estimate;
     }
 
     fn sent(&self) -> Vec<Value> {
@@ -320,7 +361,7 @@ async fn answer(State(state): State<Arc<Mutex<EndpointState>>>, Json(request): J
     let mut state = state.lock().unwrap();
     let result = match request["method"].as_str().unwrap() {
         "eth_getTransactionCount" => json!("0x7"),
-        "eth_estimateGas" => json!("0x30d40"),
+        "eth_estimateGas" => json!(format!("{:#x}", state.estimate)),
         "eth_getTransactionByHash" => {
             if state.known {
                 state.sent.last().cloned().unwrap_or(Value::Null)

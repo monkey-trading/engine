@@ -15,6 +15,8 @@ const TEST_POLL: Duration = Duration::from_millis(50);
 /// How often it reads once it knows the fake chain's 60 s heartbeat interval: a quarter of it.
 const SLOT_READ: Duration = Duration::from_secs(15);
 
+mod gas;
+
 /// A call sent: where to, and its data.
 type SentCall = (Address, Vec<u8>);
 
