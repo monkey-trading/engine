@@ -319,7 +319,8 @@ If the enclave stops posting checkpoints, the vault stops accepting deposits aft
 days without a checkpoint, anyone can start the vault's exit against the last checkpoint. Each
 account then has 30 days to register the amount that the checkpoint shows it is owed, including its
 equity at the checkpoint's prices and any unpaid withdrawals. The vault then pays every claim in
-proportion to the USDC it holds. `engine exit-proof` builds an account's claim from the public log.
+proportion to the USDC it holds. `engine exit-proof` builds an account's claim from the public log,
+which the archive's bucket holds through the vault's latest checkpoint with no server running.
 
 ## MONKEY and staking
 

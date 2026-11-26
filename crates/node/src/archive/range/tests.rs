@@ -8,6 +8,8 @@ use tokio::sync::watch;
 use crate::log::{LogEntry, SegmentedLog};
 use crate::test_support::{TestSequencer, log_entries, published_manifest, scratch_dir};
 
+mod pieces;
+
 /// A range is the same bytes from every copy of the log, however its segments are cut: the sequencer's own,
 /// one cut every five commands, one whose open segment was sealed early, as a handover seals the
 /// predecessor's, and one whose single completed segment spans every range. Each range starts at its first seq's command, and the ranges together are the log's lines

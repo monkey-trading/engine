@@ -289,6 +289,17 @@ The server's TLS certificate must be one a public certificate authority issued, 
 `[api.tls.acme]` has. The download goes to the system's temporary directory, which `TMPDIR` sets, and
 needs room for the whole log. `engine exit-proof --log` and `engine carry --log` take the same URL.
 
+The bucket alone holds the log through the vault's latest checkpoint, so the log replays and exit
+proofs build with no server running. Name the log's place in the bucket and the vault's `latestSeq`
+and `latestRoot`, which say where the log ends:
+
+```shell
+cargo run -p engine-node -- replay --log https://<bucket's public URL>/log/<chain id>/<vault>/ \
+  --seq <latestSeq> --state-root <latestRoot>
+```
+
+`engine exit-proof` takes the same `--log`, `--seq` and `--state-root`.
+
 **The enclave.** The attestation shows which code holds the signing key.
 
 ```shell

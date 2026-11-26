@@ -1,5 +1,5 @@
-//! The archive's backlog: the whole ranges not yet confirmed, when each was first seen whole, and the
-//! `archive_upload_lagging` episode their wait opens.
+//! The archive's backlog: the whole ranges not yet confirmed, when each was first seen whole, the oldest tail
+//! waiting, and the `archive_upload_lagging` episode their wait opens.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -25,6 +25,9 @@ pub(super) struct Backlog {
     resuming: Option<Instant>,
     /// When the resume that just ended began, which the ranges whole at its end wait from.
     resumed_from: Option<Instant>,
+    /// Since when the tails have waited: the oldest checkpoint whose tail waits, or none while the copy cannot be read
+    /// for its checkpoints, and the time.
+    pub(super) tail: Option<(Option<u64>, Instant)>,
     /// Whether `archive_upload_lagging` is raised.
     raised: bool,
 }
@@ -32,7 +35,8 @@ pub(super) struct Backlog {
 impl Backlog {
     /// An empty backlog, warning once a range has waited `lag_alert`.
     pub(super) fn new(lag_alert: Duration) -> Self {
-        Self { lag_alert, next: 0, whole: 0, seen: VecDeque::new(), resuming: None, resumed_from: None, raised: false }
+        let (seen, resuming, resumed_from, tail) = (VecDeque::new(), None, None, None);
+        Self { lag_alert, next: 0, whole: 0, seen, resuming, resumed_from, tail, raised: false }
     }
 
     /// Starts the clock of a resume, unless one already runs: a resume that has not reached the bucket for
@@ -69,15 +73,16 @@ impl Backlog {
         self.next += 1;
     }
 
-    /// Sets the backlog's metrics, and raises `archive_upload_lagging` once the oldest waiting range, or a resume,
-    /// has waited `lag_alert`, or resolves it once none has.
+    /// Sets the backlog's metrics, and raises `archive_upload_lagging` once the oldest waiting range, a tail or a
+    /// resume has waited `lag_alert`, or resolves it once none has.
     pub(super) fn check(&mut self, metrics: &Metrics) {
         while self.seen.front().is_some_and(|(count, _)| *count <= self.next) {
             self.seen.pop_front();
         }
         let pending = self.whole.saturating_sub(self.next);
         let oldest = self.seen.front().map(|(_, since)| *since).filter(|_| pending > 0);
-        let waited = [self.resuming, oldest].into_iter().flatten().min().map(|since| since.elapsed());
+        let tail = self.tail.map(|(_, since)| since);
+        let waited = [self.resuming, oldest, tail].into_iter().flatten().min().map(|since| since.elapsed());
         let archive = &metrics.archive;
         archive.confirmed_ranges.set(i64::try_from(self.next).unwrap_or(i64::MAX));
         archive.pending_ranges.set(i64::try_from(pending).unwrap_or(i64::MAX));
@@ -85,8 +90,12 @@ impl Backlog {
         match waited {
             Some(waited) if waited >= self.lag_alert && !self.raised => {
                 self.raised = true;
-                let what = match pending {
-                    0 => "the uploader has not reached the bucket to resume".to_owned(),
+                let what = match (pending, self.tail) {
+                    (0, Some((Some(seq), _))) => {
+                        format!("the tail of the checkpoint at seq {seq} waits for the archive")
+                    }
+                    (0, Some((None, _))) => "the copy's checkpoints wait to be read for their tails".to_owned(),
+                    (0, None) => "the uploader has not reached the bucket to resume".to_owned(),
                     _ => format!("{pending} whole ranges of the log wait for the archive, the oldest"),
                 };
                 warn!(
@@ -98,7 +107,7 @@ impl Backlog {
             Some(waited) if waited >= self.lag_alert => {}
             _ if self.raised => {
                 self.raised = false;
-                info!(alert_resolved = "archive_upload_lagging", "the archive holds every range that waited");
+                info!(alert_resolved = "archive_upload_lagging", "the archive holds every range and tail that waited");
             }
             _ => {}
         }

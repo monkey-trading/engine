@@ -229,7 +229,15 @@ an index: load only the rule whose hint matches the current action.
   archive route redirects (`308`) a listed segment the host no longer holds to the object of the range holding its first seq,
   whose bucket a reader without its own then reads; `engine replay`, `engine exit-proof` and `engine carry` take an archive's
   URL for `--log` (`archive/read/source.rs`, `PublishedLog`), downloaded into a temporary directory through the node and its
-  redirects and then read as a log on disk), `engine
+  redirects and then read as a log on disk; from #1347 the tails of every checkpoint the copy holds from the vault's
+  finalized one on, the vault's latest being one of them, each as pieces shaped and named as ranges at
+  `log/<chain id>/<vault>/tail/<seq>-<root>/`, from the first range the bucket lacks to the checkpoint's own, cut after
+  its entry, found by reading the copy's entries, the writer's active prefix included (`log::open_active_archive`), as
+  they are published, and uploaded at once, before the vault finalizes the checkpoint, create-only and read back
+  (`archive/uploader/tails.rs`, `archive_tail_seq`); none from a copy stalled at a range or superseded; so `engine
+  replay` and `engine exit-proof` read a log's URL in the bucket, `.../log/<chain id>/<vault>/`, from the bucket alone
+  through the vault's `latestSeq` and `latestRoot`, `--seq` and `--state-root`: its ranges until the first it lacks,
+  then the tail's pieces, the checkpoint's entry holding the root (`archive/read/tail.rs`)), `engine
   replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
   one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
   catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at
@@ -1236,7 +1244,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload and read and the daily snapshots' archive on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload, read and tails and the daily snapshots' archive on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1395,7 +1403,9 @@ Run from the repo root:
   `curl`, and `jq`)
 - Verify a published log: `cargo run -p engine-node -- replay --log <path>`, where `<path>` is a
   log directory, a downloaded archive, a single log file, or an archive's URL, a node's public origin, downloaded into
-  `TMPDIR` through the node and the bucket it redirects to; `--attestation <attestation.json>
+  `TMPDIR` through the node and the bucket it redirects to, or a log's URL in an archive's bucket,
+  `<public origin>/log/<chain id>/<vault>/`, read from the bucket alone through the vault's checkpoint with `--seq <the
+  vault's latestSeq> --state-root <its latestRoot>`; `--attestation <attestation.json>
   --release <release.toml> --processor <name>` additionally verifies an attestation against
   the release manifest and requires every checkpoint signer to be the enclave address it names;
   `--every-seal` checks every instruction's seal in full, on `--replay-workers` threads, not only
@@ -1424,6 +1434,11 @@ Run from the repo root:
   node's archive answers `308` to their objects; `engine replay --snapshots <the node's URL>` downloads them through the
   node and the bucket and replays in ranges to the whole log's state; a member's start takes one the node no longer
   holds from the bucket; an altered object is refused by both; then the uploader's, the route's and the fetch's tests)
+- Log tail dev scenario: `./scripts/dev-log-tail.sh` (needs only Cargo; a dev node uploads its ranges and the tails of
+  its checkpoints to the same stand-ins, each tail before the stand-in vault finalizes its checkpoint, a copy that parts
+  from the vault's history uploads its own tail under another key, and with the node, the copy and their uploaders
+  stopped, `engine exit-proof` and `engine replay` from the bucket alone, through the vault's latest checkpoint, match the
+  node's log)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole
@@ -1773,7 +1788,8 @@ Run from the repo root:
   --carry-source <source log>` checks a carried log against its source
 - Exit proofs from a published log: `cargo run -p engine-node -- exit-proof --log <path> --seq
   <the vault's latestSeq> --account <address>` (or `--house`, or `--deposit <id>`), printing the proofs and each vault
-  call ABI-encoded; the log's commands must reproduce that checkpoint's root
+  call ABI-encoded; the log's commands must reproduce that checkpoint's root; with a log's URL in an archive's bucket
+  for `--log`, `--state-root <the vault's latestRoot>` reads it from the bucket alone
 - Sign and submit an admin command as the operator: `cargo run -p engine-node -- admin --pin <the
   TLS key hash in the node's attested bundle> <command>`, with the key from `--key-file`,
   `OPERATOR_KEY_FILE`, or `OPERATOR_KEY`; `config/dev.toml` names the public key of the local test

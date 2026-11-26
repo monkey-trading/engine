@@ -11,11 +11,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail, ensure};
+use engine_core::eip712::B256;
 use reqwest::{Client, Url};
 use serde::Deserialize;
 use tokio::task::spawn_blocking;
 
-use crate::archive::{Object, RANGE_SEQS, log_prefix, range_key, read_public};
+use crate::archive::{Object, RANGE_SEQS, log_prefix, range_key, read_public, tail_prefix};
 use crate::config::NodeConfig;
 
 mod segments;
@@ -24,6 +25,8 @@ mod source;
 #[cfg(test)]
 pub(crate) use source::download;
 pub use source::{LocalLog, PublishedLog};
+mod tail;
+pub(crate) use tail::read_through;
 
 /// How long a reader waits for the bucket to answer a request, as a node fetch waits for an archive origin; half a
 /// second in tests.
@@ -98,6 +101,15 @@ impl Bucket {
             "a redirect for seq {first_seq} names {location}, not the object of the range holding it"
         );
         Ok(bucket)
+    }
+
+    /// The tail of the checkpoint at `seq` rooted at `root`, in this log's bucket: its pieces stand under it as
+    /// ranges do under the log (`tail_prefix`).
+    /// Error cases:
+    /// - the tail's prefix does not join the log's
+    pub(crate) fn tail(&self, seq: u64, root: &B256) -> anyhow::Result<Self> {
+        let prefix = tail_prefix("", seq, root);
+        Ok(Self { base: self.base.join(&prefix).with_context(|| format!("{prefix} under {}", self.base))? })
     }
 
     /// The URL of range `index`'s object.
@@ -188,6 +200,16 @@ impl Ranges {
         };
         self.held = Some((index, object.clone()));
         Ok(object)
+    }
+}
+
+impl Unread {
+    /// The failure as an error, naming the object a `Missing` lacks.
+    fn into_error(self) -> anyhow::Error {
+        match self {
+            Self::Missing { object, .. } => anyhow!("the archive's bucket has no object at {object}"),
+            Self::Unreachable(e) | Self::Refused(e) => e,
+        }
     }
 }
 

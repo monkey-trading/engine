@@ -17,6 +17,7 @@ pub struct ArchiveMetrics {
     pub stored_bytes: Counter,
     pub failures: Counter,
     pub mismatches: Counter,
+    pub tail_seq: Gauge,
 }
 
 impl ArchiveMetrics {
@@ -36,8 +37,8 @@ impl ArchiveMetrics {
         );
         r.register(
             "archive_oldest_pending_seconds",
-            "How long the oldest unconfirmed whole range, or a resume that has not reached the bucket, has waited, \
-             by the node's monotonic clock",
+            "How long the oldest unconfirmed whole range, tail of a checkpoint, or resume that has not reached the \
+             bucket, has waited, by the node's monotonic clock",
             self.oldest_pending_seconds.clone(),
         );
         r.register(
@@ -52,18 +53,26 @@ impl ArchiveMetrics {
         );
         r.register(
             "archive_stored_bytes",
-            "Bytes of the compressed ranges this node created in the archive's bucket",
+            "Bytes of the compressed ranges and tail pieces this node created in the archive's bucket",
             self.stored_bytes.clone(),
         );
         r.register(
             "archive_failures",
-            "Uploads, read-backs and reads of the vault's finality for the archive that failed and wait to be retried",
+            "Uploads, read-backs, reads of the copy for checkpoints and reads of the vault's finality for the archive that \
+             failed and wait to be retried",
             self.failures.clone(),
         );
         r.register(
             "archive_mismatches",
-            "Objects in the archive's bucket that read back as other bytes than this node's copy of their range",
+            "Objects in the archive's bucket that read back as other bytes than this node's copy of their range or tail \
+             piece",
             self.mismatches.clone(),
+        );
+        r.register(
+            "archive_tail_seq",
+            "The newest checkpoint whose tail this node confirmed in the archive's bucket, through which the bucket \
+             alone holds the log",
+            self.tail_seq.clone(),
         );
     }
 }

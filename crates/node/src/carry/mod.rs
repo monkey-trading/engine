@@ -58,7 +58,7 @@ pub struct CarryArgs {
 /// - the archive `--log` names by URL cannot be downloaded (`PublishedLog::local`)
 /// - see `build` and `write`
 pub fn run(args: CarryArgs) -> anyhow::Result<()> {
-    let file = build(args.log.local()?.path(), args.seq)?;
+    let file = build(args.log.local(None)?.path(), args.seq)?;
     let totals = file.totals;
     let summary = format!(
         "seq {}, root {}, {} accounts, {} entitled, {} staked, {} awards",

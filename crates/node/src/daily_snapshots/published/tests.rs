@@ -12,13 +12,16 @@ use crate::archive::stand_in::StandIn;
 use crate::daily_snapshots::{Listed, MANIFEST, SnapshotBucket, publish_ticks, snapshots_prefix};
 use crate::test_support::scratch_dir;
 
-/// `--snapshots` takes a node's URL as `--log` does, and a path otherwise.
+/// `--snapshots` takes a node's URL as `--log` does, and a path otherwise; a URL `--log` reads as a log's place in a
+/// bucket is a URL here too.
 #[test]
 fn snapshots_are_a_path_or_a_nodes_url() {
     assert_eq!("daily".parse::<PublishedSnapshots>().unwrap(), PublishedSnapshots::Path("daily".into()));
     let url = "https://node.example".parse::<PublishedSnapshots>().unwrap();
     assert_eq!(url, PublishedSnapshots::Url("https://node.example".parse().unwrap()));
     assert!("https://node.example/?key=1".parse::<PublishedSnapshots>().is_err(), "no query");
+    let log = "https://archive.example/log/1/0x0000000000000000000000000000000000000001/";
+    assert_eq!(log.parse::<PublishedSnapshots>().unwrap(), PublishedSnapshots::Url(log.parse().unwrap()));
 }
 
 /// A node's listed snapshots at or before the log's last checkpoint download under their names, those it holds from

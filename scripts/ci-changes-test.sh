@@ -58,7 +58,9 @@ case_ pull_request "rust ct_watch engine_build" crates/node/src/ct_watch/mod.rs
 case_ pull_request "rust scenario_tests" crates/node/src/archive/uploader.rs crates/node/src/archive/scenario.rs \
   crates/node/src/archive/uploader/tests.rs scripts/dev-log-archive.sh crates/node/src/archive/read/scenario.rs \
   crates/node/src/archive/read/segments/tests.rs scripts/dev-archive-read.sh \
-  crates/node/src/sequencer/recovery_scale/snapshot_archive.rs scripts/dev-snapshot-archive.sh
+  crates/node/src/sequencer/recovery_scale/snapshot_archive.rs scripts/dev-snapshot-archive.sh \
+  crates/node/src/archive/uploader/tails.rs crates/node/src/archive/read/tail.rs \
+  crates/node/src/archive/read/tail/scenario.rs scripts/dev-log-tail.sh
 for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crates/node/src/node/price_feeds.rs; do
   case_ pull_request "rust $feeds scenario_tests metrics_alerts production_secrets engine_build" "$feed"
 done

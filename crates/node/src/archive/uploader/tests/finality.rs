@@ -24,7 +24,8 @@ async fn a_range_waits_for_the_vaults_finalized_checkpoint() {
     vault.finalize(2 * RANGE_SEQS - 1, &root_at(&dir, 2 * RANGE_SEQS - 1));
     until("the first range confirmed", || metrics.archive.confirmed_ranges.get() == 1).await;
     tokio::time::sleep(10 * FINALITY_EVERY).await;
-    assert_eq!(bucket.with(|b| b.objects.keys().cloned().collect::<Vec<_>>()), [range_key(&test_log(), 0)]);
+    let ranges = bucket.with(|b| b.objects.keys().filter(|key| !key.contains("/tail/")).cloned().collect::<Vec<_>>());
+    assert_eq!(ranges, [range_key(&test_log(), 0)], "only the range below it, beside the tails");
     vault.finalize_past(&node, &dir, 4).await;
     until("the ranges below it confirmed", || metrics.archive.confirmed_ranges.get() >= 4).await;
     running.abort();

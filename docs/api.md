@@ -1548,6 +1548,15 @@ bucket holds the ranges below a checkpoint the vault has finalized, so a 404 for
 means the object is missing, not that the log ends there. A server without a bucket answers 500 for
 a listed segment that its host no longer holds.
 
+The bucket also holds the tails of the server's checkpoints from the vault's finalized one on, the
+vault's latest among them, at `log/<chain id>/<vault>/tail/<sequence number, 20 digits>-<root>/`, the
+root as the vault's `latestRoot` gives it. A tail holds the ranges from the first that the bucket lacked to the
+checkpoint's own, each at its first sequence number's key as a range is, and the checkpoint's own ends
+with the checkpoint's entry. With the vault's `latestSeq` and `latestRoot`, a reader takes the ranges
+until the first that the bucket lacks, then the tail's from there: the bucket alone holds the log
+through the vault's latest checkpoint. `engine replay` and `engine exit-proof` read it so with
+`--log <public URL>/log/<chain id>/<vault>/ --seq <latestSeq> --state-root <latestRoot>`.
+
 ### Daily snapshots
 
 A server configured with `[daily_snapshots]` keeps the engine's state at the first checkpoint it

@@ -17,12 +17,21 @@
 //! as archived only once a read of its object from the bucket's public origin, over TLS that ends in the enclave,
 //! decompresses to those entries. A store or network outage leaves ranges unconfirmed and raises
 //! `archive_upload_lagging`; the writer and the sequencer never wait on it.
+//!
+//! The ranges past the vault's finalized checkpoint go up in tails (`uploader::tails`): for each checkpoint the copy
+//! holds from the vault's finalized one on, pieces shaped and named as ranges at
+//! `log/<chain id>/<vault>/tail/<seq>-<root>/`, from the first range the bucket lacks to the checkpoint's own, which
+//! ends with the checkpoint's entry. A tail's key names its checkpoint's root, so it goes up as soon as the copy holds
+//! the checkpoint, and a checkpoint the vault never takes lands under a key no reader derives. With the vault's `latestSeq` and `latestRoot`, the bucket alone holds the log
+//! through the vault's latest checkpoint (`read::tail`).
 
 mod backlog;
 mod finality;
 pub(crate) use finality::{Finality, same_root};
 mod range;
-pub(crate) use range::{RANGE_SEQS, checkpoint_root, log_prefix, range_bytes, range_key, whole_ranges};
+pub(crate) use range::{
+    RANGE_SEQS, checkpoint_root, log_prefix, piece_bytes, range_bytes, range_key, tail_prefix, whole_ranges,
+};
 mod read;
 pub(crate) use read::{ArchiveOrigins, Bucket, Origins, Segments};
 pub use read::{LocalLog, PublishedLog};

@@ -872,6 +872,26 @@ missing, never that the log ends there, since a cache in front of the bucket can
 `404`: past one, the reader asks the nodes first and asks the bucket again for a segment that no
 node serves. A segment that no source serves pages `archive_segment_missing`, and the read fails.
 
+The bucket alone holds the log through the vault's latest checkpoint, which is what the exit needs once
+every operator's host is gone. The ranges stop below the vault's finalized checkpoint, and the
+vault's latest checkpoint is one of the checkpoints the trading server holds from that one on: a paced
+checkpoint is signed only once its parent is final, and a handover's, a shutdown's or a protocol
+activation's checkpoint may come between them. For each of those, the
+trading server uploads the checkpoint's tail: pieces shaped and named as ranges, under a key named for
+the checkpoint's sequence number and root, from the first range the bucket lacks to the checkpoint's
+own, whose piece ends with the checkpoint's entry. It finds the checkpoints by reading its log as the
+log writer publishes it, the open segment's flushed prefix checked against the hash the writer
+publishes, and uploads a tail as soon as its log holds the checkpoint, before the vault has it, each
+piece create-only and counted only once a read from the public origin gives back the same entries.
+A reader takes the vault's `latestSeq` and `latestRoot`, reads the bucket's ranges until the first it
+lacks and the tail's pieces from there, and keeps the lines up to the checkpoint's entry, whose root
+must be the vault's; the log it builds then replays, its commands rebuilding that root, before
+`engine exit-proof` builds a proof from it. A checkpoint that the vault never takes, as a superseded
+copy's, lands under a key that names its own root, which no reader derives from the vault. A tail
+that still waits once the vault has finalized a later checkpoint is dropped. A copy
+that has stopped at a range that reads back otherwise, or that the vault's history has superseded,
+uploads no tail.
+
 Known limits:
 
 - The host can withhold an upload or its read-back, which the trading server then never counts as
@@ -901,6 +921,19 @@ Known limits:
 - A rebuilt segment must spell its entries as its manifest line's bytes do. Where the bucket's
   range was uploaded from a copy that spells them otherwise, as a copy backfilled from another
   archive may, the reader takes the segment from a node, and fails where no node holds it.
+- The bucket holds the log through the vault's latest checkpoint only once that checkpoint's tail is
+  up. A host that withholds the upload, or that is gone before it, leaves the bucket short of the
+  vault's latest checkpoint until another member uploads the tail from its own copy; if every member's
+  host is gone first, the bucket alone never holds the log through that checkpoint, and a reader
+  fails, naming the object it lacks. A tail that waits pages
+  `archive_upload_lagging` once it has waited `archive.lag_alert`.
+- A tail starts at the first range that the bucket lacked when its uploader built it. A reader that
+  meets a stale `404` from a cache for a range below that fails, naming both objects, until the
+  cache's entry expires.
+- A holder of the bucket's keys can create a tail's object first, at a key a reader derives from the
+  vault. The lock keeps it there: the trading server pages `archive_object_mismatch` and uploads no
+  more of that tail, and a reader's replay refuses it, so the bucket alone no longer serves that
+  checkpoint. Only the deployment's owner and its members hold the keys.
 
 ## Deposits
 
