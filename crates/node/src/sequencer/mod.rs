@@ -127,7 +127,7 @@ pub struct Sequencer {
     turn_release: Option<engine_core::eip712::B256>,
     /// With sealed keys, the generation each `TurnTaken` waits for them to be sealed in.
     turn_sealing: Option<turns::TurnSealing>,
-    /// The boundary's log check, which `release_payouts` gates signatures on.
+    /// The log check, which `release_payouts` gates signatures on.
     log_check: log_check::LogCheck,
     governance: Option<engine_core::governance::GovernanceConfig>,
     fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,

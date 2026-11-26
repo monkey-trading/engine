@@ -379,7 +379,7 @@ pub(super) async fn watch_release(
 /// Refuses the first start after a handover unless the log ends at the predecessor's final
 /// checkpoint, so this release never continues from a log the host truncated, replaced, or extended
 /// at the handover; once it passes, the head is forgotten, since this release then extends the log,
-/// and the head the boundary's log check verified becomes what `check` makes of the one the keys
+/// and the head the log check verified becomes what `check` makes of the one the keys
 /// carried and the handed-over checkpoint, sealed in the same write (`log_check::own_check`).
 /// Error cases:
 /// - the log does not end at that checkpoint, or forgetting the head cannot be sealed

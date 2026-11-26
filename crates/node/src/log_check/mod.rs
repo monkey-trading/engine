@@ -1,15 +1,18 @@
-//! The boundary's log check (#594). While a daily turn is in effect whose rotation set names two or
-//! more members, the enclave signs a withdrawal only for an approval at or below the head of the log
-//! the last check verified, #14's posted root still applying; a one-member set, or no turn in effect,
-//! leaves #14's gate alone. A drawn turn stands after rotation is turned off until an installation ends
-//! the turns, as the vault's `rotationEnabled()` counts it, and the check stands with it. A check is
+//! The log check before withdrawals (#594, #1079). While a daily turn is in effect whose rotation set
+//! names two or more members, the enclave signs a withdrawal only for an approval at or below the head of
+//! the log the last check verified, #14's posted root still applying; a one-member set, or no turn in
+//! effect, leaves #14's gate alone. A drawn turn stands after rotation is turned off until an installation
+//! ends the turns, as the vault's `rotationEnabled()` counts it, and the check stands with it. A check is
 //! another member's verification of the log through a checkpoint, `(seq, link, root)`:
 //! - at a handover, the successor's own: its replica, or its start's replay, verified every entry
 //!   through the handed-over checkpoint, recorded as its start re-seals the keys
 //!   (`node::keys::check_predecessor_head`);
-//! - at a boundary the operator holds on through, an attested verification from a following member:
-//!   the operator's node asks the members of the turn's order, first to last (`ask`), and a member
-//!   answers from the checkpoints its replica verified (`answer`).
+//! - while the operator holds a turn, an attested verification from a following member, of the first
+//!   checkpoint at or after its `TurnTaken` when the verified head does not reach it, as at a boundary it
+//!   holds on through, and then of the checkpoint that covers the earliest approval waiting past the
+//!   verified head once one is written, reusing the checkpoints the node writes anyway: the operator's
+//!   node asks the members of the turn's order, first to last (`ask`), and a member answers from the
+//!   checkpoints its replica verified (`answer`). A quiet turn asks for none past its boundary's.
 //!
 //! A check counts only from a release that sequenced none of the covered range, the commands after
 //! the last verified head, as the log's `TurnTaken` commands and mirrored promotions record
@@ -63,9 +66,9 @@ pub struct Holder {
     pub candidates: BTreeSet<AccountId>,
 }
 
-/// A check the operator's node waits for: the turn in effect it holds on through, the checkpoint to
-/// verify, at or after its `TurnTaken`, and the members and releases that sequenced the covered range,
-/// which no check may come from.
+/// A check the operator's node waits for: the turn in effect it holds, the checkpoint to verify, at or
+/// after its `TurnTaken` and the earliest approval the check is for, and the members and releases that
+/// sequenced the covered range, which no check may come from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Due {
     pub turn: u64,

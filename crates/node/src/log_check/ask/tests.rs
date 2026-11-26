@@ -2,7 +2,7 @@
 //! asked under its challenge, from the release the member registered, under a policy no weaker than
 //! its own, and from a member and release that sequenced none of the range; it asks the qualifying
 //! members of the turn's order first to last, signing each question, gives the sequencer the first it
-//! admits, and pages `log_check_pending` once while a check stays due.
+//! admits, and pages `log_check_pending` once while a check stays due, which each verified check ends.
 
 use super::*;
 
@@ -17,7 +17,7 @@ use crate::log::Checkpoint;
 use crate::log_check::answer::{Answering, Checked, CheckedHeads};
 use crate::log_check::{Sequencers, VerifiedHead};
 use crate::tee::MockAttestor;
-use crate::test_support::{Alert, capture_alerts_and_resolutions, dev_config};
+use crate::test_support::{Alert, capture_alerts_and_resolutions, dev_config, wait_for};
 
 const TURN: u64 = 20_755;
 const CONFIG: [u8; 32] = [0xc1; 32];
@@ -142,6 +142,41 @@ async fn the_page_comes_due_during_a_round_that_outlasts_it() {
     };
     tokio::select! {
         () = drive => {}
+        ran = asker.run() => panic!("the asker stopped: {ran:?}"),
+    }
+}
+
+/// A verified check ends its wait: the page its wait raised ends at once, and the next check due in the
+/// same turn, as within a turn, waits from then and pages afresh while no member verifies it.
+#[tokio::test]
+async fn a_verified_check_ends_its_page_and_the_next_due_in_the_turn_pages_afresh() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    // B's replica has verified nothing yet, so the first check pages before B can verify it.
+    let checked = CheckedHeads::default();
+    let (b, b_endpoint) = following_from(0xb, checked.clone());
+    let order = vec![member(0xa, "127.0.0.1:1"), member(0xb, &b_endpoint)];
+    let (sequencer, mut requests) = mpsc::channel(4);
+    let first = due(AccountId([0xa; 20]), sequencers(&[0xa]));
+    let later = Due { head: VerifiedHead { seq: 41, ..head() }, from: 41, ..first.clone() };
+    let (due_tx, due_rx) = watch::channel(Some(first));
+    let asker = asker(order, &sequencer, due_rx);
+    let drive = async {
+        assert_eq!(next_named(&mut alerts, "log_check_pending").await["turn"], TURN.to_string());
+        // B's replica verifies the checkpoint, the sequencer takes B's verification, and a later
+        // checkpoint's check comes due in the same turn, which B's replica has not verified.
+        checked.record(Checked { head: head(), taken: Some((TURN, 0)), signer: AccountId(key().address()), from: 0 });
+        let Some(Request::LogChecked { head: verified, reply, .. }) = requests.recv().await else {
+            panic!("the asker gave the sequencer nothing");
+        };
+        assert_eq!(verified, head());
+        due_tx.send_replace(Some(later));
+        reply.send(true).unwrap();
+        assert_eq!(next_named(&mut resolved, "log_check_pending").await["turn"], TURN.to_string());
+        assert_eq!(next_named(&mut alerts, "log_check_pending").await["turn"], TURN.to_string());
+    };
+    tokio::select! {
+        () = drive => {}
+        never = b.run() => match never {},
         ran = asker.run() => panic!("the asker stopped: {ran:?}"),
     }
 }
@@ -274,10 +309,27 @@ fn key() -> Arc<EnclaveKey> {
     Arc::new(EnclaveKey::test_key())
 }
 
+/// Whether `alert`, or its resolution, is named `name`.
+fn is_named(alert: &Alert, name: &str) -> bool {
+    alert.get("alert").or(alert.get("alert_resolved")).is_some_and(|got| got == name)
+}
+
 /// The alerts, or their resolutions, named `name` that `lines` has received.
 fn named(lines: &mut mpsc::UnboundedReceiver<Alert>, name: &str) -> Vec<Alert> {
-    let named = |alert: &Alert| alert.get("alert").or(alert.get("alert_resolved")).is_some_and(|got| got == name);
-    std::iter::from_fn(|| lines.try_recv().ok()).filter(named).collect()
+    std::iter::from_fn(|| lines.try_recv().ok()).filter(|alert| is_named(alert, name)).collect()
+}
+
+/// The next alert, or resolution, named `name` that `lines` receives.
+async fn next_named(lines: &mut mpsc::UnboundedReceiver<Alert>, name: &str) -> Alert {
+    wait_for(name, async {
+        loop {
+            let alert = lines.recv().await.expect("the capture ended");
+            if is_named(&alert, name) {
+                break alert;
+            }
+        }
+    })
+    .await
 }
 
 /// A following member running `byte`'s release whose replica verified `head`, if any, in `TURN` at
@@ -287,6 +339,12 @@ fn following(byte: u8, head: Option<VerifiedHead>) -> (Answering, String) {
     if let Some(head) = head {
         checked.record(Checked { head, taken: Some((TURN, 0)), signer: AccountId(key().address()), from: 0 });
     }
+    following_from(byte, checked)
+}
+
+/// A following member running `byte`'s release whose replica's verified checkpoints are `checked`, and
+/// its endpoint.
+fn following_from(byte: u8, checked: CheckedHeads) -> (Answering, String) {
     let mut cfg = dev_config();
     let listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     cfg.tee.sealing = Some(toml::from_str(&format!("dir = '/nonexistent'\n[handover]\nlisten = '{listen}'")).unwrap());

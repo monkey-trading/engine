@@ -1,4 +1,4 @@
-//! A following member's side of the boundary's log check: the checkpoints its replica verified, and
+//! A following member's side of the log check: the checkpoints its replica verified, and
 //! the answers it gives on its registered handover endpoint while it follows, which the handover
 //! listener takes over while it holds a turn. It attests a statement only when the question is signed
 //! by the enclave that signed the checkpoint, and its replica verified that checkpoint at the

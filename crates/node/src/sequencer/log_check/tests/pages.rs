@@ -1,7 +1,7 @@
 //! The pages a held check raises: no member can be asked for it, this node can take no part in it, or
-//! approvals wait for the installation after the last drawn turn; the run loop's withdrawal of a check
-//! the turns' end lifts; and an upgrade that keeps asking for the check its member's earlier release
-//! left due.
+//! approvals wait for the installation after the last drawn turn, which this node does not hold; the
+//! holder of that turn checking approvals within it; the run loop's withdrawal of a check the turns'
+//! end lifts; and an upgrade that keeps asking for the check its member's earlier release left due.
 
 use super::*;
 
@@ -62,18 +62,42 @@ fn a_node_that_takes_no_turns_pages_while_the_gate_holds_its_payouts() {
     assert_eq!(node.signed.try_recv().expect("#14's gate alone signs it").nonce, 1);
 }
 
-/// After the last drawn turn's own check, with rotation off and no later turn assigned, an approval
-/// waits for the installation that ends the turns: the payouts read says so, and a Warning pages once,
-/// until the installation lifts the gate.
+/// The holder of the last drawn turn, with rotation off and no later turn assigned, still asks for the
+/// check of each checkpoint that covers a waiting approval: no installation pages, and a member's check
+/// releases the approval.
 #[test]
-fn approvals_after_the_last_drawn_turn_wait_for_the_installation_and_page() {
+fn the_holder_of_the_last_drawn_turn_checks_approvals_within_it_after_rotation_is_turned_off() {
+    let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
+    let mut node = Node::start("log-check-last-drawn-holder", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    let head = node.due.borrow().clone().expect("no check came due").head;
+    assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
+    node.turn_rotation_off();
+    node.approve(2);
+    let due = node.due.borrow().clone().expect("no check came due for the approval in the last drawn turn");
+    assert_eq!(node.check_of(2), Some(CheckWait::Check { checkpoint_seq: Some(due.head.seq) }));
+    assert!(named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(), "the holder paged");
+    assert!(node.seq.log_checked(due.head, (other().candidate, OTHER)));
+    node.release();
+    let signed: Vec<u64> =
+        std::iter::from_fn(|| node.signed.try_recv().ok()).map(|withdrawal| withdrawal.nonce).collect();
+    assert_eq!(signed, [1, 2], "the check in the last drawn turn released nothing");
+}
+
+/// While another member's node holds the last drawn turn, with rotation off and no later turn assigned,
+/// this node asks for no check, so an approval waits for the installation that ends the turns: the
+/// payouts read says so, and a Warning pages once, until the installation lifts the gate.
+#[test]
+fn approvals_wait_for_the_installation_and_page_while_another_member_holds_the_last_drawn_turn() {
     let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
     let mut node = Node::start("log-check-installation", &[other()]);
     node.approve(1);
-    let (turn, _) = node.take_turn();
+    node.take_turn();
     let head = node.due.borrow().clone().expect("no check came due").head;
     assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.approve(2);
+    let turn = other_takes_turn(&mut node);
     node.seq.refresh_log_check();
     assert!(named(&mut alerts, "alert", "log_check_awaiting_installation").is_empty(), "paged with rotation on");
     node.turn_rotation_off();
@@ -102,6 +126,7 @@ fn waiting_approvals_are_counted_at_most_once_a_minute() {
     let head = node.due.borrow().clone().expect("no check came due").head;
     assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.approve(2);
+    other_takes_turn(&mut node);
     node.turn_rotation_off();
     node.seq.refresh_log_check();
     assert_eq!(named(&mut alerts, "alert", "log_check_awaiting_installation").len(), 1, "no page");
@@ -119,19 +144,20 @@ fn waiting_approvals_are_counted_at_most_once_a_minute() {
     assert_eq!(named(&mut alerts, "alert", "log_check_awaiting_installation").len(), 1, "not counted a minute on");
 }
 
-/// A turn drawn after the one in effect keeps its boundary in the payouts read after rotation is turned
-/// off, and nothing pages.
+/// While another member's node holds the turn in effect, a turn drawn after it keeps its boundary in the
+/// payouts read after rotation is turned off, and nothing pages.
 #[test]
 fn a_later_drawn_turn_keeps_its_boundary_after_rotation_is_turned_off() {
     let (_guard, mut alerts, _resolved) = capture_alerts_and_resolutions();
     let mut node = Node::start("log-check-later-drawn", &[other()]);
     node.approve(1);
-    let (turn, _) = node.take_turn();
+    node.take_turn();
     let head = node.due.borrow().clone().expect("no check came due").head;
     assert!(node.seq.log_checked(head, (other().candidate, OTHER)));
     node.approve(2);
+    let turn = other_takes_turn(&mut node);
     let (candidate, admin_key, next) = (other().candidate, other().admin_key, turn + 1);
-    let (reason, block, chain_ref) = (TurnReason::Draw, 15, "0x05:0".to_owned());
+    let (reason, block, chain_ref) = (TurnReason::Draw, 17, "0x07:0".to_owned());
     let assignment = RegistryTurn { turn: next, set: 1, position: 0, reason, candidate, admin_key, block, chain_ref };
     let events = node.seq.sequence(Command::AssignTurn(assignment)).unwrap().expect("admitted");
     assert!(matches!(events.last(), Some(Event::TurnAssigned { .. })), "{events:?}");
@@ -194,6 +220,16 @@ fn an_upgrade_while_a_check_is_due_still_asks_for_it() {
 }
 
 // ── Helpers ──
+
+/// Moves `node` into the turn after its own, the other member's, and sequences that member's `TurnTaken`
+/// of it, as a log another node sequences records it: the turn.
+fn other_takes_turn(node: &mut Node) -> u64 {
+    node.hand_over_turn();
+    let turn = node.turn + 1;
+    let events = node.seq.sequence(Command::TurnTaken { turn, release: OTHER }).unwrap().expect("admitted");
+    assert!(matches!(events.as_slice(), [Event::TurnTaken { .. }]), "{events:?}");
+    turn
+}
 
 /// The alerts, or their ends, whose `key` field names `name`, that `lines` has received.
 fn named(lines: &mut mpsc::UnboundedReceiver<Alert>, key: &str, name: &str) -> Vec<Alert> {

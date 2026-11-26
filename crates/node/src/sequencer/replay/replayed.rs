@@ -27,7 +27,7 @@ pub struct Replayed {
     pub(crate) prefix_ring: crate::log::PrefixRing,
     /// The newest commands' derived rows, which the sequencer keeps on from (`history::derived`).
     pub(crate) derived: crate::history::derived::DerivedRows,
-    /// The log's `TurnTaken` commands and every checkpoint's root, which the boundary's log check
+    /// The log's `TurnTaken` commands and every checkpoint's root, which the log check
     /// attributes ranges by and restores its verified head against.
     pub(crate) takings: crate::log_check::Takings,
     pub(crate) checkpoint_roots: BTreeMap<u64, engine_core::eip712::B256>,

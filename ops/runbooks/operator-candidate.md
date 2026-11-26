@@ -625,7 +625,7 @@ member's trading server.
 | `release_superseded` at a turn's boundary | [After your turn](#after-your-turn) |
 | `handover_tip_not_on_log` or `handover_tail_lagged` | [If the take is refused](#if-the-take-is-refused) |
 | `standby_follow_failed`, `operator_log_rollback`, `replica_diverged`, `copy_tail_unaccepted` or `member_follow_blocked` | [Between your turns](#between-your-turns) |
-| `log_check_pending`, `log_check_unattributable` or `log_check_unavailable` | [Withdrawals and the boundary's log check](#withdrawals-and-the-boundarys-log-check) |
+| `log_check_pending`, `log_check_unattributable` or `log_check_unavailable` | [Withdrawals and the log check](#withdrawals-and-the-log-check) |
 | `turn_refused` | [A turn the engine refused](#a-turn-the-engine-refused) |
 
 With a schedule named, each election close made while rotation is on adopts every eligible candidate
@@ -884,24 +884,28 @@ minutes after the boundary. Hand over as
 Once a successor confirms, your trading server follows it, and never takes back the generation it
 handed over, even when a later trusted time sample falls just before the boundary.
 
-### Withdrawals and the boundary's log check
+### Withdrawals and the log check
 
 Use this section when `log_check_pending`, `log_check_unattributable` or `log_check_unavailable`
 fires.
 
 While a turn is in effect whose set names two or more members, the operator's trading server signs
-a withdrawal only once a check has verified the log through the withdrawal's approval. An approval
-therefore waits for the next boundary. A one-member set needs no check, and neither does a log whose
-turns an installation has ended. Turning rotation off leaves the drawn turns, and the check, in
-place until that installation.
+a withdrawal only once a check has verified the log through the withdrawal's approval. While you hold
+a turn, your trading server asks for a check whenever a checkpoint that it writes covers an approval
+waiting past the last verified head, so an approval waits for the check of the first checkpoint that
+covers it. A turn with no withdrawals asks for no check past its boundary's. A one-member set needs no
+check, and neither does a log whose turns an installation has ended. Turning rotation off leaves the
+drawn turns, and the check, in place until that installation.
 
 - **At a handover,** the successor's start is the check, because its replica verified the log
   through the checkpoint that it was handed.
 - **Your own upgrade's start is no check,** because your member sequenced the range. The approvals
-  it holds wait for the next boundary's check, as they would have without the upgrade.
+  it holds wait for the next check, as they would have without the upgrade.
 - **At a boundary that you hold on through,** your trading server writes a checkpoint after its
-  `TurnTaken`. It then asks the members of the turn's order, first to last, for an attested
-  verification of that checkpoint, in questions that your enclave signs. It skips your own
+  `TurnTaken`. **Within your turn,** it takes the first checkpoint written at or after the earliest
+  approval waiting past the last check, and keeps it until a member verifies it. In both cases it
+  asks the members of the turn's order, first to last, for an attested verification of that
+  checkpoint, in questions that your enclave signs. It skips your own
   candidate, members with no handover endpoint, and members that sequenced part of the range since
   the last check under any release, or that run a release that did. It asks again every minute, and
   `log_check_pending` pages after 30 minutes without a verification.

@@ -12,7 +12,7 @@ authorisation.
 - [Checkpoints are held](#checkpoints-are-held)
 - [`checkpoint_backlog`](#checkpoint_backlog)
 - [Posting fails](#posting-fails)
-- [The boundary's log check](#the-boundarys-log-check)
+- [The log check before withdrawals](#the-log-check-before-withdrawals)
 - [The trading server has stopped](#the-trading-server-has-stopped)
 - [How a withdrawal moves](#how-a-withdrawal-moves)
 
@@ -71,8 +71,8 @@ Use this procedure first, whenever a withdrawal seems stuck.
 | `checkpoint_conflict` or `vault_exit_started` | The trading server has stopped itself. | [The trading server has stopped](#the-trading-server-has-stopped) |
 | `custody_deposits_stalled`, `custody_finality_stalled`, `custody_head_stale` or `custody_rpc_quorum_lost` | Reads of the chain are failing or lagging. | [Custody RPC providers](feed-and-custody-failures.md#custody-rpc-providers) |
 | Clients receive `payout_unavailable` | New withdrawals are refused while the gate is paused. | The row for the alert that is open. |
-| The account's payouts read names a `check` | The approval is waiting for that boundary's log check. | [The boundary's log check](#the-boundarys-log-check) |
-| `log_check_pending` | No member has verified the log at a boundary through which the operator kept its turn. | [The boundary's log check](#the-boundarys-log-check) |
+| The account's payouts read names a `check` | The approval is waiting for a log check. | [The log check before withdrawals](#the-log-check-before-withdrawals) |
+| `log_check_pending` | No member has verified the checkpoint that the operator's log check names. | [The log check before withdrawals](#the-log-check-before-withdrawals) |
 
 ## The vault is paused or has no signer
 
@@ -288,7 +288,7 @@ retries it every `checkpoints.retry_interval`. The checkpoint stays queued, and 
 
 **How to tell it is resolved.** The alert resolves when a post succeeds.
 
-## The boundary's log check
+## The log check before withdrawals
 
 Use this procedure when an account's payouts read names a `check` for a waiting approval, or when
 `log_check_pending`, `log_check_unattributable`, `log_check_unavailable` or
@@ -296,11 +296,14 @@ Use this procedure when an account's payouts read names a `check` for a waiting 
 
 The check applies while a daily turn is in effect whose rotation set names two or more members.
 While it applies, the trading server signs an authorisation only for an approval at or below the
-head of the log that the last boundary's check verified. An approval made during a turn therefore
-waits until the next boundary, which is at most a day plus the time a handover takes. That wait is
+head of the log that the last check verified. The trading server that holds the turn asks for a
+check at a boundary through which it keeps its turn, and within the turn whenever a checkpoint that
+it writes covers an approval waiting past the verified head. An approval therefore waits for the
+check of its own checkpoint, which usually lands before the vault holds that checkpoint. That wait is
 the rule, not a stall. Turning rotation off leaves the drawn turns in effect, and the check with them,
-until the timelock's installation of an operator ends the turns, so an approval made during the last
-drawn turn waits for that installation. Its payouts read then shows `waits` as `installation`, and
+until the timelock's installation of an operator ends the turns. The holder of the last drawn turn
+keeps asking for checks. A trading server that does not hold that turn asks for none, so an approval
+that it holds waits for the installation. Its payouts read then shows `waits` as `installation`, and
 `log_check_awaiting_installation` pages while any approval waits so.
 
 1. Find which check each of an account's waiting approvals depends on:
@@ -310,32 +313,38 @@ drawn turn waits for that installation. Its payouts read then shows `waits` as `
    ```
 
    `<address>` is the account's address. For each approval that is still waiting, the answer's
-   `check` says what will cover it. With `waits` as `boundary`, it names the turn and the
-   `boundary_ms` of that check: the check of the turn in effect, if that check is still outstanding
-   and will reach the approval, and otherwise the check of the next turn. With `waits` as
-   `installation`, rotation is off and no turn after the last drawn one is assigned, so the approval
-   waits for the timelock's installation of an operator.
+   `check` says what will cover it. With `waits` as `check`, this trading server holds the turn and
+   asks for the check: `checkpoint_seq` names the checkpoint whose check is due and covers the
+   approval, or is `null` while that checkpoint is not written yet or while an earlier checkpoint's
+   check is asked for first. With `waits` as `boundary`, nobody has taken the turn in effect yet, or
+   this trading server does not hold it, and it names the turn and the `boundary_ms` of the check that
+   will cover the approval. With `waits` as `installation`, rotation is off, no turn after the last
+   drawn one is assigned and this trading server does not hold it, so the approval waits for the
+   timelock's installation of an operator.
 
-2. Find how the check runs at that boundary, and act on it:
+2. Find how the check runs, and act on it:
 
-   - **Waiting for the installation,** no boundary will check the approval.
-     `log_check_awaiting_installation` fires while one waits. Carry on with the governance fallback
-     in [When no standby qualifies](standby.md#when-no-standby-qualifies): the approvals are signed
-     once the installation ends the turns.
+   - **Waiting for the installation,** no check that this trading server asks for will cover the
+     approval, and `log_check_awaiting_installation` fires while one waits. If a promotion into the
+     last drawn turn waits for finality, the approvals wait for the check that this trading server
+     asks for once it takes the turn. Otherwise, carry on with the governance fallback in
+     [When no standby qualifies](standby.md#when-no-standby-qualifies): the approvals are signed once
+     the installation ends the turns.
    - **At a handover,** the successor's trading server is the check. It verified the log through the
      checkpoint it was handed before it started. Nothing needs to be done.
-   - **At a boundary through which the operator keeps its turn,** the operator's trading server asks
-     the members of the turn's order, first to last, to verify the checkpoint that it wrote after
-     its `TurnTaken`. Its enclave signs each question, and each answer is an attested verification.
-     It skips its own candidate, each member with no handover endpoint, and each member that
-     sequenced part of the range since the last verified head under any release, or that runs a
-     release that did. `log_check_pending` fires when no member has verified the checkpoint for 30
-     minutes. Check that the members' trading servers follow the operator, and that their registered
+   - **While the operator holds its turn,** the operator's trading server asks the members of the
+     turn's order, first to last, to verify a checkpoint: at a boundary through which it keeps its
+     turn, the one that it wrote after its `TurnTaken`, and within the turn, the first one written at
+     or after the earliest approval waiting past the verified head. It keeps asking about that
+     checkpoint until a member verifies it, and approvals after it then wait for the next one's check.
+     Its enclave signs each question, and each answer is an attested verification. It skips its own
+     candidate, each member with no handover endpoint, and each member that sequenced part of the
+     range since the last verified head under any release, or that runs a release that did.
+     `log_check_pending` fires when no member has verified the checkpoint for 30 minutes. Check that the members' trading servers follow the operator, and that their registered
      handover endpoints are reachable from the operator's trading server. A member answers only once
      its replica has verified that checkpoint, so a member that lags answers once it catches up.
    - **After a restart,** the trading server restores the verified head that it sealed with its
-     keys, if its log holds that checkpoint. Otherwise, it asks for the check again, as at a
-     boundary through which the operator keeps its turn.
+     keys, if its log holds that checkpoint. Otherwise, it asks for the check again.
    - **After a start from a snapshot past the verified head,** the trading server cannot tell who
      sequenced the range, so it asks no member, and `log_check_unattributable` fires. Restart the
      trading server without `[snapshots]`, so that it replays the whole log.
@@ -390,9 +399,10 @@ in both cases the trading server stops itself.
    for that checkpoint, and then for its own.
 3. When the covering checkpoint is final and collateral reconciles, the trading server signs an
    authorisation that is valid for 24 hours, and streams it to the account. Anyone may submit the
-   authorisation to the vault, which pays the account. While the boundary's log check applies, the
-   trading server also waits until that check has verified the log through the approval, as
-   [The boundary's log check](#the-boundarys-log-check) describes.
+   authorisation to the vault, which pays the account. While the log check applies, the trading
+   server also waits until a check has verified the log through the approval, which usually happens
+   while the covering checkpoint is on its way, as
+   [The log check before withdrawals](#the-log-check-before-withdrawals) describes.
 4. An authorisation that expires unclaimed is not signed again automatically. Its account asks for a
    new one with `POST /v1/accounts/{address}/withdrawals/{nonce}/reissue`, which the account signs.
 

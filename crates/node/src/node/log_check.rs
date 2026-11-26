@@ -1,4 +1,4 @@
-//! A node's part in the boundary's log check (`log_check`): the check its first start after a
+//! A node's part in the log check (`log_check`): the check its first start after a
 //! handover records, the sequencer's setup, and the asking of a node that takes turns.
 
 use std::collections::BTreeSet;
