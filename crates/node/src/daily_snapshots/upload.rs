@@ -16,7 +16,9 @@
 //! so the archive redirects a request for a removed snapshot to its object (`api::archive`). A snapshot not
 //! confirmed stays whatever its age: the host holds the window's snapshots and one before them, and those the
 //! bucket has not taken. A removal that fails is tried again at each pass, and pages Warning
-//! `daily_snapshot_unremovable` until one succeeds.
+//! `daily_snapshot_unremovable` until one succeeds. A snapshot the host keeps that is gone from it with no object in
+//! the bucket was lost: the bucket is asked for it each pass, it pages Warning `daily_snapshot_lost`, and it waits
+//! still, so `archive_upload_lagging` does not resolve.
 //!
 //! The snapshots and their manifest are the host's. What makes a snapshot usable is its signature and its root, which
 //! every reader checks, so the uploader checks only that what goes up, and what reads back, is what the listing names.
@@ -76,6 +78,9 @@ pub(crate) struct SnapshotUploader {
     refused: BTreeMap<String, Listed>,
     /// When each snapshot waiting for its confirmation was first seen waiting.
     waiting: BTreeMap<String, Instant>,
+    /// The snapshots the window keeps that neither the host nor the bucket held when last asked, by file: paged once,
+    /// and asked again each pass.
+    lost: BTreeSet<String>,
     /// Whether `archive_upload_lagging` is raised for the snapshots; unknown at a start, since the alert router keeps an
     /// episode open across a restart, so the first check that finds nothing waiting resolves it.
     raised: Option<bool>,
@@ -90,6 +95,8 @@ enum Outcome {
     Confirmed,
     /// Its object holds other bytes, or its file differs from its listing: it stays on the host.
     Refused,
+    /// Neither the host's file nor the bucket's object exists.
+    Lost,
 }
 
 /// A snapshot's file as it streams into an upload.
@@ -136,8 +143,21 @@ impl SnapshotUploader {
     ) -> Self {
         let window_ms = Millis::try_from(local_window.as_millis()).unwrap_or(Millis::MAX);
         let (confirmed, refused, waiting) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        let (raised, unremovable) = (None, None);
-        Self { store, prefix, dir, window_ms, lag_alert, metrics, confirmed, refused, waiting, raised, unremovable }
+        let (raised, unremovable, lost) = (None, None, BTreeSet::new());
+        Self {
+            store,
+            prefix,
+            dir,
+            window_ms,
+            lag_alert,
+            metrics,
+            confirmed,
+            refused,
+            waiting,
+            lost,
+            raised,
+            unremovable,
+        }
     }
 
     /// Uploads and removes in passes for the node's life, every `POLL_EVERY`, or after a failed pass with backoff.
@@ -201,18 +221,23 @@ impl SnapshotUploader {
                 );
             }
         }
-        // Every snapshot to confirm waits from when it was first seen waiting, before any transfer of the pass.
+        // Every snapshot to confirm waits from when it was first seen waiting, before any transfer of the pass. The
+        // host removes no snapshot the window keeps, so one of them it no longer holds is due too, for the bucket to
+        // be asked.
+        let (kept, _) = self.window(listed);
         let mut due = Vec::new();
         for listing in listed.iter().rev() {
             let known = |taken: &BTreeMap<String, Listed>| taken.get(&listing.file) == Some(listing);
-            if !known(&self.confirmed)
-                && !known(&self.refused)
-                && tokio::fs::try_exists(self.dir.join(&listing.file)).await?
-            {
+            if known(&self.confirmed) || known(&self.refused) {
+                continue;
+            }
+            let held = tokio::fs::try_exists(self.dir.join(&listing.file)).await?;
+            if held || kept.contains(&listing) {
                 due.push(listing);
             }
         }
         let waits: BTreeSet<&str> = due.iter().map(|listing| listing.file.as_str()).collect();
+        self.lost.retain(|file| waits.contains(file.as_str()));
         self.waiting.retain(|file, _| waits.contains(file.as_str()));
         for listing in &due {
             self.waiting.entry(listing.file.clone()).or_insert_with(Instant::now);
@@ -222,11 +247,15 @@ impl SnapshotUploader {
             self.check();
             let span = info_span!("archive_snapshot", id = %self.key(listing));
             match self.archive(listing).instrument(span).await {
+                Ok(Outcome::Lost) => {
+                    self.lost.insert(listing.file.clone());
+                }
                 Ok(outcome) => {
                     self.waiting.remove(&listing.file);
+                    self.lost.remove(&listing.file);
                     let taken = match outcome {
                         Outcome::Confirmed => &mut self.confirmed,
-                        Outcome::Refused => &mut self.refused,
+                        Outcome::Refused | Outcome::Lost => &mut self.refused,
                     };
                     taken.insert(listing.file.clone(), listing.clone());
                 }
@@ -249,12 +278,25 @@ impl SnapshotUploader {
         format!("{}{}", self.prefix, listing.file)
     }
 
-    /// Uploads `listing`'s snapshot unless the bucket holds it, then reads it back against the listing.
+    /// Uploads `listing`'s snapshot unless the bucket holds it, then reads it back against the listing; with neither
+    /// the bucket's object nor the host's file, pages `daily_snapshot_lost` once and uploads nothing.
     /// Error cases:
     /// - the file cannot be opened, or the bucket cannot take or serve the snapshot, or serves none
     async fn archive(&mut self, listing: &Listed) -> anyhow::Result<Outcome> {
         let key = self.key(listing);
         if !self.store.holds(&key).await? {
+            if !tokio::fs::try_exists(self.dir.join(&listing.file)).await? {
+                if !self.lost.contains(&listing.file) {
+                    warn!(
+                        alert = "daily_snapshot_lost",
+                        snapshot = %listing.file,
+                        "the host no longer holds a daily snapshot the window keeps, and the archive does not hold \
+                         it either, so no copy of it remains: it is not uploaded, and its requests are redirected to \
+                         an object that does not exist"
+                    );
+                }
+                return Ok(Outcome::Lost);
+            }
             let damaged = Arc::new(AtomicBool::new(false));
             let body = checked_body(&self.dir.join(&listing.file), listing, damaged.clone()).await?;
             match self.store.create_from(&key, (body, listing.bytes), JSON, TRANSFER_TIMEOUT).await {
@@ -293,22 +335,28 @@ impl SnapshotUploader {
         }
     }
 
+    /// The canonical listings of `listed` split in two: those the host keeps whatever the bucket holds, the window's
+    /// and the newest stamped before it, and those it removes once they are confirmed.
+    fn window<'a>(&self, listed: &'a [Listed]) -> (Vec<&'a Listed>, Vec<&'a Listed>) {
+        let listed: Vec<&Listed> = listed.iter().filter(|listing| canonical(listing)).collect();
+        let Some(newest) = listed.iter().map(|listing| listing.ts).max() else { return (listed, Vec::new()) };
+        let (aged, mut kept): (Vec<&Listed>, Vec<&Listed>) =
+            listed.into_iter().partition(|listing| newest.saturating_sub(listing.ts) > self.window_ms);
+        let anchor = aged.iter().copied().max_by_key(|listing| (listing.ts, listing.seq, listing.index));
+        let (anchored, removable) = aged.into_iter().partition(|listing| Some(*listing) == anchor);
+        kept.extend::<Vec<_>>(anchored);
+        (kept, removable)
+    }
+
     /// Removes from the host each confirmed snapshot of `listed` stamped more than the window before the newest, but
     /// for the newest such one.
     /// Error cases:
     /// - a file cannot be removed, or the directory synced
     async fn remove_aged(&mut self, listed: &[Listed]) -> anyhow::Result<()> {
-        let listed: Vec<&Listed> = listed.iter().filter(|listing| canonical(listing)).collect();
-        let Some(newest) = listed.iter().map(|listing| listing.ts).max() else {
-            self.resolve_unremovable();
-            return Ok(());
-        };
-        let aged: Vec<&Listed> =
-            listed.into_iter().filter(|listing| newest.saturating_sub(listing.ts) > self.window_ms).collect();
-        let anchor = aged.iter().copied().max_by_key(|listing| (listing.ts, listing.seq, listing.index));
-        let gone: Vec<Listed> = aged
+        let (_, removable) = self.window(listed);
+        let gone: Vec<Listed> = removable
             .into_iter()
-            .filter(|listing| Some(*listing) != anchor && self.confirmed.get(&listing.file) == Some(*listing))
+            .filter(|listing| self.confirmed.get(&listing.file) == Some(*listing))
             .cloned()
             .collect();
         for listing in &gone {

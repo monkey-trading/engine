@@ -90,7 +90,7 @@ async fn an_object_that_reads_back_otherwise_keeps_the_hosts_copy() {
 }
 
 /// A file that differs from its listing, as a host that changed a byte, appended one or cut one off, creates no object,
-/// pages `daily_snapshot_unreadable`, and stays; a file the host no longer holds is passed over.
+/// pages `daily_snapshot_unreadable`, and stays.
 #[tokio::test]
 async fn a_file_that_differs_from_its_listing_creates_no_object() {
     for (case, change) in [("changed", 0usize), ("longer", 1), ("shorter", 2)] {
@@ -112,12 +112,47 @@ async fn a_file_that_differs_from_its_listing_creates_no_object() {
         assert_eq!(alert["alert"], "daily_snapshot_unreadable", "{case}");
         assert!(path.exists(), "{case}: it stays");
     }
-    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-gone"));
-    let listing = publish_ticks(&dir, 3, 1_000);
-    fs::remove_file(dir.join(&listing.file)).unwrap();
-    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_secs(3600));
+}
+
+/// A listed snapshot the window keeps whose file leaves the host before the bucket holds it, as the bucket was down,
+/// is asked for, pages `daily_snapshot_lost` naming it once, and keeps `archive_upload_lagging` raised until the
+/// bucket holds it; one older than the window, which the host may have removed, is passed over.
+#[tokio::test]
+async fn a_waiting_snapshot_the_host_lost_is_paged_and_keeps_the_lag_alert_raised() {
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-lost"));
+    let days: Vec<Listed> = (0..3).map(|day| publish_ticks(&dir, 2 + day, day as i64 * DAY_MS * 2 + 1_000)).collect();
+    let kept = fs::read(dir.join(&days[1].file)).unwrap();
+    let (_guard, mut alerts, mut resolutions) = capture_alerts_and_resolutions();
+    // A start resolves `daily_snapshot_unremovable` once; only the lag alert's resolutions count here.
+    let mut resolved = move || {
+        std::iter::from_fn(|| resolutions.try_recv().ok())
+            .find(|resolution| resolution["alert_resolved"] == "archive_upload_lagging")
+    };
+    // A lag of none: every wait is paged at once.
+    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::ZERO);
+    bucket.with(|b| b.down = true);
+    uploader.pass().await.unwrap_err();
+    assert_eq!(alerts.try_recv().expect("the wait is paged")["alert"], "archive_upload_lagging");
+    // Day 1 is the newest snapshot older than the window, which the host keeps, and day 0 is older still.
+    fs::remove_file(dir.join(&days[1].file)).unwrap();
+    fs::remove_file(dir.join(&days[0].file)).unwrap();
+    bucket.with(|b| b.down = false);
     uploader.pass().await.unwrap();
-    assert_eq!(bucket.with(|b| (b.asked, b.created)), (0, 0), "a file the host no longer holds is not asked for");
+    let paged: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
+    assert_eq!(paged.len(), 1, "one page, for the snapshot the host keeps");
+    assert_eq!(paged[0]["alert"], "daily_snapshot_lost");
+    assert_eq!(paged[0]["snapshot"], days[1].file);
+    assert!(object(&bucket, &days[1]).is_none() && object(&bucket, &days[0]).is_none());
+    assert!(object(&bucket, &days[2]).is_some(), "the others go up");
+    assert_eq!(metrics.snapshot_archive.pending.get(), 1, "it still waits");
+    assert!(resolved().is_none(), "the lag alert stays raised");
+    uploader.pass().await.unwrap();
+    assert!(alerts.try_recv().is_err(), "it is not paged again");
+    assert!(resolved().is_none(), "the lag alert stays raised");
+    // Another member's upload puts it in the bucket: it is confirmed, and the lag alert resolves.
+    bucket.with(|b| b.objects.insert(format!("{}{}", prefix(), days[1].file), kept));
+    uploader.pass().await.unwrap();
+    assert_eq!(resolved().expect("the alert resolves")["alert_resolved"], "archive_upload_lagging");
     assert_eq!(metrics.snapshot_archive.pending.get(), 0);
 }
 
