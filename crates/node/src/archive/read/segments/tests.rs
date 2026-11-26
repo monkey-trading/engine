@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use super::*;
 use crate::archive::read::origin::{bucket_of, copy_log, listed_below, log_of, serve, upload};
 use crate::archive::stand_in::{StandIn, test_log};
@@ -239,4 +242,106 @@ async fn a_backfill_reads_a_manifest_of_more_than_65536_listings() {
     let read = fetch_manifest(&crate::standby::archive::archive_client(false).unwrap(), &[node.url]).await.unwrap();
     assert_eq!(read.len(), 70_000);
     assert_eq!(read.last().unwrap().first_seq, 699_990);
+}
+
+/// Reads from `socket` until the request's headers end.
+async fn read_request(socket: &mut tokio::net::TcpStream) {
+    use tokio::io::AsyncReadExt;
+    let mut request = Vec::new();
+    while !request.ends_with(b"\r\n\r\n") {
+        let mut chunk = [0u8; 1024];
+        let read = socket.read(&mut chunk).await.unwrap();
+        assert_ne!(read, 0, "the reader hung up before its request ended");
+        request.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// A stand-in node that answers any request with `body`'s chunks, one write each and no length, until it ends or
+/// the reader hangs up. Returns its origin and the bytes it managed to send.
+async fn stream_body(body: impl Iterator<Item = Vec<u8>> + Send + 'static) -> (String, Arc<AtomicU64>) {
+    use tokio::io::AsyncWriteExt;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let sent = Arc::new(AtomicU64::new(0));
+    let counted = sent.clone();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request(&mut socket).await;
+        socket.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n").await.unwrap();
+        for chunk in body {
+            if socket.write_all(&chunk).await.is_err() {
+                break;
+            }
+            counted.fetch_add(chunk.len() as u64, Ordering::SeqCst);
+        }
+    });
+    (origin, sent)
+}
+
+/// A manifest line that never ends is refused once it passes a line's bound, however long the origin keeps
+/// sending: the reader hangs up having taken a few mebibytes, not the manifest's whole bound.
+#[tokio::test]
+async fn a_manifest_line_that_never_ends_is_refused_at_its_bound() {
+    let endless = std::iter::repeat_with(|| vec![b'a'; 64 << 10]).take(4096);
+    let (origin, sent) = stream_body(endless).await;
+    let client = crate::standby::archive::archive_client(false).unwrap();
+    let e = fetch_manifest(&client, &[origin]).await.unwrap_err();
+    assert!(format!("{e:#}").contains("manifest line exceeds"), "{e:#}");
+    let sent = sent.load(Ordering::SeqCst);
+    assert!(sent < 32 << 20, "the origin sent {sent} bytes before the reader hung up");
+}
+
+/// Listings arrive in chunks that split lines anywhere, and read as the manifest read whole, with blank lines
+/// and a last line that has no newline.
+#[tokio::test]
+async fn a_manifest_read_in_one_byte_chunks_reads_as_a_whole() {
+    let listings: Vec<SegmentInfo> = (0..40u64)
+        .map(|n| SegmentInfo {
+            file: crate::log::segment_name(n * 10),
+            first_seq: n * 10,
+            last_seq: n * 10 + 9,
+            bytes: 5_500_000,
+            sha256: "ab".repeat(32),
+        })
+        .collect();
+    let mut text = listings.iter().map(|l| format!("{}\n\n", serde_json::to_string(l).unwrap())).collect::<String>();
+    text.pop();
+    text.pop();
+    let (origin, _) = stream_body(text.into_bytes().into_iter().map(|byte| vec![byte])).await;
+    let client = crate::standby::archive::archive_client(false).unwrap();
+    let read = fetch_manifest(&client, &[origin]).await.unwrap();
+    assert_eq!(read.len(), listings.len());
+    assert!(read.iter().zip(&listings).all(|(a, b)| a.file == b.file && a.last_seq == b.last_seq));
+}
+
+/// An origin that drops the manifest partway gives way to the next, whose listings are the whole manifest and not
+/// a continuation of the first's.
+#[tokio::test]
+async fn a_manifest_cut_short_is_read_again_from_the_next_origin() {
+    let line = |n: u64| {
+        let listed = SegmentInfo {
+            file: crate::log::segment_name(n * 10),
+            first_seq: n * 10,
+            last_seq: n * 10 + 9,
+            bytes: 5_500_000,
+            sha256: "ab".repeat(32),
+        };
+        format!("{}\n", serde_json::to_string(&listed).unwrap())
+    };
+    let whole: String = (0..3).map(line).collect();
+    // Claims more than it sends, so the body ends in an error.
+    let cut = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first = format!("http://{}", cut.local_addr().unwrap());
+    let partial = line(0);
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let (mut socket, _) = cut.accept().await.unwrap();
+        read_request(&mut socket).await;
+        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{partial}", partial.len() + 100);
+        socket.write_all(head.as_bytes()).await.unwrap();
+    });
+    let (second, _) = stream_body(std::iter::once(whole.clone().into_bytes())).await;
+    let client = crate::standby::archive::archive_client(false).unwrap();
+    let read = fetch_manifest(&client, &[first, second]).await.unwrap();
+    assert_eq!(read.len(), 3);
 }
