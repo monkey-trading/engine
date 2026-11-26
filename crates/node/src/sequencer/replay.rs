@@ -447,7 +447,7 @@ pub(crate) use fold::Fold;
 mod live;
 mod resumed;
 pub(crate) use live::{LiveReplay, RETAINED_LINKS};
-pub(crate) use resumed::SnapshotRefused;
+pub(crate) use resumed::{SnapshotRefused, verified_back};
 mod marks;
 mod paths;
 pub(crate) mod ranges;

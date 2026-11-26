@@ -165,11 +165,7 @@ fn entry_seq(entry: &LogEntry) -> u64 {
 
 /// The seq of the last command the log in `dir` holds.
 fn last_seq(dir: &Path) -> u64 {
-    log_entries(dir)
-        .iter()
-        .filter_map(|entry| matches!(entry, LogEntry::Command(_)).then(|| entry_seq(entry)))
-        .max()
-        .unwrap()
+    log_entries(dir).iter().filter(|entry| matches!(entry, LogEntry::Command(_))).map(entry_seq).max().unwrap()
 }
 
 /// The offset of the last entry the copy in `dir` holds.
@@ -236,7 +232,7 @@ fn forge_segment(dir: &Path, file: &str, forge: Forge) {
 
 /// The first seq of the operator's segment in `dir` after the last command `held` holds.
 fn next_first(dir: &Path, held: &[LogEntry]) -> u64 {
-    let last = held.iter().filter_map(|entry| matches!(entry, LogEntry::Command(_)).then(|| entry_seq(entry))).max();
+    let last = held.iter().filter(|entry| matches!(entry, LogEntry::Command(_))).map(entry_seq).max();
     let manifest = Manifest::load(dir).unwrap();
     manifest.segments.iter().map(|listed| listed.first_seq).find(|first| Some(*first) > last).unwrap()
 }

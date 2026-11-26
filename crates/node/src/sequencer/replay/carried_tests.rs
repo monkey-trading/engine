@@ -165,9 +165,10 @@ async fn a_recovery_anchored_at_or_after_the_snapshot_ends_as_a_whole_one() {
     assert!(refused.contains("is before the snapshot's"), "{refused}");
 }
 
-/// A start from a snapshot checks the log before the snapshot's checkpoint against the links it carries: on a log that
-/// holds it all, from the command after the first link on; one whose command there differs from the one the links name
-/// checks nothing; and a log whose earlier segments are elsewhere, from the first command it holds.
+/// A start from a snapshot checks the log before the snapshot's checkpoint against the links it carries, through the
+/// descriptors it serves the segments by: on a log that holds it all, from the command after the first link on; one
+/// whose command there differs from the one the links name checks nothing, as does one whose bytes differ from the
+/// descriptor the node read at its start; and a log whose earlier segments are elsewhere, from the first it holds.
 #[tokio::test]
 async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     let dir = scratch_dir("carried-back");
@@ -177,11 +178,15 @@ async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     let carried = whole_carried(&entries).remove(&at).unwrap();
     let signers = carried.checkpoint_signers.clone();
     let first = carried.links.first().unwrap().seq + 1;
-    let back = |dir: &Path| super::verified_back(dir, &carried.links, DOMAIN, &signers);
+    let checkpoint = Offset::start_of(carried.links.last().unwrap().seq);
+    let back = |dir: &Path| {
+        let held = SegmentedLog::open_from(dir, checkpoint, |_| Ok(())).unwrap().manifest_view();
+        super::verified_back(dir, &carried.links, &held, (DOMAIN, &signers))
+    };
     assert_eq!(back(&dir), Some(first), "the whole log checks from the command after the first link");
 
     let held = scratch_dir("carried-back-held");
-    crate::standby::tests::copy_log(&dir, &held);
+    copy_dir(&dir, &held);
     super::remove_segments_before(&held, carried.links.last().unwrap().seq);
     let first_held = log_entries(&held).iter().find_map(|entry| match entry {
         LogEntry::Command(command) => Some(command.sequenced.seq),
@@ -190,7 +195,9 @@ async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     assert_eq!(back(&held), first_held.map(|seq| seq.max(first)), "from the first command this host holds");
 
     let altered = scratch_dir("carried-back-altered");
-    crate::standby::tests::copy_log(&dir, &altered);
+    copy_dir(&dir, &altered);
+    // The descriptors the node serves by, read at its start, before the host alters a segment and its listing.
+    let served = SegmentedLog::open_from(&altered, checkpoint, |_| Ok(())).unwrap().manifest_view();
     let segment = std::fs::read_dir(&altered)
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -212,6 +219,8 @@ async fn the_log_before_a_snapshot_is_checked_against_its_carried_links() {
     relist(&altered, segment.file_name().unwrap().to_str().unwrap(), bytes.as_bytes());
     let in_window = first <= entry_seq(&entry);
     assert_eq!(back(&altered).is_none(), in_window, "an altered command in the window checks nothing");
+    let against_served = super::verified_back(&altered, &carried.links, &served, (DOMAIN, &signers));
+    assert_eq!(against_served.is_none(), in_window, "bytes that differ from the descriptor served by check nothing");
 }
 
 /// A carried state that does not stand for its snapshot's engine and checkpoint is refused before any entry
@@ -420,4 +429,14 @@ fn relist(dir: &Path, file: &str, bytes: &[u8]) {
         })
         .collect();
     std::fs::write(dir.join(crate::log::MANIFEST), text).unwrap();
+}
+
+/// Copies the log files in `from` into the directory `to`.
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for file in std::fs::read_dir(from).unwrap().map(Result::unwrap) {
+        if file.file_type().unwrap().is_file() {
+            std::fs::copy(file.path(), to.join(file.file_name())).unwrap();
+        }
+    }
 }
