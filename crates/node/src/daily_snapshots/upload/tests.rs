@@ -165,12 +165,13 @@ async fn a_copy_that_cannot_be_removed_is_removed_later_without_another_read() {
     let paged: Vec<String> =
         std::iter::from_fn(|| alerts.try_recv().ok()).map(|alert| alert["alert"].clone()).collect();
     assert_eq!(paged, ["daily_snapshot_unremovable"], "paged once");
+    resolutions(&mut resolved);
     let reads = bucket.with(|b| b.read);
     uploader.pass().await.unwrap();
     assert!(!dir.join(&days[0].file).exists(), "removed once it can be");
     assert_eq!(bucket.with(|b| b.read), reads, "with no second read");
     assert_eq!(metrics.snapshot_archive.removed.get(), 1);
-    assert_eq!(resolved.try_recv().expect("the alert resolves")["alert_resolved"], "daily_snapshot_unremovable");
+    assert_eq!(resolutions(&mut resolved), ["daily_snapshot_unremovable"], "resolved once it can be");
 }
 
 /// The node's uploader comes from `[daily_snapshots]`, `[archive]` and both of its delivered keys, under the custody
@@ -238,6 +239,11 @@ async fn a_snapshot_waiting_past_the_lag_alert_is_paged_apart_from_the_logs_rang
     uploader.pass().await.unwrap_err();
     assert_eq!(metrics.snapshot_archive.pending.get(), 2, "both wait, though the pass stopped at the newest");
     assert!(alerts.try_recv().is_err(), "not before the lag alert's time");
+    assert_eq!(
+        resolutions(&mut resolved),
+        ["daily_snapshot_unremovable"],
+        "a start's lag episode holds while snapshots wait"
+    );
     uploader.check_at(Instant::now() + lag);
     let alert = alerts.try_recv().expect("the wait is paged");
     assert_eq!((alert["alert"].as_str(), alert["objects"].as_str()), ("archive_upload_lagging", "daily_snapshots"));
@@ -247,4 +253,51 @@ async fn a_snapshot_waiting_past_the_lag_alert_is_paged_apart_from_the_logs_rang
     assert_eq!(resolution["alert_resolved"], "archive_upload_lagging");
     assert_eq!(resolution["objects"], "daily_snapshots");
     assert_eq!(metrics.snapshot_archive.pending.get(), 0);
+}
+
+/// A new process resolves once the episodes an earlier process may have left open across a restart, at its first pass
+/// that finds nothing waiting and nothing it cannot remove, whether the host holds snapshots or none; the router
+/// drops a resolution with no open episode.
+#[tokio::test]
+async fn a_start_resolves_the_episodes_an_earlier_process_left_open() {
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-restart"));
+    let (_guard, _alerts, mut resolved) = capture_alerts_and_resolutions();
+    let (mut empty, _) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    empty.pass().await.unwrap();
+    assert_eq!(sorted(resolutions(&mut resolved)), ["archive_upload_lagging", "daily_snapshot_unremovable"]);
+    publish_ticks(&dir, 3, 1_000);
+    let (mut uploader, _) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    uploader.pass().await.unwrap();
+    assert_eq!(sorted(resolutions(&mut resolved)), ["archive_upload_lagging", "daily_snapshot_unremovable"]);
+    uploader.pass().await.unwrap();
+    assert!(resolutions(&mut resolved).is_empty(), "once");
+}
+
+/// A start that cannot read the snapshots' manifest leaves an earlier process's episodes as they are, and resolves
+/// them at the first pass that reads it.
+#[tokio::test]
+async fn a_start_that_cannot_read_the_manifest_resolves_nothing() {
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-unreadable-start"));
+    publish_ticks(&dir, 3, 1_000);
+    let manifest = dir.join(crate::daily_snapshots::MANIFEST);
+    let written = fs::read(&manifest).unwrap();
+    fs::write(&manifest, b"not a listing\n").unwrap();
+    let (_guard, _alerts, mut resolved) = capture_alerts_and_resolutions();
+    let (mut uploader, _) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    uploader.pass().await.unwrap_err();
+    assert!(resolutions(&mut resolved).is_empty(), "nothing is known");
+    fs::write(&manifest, written).unwrap();
+    uploader.pass().await.unwrap();
+    assert_eq!(sorted(resolutions(&mut resolved)), ["archive_upload_lagging", "daily_snapshot_unremovable"]);
+}
+
+/// The names of the alerts resolved since the last call.
+fn resolutions(resolved: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>) -> Vec<String> {
+    std::iter::from_fn(|| resolved.try_recv().ok()).map(|resolution| resolution["alert_resolved"].clone()).collect()
+}
+
+/// `names`, sorted.
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
 }
