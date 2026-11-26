@@ -76,10 +76,11 @@ pub(crate) struct SnapshotUploader {
     refused: BTreeMap<String, Listed>,
     /// When each snapshot waiting for its confirmation was first seen waiting.
     waiting: BTreeMap<String, Instant>,
-    /// Whether `archive_upload_lagging` is raised for the snapshots.
-    raised: bool,
-    /// Whether `daily_snapshot_unremovable` is raised.
-    unremovable: bool,
+    /// Whether `archive_upload_lagging` is raised for the snapshots; unknown at a start, since the alert router keeps an
+    /// episode open across a restart, so the first check that finds nothing waiting resolves it.
+    raised: Option<bool>,
+    /// Whether `daily_snapshot_unremovable` is raised; unknown at a start, as `raised`.
+    unremovable: Option<bool>,
 }
 
 /// What an attempt at a snapshot found.
@@ -135,7 +136,7 @@ impl SnapshotUploader {
     ) -> Self {
         let window_ms = Millis::try_from(local_window.as_millis()).unwrap_or(Millis::MAX);
         let (confirmed, refused, waiting) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        let (raised, unremovable) = (false, false);
+        let (raised, unremovable) = (None, None);
         Self { store, prefix, dir, window_ms, lag_alert, metrics, confirmed, refused, waiting, raised, unremovable }
     }
 
@@ -166,11 +167,16 @@ impl SnapshotUploader {
     ///   cannot be removed
     pub(crate) async fn pass(&mut self) -> anyhow::Result<()> {
         let dir = self.dir.clone();
-        let passed = match spawn_blocking(move || read_manifest(&dir)).await? {
+        let manifest = spawn_blocking(move || read_manifest(&dir)).await?;
+        let read = manifest.is_ok();
+        let passed = match manifest {
             Ok(listed) => self.go_through(&listed).await,
             Err(e) => Err(e),
         };
-        self.check();
+        // A start whose manifest cannot be read cannot see what waits, and leaves an earlier process's episodes as they are.
+        if read || self.raised.is_some() {
+            self.check();
+        }
         passed
     }
 
@@ -293,7 +299,10 @@ impl SnapshotUploader {
     /// - a file cannot be removed, or the directory synced
     async fn remove_aged(&mut self, listed: &[Listed]) -> anyhow::Result<()> {
         let listed: Vec<&Listed> = listed.iter().filter(|listing| canonical(listing)).collect();
-        let Some(newest) = listed.iter().map(|listing| listing.ts).max() else { return Ok(()) };
+        let Some(newest) = listed.iter().map(|listing| listing.ts).max() else {
+            self.resolve_unremovable();
+            return Ok(());
+        };
         let aged: Vec<&Listed> =
             listed.into_iter().filter(|listing| newest.saturating_sub(listing.ts) > self.window_ms).collect();
         let anchor = aged.iter().copied().max_by_key(|listing| (listing.ts, listing.seq, listing.index));
@@ -315,7 +324,7 @@ impl SnapshotUploader {
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => {
-                    if !std::mem::replace(&mut self.unremovable, true) {
+                    if self.unremovable.replace(true) != Some(true) {
                         warn!(
                             alert = "daily_snapshot_unremovable",
                             "daily snapshot {} is in the archive and older than the host's window, but cannot be \
@@ -332,10 +341,16 @@ impl SnapshotUploader {
             let dir = self.dir.clone();
             spawn_blocking(move || sync_dir(&dir)).await??;
         }
-        if std::mem::take(&mut self.unremovable) {
+        self.resolve_unremovable();
+        Ok(())
+    }
+
+    /// Resolves `daily_snapshot_unremovable` unless this process knows it is not raised: a start resolves it once, ending
+    /// an episode an earlier process left open, which the router drops when none is.
+    fn resolve_unremovable(&mut self) {
+        if self.unremovable.replace(false) != Some(false) {
             info!(alert_resolved = "daily_snapshot_unremovable", "the host keeps only the window's daily snapshots");
         }
-        Ok(())
     }
 
     /// Sets the metrics, and raises `archive_upload_lagging` for the snapshots once one has waited `lag_alert` for its
@@ -350,8 +365,8 @@ impl SnapshotUploader {
         let pending = self.waiting.len();
         self.metrics.snapshot_archive.pending.set(i64::try_from(pending).unwrap_or(i64::MAX));
         match waited {
-            Some(waited) if waited >= self.lag_alert && !self.raised => {
-                self.raised = true;
+            Some(waited) if waited >= self.lag_alert && self.raised != Some(true) => {
+                self.raised = Some(true);
                 warn!(
                     alert = "archive_upload_lagging",
                     objects = "daily_snapshots",
@@ -360,8 +375,9 @@ impl SnapshotUploader {
                 );
             }
             Some(waited) if waited >= self.lag_alert => {}
-            _ if self.raised => {
-                self.raised = false;
+            // Unknown at a start: resolved only once nothing waits, as an earlier process's episode may still hold.
+            _ if self.raised == Some(true) || (self.raised.is_none() && waited.is_none()) => {
+                self.raised = Some(false);
                 info!(
                     alert_resolved = "archive_upload_lagging",
                     objects = "daily_snapshots",
