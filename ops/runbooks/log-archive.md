@@ -175,8 +175,8 @@ uploads none of the copy's ranges past the last finalized checkpoint the copy ho
 superseded tail never reaches the archive. The trading server keeps following, and its host keeps the
 log.
 
-1. Read the alert's `finalized_seq`, `finalized_root` and `copy_root` fields, and the console lines
-   around it.
+1. Read the alert's message, which names the finalized seq, the vault's root and the copy's, and the
+   console lines around it.
 2. If the node is a member that was the operator before a promotion, wait. As it follows the operator
    in effect, it sets the superseded tail aside and rebuilds its copy from the operator's log, as
    [A replaced operator coming back](operator-candidate.md#a-replaced-operator-coming-back) describes. The alert resolves once the

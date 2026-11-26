@@ -98,7 +98,7 @@ async fn dev_scenario_log_archive() {
     stale_sources.send_replace(Some(node.manifest.clone()));
     let stale_running = tokio::spawn(stale.run());
     let alert = expect(&mut alerts, "archive_copy_superseded").await;
-    assert_eq!(alert["finalized_seq"], seq.to_string(), "{alert:?}");
+    assert!(alert["message"].contains(&format!("seq {seq} ")), "{alert:?}");
     sleep(Duration::from_millis(200)).await;
     stale_running.abort();
     assert_eq!(stale_metrics.archive.objects_created.get(), 0, "nothing past the vault's other history goes up");
