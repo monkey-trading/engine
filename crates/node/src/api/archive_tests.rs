@@ -74,6 +74,35 @@ async fn a_listed_snapshot_the_host_no_longer_holds_redirects_to_its_object() {
     assert!(matches!(ask(Some(bucket), unlisted).await, Err(ApiError::NotFound)), "an unlisted name");
 }
 
+/// A manifest line under a name its offset does not give, as a host could write over the manifest, with the length and
+/// SHA-256 of a file it names, inside the snapshot directory or climbing out of it, is not served: `404`, while the
+/// canonical listing beside it is.
+#[tokio::test]
+async fn a_listing_under_another_name_than_its_offsets_is_not_served() {
+    let (dir, outside) = (scratch_dir("archive-daily-names"), scratch_dir("archive-daily-names-outside"));
+    let listing = publish_ticks(&dir, 3, 1_000);
+    let written = fs::read(dir.join(&listing.file)).unwrap();
+    let mut renamed = listing.clone();
+    renamed.file = "renamed.json".to_owned();
+    let mut climbing = listing.clone();
+    climbing.file = format!("../{}/{}", outside.file_name().unwrap().to_string_lossy(), listing.file);
+    fs::create_dir_all(&outside).unwrap();
+    for named in [&renamed, &climbing] {
+        fs::write(dir.join(&named.file), &written).unwrap();
+    }
+    crate::daily_snapshots::write_listing(&dir, &[listing.clone(), renamed.clone(), climbing.clone()]);
+    let ask = |file: String| {
+        let (mut state, _requests) = api_state(true);
+        state.daily_snapshots = Some(Arc::new(ServedSnapshots::new(dir.clone(), None)));
+        crate::api::archive::snapshot(State(state), FilePath(file))
+    };
+    let served = ask(listing.file.clone()).await.expect("the canonical listing");
+    assert_eq!(to_bytes(served.into_body(), usize::MAX).await.unwrap(), written);
+    for named in [renamed, climbing] {
+        assert!(matches!(ask(named.file.clone()).await, Err(ApiError::NotFound)), "{}", named.file);
+    }
+}
+
 /// The node's archive serves the snapshots `[daily_snapshots]` names, and with `[archive]` redirects one the host no
 /// longer holds to its object under the custody chain and vault; without `[archive]` it redirects none.
 #[tokio::test]
