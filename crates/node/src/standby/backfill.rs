@@ -225,7 +225,7 @@ async fn fetch(archive: &reqwest::Client, operator: &Followed, dir: &Path) -> an
     }
     match aside_of(dir, "refused").is_dir() {
         true => backfill(archive, std::slice::from_ref(&operator.origin), dir).await,
-        false => backfill(archive, &operator.origins(), dir).await,
+        false => backfill(archive, &operator.archive(), dir).await,
     }
 }
 
@@ -261,7 +261,7 @@ async fn cold_start(
                 "the copy on disk, backfilled from the archive ({}) or left by an earlier start, does not \
                  replay as a takeover would replay it: {refused:#}; it is set aside to {} and backfilled again \
                  from the operator alone",
-                operator.origins().join(", "),
+                operator.archive(),
                 aside_of(dir, "refused").display()
             );
             set_aside(dir, "refused").with_context(|| format!("after refusing the copy: {refused:#}"))?;
@@ -435,7 +435,11 @@ fn holds_checkpoint(dir: &Path) -> anyhow::Result<bool> {
 /// Backfills the copy in `dir` from `origins`.
 /// Error cases:
 /// - the directory cannot be created, or the backfill fails
-async fn backfill(archive: &reqwest::Client, origins: &[String], dir: &Path) -> anyhow::Result<()> {
+async fn backfill(
+    archive: &reqwest::Client,
+    origins: &(impl crate::archive::ArchiveOrigins + ?Sized),
+    dir: &Path,
+) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     bootstrap_archive(archive, origins, dir).await
 }

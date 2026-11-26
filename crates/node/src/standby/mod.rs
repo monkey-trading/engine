@@ -62,10 +62,8 @@ use crate::telemetry::Telemetry;
 /// How long one follow stint runs before the standby re-checks the chain for its promotion: the
 /// takeover's worst-case delay after the liveness timeout passes.
 const STINT: Duration = Duration::from_secs(15);
-/// The most archive bytes one fetch reads, bounding memory for a manifest or segment.
+/// The most bytes of one segment an archive fetch reads, bounding memory for it.
 pub(crate) const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
-/// The most segments one manifest may list.
-pub(super) const MAX_ARCHIVE_LISTINGS: usize = 65_536;
 /// How long one archive GET's connection or a WebSocket connect waits.
 pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long one archive body may take end to end.
@@ -166,7 +164,7 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
                 let checked = (domain, signers, cfg.node.replay_workers);
-                let origins = operator.origins();
+                let origins = operator.archive();
                 let taken = (&takeover, crate::handover::accepted_before(&chain, snapshots, takeover.seq).await);
                 if let Err(e) = finalize(&archive, checked, &origins, (dir, snapshots), taken, copied).await {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
@@ -359,7 +357,7 @@ fn open_copy_replayed<R>(
 async fn finalize(
     archive: &reqwest::Client,
     (domain, signers, workers): (CheckpointDomain, std::collections::BTreeSet<AccountId>, ReplayWorkers),
-    origins: &[String],
+    origins: &(impl crate::archive::ArchiveOrigins + ?Sized),
     (dir, snapshots): (&std::path::Path, Option<&std::path::Path>),
     (takeover, accepted): (&Takeover, std::collections::BTreeMap<u64, AccountId>),
     mut copied: Chain,
@@ -374,7 +372,7 @@ async fn finalize(
     match refreshed.as_ref().err().map(|e| (e, rollback_of(e))) {
         Some((_, Some(rollback))) => error!(
             alert = "operator_log_rollback",
-            operator = ?origins.last(),
+            operator = ?origins.nodes().last(),
             "{rollback}; the archive's segments are not added to the copy"
         ),
         Some((e, None)) => warn!("refreshing the archive before the takeover failed: {e:#}"),
@@ -445,8 +443,8 @@ fn resume_checkpoint(dir: &std::path::Path, takeover: &Takeover) -> anyhow::Resu
     Ok(tip.expect("the anchor set the tip"))
 }
 
-/// Catches the copy open in `writer`, with its chain `copied`, up from `operator`'s archive origins when the operator
-/// serves its stream only from after the copy's head (`catch_up`), each entry checked against the copy, and each
+/// Catches the copy open in `writer`, with its chain `copied`, up from `operator`'s archive, its bucket first, when the
+/// operator serves its stream only from after the copy's head (`catch_up`), each entry checked against the copy, and each
 /// checkpoint and withdrawal against the signers the vault recorded, before it is appended. The copy is no longer
 /// marked checked, so the next start replays it before it follows on.
 /// Error cases:
@@ -463,7 +461,7 @@ async fn catch_up_copy(
     backfill::unmark(&cfg.node.log_dir)?;
     let head = copied.head();
     let take = |after, bytes: &[u8]| catch_up::take_into((writer, copied), (domain, &signers), after, bytes);
-    let caught = catch_up::catch_up(archive, &operator.origins(), head, take).await?;
+    let caught = catch_up::catch_up(archive, &operator.archive(), head, take).await?;
     info!(head = ?caught, "the copy caught up from the archive; the stream resumes from it");
     Ok(())
 }

@@ -217,6 +217,7 @@ impl Node {
             status: Default::default(),
             collateral: None,
             listing: Default::default(),
+            archive_objects: None,
             operators: None,
             operator_hostname: None,
             signing: Arc::new(Signing::new(key.clone(), CHAIN_ID, VAULT, api.heartbeat_interval, trusted)),

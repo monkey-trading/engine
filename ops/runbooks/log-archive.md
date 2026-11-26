@@ -187,6 +187,37 @@ log.
 
 **How to tell it is resolved.** The alert resolves, and `engine_archive_confirmed_ranges` rises again.
 
+## When `archive_segment_missing` fires
+
+**What is happening.** A reader of the archive needed an object that the bucket answers 404 for, and
+no node origin served the segment either. The reader is a standby's or a member's backfill, a
+successor's archive sync at a handover, a promoted member's gap fetch or the carry check. Its read
+fails rather than ending there, since the bucket holds a prefix of the log and a cache in front of it
+can answer a stale 404. The node retries the read where its caller retries: a standby's next start,
+a member's next stint, the next handover attempt.
+
+1. Read the alert's `object` field, the console lines around it, and the segment the message names.
+2. Check the object at its public URL:
+
+   ```bash
+   curl -sI "<object>"
+   ```
+
+   A `200` means the 404 came from a cache in front of the bucket. Purge the cache for the key, or
+   wait for its entry to expire, and the next read finds the object.
+3. With a 404 there too, check the bucket's own listing of the key with the API token, and check
+   `engine_archive_confirmed_ranges` on the operator in effect and on every member. A range that no
+   node has confirmed was never uploaded: the node in office uploads it once the vault finalizes a
+   checkpoint past it, and a member uploads it from its copy while it follows.
+4. If a node redirects the segment, `GET /v1/archive/<segment>` answering 308, but no node holds it
+   and the bucket lacks its range, the host dropped the segment before its upload. Restore the
+   segment file from a member's copy or a backup to the host's log directory, keep the evidence, as
+   [Keep the evidence](incident-response.md#keep-the-evidence) describes, and tell the owner.
+
+**How to tell it is resolved.** The reader's next attempt succeeds: the standby follows, the member
+builds its replica, or the handover completes. The alert does not resolve itself, and a later failure
+for the same object pages again after `alerts.episode_quiet`.
+
 ## How the archive works
 
 - **What the bucket holds.** The log in ranges of 10,000 sequence numbers. Each object holds the
@@ -214,6 +245,14 @@ log.
   uploads its copy while it follows. A member finds what the bucket already holds and uploads only
   what it lacks. A restart finds the first range the bucket lacks with a few existence checks, reads
   back the range before it, and uploads on from there.
+- **How it is read.** Readers take the bucket's objects from its public URL themselves; the
+  trading server never relays them. A listed segment that the host no longer holds is redirected,
+  with a 308, to the object of the range that holds its first sequence number, and a reader derives
+  the keys of the segment's other ranges from it. Backfills read the bucket that their own
+  `[archive]` names first, then the node origins, mirrors first. A segment rebuilt from the bucket
+  is taken only if it matches its manifest line, and every copy built from the archive replays before
+  a node relies on it. `engine replay`, `engine exit-proof` and `engine carry` take a server's URL
+  for `--log`, download the log through the server and the bucket, and read it as a log on disk.
 - **Size.** At 10,000 sequence numbers a range of launch flow is about 5.5 MB. On 30 minutes of launch
   flow at 10,000 accounts, zstd's level 1 compressed the log about 6.1 times, to under a megabyte a
   range, at over a gigabyte a second. Higher levels up to 15 compressed less, level 19 about 6.8 times

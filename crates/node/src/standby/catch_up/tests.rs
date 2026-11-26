@@ -51,6 +51,38 @@ async fn a_follower_refused_its_stream_catches_up_from_the_archive() {
     assert_eq!(log_entries(&standby), log_entries(&operator)[..listed], "the standby's copy");
 }
 
+/// A copy catches up from the archive's bucket first: the segments the operator's host no longer holds come from the
+/// bucket's ranges, the rest from the operator, and the copy is the operator's log.
+#[tokio::test]
+async fn a_copy_catches_up_from_the_bucket_first() {
+    use crate::archive::origin::{bucket_of, listed_below, upload};
+    let operator = scratch_dir("catch-up-bucket-operator");
+    ticks(&operator, 2).await;
+    let standby = scratch_dir("catch-up-bucket-standby");
+    copy_log(&operator, &standby);
+    ticks(&operator, 12).await;
+    let view = crate::test_support::published_manifest(&operator).borrow().clone();
+    let ranges = crate::archive::whole_ranges(&view).unwrap();
+    let bucket = crate::archive::stand_in::StandIn::start().await;
+    upload(&bucket, &operator, &view, ranges);
+    let served = scratch_dir("catch-up-bucket-served");
+    crate::archive::origin::copy_log(&operator, &served);
+    let moved = listed_below(&operator, ranges);
+    assert!(!moved.is_empty(), "the bucket holds segments the copy lacks");
+    for listed in &moved {
+        std::fs::remove_file(served.join(&listed.file)).unwrap();
+    }
+    let origins =
+        crate::archive::Origins { bucket: Some(bucket_of(&bucket)), nodes: vec![serve(&served, Router::new()).await] };
+    let (mut writer, mut copied) = open_copy(&standby, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
+    let signers = [enclave()].into();
+    let take = |after, bytes: &[u8]| take_into((&mut writer, &mut copied), (DOMAIN, &signers), after, bytes);
+    catch_up(&bucket.client, &origins, copied_head(&standby), take).await.expect("the copy catches up");
+    drop(writer);
+    assert_eq!(log_entries(&standby), log_entries(&operator)[..completed(&operator)], "the standby's copy");
+    assert!(bucket.with(|b| b.read) > 0, "the segments the operator no longer holds came from the bucket");
+}
+
 /// An archive segment a key the vault never named sealed or signed, though its listing matches its bytes, is refused
 /// and the copy takes nothing of it: one whose commands' seals name another signer, and one whose checkpoint another
 /// key signed, as a mirror with a key of its own could serve.

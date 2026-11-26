@@ -152,7 +152,7 @@ fn check_objects(bucket: &StandIn, dir: &Path, view: &Manifest, whole: u64) {
 }
 
 /// Submits ticks until `node` has made at least `ranges` ranges whole.
-async fn ticks_until(node: &TestSequencer, ranges: u64) {
+pub(super) async fn ticks_until(node: &TestSequencer, ranges: u64) {
     while whole_ranges(&node.manifest.borrow()).unwrap() < ranges {
         node.submit(Command::Tick).await;
     }
@@ -160,7 +160,7 @@ async fn ticks_until(node: &TestSequencer, ranges: u64) {
 
 /// Has `vault` finalize a checkpoint past every range `node` has made whole, ticking until one is, waits until
 /// `metrics` confirm the ranges below it, and returns how many.
-async fn finalize_all(node: &TestSequencer, dir: &Path, vault: &Vault, metrics: &Metrics) -> u64 {
+pub(super) async fn finalize_all(node: &TestSequencer, dir: &Path, vault: &Vault, metrics: &Metrics) -> u64 {
     let whole = finalize_all_after(node, dir, vault, 0).await;
     until("the finalized ranges confirmed", || metrics.archive.confirmed_ranges.get() as u64 >= whole).await;
     whole
@@ -194,7 +194,7 @@ async fn copy_of(node: &TestSequencer, dir: &Path, copy: &Path, ranges: u64) {
 }
 
 /// An uploader of `dir` to `bucket` below `vault`'s finality, warning after `lag`, its sources and its metrics.
-fn uploading(
+pub(super) fn uploading(
     bucket: &StandIn,
     dir: &Path,
     lag: Duration,
@@ -207,7 +207,7 @@ fn uploading(
 }
 
 /// Waits until `done` holds.
-async fn until(what: &str, mut done: impl FnMut() -> bool) {
+pub(super) async fn until(what: &str, mut done: impl FnMut() -> bool) {
     let started = Instant::now();
     while !done() {
         assert!(started.elapsed() < WAIT, "timed out waiting for {what}");

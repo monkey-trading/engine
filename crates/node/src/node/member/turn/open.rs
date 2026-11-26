@@ -76,7 +76,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let archive = operator.map(|operator| archive_client(operator.danger_accept_invalid_certs)).transpose()?;
         let origins = operator.map(Followed::origins).unwrap_or_default();
         if let Some(archive) = archive.as_ref().filter(|_| !dir.join(MANIFEST).exists()) {
-            crate::standby::archive::bootstrap_archive(archive, &origins, dir).await?;
+            let backfilled = operator.map(Followed::archive).unwrap_or_default();
+            crate::standby::archive::bootstrap_archive(archive, &backfilled, dir).await?;
         }
         let roots = VaultRoots { vault: &self.vault, at: &at };
         let fetching = archive.as_ref().map(|archive| (archive, origins.as_slice()));
@@ -241,6 +242,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             enclave: at.state.signer,
             mirrors: handover.map(|handover| handover.mirrors.clone()).unwrap_or_default(),
             danger_accept_invalid_certs: handover.is_some_and(|handover| handover.danger_accept_invalid_certs),
+            bucket: crate::archive::Bucket::for_config(self.cfg)?,
         })
     }
 }

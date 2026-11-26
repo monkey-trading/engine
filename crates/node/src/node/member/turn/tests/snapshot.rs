@@ -318,7 +318,7 @@ fn recorded() -> Signing {
 /// The operator the member follows, at `origin`, whose archive the member backfills from.
 fn followed(origin: String) -> Followed {
     let enclave = AccountId(EnclaveKey::test_key().address());
-    Followed { origin, enclave, mirrors: Vec::new(), danger_accept_invalid_certs: true }
+    Followed { origin, enclave, mirrors: Vec::new(), danger_accept_invalid_certs: true, bucket: None }
 }
 
 /// Serves the completed segments of the log in `log`, their manifest and the daily snapshots in `snapshots` as an

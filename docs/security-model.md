@@ -762,7 +762,7 @@ Known limits:
   handover still extends it. Each stream it resumes must first repeat the copy's last instruction
   and every entry after it exactly, with each signature and signer compared as the bytes it holds.
 - **A standby's cold start.** The completed segments that a standby backfills from the archive, its
-  mirrors first, are checked only by hash against the manifest that the answering origin served.
+  bucket and its mirrors first, are checked only by hash against the manifest that the answering origin served.
   Before the standby first follows onto them, it replays them as its takeover would replay them. A
   copy that does not replay, or that a mirror cut short of its first checkpoint, is set aside, the
   standby raises the Critical alert `standby_backfill_refused`, and it backfills again from the
@@ -836,6 +836,21 @@ Every upload is create-only, and the bucket's lock keeps each object under `log/
 replaced or deleted, whoever holds the keys. The bucket is not trusted: a reader replays what it
 reads, as it does any copy of the log.
 
+Readers take the log from the bucket's public origin themselves, and the enclave relays none of it.
+A listed segment that the host no longer holds is redirected to the bucket's object for the range
+that holds its first sequence number. A reader works out each key it needs from the sequence
+numbers it needs, and checks each range it reads: the range must decompress within a bound, and it
+must hold its own sequence numbers in order, from the first. A segment rebuilt from the ranges is
+taken only if its length and SHA-256 equal its manifest line, as for a segment that a node or a
+mirror serves. A copy built from it then replays before anything relies on it: a standby's and a
+member's copy, a successor's copy at a handover, and a replay from the archive's URL. That replay
+checks the command seals, the links and the checkpoint signatures by recorded signers, and, with
+`--custody-config`, the vault's history. Backfills read the bucket first and fall back to the node
+origins, mirrors first, on any failure. A `404` for a key that a reader needs means the object is
+missing, never that the log ends there, since a cache in front of the bucket can answer a stale
+`404`: past one, the reader asks the nodes first and asks the bucket again for a segment that no
+node serves. A segment that no source serves pages `archive_segment_missing`, and the read fails.
+
 Known limits:
 
 - The host can withhold an upload or its read-back, which the trading server then never counts as
@@ -855,6 +870,16 @@ Known limits:
   the object when they replay it. Only the deployment's owner and its members hold the keys.
 - A segment file the host altered or removed before its range's upload fails the listing check, and
   the trading server uploads nothing past it until the file is restored.
+- The trading server redirects a listed segment that its host no longer holds whether or not its
+  ranges are in the bucket yet. A reader then finds the object missing, pages
+  `archive_segment_missing` and fails, so a host that drops a segment before its upload denies
+  readers that segment but cannot alter it.
+- A replay from the archive's URL checks only what the archive lists. Without `--custody-config`,
+  an archive cut short, or a node that stops listing its last segments, replays to a shorter log;
+  with it, a log that ends before the vault's finalized checkpoint fails as truncated.
+- A rebuilt segment must spell its entries as its manifest line's bytes do. Where the bucket's
+  range was uploaded from a copy that spells them otherwise, as a copy backfilled from another
+  archive may, the reader takes the segment from a node, and fails where no node holds it.
 
 ## Deposits
 

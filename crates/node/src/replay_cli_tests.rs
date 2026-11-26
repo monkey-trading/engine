@@ -104,3 +104,19 @@ fn replay_in_ranges_takes_a_snapshot_directory_and_its_jobs_but_not_every_seal()
         Cli::try_parse_from(["engine", "replay", "--log", "public", "--snapshots", "daily", "--every-seal"]).is_err()
     );
 }
+
+/// `--log` and `--carry-source` take an archive's URL as well as a path, in `engine replay`, `engine exit-proof` and
+/// `engine carry`, and refuse a URL that names a query.
+#[test]
+fn a_published_log_is_a_path_or_an_archives_url() {
+    let url = "https://node.example";
+    let cli = Cli::try_parse_from(["engine", "replay", "--log", url, "--carry-source", "source"]).unwrap();
+    let Cmd::Replay { log, carry_source, .. } = cli.cmd else { panic!("a replay") };
+    assert_eq!(log, PublishedLog::Url(url.parse().unwrap()));
+    assert_eq!(carry_source, Some(PublishedLog::Path("source".into())));
+    let exit =
+        Cli::try_parse_from(["engine", "exit-proof", "--log", "http://127.0.0.1:8080/", "--seq", "7", "--house"]);
+    assert!(matches!(exit.unwrap().cmd, Cmd::ExitProof { log: PublishedLog::Url(_), .. }));
+    assert!(Cli::try_parse_from(["engine", "carry", "--log", url, "--check"]).is_ok());
+    assert!(Cli::try_parse_from(["engine", "replay", "--log", "https://node.example/?page=2"]).is_err());
+}

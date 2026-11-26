@@ -16,8 +16,8 @@ use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
 use engine_node::{
-    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, SentRequest, VerifiedAttestation, VerifyOptions,
-    ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
+    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, PublishedLog, SentRequest, VerifiedAttestation,
+    VerifyOptions, ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
     parse_launch_digest, replay_path_with_custody, replay_path_with_trust, replay_ranges_with_custody, run_dedicated,
     verify_attestation_files, verify_frames_file, verify_response_files,
 };
@@ -51,14 +51,16 @@ enum Cmd {
         #[arg(long, conflicts_with = "standby")]
         frozen: bool,
     },
-    /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, or a
-    /// directory of segments with their manifest: a node's log directory or a downloaded archive. A
-    /// missing log, or one with no command or no checkpoint, fails. Every instruction's chained digest is
-    /// checked, every seal's form, and in full the first and last seal of each run of one signer's seals,
-    /// the last authenticating every instruction in the run; `--every-seal` checks every seal in full.
+    /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, a
+    /// directory of segments with their manifest (a node's log directory or a downloaded archive), or an
+    /// archive's URL, a node's public origin, downloaded first, with each segment the node no longer holds read
+    /// from the bucket it redirects to. A missing log, or one with no command or no checkpoint, fails. Every
+    /// instruction's chained digest is checked, every seal's form, and in full the first and last seal of each run
+    /// of one signer's seals, the last authenticating every instruction in the run; `--every-seal` checks every
+    /// seal in full.
     Replay {
         #[arg(short, long)]
-        log: PathBuf,
+        log: PublishedLog,
         /// Explicit domain for signed logs written before domain recording.
         #[arg(long, requires = "vault")]
         chain_id: Option<u64>,
@@ -103,10 +105,11 @@ enum Cmd {
         /// How many ranges replay at once with `--snapshots`; one per two physical cores when unset.
         #[arg(long, requires = "snapshots")]
         jobs: Option<NonZeroUsize>,
-        /// The published log a carried genesis took its state from: its checkpoint at the carried seq must
-        /// hold the carried root, signed, and the carried values must be its state there.
+        /// The published log a carried genesis took its state from, a path or an archive's URL as `--log`: its
+        /// checkpoint at the carried seq must hold the carried root, signed, and the carried values must be its
+        /// state there.
         #[arg(long)]
-        carry_source: Option<PathBuf>,
+        carry_source: Option<PublishedLog>,
     },
     /// Build the carry file a new log's genesis takes MONKEY entitlements, stakes and awards from, from a source
     /// log's published checkpoint, and print what it carries and its SHA-256.
@@ -119,8 +122,9 @@ enum Cmd {
     /// that checkpoint's root; signatures are not checked, since the vault checks every proof against
     /// the root it accepted.
     ExitProof {
+        /// The published log: a path or an archive's URL, as `engine replay --log` takes it.
         #[arg(short, long)]
-        log: PathBuf,
+        log: PublishedLog,
         /// The checkpoint the vault last posted.
         #[arg(long)]
         seq: u64,
@@ -300,7 +304,8 @@ fn main() -> anyhow::Result<()> {
                 .zip(&release)
                 .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let mut replayed = audit(&path, ranges, seals, custody_config, (signer, domain), &verified)?;
+            let log = path.local()?;
+            let mut replayed = audit(log.path(), ranges, seals, custody_config, (signer, domain), &verified)?;
             if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;
                 for attested in &verified {
@@ -342,7 +347,12 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            engine_node::carry::check_replayed(&replayed.engine, &path, carry_source.as_deref())
+            let source = carry_source.as_ref().map(PublishedLog::local).transpose()?;
+            engine_node::carry::check_replayed(
+                &replayed.engine,
+                log.path(),
+                source.as_ref().map(|source| source.path()),
+            )
         }
         Cmd::Carry(args) => {
             init_logging("error")?;
@@ -356,7 +366,7 @@ fn main() -> anyhow::Result<()> {
                 (None, Some(deposit_id)) => ExitSubject::Deposit(deposit_id),
                 (None, None) => ExitSubject::House,
             };
-            let bundle = exit_bundle(&log, seq, subject)?;
+            let bundle = exit_bundle(log.local()?.path(), seq, subject)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }

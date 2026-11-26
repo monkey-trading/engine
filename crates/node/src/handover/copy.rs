@@ -118,9 +118,10 @@ pub(crate) async fn copy_start(
 }
 
 /// Fetches the predecessor's published log into this node's log directory before the handover
-/// connects: the completed segments the archive lists, checked against their listings. The final
-/// segments arrive with the keys instead — the archive serves only completed segments, and this
-/// fetches while the predecessor's API is still up. A transport failure is not fatal: a local copy
+/// connects: the completed segments the archive lists, from the bucket `[archive]` names first,
+/// checked against their listings. The final segments arrive with the keys instead — the archive
+/// serves only completed segments, and this fetches while the predecessor's API is still up. A
+/// transport failure is not fatal: a local copy
 /// from an earlier start may exist, and the strict tail checks at the handover decide; a fetched
 /// copy that fails its integrity checks or does not replay is fatal, surfacing a poisoned mirror
 /// before the predecessor stops. The copy replays from the daily snapshot `copy_start` gives under
@@ -135,8 +136,9 @@ pub(crate) async fn sync_predecessor_log(
     metrics: &crate::metrics::Metrics,
 ) -> anyhow::Result<()> {
     let section = cfg.tee.sealing.as_ref().and_then(|sealing| sealing.handover.as_ref());
-    let mut origins = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
-    origins.push(format!("https://{}", source.api_hostname));
+    let mut nodes = section.map(|handover| handover.mirrors.clone()).unwrap_or_default();
+    nodes.push(format!("https://{}", source.api_hostname));
+    let origins = crate::archive::Origins { bucket: crate::archive::Bucket::for_config(cfg)?, nodes };
     let client =
         crate::standby::archive::archive_client(section.is_some_and(|handover| handover.danger_accept_invalid_certs))?;
     let dir = cfg.node.log_dir.as_path();

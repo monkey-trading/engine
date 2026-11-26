@@ -23,8 +23,13 @@ mod finality;
 pub(crate) use finality::{Finality, same_root};
 mod range;
 pub(crate) use range::{RANGE_SEQS, checkpoint_root, log_prefix, range_bytes, range_key, whole_ranges};
+mod read;
+pub(crate) use read::{ArchiveOrigins, Bucket, Origins, Segments};
+pub use read::{LocalLog, PublishedLog};
+#[cfg(test)]
+pub(crate) use read::{download, origin};
 mod store;
-pub(crate) use store::{Created, Object, Store};
+pub(crate) use store::{Created, Object, Store, read_public};
 mod uploader;
 pub(crate) use uploader::{Sources, Uploader};
 

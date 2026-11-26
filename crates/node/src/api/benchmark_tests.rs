@@ -405,6 +405,7 @@ impl Node {
             status: Default::default(),
             collateral: None,
             listing: Default::default(),
+            archive_objects: None,
             operators: None,
             operator_hostname: None,
             signing: crate::test_support::signing(),

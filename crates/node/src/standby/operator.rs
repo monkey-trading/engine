@@ -11,6 +11,7 @@ use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
 use tracing::{error, info};
 
+use crate::archive::{Bucket, Origins};
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::{NodeConfig, StandbySection};
 
@@ -29,16 +30,19 @@ pub(crate) struct Followed {
     pub mirrors: Vec<String>,
     /// Accept the operator's self-signed or private-CA certificate: development only.
     pub danger_accept_invalid_certs: bool,
+    /// The archive's bucket the follower's own `[archive]` names, read before the mirrors and the origin.
+    pub bucket: Option<Bucket>,
 }
 
 impl Followed {
-    /// The operator `[standby]` names.
+    /// The operator `[standby]` names, its archive read with no bucket.
     pub(crate) fn from_standby(standby: &StandbySection) -> Self {
         Self {
             origin: standby.operator.clone(),
             enclave: standby.enclave,
             mirrors: standby.mirrors.clone(),
             danger_accept_invalid_certs: standby.danger_accept_invalid_certs,
+            bucket: None,
         }
     }
 
@@ -52,19 +56,27 @@ impl Followed {
     pub(crate) fn origins(&self) -> Vec<String> {
         self.mirrors.iter().cloned().chain(std::iter::once(self.origin.clone())).collect()
     }
+
+    /// Where a backfill reads the operator's archive: the bucket first, then `origins`.
+    pub(crate) fn archive(&self) -> Origins {
+        Origins { bucket: self.bucket.clone(), nodes: self.origins() }
+    }
 }
 
 /// The operator in effect: with `operator.rotation_enabled`, the registry's candidate in effect at
 /// `https://` its registered API hostname, with the vault's signer at the latest block and the archive
-/// settings of `[tee.sealing.handover]`; otherwise the one `[standby]` names.
+/// settings of `[tee.sealing.handover]`; otherwise the one `[standby]` names. Its archive is read from the
+/// bucket `[archive]` names first.
 /// Error cases:
 /// - rotation is off and there is no `[standby]`
 /// - the chain cannot be read, or the registry records no hostname for the operator in effect
+/// - the custody vault does not parse
 pub(crate) async fn resolve(cfg: &NodeConfig, vault: &impl CheckpointChain) -> anyhow::Result<Followed> {
+    let bucket = Bucket::for_config(cfg)?;
     if !cfg.operator.rotation_enabled {
         let standby =
             cfg.standby.as_ref().context("with rotation off, a follower follows the operator [standby] names")?;
-        return Ok(Followed::from_standby(standby));
+        return Ok(Followed { bucket, ..Followed::from_standby(standby) });
     }
     let hostname = vault.operator_hostname().await.context("reading the operator in effect's API hostname")?;
     ensure!(!hostname.is_empty(), "the registry records no API hostname for the operator in effect");
@@ -75,6 +87,7 @@ pub(crate) async fn resolve(cfg: &NodeConfig, vault: &impl CheckpointChain) -> a
         enclave,
         mirrors: handover.map(|handover| handover.mirrors.clone()).unwrap_or_default(),
         danger_accept_invalid_certs: handover.is_some_and(|handover| handover.danger_accept_invalid_certs),
+        bucket,
     })
 }
 

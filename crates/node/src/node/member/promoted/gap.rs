@@ -213,7 +213,7 @@ pub(super) async fn from_members(
     }
 }
 
-/// Takes what `operator`'s archive and its mirrors hold past the copy, or all of it for an empty copy:
+/// Takes what `operator`'s archive, its bucket and its mirrors hold past the copy, or all of it for an empty copy:
 /// every entry of the completed segments past its last entry, a segment at a time through the copy's seal
 /// chain as a handover's tail.
 /// Returns how many entries the copy took.
@@ -221,17 +221,12 @@ pub(super) async fn from_members(
 /// - the archive cannot be read, a segment differs from its listing or does not parse, or its entries
 ///   do not extend the copy
 async fn archive(follower: &mut Follower, operator: &crate::standby::Followed) -> anyhow::Result<u64> {
-    use crate::standby::archive::{archive_client, check_listing, fetch_archive_bytes, fetch_manifest};
-    let (archive, origins) = (archive_client(operator.danger_accept_invalid_certs)?, operator.origins());
-    let listings = fetch_manifest(&archive, &origins).await?;
+    let (archive, origins) =
+        (crate::standby::archive::archive_client(operator.danger_accept_invalid_certs)?, operator.archive());
+    let mut reader = crate::archive::Segments::new(&archive, &origins);
+    let listings = reader.manifest().await?;
     let segments: Vec<(u64, u64)> = listings.iter().map(|listed| (listed.first_seq, listed.last_seq)).collect();
-    take_segments(follower, &segments, async |index| {
-        let listed = &listings[index];
-        let bytes = fetch_archive_bytes(&archive, &origins, &listed.file, Some(listed)).await?;
-        check_listing(listed, &bytes)?;
-        Ok(bytes)
-    })
-    .await
+    take_segments(follower, &segments, async |index| reader.segment(&listings[index]).await).await
 }
 
 /// Takes the completed `segments` (first and last seq) past the copy's head, in order, one at a time, `bytes`

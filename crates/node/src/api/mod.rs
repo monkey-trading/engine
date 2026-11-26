@@ -164,6 +164,9 @@ pub struct ApiState {
     pub operator_hostname: Option<crate::handover::hostname::HostnameFeed>,
     /// The archive manifest listing proven so far, extended as segments complete.
     pub listing: Arc<tokio::sync::Mutex<Option<crate::log::catalog::CatalogListing>>>,
+    /// The bucket `[archive]` names, to whose objects the archive redirects a listed segment the host no longer
+    /// holds; `None` keeps every segment to the host.
+    pub(crate) archive_objects: Option<crate::archive::Bucket>,
     /// The emission period budget the configured minter's MONKEY cap was derived from, which an
     /// emission schedule must match; `None` when the node reads no minter, as without `[checkpoints]`.
     pub emission_budget: Option<TokenUnits>,

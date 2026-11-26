@@ -1,13 +1,32 @@
 //! The standby's archive reads: the cold-start bootstrap, the takeover's refresh, and the
-//! bounded, validated fetches behind both.
+//! bounded, validated fetches behind both. Each segment comes from the archive's bucket first, when the
+//! reader names one, then from the node origins (`archive::Segments`).
 
-use anyhow::{Context, ensure};
+use std::collections::BTreeSet;
+
+use anyhow::{Context, bail, ensure};
+use reqwest::header::LOCATION;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
-use super::{BODY_TIMEOUT, FETCH_TIMEOUT, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_LISTINGS, sha256};
+use super::{BODY_TIMEOUT, FETCH_TIMEOUT, sha256};
+use crate::archive::{ArchiveOrigins, Segments};
 use crate::log::MANIFEST;
-use crate::log::SegmentInfo;
+use crate::log::{Manifest, SegmentInfo};
+
+/// The most bytes of the archive's manifest a fetch reads: about seven million listings, or seventy years of
+/// launch flow in segments of 10,000 commands. The listings it holds take about as much memory as the node's
+/// own manifest does.
+const MAX_MANIFEST_BYTES: u64 = 1 << 30;
+
+/// What one archive origin served for a file.
+pub(crate) enum Fetched {
+    /// The file's bytes.
+    Bytes(Vec<u8>),
+    /// The origin no longer holds the segment, and redirected (`308`) to the bucket's object of the range that
+    /// holds its first seq.
+    Moved(reqwest::Url),
+}
 
 /// What the archive served failed its integrity checks: a file differs from its listing, or the
 /// listings are not canonical or not in order. Any other failure — an origin that is unreachable,
@@ -24,16 +43,18 @@ impl std::fmt::Display for ArchiveIntegrity {
 impl std::error::Error for ArchiveIntegrity {}
 
 /// A cold start: fetches the published manifest and every completed segment it lists into the
-/// empty copy, checking each file against its listing, and writes the manifest. A missing
-/// manifest (a fresh deployment) leaves the copy empty for the stream to fill from seq 0.
+/// empty copy, from the bucket first when `origins` names one (`Segments`), checking each file
+/// against its listing, and writes the manifest. A missing manifest (a fresh deployment) leaves the
+/// copy empty for the stream to fill from seq 0.
 /// Error cases:
 /// - a fetch fails, exceeds the bound, or a file differs from its listing
 pub(crate) async fn bootstrap_archive(
     archive: &reqwest::Client,
-    origins: &[String],
+    origins: &(impl ArchiveOrigins + ?Sized),
     dir: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let listings = match fetch_manifest(archive, origins).await {
+    let mut segments = Segments::new(archive, origins);
+    let listings = match segments.manifest().await {
         Ok(listings) => listings,
         Err(e) => match e.downcast::<reqwest::Error>() {
             Ok(reqwest) if reqwest.status() == Some(reqwest::StatusCode::NOT_FOUND) => return Ok(()),
@@ -44,8 +65,7 @@ pub(crate) async fn bootstrap_archive(
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let mut text = String::new();
     for listed in &listings {
-        let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
-        check_listing(listed, &bytes)?;
+        let bytes = segments.segment(listed).await?;
         // Stage under a name `SegmentedLog::open` ignores, then link into place: a crash leaves
         // either the old or the new whole file, never a torn one. Syncs make the adopted copy
         // durable: a confirmed handover must survive a VM stop, and the guest page cache is lost
@@ -64,22 +84,23 @@ pub(crate) async fn bootstrap_archive(
     Ok(())
 }
 
-/// Best-effort refresh of completed segments the copy lacks, run once a takeover is promoted:
-/// the checkpoint the vault accepted last may post after the stream last delivered. Existing
-/// files are never overwritten: a local file with the segment's name is this follower's own
-/// frame-verified bytes, which wins over anything an archive serves. New segments are staged and
-/// linked before the manifest gains their lines, and the manifest keeps its local lines, so a
-/// crash leaves at most unlisted trailing files, which open as the open segment. Each staged
-/// segment is linked only once `accept` passes it.
+/// Best-effort refresh of completed segments the copy lacks, run once a takeover is promoted, from the
+/// bucket first when `origins` names one: the checkpoint the vault accepted last may post after the
+/// stream last delivered. Existing files are never overwritten: a local file with the segment's name
+/// is this follower's own frame-verified bytes, which wins over anything an archive serves. New
+/// segments are staged and linked before the manifest gains their lines, and the manifest keeps its
+/// local lines, so a crash leaves at most unlisted trailing files, which open as the open segment.
+/// Each staged segment is linked only once `accept` passes it.
 /// Error cases:
 /// - a manifest line is invalid, a fetched file differs from its listing, or `accept` refuses one
 pub(crate) async fn refresh_archive(
     archive: &reqwest::Client,
-    origins: &[String],
+    origins: &(impl ArchiveOrigins + ?Sized),
     dir: &std::path::Path,
     mut accept: impl FnMut(&std::path::Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    let listings = fetch_manifest(archive, origins).await.context("fetching the published manifest")?;
+    let mut segments = Segments::new(archive, origins);
+    let listings = segments.manifest().await.context("fetching the published manifest")?;
     let manifest = std::fs::read_to_string(dir.join(MANIFEST)).unwrap_or_default();
     // The copy's own stream-fed tail wins: with an open (unlisted) segment holding entries, the
     // follower's segmentation may differ from the operator's, so no later listing can be
@@ -92,15 +113,15 @@ pub(crate) async fn refresh_archive(
         warn!("the copy has an unlisted tail; the archive refresh is skipped");
         return Ok(());
     }
+    let held: BTreeSet<String> = Manifest::load(dir)?.segments.iter().map(|listed| listed.file.clone()).collect();
     let mut text = manifest.clone();
     for listed in &listings {
         validate_listing(listed)?;
         let path = dir.join(&listed.file);
-        if path.exists() || text.contains(&listed.file) {
+        if path.exists() || held.contains(&listed.file) {
             continue;
         }
-        let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(listed)).await?;
-        check_listing(listed, &bytes)?;
+        let bytes = segments.segment(listed).await?;
         let staged = dir.join(format!("{}.staging", listed.file));
         write_synced(&staged, &bytes)?;
         if let Err(e) = accept(&staged) {
@@ -124,7 +145,7 @@ pub(crate) async fn refresh_archive(
 /// can never point a write outside the copy, and listings must be ordered and bounded.
 /// Error cases:
 /// - the name is not canonical (`ArchiveIntegrity`)
-pub(super) fn validate_listing(listed: &SegmentInfo) -> anyhow::Result<()> {
+pub(crate) fn validate_listing(listed: &SegmentInfo) -> anyhow::Result<()> {
     if crate::log::segment_seq(&listed.file) != Some(listed.first_seq) {
         return Err(ArchiveIntegrity(format!(
             "archive listing {:?} is not the canonical segment name for seq {}",
@@ -135,18 +156,38 @@ pub(super) fn validate_listing(listed: &SegmentInfo) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The archive's manifest: one segment listing a line, oldest first, validated before use.
+/// The archive's manifest, from the first node origin of `origins` that serves it whole: one segment listing a
+/// line, oldest first, validated before use, however many it lists within `MAX_MANIFEST_BYTES`.
 /// Error cases:
-/// - the fetch fails, a line is not a listing, or the listings are unbounded
+/// - the fetch fails, or a line is not a listing
 /// - a listing is not canonical, or the listings are unordered (`ArchiveIntegrity`)
-pub(crate) async fn fetch_manifest(archive: &reqwest::Client, origins: &[String]) -> anyhow::Result<Vec<SegmentInfo>> {
-    let bytes = fetch_archive_bytes(archive, origins, MANIFEST, None).await?;
+pub(crate) async fn fetch_manifest(
+    archive: &reqwest::Client,
+    origins: &(impl ArchiveOrigins + ?Sized),
+) -> anyhow::Result<Vec<SegmentInfo>> {
+    let mut last = None;
+    let mut bytes = None;
+    for origin in origins.nodes() {
+        match fetch_from(archive, origin, MANIFEST, MAX_MANIFEST_BYTES).await {
+            Ok(Fetched::Bytes(served)) => {
+                bytes = Some(served);
+                break;
+            }
+            Ok(Fetched::Moved(location)) => {
+                last = Some(anyhow::anyhow!("{origin} redirected its manifest to {location}"))
+            }
+            Err(e) => last = Some(e),
+        }
+    }
+    let Some(bytes) = bytes else {
+        return Err(last.unwrap_or_else(|| anyhow::anyhow!("no archive origin to read")))
+            .context("every archive origin failed");
+    };
     let listings: Vec<SegmentInfo> = bytes
         .split(|b| *b == b'\n')
         .filter(|line| !line.trim_ascii().is_empty())
         .map(|line| serde_json::from_slice(line).context("parsing a manifest line"))
         .collect::<anyhow::Result<_>>()?;
-    ensure!(listings.len() <= MAX_ARCHIVE_LISTINGS, "the archive lists too many segments");
     let mut previous = None;
     for listed in &listings {
         validate_listing(listed)?;
@@ -183,57 +224,38 @@ fn sync_dir(dir: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// One archive GET from the first mirror that answers, bounded in bytes and time end to end.
+/// One archive GET of `file` from `origin`, bounded to `bound` bytes and in time end to end: its bytes, or the
+/// bucket's object a `308` names.
 /// Error cases:
-/// - every origin fails, the body stalls past the deadline, or the body exceeds the bound
-pub(crate) async fn fetch_archive_bytes(
+/// - the request fails or times out, or the origin answers an error, or a `308` that names no URL
+/// - the body stalls past the deadline, or exceeds the bound
+pub(crate) async fn fetch_from(
     archive: &reqwest::Client,
-    origins: &[String],
+    origin: &str,
     file: &str,
-    listed: Option<&SegmentInfo>,
-) -> anyhow::Result<Vec<u8>> {
-    let mut last = None;
-    for origin in origins {
-        let url = format!("{}/v1/archive/{file}", origin.trim_end_matches('/'));
-        let fetched = timeout(FETCH_TIMEOUT, archive.get(&url).send())
-            .await
-            .context("archive fetch timed out")
-            .and_then(|sent| sent?.error_for_status().with_context(|| format!("fetching {url}")));
-        let mut response = match fetched {
-            Ok(response) => response,
-            Err(e) => {
-                last = Some(e);
-                continue;
-            }
-        };
-        let body = async {
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.context("reading the archive")? {
-                ensure!(
-                    bytes.len() as u64 + chunk.len() as u64 <= MAX_ARCHIVE_BYTES,
-                    "archive file {file} exceeds the bound"
-                );
-                bytes.extend_from_slice(&chunk);
-            }
-            anyhow::Ok(bytes)
-        };
-        match timeout(BODY_TIMEOUT, body).await {
-            Ok(Ok(bytes)) => {
-                if let Some(listed) = listed {
-                    // A bad mirror must not block the rest: its bytes are only adopted when
-                    // they match the listing.
-                    if let Err(e) = check_listing(listed, &bytes) {
-                        last = Some(e);
-                        continue;
-                    }
-                }
-                return Ok(bytes);
-            }
-            Ok(Err(e)) => last = Some(e),
-            Err(_) => last = Some(anyhow::anyhow!("reading {url} timed out")),
-        }
+    bound: u64,
+) -> anyhow::Result<Fetched> {
+    let url = format!("{}/v1/archive/{file}", origin.trim_end_matches('/'));
+    let response = timeout(FETCH_TIMEOUT, archive.get(&url).send()).await.context("archive fetch timed out")??;
+    if response.status() == reqwest::StatusCode::PERMANENT_REDIRECT {
+        let location = response.headers().get(LOCATION).and_then(|location| location.to_str().ok());
+        let location = location.with_context(|| format!("{url} answered 308 with no Location"))?;
+        let target = response.url().join(location).with_context(|| format!("{url} redirected to {location:?}"))?;
+        return Ok(Fetched::Moved(target));
     }
-    Err(last.expect("at least one archive origin")).context("every archive origin failed")
+    let mut response = response.error_for_status().with_context(|| format!("fetching {url}"))?;
+    let body = async {
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.context("reading the archive")? {
+            ensure!(bytes.len() as u64 + chunk.len() as u64 <= bound, "archive file {file} exceeds the bound");
+            bytes.extend_from_slice(&chunk);
+        }
+        anyhow::Ok(bytes)
+    };
+    match timeout(BODY_TIMEOUT, body).await {
+        Ok(bytes) => bytes.map(Fetched::Bytes),
+        Err(_) => bail!("reading {url} timed out"),
+    }
 }
 
 /// The TLS client config for archive fetches: public roots, or no verification when the config

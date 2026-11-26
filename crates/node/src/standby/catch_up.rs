@@ -1,18 +1,19 @@
 //! A follower's catch-up from the archive. An operator that started from a daily snapshot serves its signed stream
 //! only from after the snapshot's checkpoint (`log::Manifest::verified_from`), so a member or standby whose copy
 //! trails it is refused a stream from its head (`BeforeServed`). It then fetches the completed segments the first
-//! archive origin that lists any past its head lists, through the readers a cold start uses (`archive::fetch_manifest`,
-//! `archive::fetch_archive_bytes`, each segment checked against its listing), takes each entry after the head as a
-//! stream's entry is taken, its seal and link checked against the copy (`Chain::check`) before the copy appends it,
-//! and resumes the stream from its new head.
+//! archive origin that lists any past its head lists, through the readers a cold start uses (`archive::fetch_manifest`
+//! and `crate::archive::Segments`, the bucket first, each segment checked against its listing), takes each entry after
+//! the head as a stream's entry is taken, its seal and link checked against the copy (`Chain::check`) before the copy
+//! appends it, and resumes the stream from its new head.
 
 use std::collections::BTreeSet;
 
 use anyhow::Context;
 use engine_core::types::AccountId;
 
+use crate::archive::{ArchiveOrigins, Origins, Segments};
 use crate::log::{CheckpointDomain, LogEntry, LogWriter, Offset, offset_of};
-use crate::standby::archive::{fetch_archive_bytes, fetch_manifest, validate_listing};
+use crate::standby::archive::{fetch_manifest, validate_listing};
 use crate::standby::chain::{Chain, Step};
 
 /// Marks a stream the operator refused because the copy resumes before the first seq its start verified, with the
@@ -36,8 +37,9 @@ pub(crate) fn before_served(error: &anyhow::Error) -> bool {
 
 /// Hands `take`, segment by segment, the entries the completed segments listed past `head`, the copy's last entry,
 /// hold after it, as JSON lines with the offset they follow, from the first of `origins` whose manifest lists one, so
-/// a mirror that stopped at or before the copy's head gives way to the next; each segment is fetched from that origin
-/// and checked against its listing as a cold start's backfill fetches it; `take` checks and appends them and gives
+/// a mirror that stopped at or before the copy's head gives way to the next; each segment is fetched from the bucket
+/// `origins` names, when it names one, or that origin, and checked against its listing as a cold start's backfill
+/// fetches it; `take` checks and appends them and gives
 /// the copy's new head. The copy's head once every listed segment is taken.
 /// Error cases:
 /// - no origin's manifest can be fetched, a listing is not canonical, a segment differs from its listing, or a line
@@ -46,7 +48,7 @@ pub(crate) fn before_served(error: &anyhow::Error) -> bool {
 /// - no origin lists anything past the copy's head, so the stream would be refused again
 pub(crate) async fn catch_up(
     archive: &reqwest::Client,
-    origins: &[String],
+    origins: &(impl ArchiveOrigins + ?Sized),
     mut head: Option<Offset>,
     mut take: impl FnMut(Option<Offset>, &[u8]) -> anyhow::Result<Option<Offset>>,
 ) -> anyhow::Result<Option<Offset>> {
@@ -54,7 +56,7 @@ pub(crate) async fn catch_up(
     let past = |listed: &crate::log::SegmentInfo| from.is_none_or(|from| listed.last_seq > from.seq);
     let mut failed = None;
     let mut found = None;
-    for origin in origins {
+    for origin in origins.nodes() {
         let origin = std::slice::from_ref(origin);
         match fetch_manifest(archive, origin).await {
             Ok(listings) if listings.iter().any(past) => {
@@ -71,9 +73,11 @@ pub(crate) async fn catch_up(
             None => anyhow::anyhow!("the archive lists nothing past the copy's head, {from:?}"),
         });
     };
+    let reading = Origins { bucket: origins.bucket().cloned(), nodes: origin.to_vec() };
+    let mut segments = Segments::new(archive, &reading);
     for listed in listings.iter().filter(|listed| from.is_none_or(|from| listed.last_seq >= from.seq)) {
         validate_listing(listed)?;
-        let bytes = fetch_archive_bytes(archive, origin, &listed.file, Some(listed)).await?;
+        let bytes = segments.segment(listed).await?;
         let (mut at, mut after) = (None, Vec::new());
         for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).context("an archive line is not a log entry")?;

@@ -274,6 +274,21 @@ Replay prints `verified: <n> commands, <n> checkpoints, final root 0x…`, follo
 signed the checkpoints. With `--attestation`, replay also requires every checkpoint to be signed by
 a key that a verified attestation names.
 
+A running server publishes its log's archive, so the whole log can be replayed from its URL. The
+server keeps recent segments of the log on its host, and the archive's bucket keeps all of it.
+Replay downloads the completed segments that the server's manifest lists. Once the server points it
+to the bucket for a segment that the server no longer holds, replay reads each later segment from
+the bucket first and from the server when the bucket lacks it. It checks every segment against its
+manifest line before it replays the log:
+
+```shell
+cargo run -p engine-node -- replay --log https://<server>
+```
+
+The server's TLS certificate must be one a public certificate authority issued, as a server with
+`[api.tls.acme]` has. The download goes to the system's temporary directory, which `TMPDIR` sets, and
+needs room for the whole log. `engine exit-proof --log` and `engine carry --log` take the same URL.
+
 **The enclave.** The attestation shows which code holds the signing key.
 
 ```shell

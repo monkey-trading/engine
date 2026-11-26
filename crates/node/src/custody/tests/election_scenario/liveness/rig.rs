@@ -189,8 +189,13 @@ impl Rig {
         for member in members.iter().enumerate().filter(|(i, _)| *i != operator).map(|(_, m)| m) {
             let (copy, enclave, cfg, following) =
                 (member.copy.clone(), AccountId(signing.address()), cfg.clone(), following.0.clone());
-            let followed =
-                Followed { origin: origin.clone(), enclave, mirrors: Vec::new(), danger_accept_invalid_certs: false };
+            let followed = Followed {
+                origin: origin.clone(),
+                enclave,
+                mirrors: Vec::new(),
+                danger_accept_invalid_certs: false,
+                bucket: None,
+            };
             // The directory is made here, on the test's thread, which owns its removal; one per follower.
             static FOLLOWERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let dir = crate::test_support::scratch_dir(&format!(
