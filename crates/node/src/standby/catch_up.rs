@@ -96,9 +96,10 @@ pub(crate) async fn catch_up(
 }
 
 /// Appends to a standby's copy, open in `writer` with its chain `copied`, the entries `bytes` holds after the copy's
-/// entry at `after`, each checked as a stream's entry is (`Chain::check`) and, as no frame signature vouches for an
-/// archive's bytes, each checkpoint and withdrawal entry signed by one of `signers`, the vault's recorded signers, in
-/// `domain`, before any is appended; syncs the copy and gives its new head.
+/// entry at `after`, each checked as a stream's entry is (`Chain::check`), every one of `signers`, the vault's recorded
+/// signers, admitted to seal them, and, as no frame signature vouches for an archive's bytes, each checkpoint and
+/// withdrawal entry signed by one of `signers` in `domain`, before any is appended; syncs the copy and gives its new
+/// head.
 /// Error cases:
 /// - a line does not parse, an entry does not extend the copy (a `Rollback`), a checkpoint or withdrawal entry is not
 ///   signed by one of `signers`, or the copy cannot be written or synced
@@ -120,6 +121,9 @@ pub(super) fn take_into(
     if let Some(after) = after {
         copied.begin_after(after);
     }
+    // A signer the copy holds no checkpoint from may seal what the archive holds: a key a promotion moved to seals
+    // commands before its first checkpoint.
+    signers.iter().for_each(|signer| copied.admit(*signer));
     for (offset, entry) in entries {
         if let Step::Extends(link) = copied.check(offset, &entry)? {
             writer.append(&entry).context("appending an archive entry to the copy")?;
