@@ -35,7 +35,7 @@ use alloy::primitives::utils::format_ether;
 use alloy::primitives::{Address, B256, U64, U256};
 use alloy::rpc::client::RpcClient;
 use alloy::rpc::types::TransactionRequest;
-use alloy::sol_types::SolCall;
+use alloy::sol_types::{SolCall, SolError};
 use alloy::transports::http::reqwest::redirect::Policy;
 use alloy::transports::http::reqwest::{Certificate, Client};
 use anyhow::Context as _;
@@ -44,7 +44,9 @@ use tokio::time::{MissedTickBehavior, interval, interval_at, timeout};
 use tracing::{debug, info, warn};
 
 use crate::config::{CheckpointSection, LivenessSection, redact};
-use crate::liveness::chain::{LivenessDomain, View, promoteCall, skipCall, view, witnessCall};
+use crate::liveness::chain::{
+    KeyHolderUnknown, LivenessDomain, View, head_release, promoteCall, skipCall, view, witnessCall,
+};
 use crate::liveness::fallback::{Account, Sends};
 use crate::liveness::link::Copy;
 use crate::liveness::read_every;
@@ -67,12 +69,31 @@ pub(crate) enum Call {
     Relay(Box<SignedHead>),
 }
 
+/// A skip or promotion the schedule refused with `KeyHolderUnknown`: the newest head's release belongs to no
+/// candidate, so neither can pass until a member takes the keys or the release is bound to its candidate.
+#[derive(Debug)]
+pub(crate) struct KeyHolderRefused;
+
+impl std::fmt::Display for KeyHolderRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the schedule refused the call: the newest head's release belongs to no candidate")
+    }
+}
+
+impl std::error::Error for KeyHolderRefused {}
+
+/// Whether the revert in `error`, as the endpoint reports it, carries `KeyHolderUnknown`'s selector.
+fn names_unknown_key_holder(error: &str) -> bool {
+    error.to_ascii_lowercase().contains(&alloy::hex::encode(KeyHolderUnknown::SELECTOR))
+}
+
 /// How the caller sends: estimated first, then sent from its own account.
 pub(crate) trait Sending: Send + Sync {
     /// Sends `data` to `to` once its estimate succeeds, returning the transaction hash, or `None` when
     /// the estimate shows the chain would refuse it.
     /// Error cases:
     /// - the send fails or outruns its bound
+    /// - the estimate reverts with `KeyHolderUnknown` (`KeyHolderRefused`)
     fn send(&self, to: Address, data: Vec<u8>) -> impl Future<Output = anyhow::Result<Option<B256>>> + Send;
 
     /// The caller's balance, in wei.
@@ -159,6 +180,7 @@ impl Sending for Endpoint {
         let estimate: U64 = match self.deadline(self.client.request("eth_estimateGas", (tx.clone(),))).await {
             Ok(estimate) => estimate,
             // Only a revert is the chain refusing the call; a transport or endpoint failure is not.
+            Err(e) if names_unknown_key_holder(&format!("{e:#}")) => return Err(KeyHolderRefused.into()),
             Err(e) if format!("{e:#}").to_ascii_lowercase().contains("revert") => {
                 debug!("the call would be refused: {e:#}");
                 return Ok(None);
@@ -182,7 +204,7 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
     pub(crate) async fn run(self) -> anyhow::Result<()> {
         let mut poll = interval(self.poll.min(UNREAD_EVERY));
         poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let (mut read_failed, mut failing) = (false, false);
+        let (mut read_failed, mut failing, mut unowned) = (false, false, false);
         // When the last read's head turns stale for a relay, and that read's block time: a head the stream
         // brings from then on is read for at once, by the later of that block time and the clock.
         let mut stale_at: Option<(u64, u64)> = None;
@@ -248,9 +270,13 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
                 ?decided,
                 "the liveness caller read the chain"
             );
+            if unowned && !decided.iter().any(|call| matches!(call, Call::Skip | Call::Promote)) {
+                unowned = false;
+                info!(alert_resolved = "liveness_key_holder_unknown", "no skip or promotion is due");
+            }
             for call in decided {
                 let mut account = self.sends.lock().await;
-                self.send(&call, (&mut account.unfunded, &mut failing)).await;
+                self.send(&call, view.epoch, (&mut account.unfunded, &mut failing, &mut unowned)).await;
             }
             // An unreadable balance is part of the `liveness_caller_send_failed` episode.
             if let Err(e) = check_balance(&self.sending, self.min_balance, &mut *self.sends.lock().await).await
@@ -263,8 +289,9 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
 
     /// Sends `call`, logging what happened: a send that fails for funds pages `liveness_caller_unfunded`,
     /// and any other failure `liveness_caller_send_failed`, once per episode, which a call the endpoint
-    /// estimates resolves.
-    async fn send(&self, call: &Call, (unfunded, failing): (&mut bool, &mut bool)) {
+    /// estimates resolves. A skip or promotion refused with `KeyHolderUnknown` pages
+    /// `liveness_key_holder_unknown` for `epoch`'s newest head's release, until one is not refused.
+    async fn send(&self, call: &Call, epoch: u64, (unfunded, failing, unowned): (&mut bool, &mut bool, &mut bool)) {
         let (to, data) = match call {
             Call::Witness => (self.domain.standby.schedule, witnessCall {}.abi_encode()),
             Call::Promote => (self.domain.standby.schedule, promoteCall {}.abi_encode()),
@@ -278,6 +305,25 @@ impl<C: StandbyChain, S: Sending> Caller<C, S> {
             },
         };
         let sent = self.sending.send(to, data).await;
+        let schedule_call = matches!(call, Call::Skip | Call::Promote);
+        if sent.as_ref().is_err_and(|e| e.is::<KeyHolderRefused>()) {
+            if schedule_call && !std::mem::replace(unowned, true) {
+                let release = match self.chain.latest().await {
+                    Ok(block) => head_release(&block, &self.domain, epoch).await,
+                    Err(e) => Err(e),
+                };
+                let release = release.map_or_else(|e| format!("(unreadable: {e:#})"), |release| release.to_string());
+                warn!(
+                    alert = "liveness_key_holder_unknown",
+                    "the schedule refuses {call:?}: the newest head's release {release} belongs to no candidate, so no \
+                     skip or promotion can pass until a member takes the keys or the timelock binds the release"
+                );
+            }
+            return;
+        }
+        if schedule_call && sent.is_ok() && std::mem::take(unowned) {
+            info!(alert_resolved = "liveness_key_holder_unknown", "the schedule no longer refuses {call:?}");
+        }
         if sent.is_ok() && std::mem::take(failing) {
             info!(alert_resolved = "liveness_caller_send_failed", "the liveness caller's endpoint answers again");
         }
