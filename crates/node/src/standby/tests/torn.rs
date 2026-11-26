@@ -54,4 +54,6 @@ async fn a_copy_opens_from_its_last_checkpoint_past_a_damaged_earlier_segment() 
     let (_, copied) = open_copy(&dir, 2, Chain::new(DOMAIN, enclave())).unwrap();
     assert_eq!(copied.head(), whole.head(), "the copy's head");
     assert_eq!(copied.resume_seq(), whole.resume_seq(), "where the stream resumes");
+    assert_ne!(copied.link(), engine_core::eip712::B256::default(), "the link is the last checkpoint's");
+    assert_eq!(copied.link(), whole.link(), "the link the next streamed entry is checked against");
 }
