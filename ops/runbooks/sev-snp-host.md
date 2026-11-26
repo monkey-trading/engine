@@ -118,7 +118,7 @@ a development machine at 100,000 accounts on the launch book.
 | --- | --- | --- | --- |
 | vCPUs | 4 | 12 of the host's 48 threads | The guest shape that `measurement.json` measures. Under ten times launch flow the load test's process, which also holds the price stand-ins and the screening source, peaked at 4.6 cores. |
 | Memory | 16 GiB (proposed) | 48 GiB | The launch bar asks for four times the trading server's resident memory. That memory is 1.2 GiB for the trading server and its stats worker's copy, and 2.6 GB to 3.6 GB for the load test's whole process. |
-| Disk | See [Plan each store's capacity](#plan-each-stores-capacity) | | The soak's measured growth of each store. The history index keeps 30 days of account events, at most about 97 GB at launch flow. |
+| Disk | See [Plan each store's capacity](#plan-each-stores-capacity) | | The soak's measured growth of each store, and for the history index a recorded log's. The history index keeps 30 days of account events, about 85 GB to 97 GB projected at launch flow. |
 
 The memory figure is not covered by the launch measurement, so a guest's memory can change without a
 new release. The vCPU count is covered by it, so a different count is a new image. The 192 GB
@@ -129,14 +129,15 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 ## Plan each store's capacity
 
 The trading server keeps six stores on disk, and its log's archive in a bucket. This section sizes each from
-the soak's measurements, says what the server alerts on, and says what can and cannot be relied on in the
-figures it reports. **The log grows without a bound. The history index keeps 30 days of account events, and
-with `[archive]` the host keeps 30 days of daily snapshots; each is bounded by its window.** Until the log has a
-bound, plan a node that must run for months on these figures.
+the soak's measurements and, for the history index, a recorded log's, says what the server alerts on, and says
+what can and cannot be relied on in the figures it reports. **The log grows without a bound. The history index
+keeps 30 days of account events, and with `[archive]` the host keeps 30 days of daily snapshots; each is bounded
+by its window.** Until the log has a bound, plan a node that must run for months on these figures.
 
 ### What each store grows by
 
-The figures come from the soak at ten times launch flow, at 10,000 accounts and about 263 commands a second.
+The figures, but for the history index's, come from the soak at ten times launch flow, at 10,000 accounts and
+about 263 commands a second.
 Launch flow's daily log of 5.7 GB, which the sizing above gives, is about 7.5
 million commands a day at the soak's 715 to 800 bytes a command, or about 87 a second: the price commands
 are the same at every multiple, so ten times launch flow's trading is about three times its commands. The
@@ -212,14 +213,16 @@ same at both.
 
 The production release configurations leave `[snapshots]` out while rotation is on, so a node at launch runs
 the index without it. The authenticated index's figure held from 0.1 GB to 1 GB of index on a development
-machine; its upper figure allows for the eighth of the file's pages that collection leaves free for later
-writes. The other index's figure held as it reached 545,000 events and then stayed level while it dropped
+machine, before expiry removed any event; its upper figure allows for the eighth of the file's pages that
+collection leaves free for later writes. The other index's figure held as it reached 545,000 events and then stayed level while it dropped
 events past its retention. The rollover's rows are taken to cost what a trading event does. Both 30-day
 figures are projections from those costs: neither index has been run at that size. Collection also keeps the
 versions the two newest recovery caches pin, a few minutes of writes, which these figures leave out.
 
 A shorter `history.retention` lowers the bound in proportion. A release sets it, and a node whose index was
-built under another retention discards the index and rebuilds it from the log on its first start.
+built under another retention discards the index and rebuilds it from the log on its first start. Under
+`[snapshots]` the old index stays on the drive until the recovery caches that name it are pruned, so the
+rebuild needs room for a second index.
 
 ### The daily snapshots' bound
 

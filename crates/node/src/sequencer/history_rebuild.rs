@@ -127,9 +127,9 @@ impl<'a> Rederive<'a> {
 
 /// Rebuilds the index from every command the log in `dir` holds, read through `view`, the first pass's actual
 /// byte commitments, never a newly loaded unsigned manifest, each with its derived rows (`Rederive`), which are
-/// written to `rows`. The entries `expected` fingerprints, every one or those after a daily snapshot's checkpoint
-/// the first pass started from, must be the ones it replayed; the commands before them are bound by the index's
-/// command prefix, which the caller compares with the replay's (`ReplayedLog::verify_history_tip`).
+/// written to `rows`. The entries `expected` fingerprints, every one, must be the ones it replayed; the index's
+/// command prefix, which the caller compares with the replay's (`ReplayedLog::verify_history_tip`), binds the
+/// commands.
 /// Error cases:
 /// - checked rereading, a command's rows (`Rederive::rows`), exact history updates or the fingerprint comparison
 ///   fails
@@ -141,13 +141,11 @@ pub(crate) fn rebuild_history_view(
     index: &mut Index,
 ) -> Result<()> {
     let mut reader = LogReader::open(dir, Offset::start_of(0), tokio::sync::watch::channel(view).1)?;
-    let mut fingerprint = Fingerprinter::after(expected.after);
+    let mut fingerprint = Fingerprinter::new();
     let (mut derive, running) = (Rederive::new(dir, rows), AtomicBool::new(false));
     let mut batch = Vec::with_capacity(REBUILD_BATCH);
-    while let Some((offset, entry)) = reader.next_entry()? {
-        if expected.after.is_none_or(|after| offset > after) {
-            fingerprint.observe(&entry)?;
-        }
+    while let Some((_, entry)) = reader.next_entry()? {
+        fingerprint.observe(&entry)?;
         if let LogEntry::Command(command) = entry {
             let derived = derive.rows(&command, &running)?;
             batch.push(Taken { command, derived });
