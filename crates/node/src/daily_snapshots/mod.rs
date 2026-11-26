@@ -7,9 +7,18 @@
 //! `sequencer::replay::ranges`). The node's enclave key signs each snapshot over that digest (`signature`),
 //! which a member that starts its replica from one requires, since nothing before it is replayed. Each is
 //! `<seq>-<index>.json` after its checkpoint's offset in the log, as recovery caches are named, and
-//! `manifest.jsonl` lists one line per snapshot.
+//! `manifest.jsonl` lists one line per snapshot. With `[archive]`, each goes to the bucket as it is published, and
+//! the host keeps its copy for `local_window` (`upload`); the manifest lists it still, and a reader of one the host
+//! no longer holds reads it from the bucket.
 
+mod bucket;
+pub(crate) use bucket::{SnapshotBucket, snapshots_prefix};
 mod fetch;
+pub(crate) use fetch::{Takes, canonical, download, manifest};
+mod published;
+#[cfg(test)]
+pub(crate) use published::tests::serve as serve_snapshots;
+pub use published::{LocalSnapshots, PublishedSnapshots};
 mod history;
 pub(crate) use history::{History, Pending};
 mod signature;
@@ -17,7 +26,9 @@ pub(crate) use signature::{Covered, Signed, Signing, open_signed, sha256};
 mod start;
 #[cfg(test)]
 pub(crate) use start::snapshot_start;
-pub(crate) use start::{AcceptedRoots, Bounds, NoRoots, entry_at, snapshot_start_against};
+pub(crate) use start::{AcceptedRoots, Bounds, Fetching, NoRoots, entry_at, snapshot_start_against};
+mod upload;
+pub(crate) use upload::SnapshotUploader;
 mod vault;
 pub(crate) use vault::{VaultRoots, accepted_signers, anchor_signer};
 mod writer;
@@ -279,6 +290,29 @@ pub(crate) fn state_digest(engine: &Engine) -> anyhow::Result<[u8; 32]> {
     serde_json::to_writer(&mut hashed, engine).context("encoding the engine")?;
     let hashed = hashed.into_inner().map_err(|e| e.into_error()).context("hashing the engine's encoding")?;
     Ok(hashed.hash.finalize().into())
+}
+
+/// Publishes into `dir` a snapshot of an engine that applied ticks up to `seq`, the last stamped `ts`, signed with the
+/// published mock key and carrying nothing: for a test of a read that checks only its bytes.
+#[cfg(test)]
+pub(crate) fn publish_ticks(dir: &Path, seq: u64, ts: Millis) -> Listed {
+    use engine_core::command::{Command, Sequenced};
+    let mut engine = Engine::default();
+    for seq in 0..=seq {
+        engine.apply(&Sequenced { seq, ts, cmd: Command::Tick }).expect("a tick applies");
+    }
+    let checkpoint = Checkpoint {
+        parent: None,
+        seq,
+        root: format!("0x{}", hex::encode(engine.state_root())),
+        signature: String::new(),
+        signer: format!("0x{}", hex::encode([1; 20])),
+        domain: None,
+        deferred_withdrawals: false,
+    };
+    let engine = crate::snapshot::sealing::Encoding::Encoded(serde_json::to_string(&engine).expect("it encodes"));
+    let job = Job::bare(Offset { seq, index: 1 }, checkpoint, ts, engine, Signing::for_tests());
+    publish_now(dir, job).expect("the snapshot publishes")
 }
 
 /// No replay state and no history anchors, as a daily snapshot carries them: for a test of the writer or of a read

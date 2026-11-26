@@ -1,7 +1,7 @@
 //! A member's snapshot start against the roots the vault accepted.
 
 use super::*;
-use crate::daily_snapshots::{AcceptedRoots, snapshot_start_against};
+use crate::daily_snapshots::{AcceptedRoots, Fetching, snapshot_start_against};
 
 /// A snapshot whose checkpoint the vault accepted another root at is an orphan fork's: it is refused before it is
 /// fetched, paged, and the older one taken. One at the root the vault accepted there is taken.
@@ -21,7 +21,7 @@ async fn a_snapshot_at_a_seq_the_vault_accepted_another_root_at_is_refused_befor
         let member = scratch_dir(&format!("build-snapshot-vault-root-{}", case.replace(' ', "-")));
         let roots = Roots([(newer, root)].into());
         let bounds = crate::daily_snapshots::Bounds { finalized: u64::MAX, before: None, keep_from: None };
-        let fetching = Some((&client, origins.as_slice()));
+        let fetching = Some(Fetching { client: &client, origins: &origins, bucket: None });
         let signed = snapshot_start_against(fetching, (&member, &dir), (DOMAIN, &signers), bounds, &roots).await;
         assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(taken), "{case}");
         if taken == older {
@@ -50,7 +50,7 @@ async fn a_snapshot_another_recorded_key_signed_is_refused_before_it_is_fetched(
         let member = scratch_dir(&format!("build-snapshot-vault-signer-{}", case.replace(' ', "-")));
         let roots = Signers([(newer, named)].into());
         let bounds = crate::daily_snapshots::Bounds { finalized: u64::MAX, before: None, keep_from: None };
-        let fetching = Some((&client, origins.as_slice()));
+        let fetching = Some(Fetching { client: &client, origins: &origins, bucket: None });
         let signed = snapshot_start_against(fetching, (&member, &dir), (DOMAIN, &signers), bounds, &roots).await;
         assert_eq!(signed.map(|signed| signed.snapshot.offset.seq), Some(taken), "{case}");
         if taken == older {

@@ -3,13 +3,16 @@
 use std::fs;
 use std::sync::Arc;
 
+use axum::body::to_bytes;
+use axum::extract::{Path as FilePath, State};
+use axum::http::header::LOCATION;
 use engine_core::Engine;
 use engine_core::command::{Command, Sequenced};
 use tokio::sync::Semaphore;
 
-use crate::api::ServedSnapshots;
 use crate::api::tests::{api_state, get, serve_state};
-use crate::daily_snapshots::{Job, MANIFEST, Signing, publish_now};
+use crate::api::{ApiError, ServedSnapshots};
+use crate::daily_snapshots::{Job, MANIFEST, Signing, SnapshotBucket, publish_now, publish_ticks};
 use crate::log::{Checkpoint, Offset};
 use crate::snapshot::sealing::Encoding;
 use crate::test_support::scratch_dir;
@@ -23,7 +26,7 @@ async fn the_archive_serves_the_daily_snapshots_it_lists_as_written() {
     let (mut state, _requests) = api_state(true);
     let unpublished = serve_state(state.clone()).await;
     assert_eq!(get(unpublished, &format!("/v1/archive/snapshots/{MANIFEST}")).await.0, 404);
-    state.daily_snapshots = Some(Arc::new(ServedSnapshots::new(dir.clone())));
+    state.daily_snapshots = Some(Arc::new(ServedSnapshots::new(dir.clone(), None)));
     // A snapshot's read takes none of the stream's backfills.
     state.backfills = Arc::new(Semaphore::new(0));
     let addr = serve_state(state).await;
@@ -44,6 +47,62 @@ async fn the_archive_serves_the_daily_snapshots_it_lists_as_written() {
     damaged[10] ^= 1;
     fs::write(dir.join(&listing.file), damaged).unwrap();
     assert_eq!(get(addr, &format!("/v1/archive/snapshots/{}", listing.file)).await.0, 500);
+}
+
+/// A listed snapshot the host no longer holds is redirected (`308`) to its object in the bucket, relaying none of it,
+/// while one it holds is served from the handle its check read; a node that names no bucket answers 500 for it, and
+/// a name the manifest does not list is not redirected.
+#[tokio::test]
+async fn a_listed_snapshot_the_host_no_longer_holds_redirects_to_its_object() {
+    let dir = scratch_dir("archive-daily-moved");
+    let (gone, held) = (publish_ticks(&dir, 3, 1_000), publish_ticks(&dir, 5, 2_000));
+    fs::remove_file(dir.join(&gone.file)).unwrap();
+    let ask = |moved: Option<SnapshotBucket>, file: String| {
+        let (mut state, _requests) = api_state(true);
+        state.daily_snapshots = Some(Arc::new(ServedSnapshots::new(dir.clone(), moved)));
+        crate::api::archive::snapshot(State(state), FilePath(file))
+    };
+    assert!(matches!(ask(None, gone.file.clone()).await, Err(ApiError::Internal)), "no bucket keeps it");
+    let bucket = SnapshotBucket::new(&"https://archive.example".parse().unwrap(), "snapshots/31337/0x00/").unwrap();
+    let moved = ask(Some(bucket.clone()), gone.file.clone()).await.expect("a redirect");
+    assert_eq!(moved.status(), 308);
+    assert_eq!(moved.headers()[LOCATION], bucket.object(&gone.file).unwrap().as_str());
+    assert!(to_bytes(moved.into_body(), usize::MAX).await.unwrap().is_empty(), "nothing relayed");
+    let served = ask(Some(bucket.clone()), held.file.clone()).await.expect("a held snapshot");
+    assert_eq!(to_bytes(served.into_body(), usize::MAX).await.unwrap(), fs::read(dir.join(&held.file)).unwrap());
+    let unlisted = "00000000000000000009-0000000001.json".to_owned();
+    assert!(matches!(ask(Some(bucket), unlisted).await, Err(ApiError::NotFound)), "an unlisted name");
+}
+
+/// The node's archive serves the snapshots `[daily_snapshots]` names, and with `[archive]` redirects one the host no
+/// longer holds to its object under the custody chain and vault; without `[archive]` it redirects none.
+#[tokio::test]
+async fn the_node_redirects_its_snapshots_to_the_bucket_its_archive_names() {
+    let mut cfg = crate::test_support::dev_config();
+    assert!(ServedSnapshots::for_config(&cfg).unwrap().is_none(), "no section");
+    let dir = scratch_dir("archive-daily-config");
+    let gone = publish_ticks(&dir, 3, 1_000);
+    fs::remove_file(dir.join(&gone.file)).unwrap();
+    cfg.daily_snapshots = Some(crate::config::DailySnapshotsSection::at(dir));
+    let ask = |served: Arc<ServedSnapshots>| {
+        let (mut state, _requests) = api_state(true);
+        state.daily_snapshots = Some(served);
+        crate::api::archive::snapshot(State(state), FilePath(gone.file.clone()))
+    };
+    let unarchived = ServedSnapshots::for_config(&cfg).unwrap().expect("the section");
+    assert!(matches!(ask(unarchived).await, Err(ApiError::Internal)), "no bucket keeps it");
+    cfg.archive = Some(
+        toml::from_str(
+            "endpoint = 'https://account.r2.cloudflarestorage.com'\nbucket = 'engine-log'\nregion = 'auto'\n\
+             public_url = 'https://archive.example.com'\naccess_key_id_secret = 'archive_access_key_id'\n\
+             secret_access_key_secret = 'archive_secret_access_key'\n",
+        )
+        .unwrap(),
+    );
+    let moved = ask(ServedSnapshots::for_config(&cfg).unwrap().expect("the section")).await.expect("a redirect");
+    let vault = cfg.custody.vault.to_lowercase();
+    let object = format!("https://archive.example.com/snapshots/{}/{vault}/{}", cfg.custody.chain_id, gone.file);
+    assert_eq!((moved.status().as_u16(), moved.headers()[LOCATION].to_str().unwrap()), (308, object.as_str()));
 }
 
 // ── Helpers ──

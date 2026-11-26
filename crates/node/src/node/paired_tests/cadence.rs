@@ -288,7 +288,7 @@ async fn a_node_without_a_stats_worker_encodes_its_caches_itself() {
     let (mut cfg, reader) = node.stop().await;
     drop(reader);
     let root = cfg.node.log_dir.parent().unwrap().to_owned();
-    cfg.daily_snapshots = Some(crate::config::DailySnapshotsSection { dir: root.join("daily") });
+    cfg.daily_snapshots = Some(crate::config::DailySnapshotsSection::at(root.join("daily")));
     let (_guard, mut alerts) = crate::test_support::capture_alerts();
     let (log, plan) = crate::node::tests::read_log_and_history_observe(&cfg, None, |_| {}).await.unwrap();
     let rejected = std::iter::from_fn(|| alerts.try_recv().ok()).filter(|alert| alert["alert"] == "snapshot_rejected");

@@ -6,8 +6,9 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, IF_NONE_MATCH};
-use reqwest::{Client, StatusCode, Url, redirect};
+use reqwest::{Body, Client, RequestBuilder, StatusCode, Url, redirect};
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
+use sha2::{Digest, Sha256};
 
 use crate::config::{ArchiveSection, SecretValue};
 
@@ -36,6 +37,25 @@ pub(crate) enum Object {
     /// The object's bytes.
     Read(Vec<u8>),
     /// The object is longer than the reader's bound, and was not read past it.
+    Oversized,
+}
+
+/// An object's length and SHA-256 as the bucket's public origin serves it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Digested {
+    /// None stands at the key.
+    Absent,
+    /// The object's length and SHA-256.
+    Read { bytes: u64, sha256: [u8; 32] },
+    /// The object is longer than the reader's bound, and was not read past it.
+    Oversized,
+}
+
+/// What a read of an object handed on.
+enum Streamed {
+    Absent,
+    /// The whole object, this many bytes.
+    Whole(u64),
     Oversized,
 }
 
@@ -89,14 +109,29 @@ impl Store {
     /// Error cases:
     /// - the request fails or times out, or the bucket answers anything else
     pub(crate) async fn create(&self, key: &str, body: Vec<u8>, content_type: &'static str) -> anyhow::Result<Created> {
+        let length = body.len() as u64;
+        self.create_from(key, (Body::from(body), length), content_type, REQUEST_TIMEOUT).await
+    }
+
+    /// `create` of the `length` bytes `body` streams, within `timeout`, body included: a body that ends in an error
+    /// before its last byte creates nothing.
+    /// Error cases:
+    /// - as `create`, or the body fails
+    pub(crate) async fn create_from(
+        &self,
+        key: &str,
+        (body, length): (Body, u64),
+        content_type: &'static str,
+        timeout: Duration,
+    ) -> anyhow::Result<Created> {
         let mut action = self.bucket.put_object(Some(&self.credentials), key);
         action.headers_mut().insert("content-type", content_type);
         action.headers_mut().insert("if-none-match", "*");
-        let length = body.len();
         // The signed URL is a credential for its lifetime, so no error carries it.
         let response = self
             .http
             .put(action.sign(SIGNED_FOR))
+            .timeout(timeout)
             .header(CONTENT_TYPE, content_type)
             .header(IF_NONE_MATCH, "*")
             .header(CONTENT_LENGTH, length)
@@ -116,6 +151,23 @@ impl Store {
     /// - see `read_public`
     pub(crate) async fn read(&self, key: &str, limit: u64) -> anyhow::Result<Object> {
         read_public(&self.http, self.public_object(key)?, limit, REQUEST_TIMEOUT).await
+    }
+
+    /// The length and SHA-256 of the object `key` as the bucket's public origin serves it, read up to `limit` bytes
+    /// within `timeout`, body included, and held a chunk at a time.
+    /// Error cases:
+    /// - as `read_public`, or the read takes longer than `timeout`
+    pub(crate) async fn digest(&self, key: &str, limit: u64, timeout: Duration) -> anyhow::Result<Digested> {
+        let url = self.public_object(key)?;
+        let mut hash = Sha256::new();
+        let read = stream_public(self.http.get(url.clone()).timeout(timeout), &url, limit, REQUEST_TIMEOUT, |chunk| {
+            hash.update(chunk);
+        });
+        Ok(match read.await? {
+            Streamed::Absent => Digested::Absent,
+            Streamed::Oversized => Digested::Oversized,
+            Streamed::Whole(bytes) => Digested::Read { bytes, sha256: hash.finalize().into() },
+        })
     }
 
     /// Whether the bucket's public origin serves an object at `key`.
@@ -145,26 +197,47 @@ impl Store {
 /// - the request fails or times out, the headers take longer than `answered`, or the origin answers other than
 ///   `200` or `404`
 pub(crate) async fn read_public(http: &Client, url: Url, limit: u64, answered: Duration) -> anyhow::Result<Object> {
-    let sent = tokio::time::timeout(answered, http.get(url.clone()).send()).await;
+    let mut body = Vec::new();
+    let read = stream_public(http.get(url.clone()), &url, limit, answered, |chunk| body.extend_from_slice(chunk));
+    Ok(match read.await? {
+        Streamed::Absent => Object::Absent,
+        Streamed::Oversized => Object::Oversized,
+        Streamed::Whole(_) => Object::Read(body),
+    })
+}
+
+/// Sends `request`, a read of `url` at a bucket's public origin, and hands each chunk of the object to `take`, up to
+/// `limit` bytes, its answer's headers within `answered`.
+/// Error cases:
+/// - as `read_public`
+async fn stream_public(
+    request: RequestBuilder,
+    url: &Url,
+    limit: u64,
+    answered: Duration,
+    mut take: impl FnMut(&[u8]),
+) -> anyhow::Result<Streamed> {
+    let sent = tokio::time::timeout(answered, request.send()).await;
     let response = sent.map_err(|_| anyhow::anyhow!("{url} did not answer within {answered:?}"))?;
     let response = response.with_context(|| format!("reading {url}"))?;
     match response.status() {
         StatusCode::OK => {}
-        StatusCode::NOT_FOUND => return Ok(Object::Absent),
+        StatusCode::NOT_FOUND => return Ok(Streamed::Absent),
         status => bail!("reading {url}: the origin answered {status} {}", error_code(response).await),
     }
     if response.content_length().is_some_and(|length| length > limit) {
-        return Ok(Object::Oversized);
+        return Ok(Streamed::Oversized);
     }
-    let (mut body, mut stream) = (Vec::new(), response.bytes_stream());
+    let (mut read, mut stream) = (0u64, response.bytes_stream());
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.with_context(|| format!("reading {url}"))?;
-        if body.len() as u64 + chunk.len() as u64 > limit {
-            return Ok(Object::Oversized);
+        read += chunk.len() as u64;
+        if read > limit {
+            return Ok(Streamed::Oversized);
         }
-        body.extend_from_slice(&chunk);
+        take(&chunk);
     }
-    Ok(Object::Read(body))
+    Ok(Streamed::Whole(read))
 }
 
 /// The S3 error code an error answer names, for the log, as `(<code>)`, read from at most `ERROR_BYTES` of its body.

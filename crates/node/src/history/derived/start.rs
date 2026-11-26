@@ -1,8 +1,11 @@
 //! Where a replay that derives a command's rows again starts: from the newest daily snapshot the node holds that
 //! is early enough, its engine at the snapshot's checkpoint, or from genesis, with an empty engine, when none is.
-//! The replay reads only the log after where it starts, so the segments before that need not be on this host.
-//! A snapshot's file is the host's, of any format: each command's logged events must be the ones it gives, among
-//! them each rollover's `financing_applied` and its root over the rows, against which a read checks the rows.
+//! The replay reads only the log after where it starts, so the segments before that need not be on this host. Only
+//! a snapshot listed under its canonical name whose file the host holds is taken: one the archive's bucket keeps in
+//! its place is older than the host's window, which keeps a snapshot before each of its commands
+//! (`daily_snapshots::upload`). A snapshot's file is the host's, of any format: each command's logged events must be
+//! the ones it gives, among them each rollover's `financing_applied` and its root over the rows, against which a read
+//! checks the rows.
 
 use std::path::Path;
 
@@ -34,10 +37,16 @@ pub(crate) fn engine_from(snapshots: Option<&Path>, fits: impl Fn(&Listed) -> bo
     Engine::new()
 }
 
-/// The newest `ATTEMPTS` snapshots listed in `dir` that `fits`, newest first; none when the listing cannot be read.
+/// The newest `ATTEMPTS` snapshots listed in `dir` that `fits` and whose file the host holds, newest first; none when
+/// the listing cannot be read.
 pub(crate) fn newest(dir: &Path, fits: impl Fn(&Listed) -> bool) -> Vec<Listed> {
     match daily_snapshots::read_manifest(dir) {
-        Ok(listed) => listed.into_iter().rev().filter(|listing| fits(listing)).take(ATTEMPTS).collect(),
+        Ok(listed) => listed
+            .into_iter()
+            .rev()
+            .filter(|listing| fits(listing) && daily_snapshots::canonical(listing) && dir.join(&listing.file).exists())
+            .take(ATTEMPTS)
+            .collect(),
         Err(e) => {
             warn!("the daily snapshots cannot be listed, so rows are derived from genesis: {e:#}");
             Vec::new()

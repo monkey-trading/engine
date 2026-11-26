@@ -314,7 +314,8 @@ affected.
 Use this procedure when `daily_snapshot_failed` or `daily_snapshot_unreadable` fires. With
 `[daily_snapshots]` in the configuration, the trading server writes the engine's state at the first
 checkpoint it writes on each UTC day, into the directory that the section names, and serves each
-file beside the log's archive. `engine replay --snapshots` starts a range of the log from a day's
+file beside the log's archive. With `[archive]` too, it uploads each snapshot to the bucket as soon
+as it is published, and serves one the host no longer holds by a redirect to the bucket. `engine replay --snapshots` starts a range of the log from a day's
 snapshot, so an audit replays the log's days in parallel. A snapshot is not part of the books: a
 replay checks it against the log's checkpoint and the replay state the log before it folds to, and
 takes nothing that the snapshot alone says. Every start, and every rotation member's replica, goes on
@@ -324,9 +325,12 @@ without one. A missing or damaged snapshot costs an audit or a start time, never
 clients are not affected; but a start with no usable snapshot needs every segment of the log on the
 host.
 
-The trading server keeps every day's snapshot, so the directory grows without a bound, by about
-420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old
-snapshots off the host, as step 4 describes. Beside the marks cache in `history/`, the marks task
+With `[archive]`, the host keeps a snapshot until the bucket holds it and it is stamped more than
+`daily_snapshots.local_window` (30 days) before the newest, and keeps the newest of those too: at most
+32 snapshots, about 13 GB at 100,000 accounts. The manifest keeps listing every snapshot. Without
+`[archive]`, the trading server keeps every day's snapshot, and the directory grows by about 420 MB a
+day at 100,000 accounts: size the data disk for the months it must hold, or move old snapshots off the
+host, as step 4 describes. Beside the marks cache in `history/`, the marks task
 keeps a frozen copy of the cache at each of the three newest listed snapshots' checkpoints, and at
 the checkpoint of the snapshot being written, from which a start restores the chart history, so
 `history/` holds up to five times the cache's size.
@@ -368,15 +372,32 @@ the checkpoint of the snapshot being written, from which a start restores the ch
    an empty answer, `e3b0c442…`. If the manifest itself failed, check the permissions and the disk
    of the snapshot directory instead.
 
-   A file that fails or does not match is damaged. Stop the trading server, mount the data disk on
-   the host, remove the file and its line in the directory's `manifest.jsonl`, and start the
-   trading server again. A replay in ranges then takes that day from the snapshot before it.
+   A file that fails or does not match is damaged. With `[archive]`, the trading server never
+   uploads it and keeps it on the host, and the same alert names it with a `snapshot` field. Stop
+   the trading server, mount the data disk on the host, remove the file and its line in the
+   directory's `manifest.jsonl`, and start the trading server again. A replay in ranges then takes
+   that day from the snapshot before it.
 
    **Changes the live system.** The owner must approve the stop and the start. Remove only the
    damaged file and its line.
 
-4. To keep the directory within the disk, copy the snapshots off the host first, by downloading each
-   file that the manifest lists, as [Download the public log and verify
+4. To keep the directory within the disk with `[archive]`, check that the bucket takes the snapshots:
+
+   ```shell
+   curl -s http://<metrics listener>/metrics | grep '^engine_archive_snapshot'
+   ```
+
+   `engine_archive_snapshots_pending` is at most one or two, and `engine_archive_snapshots_removed_total`
+   rises by one a day once the host holds 30 days of snapshots. For some minutes after a start, the
+   pending count holds every snapshot on the host while the trading server reads each back from the
+   bucket. A pending count that stays up comes with `archive_upload_lagging`, which [Log
+   archive](log-archive.md#when-archive_upload_lagging-fires) covers. A snapshot that the host cannot
+   remove fires `daily_snapshot_unremovable`: check the permissions and the attributes of the file and
+   of the snapshot directory, which the trading server must be able to write. Do not remove a snapshot
+   by hand: the host removes each once the bucket holds it.
+
+   Without `[archive]`, copy the snapshots off the host first, by downloading each file that the
+   manifest lists, as [Download the public log and verify
    it](reference.md#download-the-public-log-and-verify-it) does for segments. Then remove old files
    and their lines from the manifest, in one stop of the trading server, with the same approval as
    step 3. Keep the newest snapshot.

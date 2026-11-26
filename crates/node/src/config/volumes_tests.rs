@@ -45,7 +45,7 @@ fn config() -> NodeConfig {
         max_bytes: NonZeroUsize::MIN,
         trusted_signers: Vec::new(),
     });
-    cfg.daily_snapshots = Some(DailySnapshotsSection { dir: "data/dev/daily-snapshots".into() });
+    cfg.daily_snapshots = Some(DailySnapshotsSection::at("data/dev/daily-snapshots".into()));
     cfg
 }
 

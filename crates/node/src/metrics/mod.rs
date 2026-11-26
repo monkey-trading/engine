@@ -11,6 +11,7 @@ pub(crate) mod latency;
 mod listener;
 mod reasons;
 mod roots;
+mod snapshot_archive;
 mod storage;
 use crate::metrics::reasons::prices_reject_reason;
 pub use archive::ArchiveMetrics;
@@ -18,6 +19,7 @@ pub use latency::{LATENCY_BUCKETS, LatencyMetrics};
 pub use listener::router;
 pub(crate) use listener::{alongside, bind};
 pub use roots::RootMetrics;
+pub use snapshot_archive::SnapshotArchiveMetrics;
 pub use storage::{StorageMetrics, StoreLabel, VolumeLabel};
 
 use engine_core::Fixed;
@@ -127,6 +129,7 @@ pub struct Metrics {
     pub state_root: RootMetrics,
     pub latency: LatencyMetrics,
     pub archive: ArchiveMetrics,
+    pub snapshot_archive: SnapshotArchiveMetrics,
     pub queue_depth: Gauge,
     pub access_pending_deposits: Gauge,
     pub withdrawals_paused: Gauge,
@@ -171,6 +174,7 @@ impl Metrics {
             state_root: RootMetrics::default(),
             latency: LatencyMetrics::default(),
             archive: ArchiveMetrics::default(),
+            snapshot_archive: SnapshotArchiveMetrics::default(),
             queue_depth: Gauge::default(),
             access_pending_deposits: Gauge::default(),
             withdrawals_paused: Gauge::default(),
@@ -221,6 +225,7 @@ impl Metrics {
         metrics.state_root.register(r);
         metrics.latency.register(r);
         metrics.archive.register(r);
+        metrics.snapshot_archive.register(r);
         r.register(
             "access_pending_deposits",
             "Deposits awaiting automatic source screening retry",

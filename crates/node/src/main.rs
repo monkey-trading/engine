@@ -16,10 +16,10 @@ use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
 use engine_node::{
-    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, PublishedLog, SentRequest, VerifiedAttestation,
-    VerifyOptions, ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral, parse_challenge_arg,
-    parse_launch_digest, replay_path_with_custody, replay_path_with_trust, replay_ranges_with_custody, run_dedicated,
-    verify_attestation_files, verify_frames_file, verify_response_files,
+    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, PublishedLog, PublishedSnapshots, SentRequest,
+    VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral,
+    parse_challenge_arg, parse_launch_digest, replay_path_with_custody, replay_path_with_trust,
+    replay_ranges_with_custody, run_dedicated, verify_attestation_files, verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -97,11 +97,12 @@ enum Cmd {
         /// Threads that check command seals ahead of the replay with `--every-seal`; one per core when unset.
         #[arg(long, requires = "every_seal")]
         replay_workers: Option<NonZeroUsize>,
-        /// A directory of daily snapshots, as `/v1/archive/snapshots/` serves them: the log, which must be a
-        /// directory, is replayed in ranges from the checkpoints they name, each snapshot checked against
-        /// its checkpoint's signed root, several ranges at once.
+        /// A directory of daily snapshots, as `/v1/archive/snapshots/` serves them, or a node's URL, whose listed
+        /// snapshots are downloaded first, from the node or the bucket it redirects to: the log, which must be a
+        /// directory, is replayed in ranges from the checkpoints they name, each snapshot checked against its
+        /// checkpoint's signed root, several ranges at once.
         #[arg(long, conflicts_with = "every_seal")]
-        snapshots: Option<PathBuf>,
+        snapshots: Option<PublishedSnapshots>,
         /// How many ranges replay at once with `--snapshots`; one per two physical cores when unset.
         #[arg(long, requires = "snapshots")]
         jobs: Option<NonZeroUsize>,
@@ -284,7 +285,6 @@ fn main() -> anyhow::Result<()> {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
             let seals = if every_seal { SealChecks::Every(workers) } else { SealChecks::RunEnds };
-            let ranges = snapshots.map(|dir| (dir, jobs.unwrap_or_else(engine_node::default_jobs)));
             let domain = chain_id.zip(vault).map(|(chain_id, vault)| CheckpointDomain { chain_id, vault });
             anyhow::ensure!(
                 attestation.len() == release.len(),
@@ -305,6 +305,9 @@ fn main() -> anyhow::Result<()> {
                 .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
                 .collect::<anyhow::Result<Vec<_>>>()?;
             let log = path.local()?;
+            let snapshots = snapshots.map(|snapshots| snapshots.local(log.path())).transpose()?;
+            let jobs = jobs.unwrap_or_else(engine_node::default_jobs);
+            let ranges = snapshots.as_ref().map(|snapshots| (snapshots.path().to_owned(), jobs));
             let mut replayed = audit(log.path(), ranges, seals, custody_config, (signer, domain), &verified)?;
             if !verified.is_empty() {
                 ensure_signers_verified(&replayed.checkpoint_signers, &verified)?;

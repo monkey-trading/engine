@@ -177,7 +177,7 @@ maximum `limit`.
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
 | GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment, or a redirect to the bucket's object that holds it |
-| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
+| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot, or a redirect to the bucket's object of it |
 | GET | `/v1/stream` | The WebSocket stream of the log, quotes, status and notices |
 
 ## Signing requests
@@ -1486,7 +1486,7 @@ is too old.
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
 | GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment, or a redirect to the bucket's object that holds it |
-| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
+| GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot, or a redirect to the bucket's object of it |
 
 None of these answers is signed, and `/v1/health` answers the text `ok`.
 
@@ -1575,7 +1575,17 @@ neither `carried` nor `history`, and its signature covers the tag `engine.daily-
 fields to `state`; one of schema 1, written before snapshots were signed, has neither `state` nor
 `signature`. A file the manifest does not list
 answers 404, and so does every request to a server without `[daily_snapshots]`. The server checks
-each snapshot's length and hash against the manifest before serving it. `engine replay --snapshots`
+each snapshot's length and hash against the manifest before serving it.
+
+A server with `[archive]` uploads each snapshot to the bucket as soon as it is published, under
+`snapshots/<chain id>/<vault>/<file>`, its bytes as the file holds them. Once the bucket holds a
+snapshot and it is stamped more than `daily_snapshots.local_window`, 30 days, before the newest, the
+server removes it from its host, but for the newest such one. The manifest keeps listing every
+snapshot. A listed snapshot that the host no longer holds answers 308, and its `Location` is the
+bucket's object of it, whose length and hash are its manifest line's; the server relays none of it. A
+server without a bucket answers 500 for a listed snapshot that its host no longer holds.
+`engine replay --snapshots <URL>` downloads every listed snapshot at or before the log's last
+checkpoint, through the server and the bucket it redirects to. `engine replay --snapshots`
 takes one only at a checkpoint the log holds, equal to the snapshot's, once the root of the
 snapshot's state is that checkpoint's, and only where the replay of the log before it ends in that
 state; it skips, and names, one of a checkpoint the log does not hold. A rotation member with an

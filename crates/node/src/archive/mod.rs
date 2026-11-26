@@ -29,7 +29,7 @@ pub use read::{LocalLog, PublishedLog};
 #[cfg(test)]
 pub(crate) use read::{download, origin};
 mod store;
-pub(crate) use store::{Created, Object, Store, read_public};
+pub(crate) use store::{Created, Digested, Object, Store, read_public};
 mod uploader;
 pub(crate) use uploader::{Sources, Uploader};
 

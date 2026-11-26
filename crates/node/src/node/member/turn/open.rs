@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use engine_core::eip712::B256;
 
 use crate::checkpoints::Observation;
-use crate::daily_snapshots::{AcceptedRoots, VaultRoots};
+use crate::daily_snapshots::{AcceptedRoots, Fetching, SnapshotBucket, VaultRoots};
 use crate::sequencer::replay::RETAINED_LINKS;
 use crate::standby::archive::archive_client;
 
@@ -80,7 +80,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             crate::standby::archive::bootstrap_archive(archive, &backfilled, dir).await?;
         }
         let roots = VaultRoots { vault: &self.vault, at: &at };
-        let fetching = archive.as_ref().map(|archive| (archive, origins.as_slice()));
+        let bucket = SnapshotBucket::for_config(self.cfg)?;
+        let fetching = archive.as_ref().map(|client| Fetching { client, origins: &origins, bucket: bucket.as_ref() });
         let finalized = at.state.checkpoint.as_ref().map(|(seq, _)| *seq);
         let (stats, mut history) = (Stats::new(self.cfg)?, HistoryPlan::for_member(&self.cfg.history)?);
         // A snapshot at or before the history index's last command, where this member's marks cache ended too, so the
@@ -136,16 +137,17 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     }
 
     /// The daily snapshot the replica of the copy starts from, under `[daily_snapshots]`: the newest, of those the
-    /// directory holds and those the origins list, when `fetching` names them, fetched with its client, whose
-    /// checkpoint the copy holds and the vault has finalized, at `finalized`, from before the turns of the member
-    /// in office began, at `before` (`in_office_since`), and before `keep_from`, signed over its state by the
+    /// directory holds and those the origins list, when `fetching` names them, fetched with its client from their
+    /// disk or the bucket a `308` names, the one `[archive]` names where it names one, whose checkpoint the copy
+    /// holds and the vault has finalized, at `finalized`, from before the turns of the member in office began, at
+    /// `before` (`in_office_since`), and before `keep_from`, signed over its state by the
     /// recorded signer of that checkpoint, one of `signers`, and of the root the vault accepted at its seq where
     /// `roots` names one (`daily_snapshots::snapshot_start_against`). None when the section is absent, the vault
     /// has finalized no checkpoint or the copy holds none, or no snapshot passes; a failure is paged as Warning
     /// `snapshot_start_refused`, and the replica replays the whole copy.
     async fn snapshot_start(
         &self,
-        fetching: Option<(&reqwest::Client, &[String])>,
+        fetching: Option<Fetching<'_>>,
         (finalized, before, keep_from): (Option<u64>, Option<Millis>, Option<u64>),
         (domain, signers): (CheckpointDomain, &BTreeSet<AccountId>),
         roots: &impl AcceptedRoots,

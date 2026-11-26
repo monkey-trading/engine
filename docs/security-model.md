@@ -488,6 +488,20 @@ deferred before a range, and the replay does not compute the running digest of e
 the checkpoint accounting. A snapshot crafted so that building its indexes or its root overflows the
 engine's arithmetic stops the replay with a panic rather than an error; it never passes.
 
+With `[archive]`, a trading server uploads each daily snapshot to the bucket as soon as it publishes it,
+and removes its host's copy of one only once a read of the object from the bucket's public URL, over
+TLS that ends in the enclave, gives back the length and SHA-256 its manifest line names, and the
+snapshot is stamped more than `daily_snapshots.local_window` before the newest, keeping the newest of
+those. Its manifest keeps every line, and it answers a request for a snapshot its host no longer holds
+with a 308 to the object. `engine replay --snapshots <URL>`, a trading server's public origin, downloads
+every snapshot the manifest lists at or before the log's last checkpoint, from the server or from the
+object a 308 names, each only as the bytes its line names, and replays from them as from snapshots on
+disk; a rotation member's start follows a 308 only to the bucket its own `[archive]` names, where it
+names one, and otherwise to any object of the snapshot's file, which it checks as any other. The snapshot
+files and the manifest are the host's. A host can remove or alter a snapshot before its upload, as it
+can remove one at any time, and the upload sends only the bytes the file's line names, so an altered
+file creates no object. Wherever a reader takes a snapshot from, it checks it as above.
+
 A trading server starts from its newest usable daily snapshot, no later than the newest one whose
 frozen copy of the chart history it holds, and the log's segments on its host after the snapshot's
 checkpoint, and reads none of the log before it; nor does a rotation member's

@@ -20,6 +20,7 @@ pub use config::NodeConfig;
 pub mod ct_watch;
 mod custody;
 mod daily_snapshots;
+pub use daily_snapshots::{LocalSnapshots, PublishedSnapshots};
 mod episodes;
 pub mod exit;
 mod feeds;

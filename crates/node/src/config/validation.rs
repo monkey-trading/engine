@@ -264,6 +264,7 @@ impl NodeConfig {
         }
         self.stats.validate()?;
         if let Some(daily) = &self.daily_snapshots {
+            daily.validate(self.archive.is_some(), self.history.retention)?;
             // A start removes the files in it named as snapshots but unlisted, as recovery caches are named, and
             // a snapshot's publication replaces its `manifest.jsonl`, as the log's is named.
             let dir = resolved(&daily.dir)?;
