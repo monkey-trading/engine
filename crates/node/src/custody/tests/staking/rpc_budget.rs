@@ -89,9 +89,9 @@ impl<R: VaultReader + Sync> VaultReader for Counted<R> {
         self.1.add("eth_getLogs", blocks.len() as u64);
         self.0.pinned_staking_events(blocks).await
     }
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+    async fn registry_staking(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         self.1.add("eth_call", 1);
-        self.0.staking_registry(at).await
+        self.0.registry_staking(at).await
     }
     async fn registry_schedule(&self, at: BlockRef) -> anyhow::Result<Address> {
         self.1.add("eth_call", 1);

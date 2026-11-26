@@ -102,12 +102,12 @@ pub trait VaultReader {
         async { anyhow::bail!("this reader does not read staking events by block hash") }
     }
 
-    /// The registry the configured staking contract records as its deployer, in the canonical
-    /// block `at`, or `None` where the staking contract has no code yet, before its deployment.
+    /// The staking contract the configured registry records as the one it deployed, in the
+    /// canonical block `at`, or `None` where the registry has no code yet, before its deployment.
     /// A reader that cannot read it refuses.
-    fn staking_registry(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Option<Address>>> + Send {
+    fn registry_staking(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<Option<Address>>> + Send {
         let _ = at;
-        async { anyhow::bail!("this reader does not read the staking contract's registry") }
+        async { anyhow::bail!("this reader does not read the registry's staking contract") }
     }
 
     /// The schedule the configured registry names, in the canonical block `at`; the zero address

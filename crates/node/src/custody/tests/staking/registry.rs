@@ -65,8 +65,10 @@ async fn an_installation_mirrors_while_rotation_is_off() {
     node.stop().await;
 }
 
+/// The staking contract mirrored is the one the configured registry records as its own (`staking()`), not one
+/// whose own `registry()` names that registry, which any contract can answer.
 #[tokio::test]
-async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any_mirror() {
+async fn a_staking_contract_the_registry_did_not_deploy_stalls_the_poll_before_any_mirror() {
     let dir = scratch("registry-binding");
     let node = Node::start_confirmed(&dir);
     init_staking(&node).await;
@@ -75,9 +77,10 @@ async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any
     for chain in &chains {
         chain.0.lock().unwrap().staking.push(staked(2, 1, account, 500));
     }
+    let other = Address::repeat_byte(0x5b);
     let toml = format!(
         r#"{}
-        staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", registry = {{ contract = "0x7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c" }} }}
+        staking = {{ contract = "{other}", cursor_path = "{}", registry = {{ contract = "{REGISTRY}" }} }}
         "#,
         evm_toml(&dir, 100),
         dir.join("staking-cursor.json").display()
@@ -88,9 +91,9 @@ async fn a_staking_contract_another_registry_deployed_stalls_the_poll_before_any
     let mut watcher = DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap();
     let error = watcher.poll(&node.tx).await.unwrap_err();
     let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
-    assert!(cause.to_string().contains("records registry"), "{cause}");
+    assert!(cause.to_string().contains(&format!("not the configured {other}")), "{cause}");
     assert!(node.read(move |engine| engine.staked_balances().is_empty()).await, "nothing mirrors");
-    // The configured registry passes, once.
+    // The registry's own staking contract passes, once.
     let mut watcher = staking_watcher(&chains, &dir);
     watcher.poll(&node.tx).await.unwrap();
     assert_eq!(node.read(move |engine| engine.staked(account)).await, TokenUnits(500));

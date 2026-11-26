@@ -221,16 +221,17 @@ impl StakingCursor {
 /// whatever the backends that answered. Each such block is then read again by its hash, so a log backend
 /// that lags cannot drop an event from a block it returned another in: pinned reads that differ from the
 /// range read in those blocks stall, as do pinned reads that fail.
-/// `bound` is whether the poll has verified the configured registry as the staking contract's
-/// deployer: while it is false the poll read no staking code at `to`, and since the registry
-/// deploys the staking contract atomically no event can legitimately exist in the window, so any
-/// event is a contradiction that stalls rather than mirrors. Its second part is whether a configured
-/// schedule has been read to name the registry, its third whether a configured vote contract has been
-/// read to name the schedule, and its fourth whether a configured fault proof contract has been read to
-/// name the vault: a schedule, vote or fault event before then stalls the same way. With `turns`, the
-/// bound registry, the progress from `V65` carries the registry's turn state at `to`: the boundary of
-/// the drawn turn naming the operator, from `V67` else that of a drawn turn yet to start, or none. A
-/// failed event read, by range or by hash, halves `range`; a completed chunk lets it grow back.
+/// `bound` is whether the poll has read the configured registry to record the configured staking
+/// contract as the one it deployed: while it is false the poll read no registry code at `to`, and
+/// since the registry deploys the staking contract atomically no event can legitimately exist in the
+/// window, so any event is a contradiction that stalls rather than mirrors. Its second part is
+/// whether a configured schedule has been read to name the registry, its third whether a configured
+/// vote contract has been read to name the schedule, and its fourth whether a configured fault proof
+/// contract has been read to name the vault: a schedule, vote or fault event before then stalls the
+/// same way. With `turns`, the bound registry, the progress from `V65` carries the registry's turn
+/// state at `to`: the boundary of the drawn turn naming the operator, from `V67` else that of a drawn
+/// turn yet to start, or none. A failed event read, by range or by hash, halves `range`; a completed
+/// chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is not on the canonical block there, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -272,7 +273,7 @@ pub(super) async fn mirror<V: VaultReader>(
     }
     if !bound && !events.is_empty() {
         return Err(PollError::inconsistent(anyhow!(
-            "the window names staking events, but the staking contract has no code at its end: the configured contract cannot be the registry's"
+            "the window names staking events, but the registry has no code at its end: no staking contract it deployed can have emitted them"
         )));
     }
     let from_schedule = |event: &StakingEvent| {

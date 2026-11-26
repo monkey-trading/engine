@@ -77,18 +77,21 @@ impl<V: VaultReader> DepositWatcher<V> {
         if release.is_some_and(|release| release.number == to && release.hash != end.hash) {
             return Err(PollError::unsettled(anyhow!("the staking window's end is not the release tag's block")));
         }
-        // The registry whose elections mirror must be the one that deployed the staking contract.
-        // A window ending before the contract's deployment has no code to read and nothing that
-        // could name another registry, so the binding is checked again at the end of a later
-        // window instead of trapping the catch-up on the same range.
+        // The staking contract mirrored must be the one the configured registry records as the one it
+        // deployed, whose elections mirror with it: a staking contract's own answer naming the registry
+        // would bind any contract that answers so. A window ending before the registry's deployment has
+        // no code to read and nothing that could name another staking contract, so the binding is checked
+        // again at the end of a later window instead of trapping the catch-up on the same range.
         if let Some((registry, false)) = self.registry {
             let hash = end.hash;
-            match self.vault.staking_registry(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
-                None => info!(to, "the staking contract is not deployed at this window's end"),
+            let staking =
+                self.staking.as_ref().map(|(cursor, _)| cursor.contract).expect("staking cursor checked above");
+            match self.vault.registry_staking(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
+                None => info!(to, "the registry is not deployed at this window's end"),
                 Some(recorded) => {
-                    if recorded != registry {
+                    if recorded != staking {
                         return Err(PollError::inconsistent(anyhow!(
-                            "the staking contract records registry {recorded}, not the configured {registry}"
+                            "the registry {registry} records staking contract {recorded}, not the configured {staking}"
                         )));
                     }
                     self.registry = Some((registry, true));

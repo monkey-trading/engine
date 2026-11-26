@@ -317,8 +317,8 @@ pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
 /// - `--pin` is missing
 /// - a spec or parameters file cannot be read, does not parse, or fails validation
 /// - the node cannot be reached in time, or refuses the request (see `call`)
-/// - a staking config whose epoch or cooldown is not the staking contract's, or that cannot be read
-///   (see `staking::check`)
+/// - a staking config whose epoch or cooldown is not the staking contract's, a staking contract the
+///   registry did not deploy, or one that cannot be read (see `staking::check`)
 /// - the engine rejects the command
 /// - for the publisher worker, its alert routes or outbox cannot start, or stop
 pub async fn run(args: AdminArgs, env: KeyEnv) -> anyhow::Result<AdminRequest> {

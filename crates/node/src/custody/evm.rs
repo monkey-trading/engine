@@ -57,8 +57,8 @@ pub struct DepositWatcher<V> {
     cursor_path: PathBuf,
     /// The staking mirror's cursor and store, present when the deployment has a staking contract.
     staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
-    /// The operator registry mirrored with the staking contract, and whether the staking contract
-    /// has been read to name it as its deployer.
+    /// The operator registry mirrored with the staking contract, and whether it has been read to
+    /// record the configured staking contract as the one it deployed.
     registry: Option<(Address, bool)>,
     /// The registry's schedule mirrored with it, and whether the schedule has been read to name
     /// the registry.

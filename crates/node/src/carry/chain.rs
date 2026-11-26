@@ -1,7 +1,7 @@
 //! What the chain says of a move to this node's vault, read at one finalized block through the custody quorum:
-//! the source vault's signer, last accepted checkpoint and registry, the registry's vault, rotation switch and
-//! operator in effect, the vault MONKEY's minter follows, and the tokens the minter mints and the staking contract
-//! holds.
+//! the source vault's signer, last accepted checkpoint and registry, the registry's vault, rotation switch,
+//! operator in effect and staking contract, the vault MONKEY's minter follows, and the tokens the minter mints and
+//! the staking contract holds.
 
 use alloy::primitives::{Address, B256};
 use alloy::sol;
@@ -20,6 +20,7 @@ sol! {
     function vault() external view returns (address);
     function registry() external view returns (address);
     function monkey() external view returns (address);
+    function staking() external view returns (address);
     function rotationSwitch() external view returns (bool);
     function operatorInEffect() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
 }
@@ -49,6 +50,8 @@ pub(crate) struct MoveState {
     pub rotation_switch: bool,
     /// The admin key of the registry's operator in effect.
     pub admin_key: Address,
+    /// The staking contract the registry deployed, as it records it.
+    pub registry_staking: Address,
     /// The vault MONKEY's minter mints against.
     pub minter_vault: Address,
     /// The token the minter mints, and the one the staking contract holds.
@@ -110,6 +113,9 @@ pub(crate) async fn read<R: VaultReader + Sync>(
         &call("carry_registry_operator", registry, operatorInEffectCall {}.abi_encode()).await?,
     )
     .context("the registry's operatorInEffect")?;
+    let registry_staking =
+        stakingCall::abi_decode_returns(&call("carry_registry_staking", registry, stakingCall {}.abi_encode()).await?)
+            .context("the registry's staking contract")?;
     let minter_vault =
         vaultCall::abi_decode_returns(&call("carry_minter_vault", minter, vaultCall {}.abi_encode()).await?)
             .context("the minter's vault")?;
@@ -127,6 +133,7 @@ pub(crate) async fn read<R: VaultReader + Sync>(
         registry_vault,
         rotation_switch,
         admin_key: operator.adminKey,
+        registry_staking,
         minter_vault,
         minter_token,
         staking_token,

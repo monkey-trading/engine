@@ -93,7 +93,7 @@ pub struct StakingCustodySection {
     pub cursor_path: PathBuf,
     /// The operator registry that deployed the staking contract, whose rotation switches and
     /// elections the watcher mirrors with the staking events from `V37`. The watcher refuses a
-    /// staking contract whose `registry()` is not this one.
+    /// staking contract that this registry's `staking()` does not name.
     pub registry: RegistryCustodySection,
 }
 

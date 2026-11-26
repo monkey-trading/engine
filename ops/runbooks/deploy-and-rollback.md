@@ -259,7 +259,17 @@ again before the registry records it.**
 2. Deploy `Vault`, with these constructor arguments in this order: the USDC token; the signer, which
    is a placeholder until [First deployment](#first-deployment) registers the enclave's address; the
    timelock; the multisig as guardian; and the `[vault]` values `exit_period`, `claim_window` and
-   `stale_after`. The vault deploys its exit verifier itself. The constructor reverts with
+   `stale_after`. **The placeholder must be an address whose private key nobody holds.** Until the
+   enclave's address replaces it, the placeholder is the only key whose checkpoints the vault accepts,
+   so a key for it could post a root of its own, pay itself any USDC deposited, and, once the minter
+   follows the vault, mint MONKEY up to the cap. Derive it from a public phrase, so that nobody can
+   have chosen it with a key:
+
+   ```shell
+   PLACEHOLDER=$(cast to-check-sum-address 0x$(cast keccak 'vault placeholder signer' | cut -c 27-66))
+   ```
+
+   Pass `$PLACEHOLDER` as the signer. The vault deploys its exit verifier itself. The constructor reverts with
    `InvalidGovernance` when the timelock has no code or no delay. It reverts with `InvalidExitSchedule` when the exit period is no longer than the delay,
    when the claim window or the staleness limit is zero, or when the staleness limit is longer than
    the exit period. A new vault starts empty. No balance, accepted root or used nonce carries over
@@ -587,8 +597,8 @@ Before step 1, complete and check each of the following:
 
     The epoch is one day and the cooldown is 28 days. They are the staking contract's own `epoch()`
     and `cooldown()`, in milliseconds. The liquidity floor is $30.5 million. The tool reads the
-    contract through the configuration's custody providers, and refuses a different value before it
-    signs. The trading server reads the contract again, and refuses a different value before it
+    contract through the configuration's custody providers, only once the configuration's registry
+    records it as its `staking()`, and refuses another contract or a different value before it signs. The trading server reads the contract again, and refuses a different value before it
     sequences the instruction. `--secrets-file` is the bundle delivered at step 3, whose keys fill
     in the providers' URLs for that read. A refusal names both values. **Fix the command, never the
     contract.**

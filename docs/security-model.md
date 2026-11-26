@@ -1155,11 +1155,14 @@ distributions, against entitlements proven against the root of any recorded chec
 signer epoch in force, less what the account has already claimed. The minter proves against the
 roots of the vault it follows, and counts what it has minted each account across every vault it has
 followed, so an entitlement a later vault's log carries mints only what was not minted before. The staking contract holds staked MONKEY, enforces the unstake
-cooldown, and emits the events that the engine mirrors from finalised blocks. The staking mirror's
-references to those events, and the anchors that record how far it has scanned, are part of the
-state root. The mirror's frontier is the latest finalised block it has mirrored. A distribution
-epoch closes only once that frontier has passed the epoch's end, so no epoch's close pays a stake
-set that the mirror has not brought up to the epoch's end.
+cooldown, and emits the events that the engine mirrors from finalised blocks. The trading server
+mirrors only the staking contract that the configured registry records as the one it deployed, and
+checks `InitStaking`'s epoch and cooldown against that contract alone, so a configuration cannot name
+a contract that merely answers as the registry's own. The staking mirror's references to those
+events, and the anchors that record how far it has scanned, are part of the state root. The
+mirror's frontier is the latest finalised block it has mirrored. A distribution epoch closes only
+once that frontier has passed the epoch's end, so no epoch's close pays a stake set that the mirror
+has not brought up to the epoch's end.
 
 The mirror reads a window of finalised blocks in one log read over its range. A strict majority of
 the custody providers must agree on it together with their header at the window's end. A window that
@@ -1258,11 +1261,11 @@ At its first start, before its genesis, the trading server reads the chain at a 
 through the custody providers. It carries only from the old vault's latest checkpoint, and only once
 that vault's signer is retired, the registry follows the new vault, rotation's switch is off, the
 registry's operator in effect has the configured operator key, and `MonkeyMinter` follows the new
-vault. The configured registry must be the one the old vault reads, whose staking contract the old
-log mirrored, and `MonkeyMinter` must mint the token that contract holds. A configuration author
-therefore cannot carry from an older root of the old vault, nor continue the carried stakes on
-another staking contract. The carried emission budget must match the cap that `MonkeyMinter`'s token
-holds.
+vault. The configured registry must be the one the old vault reads, the configured staking contract
+must be the one that registry records as the one it deployed, whose events the old log mirrored, and
+`MonkeyMinter` must mint the token that contract holds. A configuration author therefore cannot carry
+from an older root of the old vault, nor continue the carried stakes on another staking contract. The
+carried emission budget must match the cap that `MonkeyMinter`'s token holds.
 
 `MonkeyMinter` keeps one count of the MONKEY each account has claimed across every vault it has
 followed, so an account can claim from the new vault only what its carried entitlement adds to what

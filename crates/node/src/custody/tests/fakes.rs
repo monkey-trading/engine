@@ -32,7 +32,7 @@ use crate::test_support::{dev_config, log_entries, sequencer_config, trusted_now
 pub(super) const CHAIN_ID: u64 = 42161;
 pub(super) const VAULT: Address = Address::repeat_byte(0x7a);
 pub(super) const USDC_TOKEN: Address = Address::repeat_byte(0xc0);
-/// The operator registry the fake chain's staking contract records as its deployer.
+/// The operator registry, which records the custody tests' staking contract, `0x5a…5a`, as the one it deployed.
 pub(super) const REGISTRY: Address = Address::repeat_byte(0x6b);
 pub(super) const TRADER: AccountId = AccountId([0xaa; 20]);
 /// One USDC in base units.
@@ -110,8 +110,8 @@ pub(super) struct ChainState {
     pub(super) log_range_cap: Option<u64>,
     /// Staking event reads refused for covering more blocks than `log_range_cap`.
     pub(super) staking_refusals: u32,
-    /// The block the staking contract deploys at; before it the endpoint answers no code. `None`
-    /// means it always exists, as in single-fixture tests.
+    /// The block the registry, and with it its staking contract, deploys at; before it the endpoint
+    /// answers no code. `None` means both always exist, as in single-fixture tests.
     pub(super) staking_deployed_at: Option<u64>,
     /// The schedule the registry names, and the registry that schedule records.
     pub(super) schedule: schedule::Schedule,
@@ -287,12 +287,12 @@ impl VaultReader for FakeChain {
         Ok(self.0.lock().unwrap().schedule.registry)
     }
 
-    async fn staking_registry(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
+    async fn registry_staking(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         let chain = self.0.lock().unwrap();
         if chain.staking_deployed_at.is_some_and(|at_deploy| at.number < at_deploy) {
             return Ok(None);
         }
-        Ok(Some(REGISTRY))
+        Ok(Some(Address::repeat_byte(0x5a)))
     }
 
     async fn latest_block(&self) -> anyhow::Result<(u64, B256)> {

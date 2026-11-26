@@ -31,8 +31,9 @@ use crate::custody::StakingTermsRefused;
 ///   derived from
 /// - a nonce other than the operator's next
 /// - an expiry already past
-/// - a staking config whose epoch or cooldown is not the configured staking contract's, or, as
-///   unavailable, one made while the contract cannot be read (read only for a fresh request)
+/// - a staking config whose epoch or cooldown is not the configured staking contract's, or a configured
+///   staking contract the configured registry did not deploy, or, as unavailable, one made while the
+///   contract cannot be read (read only for a fresh request)
 /// - the sequencer has stopped
 pub(super) async fn admin(State(s): State<ApiState>, Json(req): Json<AdminRequest>) -> ApiResult<Vec<Event>> {
     let mut seen = None;
