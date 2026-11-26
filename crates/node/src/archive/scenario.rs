@@ -58,7 +58,9 @@ async fn dev_scenario_log_archive() {
     assert!(alert["message"].contains("whole ranges"), "{alert:?}");
     until("the outage's ranges counted", || metrics.archive.pending_ranges.get() >= 4).await;
     let pending = metrics.archive.pending_ranges.get();
-    assert!(metrics.archive.failures.get() > 0, "the uploads failed");
+    // The lag alert and the count of waiting ranges come from the backlog, not from an attempt: the uploader
+    // reads the vault's new checkpoint on its own poll, so its first failed upload can come after both.
+    until("an upload to fail", || metrics.archive.failures.get() > 0).await;
     bucket.with(|b| b.down = false);
     expect(&mut resolved, "archive_upload_lagging").await;
     until("the outage's ranges confirmed", || metrics.archive.confirmed_ranges.get() as u64 >= past).await;
