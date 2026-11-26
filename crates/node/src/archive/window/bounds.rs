@@ -54,8 +54,8 @@ pub(crate) struct Checked(BTreeMap<String, (u64, Option<SystemTime>)>);
 /// Where a new or discarded history index takes a log whose first segment left the host from (`fresh_start`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FreshStart {
-    /// The command after the checkpoint of the newest daily snapshot stamped before the retention, or the first on
-    /// the host when no such snapshot is held.
+    /// The command after the checkpoint of the newest daily snapshot stamped before the retention, or the log's
+    /// first when the host holds no such snapshot, as once its file left the host after the retention grew.
     pub from: u64,
     /// The first seq of the oldest segment on the host.
     pub first_local: u64,
@@ -161,9 +161,10 @@ impl Checked {
 /// daily snapshots in `snapshots` and the index's `retention`: none, the log's start, while the host holds the log's
 /// first segment, which one look finds; otherwise the command after the checkpoint of the newest daily snapshot stamped
 /// before the retention, counted back from the newest segment's first command, from which the window keeps every
-/// segment (`Floors`), so the index re-derives every row it takes from the log on the host, or the first command on
-/// the host when no such snapshot is held. The host lacks the log from there when the retention grew past what the
-/// window kept (`restore::history_start`). Every command before it is past the retention.
+/// segment (`Floors`), so the index re-derives every row it takes from the log on the host, or the log's first command
+/// when the host holds no such snapshot, from which a re-derivation then replays. The host lacks the log from there
+/// when the retention grew past what the window kept (`restore::history_start`). Every command before it is past the
+/// retention.
 /// Error cases:
 /// - a listing, the log's directory, or its newest segment's first command cannot be read
 pub(crate) fn fresh_start(
@@ -186,7 +187,7 @@ pub(crate) fn fresh_start(
         }
         None => None,
     };
-    Ok(Some(FreshStart { from: floor.unwrap_or(first_local), first_local }))
+    Ok(Some(FreshStart { from: floor.unwrap_or(0), first_local }))
 }
 
 /// The checkpoint seq of the newest daily snapshot listed in `snapshots` under its own name, stamped before `ts`,

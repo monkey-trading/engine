@@ -127,6 +127,33 @@ async fn a_feed_backfills_past_one_batch_from_disk() {
     assert_next_is_the_next_command(&node, &mut feed).await;
 }
 
+/// A feed between two batches of its backfill holds the segment its reader stands in, as the history index's does, so
+/// the log's local window keeps it; a stream client's, `unheld`, holds none, so no client keeps a segment on the host.
+#[tokio::test]
+async fn only_a_holding_feed_keeps_a_hold_on_the_segment_its_backfill_stands_in() {
+    let dir = scratch_dir("feed-holds");
+    let node = TestSequencer::start_legacy(&dir, 1024);
+    for n in 0..2 * BACKFILL_BATCH {
+        node.submit(deposit(1, &format!("dep-{n}"))).await;
+    }
+    let holds = || node.manifest.borrow().holds.oldest();
+    for holding in [true, false] {
+        let feed = Feed::new(
+            node.stream.subscribe(),
+            dir.clone(),
+            node.manifest.clone(),
+            permits(),
+            Some(Offset::start_of(0)),
+        );
+        let mut feed = if holding { feed } else { feed.unheld() };
+        next_msg(&mut feed).await;
+        assert!(feed.reader.is_some(), "the backfill stands mid-log");
+        assert_eq!(holds().is_some(), holding, "holding: {holding}");
+        drop(feed);
+        assert_eq!(holds(), None, "a dropped feed holds nothing");
+    }
+}
+
 /// The live channel keeps a message until every subscriber has taken it. A feed reading the disk lets go
 /// of the messages sent before each read, which it takes from disk, and still yields every message once.
 #[tokio::test]

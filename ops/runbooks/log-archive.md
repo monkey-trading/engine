@@ -346,8 +346,12 @@ builds its replica from its whole copy, and a handover's replay of a copy with n
 go on from. Each needs room on the log's volume for the whole log, as does a member whose copy is
 empty, which takes every segment from the archive before its window trims it. A history index that
 rebuilds after `history.retention` grew puts back the segments its new retention holds first, at the
-start of the node or of the member's copy, and the start refuses under `history_recovery_failed`
-while the archive cannot give them back.
+start of the node or of the member's copy, from the daily snapshot before the new retention, or the
+whole log when the host no longer holds a daily snapshot that old, as once the daily snapshots' own
+window removed it; the start refuses under `history_recovery_failed` while the archive cannot give
+them back. The uploader puts back from the bucket, as its manifest line names it, a segment of a range
+it uploads or reads back that the host lacks, and waits at the range while the bucket cannot give it
+back.
 
 A copy of a log directory that a window trimmed does not replay from genesis on its own. Give the
 command that reads it the node config whose `[archive]` names the bucket, and it puts the removed
@@ -357,6 +361,9 @@ segments back into the directory first, which then needs room for the whole log:
 $ENGINE replay --log <log directory> --archive-config <node config>
 $ENGINE carry --log <log directory> --seq $S --check --archive-config <node config>
 ```
+
+`engine replay --carry-source <log directory>` takes `--carry-source-archive-config <node config>` for that
+log's own bucket prefix.
 
 Run either on a copy of a running node's directory, not on the directory itself, whose window would
 remove the segments again.
@@ -397,7 +404,7 @@ back, so each in turn may page. The host removed or lost the file, since the win
 gives it back. The trading server keeps sequencing, but its uploads wait at that segment's range and
 `archive_upload_lagging` follows, and a restart refuses a log with a gap.
 
-1. Read the alert's `segment` field and the console lines around it.
+1. Read the segment the alert's message names, and the console lines around it.
 2. Check whether a member's copy holds the segment: on a member, `ls <node.log_dir>/<segment>`. A
    member uploads its copy's ranges while it follows, so once the vault finalizes a checkpoint past
    them, the bucket holds them, the node puts the segment back from there, and the alert resolves.

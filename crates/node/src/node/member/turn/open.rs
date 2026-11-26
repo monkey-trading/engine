@@ -42,6 +42,11 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         keep: &[u64],
     ) -> anyhow::Result<Opened> {
         let dir = self.cfg.node.log_dir.as_path();
+        // The archive's uploader and the log's local window follow no writer while the copy opens, as again while
+        // a replica it replaces still runs: the window would remove segments the open puts back or reads.
+        if let Some(archive) = self.delivered.and_then(|delivered| delivered.archive.as_ref()) {
+            archive.send_replace(None);
+        }
         // The chain and trusted time are read before the copy is bootstrapped: a read that fails then leaves the
         // copy empty, so the open tried again bootstraps it again, and may still start its replica from a snapshot.
         let at = self.vault.observe(View::Finalized, &[]).await?;

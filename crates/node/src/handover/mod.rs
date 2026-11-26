@@ -71,7 +71,7 @@ use crate::tee::sealing::Release;
 
 pub(crate) mod assigned;
 mod copy;
-pub(crate) use copy::{Finalized, accepted_before, copy_start, sync_predecessor_log};
+pub(crate) use copy::{Finalized, accepted_before, copy_start, replay_restored, sync_predecessor_log};
 pub(crate) mod discovery;
 pub(crate) mod evidence;
 pub(crate) use evidence::{Evidence, same_policy};

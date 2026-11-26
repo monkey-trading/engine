@@ -120,10 +120,13 @@ enum Cmd {
         /// state there.
         #[arg(long)]
         carry_source: Option<PublishedLog>,
-        /// A node config whose `[archive]` names the log's bucket: the segments a `--log` or `--carry-source`
-        /// directory lacks, as a node's local window removes them, are put back into it from there first.
+        /// A node config whose `[archive]` names the log's bucket: the segments a `--log` directory lacks, as a
+        /// node's local window removes them, are put back into it from there first.
         #[arg(long)]
         archive_config: Option<PathBuf>,
+        /// As `--archive-config`, for the `--carry-source` directory, whose log has a bucket prefix of its own.
+        #[arg(long, requires = "carry_source")]
+        carry_source_archive_config: Option<PathBuf>,
     },
     /// Build the carry file a new log's genesis takes MONKEY entitlements, stakes and awards from, from a source
     /// log's published checkpoint, and print what it carries and its SHA-256.
@@ -300,6 +303,7 @@ fn main() -> anyhow::Result<()> {
             jobs,
             carry_source,
             archive_config,
+            carry_source_archive_config,
         } => {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
@@ -369,7 +373,9 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            let source = carry_source.map(|source| source.local_filled(None, archive_config.as_deref())).transpose()?;
+            let source = carry_source
+                .map(|source| source.local_filled(None, carry_source_archive_config.as_deref()))
+                .transpose()?;
             engine_node::carry::check_replayed(
                 &replayed.engine,
                 log.path(),

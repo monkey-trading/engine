@@ -6,8 +6,8 @@
 //! A completed segment leaves the host, oldest first, only when all of these hold:
 //! - every range it holds seqs of is below the uploader's count of ranges the bucket holds (`Uploader::archived`),
 //!   which the window waits for after a start, so a segment holding a seq of a range not yet whole or not yet
-//!   finalized stays, whatever else holds its commands: a log that stops for good keeps its last segments, whose
-//!   last range never fills;
+//!   finalized stays, whatever else holds its commands, such as a checkpoint's tail (`uploader::tails`): a log that
+//!   stops for good keeps its last segments, whose last range never fills;
 //! - every command of it is older than the window: the first command of the segment after it is stamped at least the
 //!   window before the newest segment's first command, a lower bound of the log's sequenced time, so the host's clock
 //!   brings nothing forward;
@@ -21,7 +21,8 @@
 //!
 //! A listed segment the host must keep and lacks, as one the host lost, is put back from the bucket or a node origin,
 //! as its listing names it, newest first, so the host's segments stay one run; one no source gives back raises
-//! Critical `log_segment_missing`. A segment a reader or the bucket's read-back holds more than `HELD_ALERT` past the
+//! Critical `log_segment_missing`. Each alert's state is unknown at a start, since the alert router keeps an episode
+//! open across a restart, so the first pass that finds it over resolves it. A segment a reader or the bucket's read-back holds more than `HELD_ALERT` past the
 //! window raises Warning `log_window_held`; the archive's wait is `archive_upload_lagging`'s, and the daily snapshots'
 //! and the history's holds are the node's own, as long as the gap between the snapshots it holds, which on a rotation
 //! member are its own turns' and those it fetched. Passes that keep failing for an hour, as over a directory that no
@@ -31,7 +32,7 @@
 mod bounds;
 pub(crate) use bounds::{Checked, Floors, FreshStart, Held, Stamps, fresh_start, millis};
 mod restore;
-pub(crate) use restore::{Sources as RestoreSources, history_start, restore_whole};
+pub(crate) use restore::{Sources as RestoreSources, history_start, restore_whole, write as write_segment};
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -74,18 +75,19 @@ pub(crate) struct Window {
     metrics: Arc<Metrics>,
     stamps: Stamps,
     checked: Checked,
-    /// The segments raised as `log_segment_missing`, by file.
-    missing: BTreeSet<String>,
-    /// Whether `log_window_held` is raised.
-    held: bool,
+    /// Whether `log_segment_missing`, `log_window_held` and `log_window_failing` are raised; each unknown at a start,
+    /// since the alert router keeps an episode open across a restart, so the first pass that finds it over resolves it.
+    raised: Raised,
     /// Since when the passes have failed, if the last did.
-    failing: Option<Failing>,
+    failing: Option<Instant>,
 }
 
-/// Passes that keep failing: since when, and whether `log_window_failing` is raised.
-struct Failing {
-    since: Instant,
-    raised: bool,
+/// Whether each of the window's alerts is raised, none when not known.
+#[derive(Default)]
+struct Raised {
+    missing: Option<bool>,
+    held: Option<bool>,
+    failing: Option<bool>,
 }
 
 /// What a pass found of the segments on the host.
@@ -145,8 +147,7 @@ impl Window {
             metrics: Arc::new(Metrics::new()),
             stamps: Stamps::default(),
             checked: Checked::default(),
-            missing: BTreeSet::new(),
-            held: false,
+            raised: Raised::default(),
             failing: None,
         }
     }
@@ -205,8 +206,9 @@ impl Window {
                         held = ?pass.held,
                         "the local window passed over the log's segments"
                     );
-                    if self.failing.take().is_some_and(|failing| failing.raised) {
-                        info!(alert_resolved = "log_window_failing", "the local window's passes succeed again");
+                    self.failing = None;
+                    if self.raised.failing.replace(false) != Some(false) {
+                        info!(alert_resolved = "log_window_failing", "the local window's passes succeed");
                     }
                 }
                 Err(e) => self.failed(&e),
@@ -377,14 +379,14 @@ impl Window {
     /// Counts a failed pass, and raises `log_window_failing` once passes have failed for `FAILING_ALERT`.
     fn failed(&mut self, e: &anyhow::Error) {
         self.metrics.archive.window.failures.inc();
-        let failing = self.failing.get_or_insert(Failing { since: Instant::now(), raised: false });
-        if !failing.raised && failing.since.elapsed() >= FAILING_ALERT {
-            failing.raised = true;
+        let since = *self.failing.get_or_insert_with(Instant::now);
+        if self.raised.failing != Some(true) && since.elapsed() >= FAILING_ALERT {
+            self.raised.failing = Some(true);
             warn!(
                 alert = "log_window_failing",
                 "the local window's passes over the log's segments have failed for {:?}, so no segment leaves the \
                  host: {e:#}",
-                failing.since.elapsed()
+                since.elapsed()
             );
         } else {
             warn!("the local window's pass over the log's segments failed, and runs again: {e:#}");
@@ -397,9 +399,9 @@ impl Window {
         let past = past.max(0);
         self.metrics.archive.window.held_seconds.set(past as f64 / 1000.0);
         let over = past >= millis(HELD_ALERT) && matches!(held, Held::Reader | Held::ReadBack);
-        match (over, self.held) {
-            (true, false) => {
-                self.held = true;
+        match (over, self.raised.held) {
+            (true, Some(false) | None) => {
+                self.raised.held = Some(true);
                 warn!(
                     alert = "log_window_held",
                     "segment {} has been past archive.local_window for {}s of sequenced time, and stays on the host \
@@ -409,9 +411,9 @@ impl Window {
                     held.reason()
                 );
             }
-            (false, true) => {
-                self.held = false;
-                info!(alert_resolved = "log_window_held", "the log's oldest segment on the host is within the window");
+            (false, Some(true) | None) => {
+                self.raised.held = Some(false);
+                info!(alert_resolved = "log_window_held", "no reader or read-back holds the log past the window");
             }
             _ => {}
         }

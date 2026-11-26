@@ -179,8 +179,8 @@ async fn segments_before_the_snapshot_a_start_goes_on_from_leave_once_the_bucket
 }
 
 /// A segment holding a seq of a range the bucket does not hold yet stays, whatever its age, whatever else holds its
-/// commands, and whatever else lets it go: as the one a log's last, unfilled range starts in, which a log that stops
-/// for good leaves.
+/// commands, such as a checkpoint's tail in the bucket, and whatever else lets it go: as the one a log's last,
+/// unfilled range starts in, which a log that stops for good leaves, its commands in the bucket only in tails.
 #[tokio::test]
 async fn a_segment_holding_a_seq_of_a_range_the_bucket_lacks_stays_however_old() {
     let fixture = Fixture::start("window-archive", 150).await;
@@ -309,6 +309,8 @@ async fn a_bucket_that_does_not_give_a_segment_back_keeps_it_and_the_held_alert_
     assert_eq!(pass.held, Some(Held::ReadBack));
     let alert = named(&mut alerts, "log_window_held").await;
     assert!(alert["message"].contains("does not give back"), "{alert:?}");
+    // The first pass resolved what it found well, as a start does: only the resolution after the raise counts.
+    while resolved.try_recv().is_ok() {}
     assert!(window.metrics.archive.window.held_seconds.get() >= HELD_ALERT.as_secs_f64());
     fixture.bucket.with(|b| b.down = false);
     let key = crate::archive::range_key(&crate::archive::stand_in::test_log(), 0);
@@ -400,6 +402,25 @@ async fn a_directory_without_the_newest_segment_its_writer_names_fails_the_pass(
     let failed = window.pass(&view).await.expect_err("the directory lacks the newest segment");
     assert!(format!("{failed:#}").contains("does not hold the newest segment"), "{failed:#}");
     assert!(!held(&fixture.dir, &newest), "nothing is written into it");
+    fixture.node.stop().await;
+}
+
+/// A start's window knows none of its alerts' states, which the alert router keeps open across a restart: its first
+/// pass over a log it finds well resolves each, and a later raise pages again.
+#[tokio::test]
+async fn a_starting_window_resolves_the_alerts_an_earlier_process_left_open() {
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let fixture = Fixture::start("window-start-alerts", 30).await;
+    let (window, _archived) = fixture.window((600, 30), fixture.archive_all());
+    let (writers, sources) = watch::channel(Some(fixture.node.manifest.clone()));
+    let running = tokio::spawn(Window { sources, ..window }.run());
+    for name in ["log_segment_missing", "log_window_held", "log_window_failing"] {
+        named(&mut resolved, name).await;
+    }
+    assert!(!drained(&mut resolved, "log_window_held"), "resolved once");
+    assert!(!drained(&mut alerts, "log_window_held") && !drained(&mut alerts, "log_segment_missing"));
+    running.abort();
+    drop(writers);
     fixture.node.stop().await;
 }
 

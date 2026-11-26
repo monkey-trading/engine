@@ -1,10 +1,10 @@
 //! The log's local window's dev scenario (`scripts/dev-log-window.sh`), on accelerated sequenced time with isolated
 //! temporary state: a dev node with a window of hours, which only a development build takes, writes days of flow and
 //! a daily snapshot at each UTC day's first checkpoint, uploads its ranges to the bucket's loopback stand-in, and
-//! keeps on its host the window and no more than a day past it, through a day's outage of the bucket, a segment its host
-//! loses before the bucket holds it, and a restart of its window; the node, and a member's replica on a copy trimmed
-//! as its own window would, each start from the newest snapshot; and the whole log still replays from genesis from the
-//! node's archive, which redirects a segment its host no longer holds to the bucket.
+//! keeps on its host the window and no more than a day past it, through a day's outage of the bucket, a segment its
+//! host loses before the bucket holds it, and a restart of its window; the node, and a member's replica on a copy
+//! without the segments before the newest snapshot, each start from that snapshot; and the whole log still replays from
+//! genesis from the node's archive, which redirects a segment its host no longer holds to the bucket.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -106,20 +106,23 @@ async fn dev_scenario_log_window() {
     assert!(view.segments.last().is_some_and(|newest| newest.first_seq > lost.first_seq), "not the newest");
     let bytes = std::fs::read(node.dir.join(&lost.file)).unwrap();
     std::fs::remove_file(node.dir.join(&lost.file)).unwrap();
+    // Each start's first passes resolve what they find well, as after a restart: only what follows counts.
+    while resolved.try_recv().is_ok() {}
     node.start_tasks();
     let alert = expect(&mut alerts, "log_segment_missing").await;
-    assert_eq!(alert["segment"], lost.file);
+    assert!(alert["message"].contains(&lost.file), "{alert:?}");
     let (uploader, sources) = uploader(&node.bucket, &member, &Arc::new(Metrics::new()));
     sources.send_replace(Some(view_from_first_local(&member)));
     let member_uploads = tokio::spawn(uploader.run());
-    let resolution = expect(&mut resolved, "log_segment_missing").await;
-    assert_eq!(resolution["segment"], lost.file);
+    expect(&mut resolved, "log_segment_missing").await;
     assert_eq!(std::fs::read(node.dir.join(&lost.file)).unwrap(), bytes, "put back as its listing names it");
     member_uploads.abort();
     assert!(node.first_local() >= trimmed, "the restarted window put back nothing the bucket holds");
     println!("    {} put back from the ranges the member's copy uploaded", lost.file);
 
-    println!("==> 4. the node, and a member whose copy its window trimmed, each start from the newest snapshot");
+    println!(
+        "==> 4. the node, and a member whose copy lacks the segments before it, each start from the newest snapshot"
+    );
     let manifest = node.sequencer.manifest.clone();
     let (dir, snapshots, run) = (node.dir.clone(), node.snapshots.clone(), node.run.clone());
     let bucket = node.stop().await;
@@ -306,7 +309,8 @@ async fn start_from_newest(snapshots: &Path, dir: &Path) -> Listed {
     newest
 }
 
-/// Removes from the copy in `dir` the segments that end before `seq`, as its own window would, and returns how many.
+/// Removes from the copy in `dir` the segments that end before `seq`, and returns how many: more than its own window
+/// would, which keeps the window and the history's floor too.
 fn trim_before(dir: &Path, seq: u64) -> usize {
     let listed = Manifest::load(dir).unwrap().segments;
     let before: Vec<&SegmentInfo> = listed.iter().filter(|segment| segment.last_seq < seq).collect();

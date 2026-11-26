@@ -226,12 +226,12 @@ pub(super) async fn ask(
 /// Takes the whole segments the keys name (`tails`) past the copy's listed tip `log_tip` into the
 /// log in `dir`, each checked against its listing and chained to the one before, then requires the
 /// log to replay, authenticated against `signers`, every signer the vault recorded, and every command
-/// sealed by one of them, the seals checked ahead by `workers`, to the handed-over checkpoint: the
+/// sealed by one of them, the seals checked ahead by `cfg`'s replay workers, to the handed-over checkpoint: the
 /// confirmation ends the predecessor, so an invalid transfer, or a copy whose command prefix is not the
 /// predecessor's, must be caught here. The log replays from the daily snapshot in `snapshots` that
 /// `copy_start` gives under `finalized`, the vault's finalized checkpoint, or whole, which counts in
-/// `metrics.full_replays`, once the segments the local window removed from `cfg`'s log are back from the archive
-/// (`archive::restore_whole`). Returns the engine the replay leaves.
+/// `metrics.full_replays`, a whole one once the segments the local window removed from `cfg`'s log are back from the
+/// archive (`replay_restored`). Returns the engine the replay leaves.
 /// Error cases:
 /// - a segment is missing, differs from its listing, breaks the chain, or cannot be written
 /// - a whole replay's segments cannot be put back, or the log does not replay, or does not end at the handed-over
@@ -247,7 +247,7 @@ pub(super) async fn take_segments(
     (signers, finalized): (std::collections::BTreeSet<AccountId>, Option<&Finalized>),
     metrics: &Metrics,
 ) -> anyhow::Result<engine_core::Engine> {
-    let (dir, workers) = (cfg.node.log_dir.as_path(), cfg.node.replay_workers);
+    let dir = cfg.node.log_dir.as_path();
     let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
     let mut tip = log_tip;
     for listed in tails {
@@ -259,10 +259,8 @@ pub(super) async fn take_segments(
         info!("the predecessor handed no log segments over: the restored log already reaches the head");
     }
     let start = crate::handover::copy_start(snapshots, dir, (domain, &signers), finalized).await;
-    if start.is_none() {
-        crate::archive::restore_whole(cfg, dir).await?;
-    }
-    let (replayed, from) = crate::sequencer::replay_copy_from(start, dir, domain, signers, workers)
+    let (replayed, from) = crate::handover::replay_restored(cfg, start, domain, signers)
+        .await
         .context("the restored log does not replay")?;
     if from.is_none() {
         metrics.full_replays.inc();

@@ -111,8 +111,8 @@ impl Window {
     /// and none after one no source gives back: one after the oldest segment on the host, which a restart's read
     /// requires, and one before it that the uploader needs, holding a seq of a range at or past `archived` that the
     /// bucket lacks, as long as the segment after it is on the host, so what is on the host stays one run. Raises
-    /// Critical `log_segment_missing` for the one no source gives back, the newest the host lacks and must keep, and
-    /// resolves it once it is back or no longer needed. Returns the files it put back.
+    /// Critical `log_segment_missing`, naming the one no source gives back, the newest the host lacks and must keep,
+    /// and resolves it once a pass leaves none lacking. Returns the files it put back.
     /// Error cases:
     /// - a listing cannot be read
     pub(super) async fn restore_lacking(
@@ -129,7 +129,7 @@ impl Window {
                 listed.push(view.completed_at(ordinal)?);
             }
         }
-        let (mut restored, mut tried, mut lacking) = (Vec::new(), 0, BTreeSet::new());
+        let (mut restored, mut tried, mut lacking) = (Vec::new(), 0, false);
         for (at, segment) in listed.iter().enumerate().rev() {
             if local.contains(&segment.first_seq) {
                 continue;
@@ -140,11 +140,9 @@ impl Window {
             if !needed {
                 continue;
             }
-            if tried >= MAX_RESTORES || !lacking.is_empty() {
-                // Left for the next pass, its alert as it stands.
-                if self.missing.contains(&segment.file) {
-                    lacking.insert(segment.file.clone());
-                }
+            if tried >= MAX_RESTORES || lacking {
+                // Left for the next pass, the alert as it stands.
+                lacking = true;
                 continue;
             }
             tried += 1;
@@ -154,24 +152,24 @@ impl Window {
                     restored.push(segment.file.clone());
                 }
                 Err(e) => {
-                    lacking.insert(segment.file.clone());
-                    if self.missing.insert(segment.file.clone()) {
+                    lacking = true;
+                    if self.raised.missing.replace(true) != Some(true) {
                         error!(
                             alert = "log_segment_missing",
-                            segment = %segment.file,
-                            "the log lists this segment, seqs {} to {}, which this host must keep and lacks, and no \
+                            "the log lists segment {}, seqs {} to {}, which this host must keep and lacks, and no \
                              source gives it back; the window tries the segments before it once it is back: {e:#}",
+                            segment.file,
                             segment.first_seq,
                             segment.last_seq
                         );
+                    } else {
+                        warn!(segment = %segment.file, "no source gives back this segment the host lacks: {e:#}");
                     }
                 }
             }
         }
-        let resolved: Vec<String> = self.missing.iter().filter(|file| !lacking.contains(*file)).cloned().collect();
-        for file in resolved {
-            self.missing.remove(&file);
-            info!(alert_resolved = "log_segment_missing", segment = %file, "the segment is back, or no longer needed");
+        if !lacking && self.raised.missing.replace(false) != Some(false) {
+            info!(alert_resolved = "log_segment_missing", "the host holds every segment of the log it must keep");
         }
         Ok(restored)
     }

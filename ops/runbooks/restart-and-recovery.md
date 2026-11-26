@@ -44,7 +44,7 @@ their output call a running trading server a node.
   most. A new account history index (below) on a log whose oldest segments left the host takes the log
   from the daily snapshot before the start of its retention, which `archive.local_window` keeps on the
   host; after `history.retention` grew, the start first puts back from the archive's bucket the segments
-  the longer retention holds.
+  the longer retention holds, the whole log when the host holds no daily snapshot from before it.
 - **Some starts replay much more.** A start that finds no usable daily snapshot (`snapshot_start_refused`,
   or none written yet, as in a log's first day) replays every instruction in the log: 30 days of launch
   flow, about 246 million instructions, take about 11 hours. It first puts back every segment that

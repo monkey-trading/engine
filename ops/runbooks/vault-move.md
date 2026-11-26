@@ -300,9 +300,10 @@ Then check, after each checkpoint the alpha vault accepts, whether a carry from 
 the check on a copy of the alpha's log that holds the alpha vault's newest checkpoint, such as a
 following member's copy, taken as [Running as a standby](standby.md) shows. The archive does not
 serve the segment still being written. With `archive.local_window`, as the alpha's release sets, the
-copy lacks its oldest segments: each `engine carry` and `engine replay` of it below takes
-`--archive-config <alpha config>`, the alpha node's configuration, which puts them back into the copy
-from the alpha's bucket first, so the copy needs room for the whole log
+copy lacks its oldest segments: each `engine carry` of it below takes `--archive-config <alpha config>`,
+the alpha node's configuration, and the `engine replay` with `--carry-source` takes
+`--carry-source-archive-config <alpha config>`, either of which puts them back into the copy from the
+alpha's bucket first, so the copy needs room for the whole log
 ([Keep a window of the log on the host](log-archive.md#keep-a-window-of-the-log-on-the-host)).
 
 ```shell
@@ -476,7 +477,7 @@ These checks only read.
    shows, into `launch-archive`, and use the alpha log copy from step 9:
 
    ```shell
-   $ENGINE replay --log launch-archive --carry-source <alpha log copy> --archive-config <alpha config>
+   $ENGINE replay --log launch-archive --carry-source <alpha log copy> --carry-source-archive-config <alpha config>
    ```
 
    After the usual replay, the command replays the alpha's log to the carried sequence number. It

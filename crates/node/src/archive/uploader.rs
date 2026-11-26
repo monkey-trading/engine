@@ -7,16 +7,16 @@
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
 //! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise. While no
 //! range can go up, it puts the tails of the checkpoints the vault may still hold as its latest in the bucket (`tails`).
-//! A range whose segments are no longer on the host, which the log's local window removes only once the bucket holds
-//! every range they hold, counts once the bucket holds it, with nothing of this copy's left to read it back against.
-//! The uploader publishes how many ranges, from the first, the bucket holds (`archived`), which the window reads.
+//! A segment of a range that is no longer on the host is put back from the bucket, as its listing names it, before the
+//! range is built (`absent`). The uploader publishes how many ranges, from the first, the bucket holds (`archived`),
+//! which the log's local window reads.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context, anyhow};
 use tokio::sync::watch;
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep};
@@ -24,14 +24,15 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, absent_segments, checkpoint_root, compress, holds, log_prefix,
-    range_bytes, range_key, same_root, stored_bound, whole_ranges,
+    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes,
+    range_key, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, Values};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
 
+mod absent;
 mod tails;
 use crate::archive::uploader::tails::Tails;
 
@@ -310,26 +311,14 @@ impl<F: Finality> Work<F> {
         self.range(view, index).await
     }
 
-    /// Reads range `index`'s object back against the node's copy of it; one whose segments are no longer on the
-    /// host, which the bucket holds as the resume found, has nothing to read it back against, and counts.
+    /// Reads range `index`'s object back against the node's copy of it, its segments no longer on the host put back
+    /// first (`put_back_absent`).
     /// Error cases:
-    /// - see `absent`, `build` and `check`
+    /// - see `put_back_absent`, `build` and `check`
     async fn read_back(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
-        if let Some(segment) = self.absent(view, index).await? {
-            info!(%segment, "this host no longer holds a segment of the range the bucket holds, which is not read back");
-            return Ok(Found::Confirmed);
-        }
+        self.put_back_absent(view, index).await?;
         let raw = self.build(view, index).await?;
         self.check(index, raw).await
-    }
-
-    /// The first listed segment holding a seq of range `index` whose file is not on the host, if any.
-    /// Error cases:
-    /// - see `absent_segments`
-    async fn absent(&self, view: &Manifest, index: u64) -> anyhow::Result<Option<String>> {
-        let (dir, read) = (self.dir.clone(), view.clone());
-        let absent = spawn_blocking(move || absent_segments(&dir, &read, index)).await??;
-        Ok(absent.into_iter().next().map(|listed| listed.file))
     }
 
     /// How many ranges, from the first, end below the newest finalized checkpoint that `view`'s copy holds at the
@@ -388,20 +377,13 @@ impl<F: Finality> Work<F> {
         );
     }
 
-    /// Uploads range `index`, and reads it back. A range with a segment no longer on the host is not built: it counts
-    /// once the bucket holds it, as another copy's uploader puts it there, and waits for that otherwise, while the
-    /// log's local window restores the segment (`archive::window`).
+    /// Uploads range `index`, and reads it back, its segments no longer on the host put back first: a range one of
+    /// which the host lost waits until another copy's uploader puts the range in the bucket.
     /// Error cases:
+    /// - a segment of it is not on the host, and the bucket does not give it back (`put_back_absent`)
     /// - the range cannot be built, or the bucket cannot take or serve it
-    /// - a segment of it is not on the host, and the bucket does not hold it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
-        if let Some(segment) = self.absent(view, index).await? {
-            let key = range_key(&self.prefix, index);
-            ensure!(self.store.holds(&key).await?, "{segment} is not on this host, and the bucket does not hold {key}");
-            self.backlog.passed();
-            info!(%segment, "the bucket holds the range, a segment of which is not on this host");
-            return Ok(Found::Confirmed);
-        }
+        self.put_back_absent(view, index).await?;
         let raw = self.build(view, index).await?;
         let (created, length) = self.create(&self.store, &range_key(self.store.prefix(), index), &raw).await?;
         let bytes = raw.len() as u64;

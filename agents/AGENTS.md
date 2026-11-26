@@ -255,11 +255,14 @@ an index: load only the rule whose hint matches the current action.
   segment its writer names, Warning `log_window_failing`; every whole replay (a start with no snapshot, a posted head
   older than a snapshot's links, a member replica, a handover's copy) first puts back what the window removed, newest
   first (`window/restore.rs`, `restore_whole`), a new or discarded legacy history index on a trimmed log starts after the
-  daily snapshot before its retention, putting back the segments from there that the host lacks, as after the retention
-  grew (`archive::history_start`), and a member's rows before its replica's snapshot derive from the retention of its
-  newest command (`RowsStore::derive_retained`); `engine replay` and `engine carry` take `--archive-config <node
-  config>` to put a trimmed directory's segments back first (`PublishedLog::local_filled`); not with `[snapshots]`; the
-  uploader counts a range whose segments left the host once the bucket holds it), `engine
+  daily snapshot before its retention, or genesis with none held that old, putting back the segments from there that the
+  host lacks, as after the retention grew (`archive::history_start`), and a member's rows before its replica's
+  snapshot derive from the retention of its newest command (`RowsStore::derive_retained`); `engine replay` and `engine
+  carry` take `--archive-config <node config>`, and `engine replay` `--carry-source-archive-config`, to put a trimmed
+  directory's segments back first (`PublishedLog::local_filled`); each alert's state is unknown at a start, so a first
+  good pass resolves an episode an earlier process left open; a member's open stops the uploader and the window
+  following its old replica; not with `[snapshots]`; the uploader puts a segment of a range it builds that the host
+  lacks back from the bucket, as listed, before it builds the range (`archive/uploader/absent.rs`)), `engine
   replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
   one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
   catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at

@@ -6,8 +6,8 @@ use crate::history::HistoryPlan;
 use crate::test_support::{RETENTION, TestHistory};
 
 /// While the host holds the log's first segment, a new index takes the whole log; once the window has removed the
-/// oldest, it takes it from the command after the daily snapshot at the history's retention, whose rows it
-/// re-derives from the log on the host, or from the first command on the host with no such snapshot.
+/// oldest, it takes it from the command after the daily snapshot before the history's retention, whose rows it
+/// re-derives from the log on the host, or from the log's first command with no such snapshot.
 #[tokio::test]
 async fn a_new_history_index_starts_where_the_host_holds_what_it_re_derives() {
     let fixture = Fixture::start("window-fresh", 150).await;
@@ -22,13 +22,13 @@ async fn a_new_history_index_starts_where_the_host_holds_what_it_re_derives() {
     assert!(first_local <= at_retention, "the window kept the newest snapshot's checkpoint");
     let from = |from| Some(FreshStart { from, first_local });
     assert_eq!(fresh(Some(&fixture.snapshots)), from(at_retention + 1), "after the snapshot before the retention");
-    assert_eq!(fresh(None), from(first_local), "with no snapshots, the first command on the host");
+    assert_eq!(fresh(None), from(0), "with no snapshots, the log's first command");
     fixture.node.stop().await;
 }
 
 /// After `history.retention` grew past what the window kept, an index that rebuilds takes the log from the command
-/// after the snapshot before its new retention, which the archive puts back first, newest first; one that resumes
-/// takes nothing back.
+/// after the snapshot before its new retention, which the archive puts back first, newest first, or from genesis once
+/// that snapshot's file is gone too; one that resumes takes nothing back.
 #[tokio::test]
 async fn a_rebuilt_index_whose_retention_grew_puts_back_the_log_it_takes() {
     let fixture = Fixture::start("window-fresh-grown", 150).await;
@@ -54,6 +54,12 @@ async fn a_rebuilt_index_whose_retention_grew_puts_back_the_log_it_takes() {
     let back = view.segments.iter().find(|listed| listed.last_seq > early).unwrap();
     assert_eq!(list_segments(&fixture.dir).unwrap()[0].0, back.first_seq, "put back from there");
     commands(&fixture.dir);
+    // With the early snapshot's file gone from the host too, as the daily snapshots' own window removes it, the
+    // rebuilt index takes the whole log, whose re-derivations replay from genesis.
+    let listed = crate::daily_snapshots::read_manifest(&fixture.snapshots).unwrap();
+    std::fs::remove_file(fixture.snapshots.join(&listed.iter().find(|l| l.seq == early).unwrap().file)).unwrap();
+    assert_eq!(history_start(&cfg, &view, |_| false).await.unwrap(), Some(0), "from the log's first command");
+    assert_eq!(list_segments(&fixture.dir).unwrap()[0].0, 0, "the whole log is back");
     fixture.node.stop().await;
 }
 
