@@ -106,3 +106,60 @@ impl CheckpointChain for Vault {
         synced.context("this vault reads no fold")
     }
 }
+
+/// The custody quorum's reads at the endpoint's block: what the test vault reads there by default, as
+/// when the endpoint tells the truth; once a test sets `reads`, what it sets, as when the endpoint lies.
+pub(super) struct Majority {
+    current: Arc<Mutex<CurrentRelease>>,
+    synced: Arc<Mutex<Option<[u8; 32]>>>,
+    scheduled: Arc<Mutex<Option<ScheduledTurn>>>,
+    rotation: Rotation,
+    pub(super) reads: Mutex<Reads>,
+}
+
+/// What the quorum reads in place of what the test vault reads, where set.
+#[derive(Default)]
+pub(super) struct Reads {
+    pub(super) current: Option<CurrentRelease>,
+    pub(super) synced: Option<[u8; 32]>,
+    pub(super) turn: Option<Option<ScheduledTurn>>,
+    /// At the endpoint's block and at the quorum's head.
+    pub(super) rotation: Option<(bool, bool)>,
+}
+
+impl Majority {
+    /// A quorum reading what `vault` reads.
+    pub(super) fn of(vault: &Vault) -> Self {
+        Self {
+            current: vault.current.clone(),
+            synced: vault.synced.clone(),
+            scheduled: vault.scheduled.clone(),
+            rotation: vault.rotation.clone(),
+            reads: Mutex::default(),
+        }
+    }
+}
+
+impl crate::handover::quorum::ReleaseQuorum for Majority {
+    fn held<'a>(
+        &'a self,
+        _at: &'a Observation,
+        now_ms: Option<Millis>,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<crate::handover::quorum::Held>> {
+        let reads = self.reads.lock().unwrap();
+        let current = reads.current.unwrap_or(*self.current.lock().unwrap());
+        let synced = reads.synced.or(*self.synced.lock().unwrap()).unwrap_or(current.id);
+        let turn = reads.turn.clone().unwrap_or_else(|| self.scheduled.lock().unwrap().clone());
+        let turn = turn.filter(|_| now_ms.is_some()).as_ref().map(crate::handover::quorum::TurnFacts::from);
+        Box::pin(async move { Ok(crate::handover::quorum::Held { current, synced, turn }) })
+    }
+
+    fn rotation<'a>(
+        &'a self,
+        _at: &'a Observation,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<(bool, bool)>> {
+        let mirrored = (self.rotation.finalized.load(Ordering::SeqCst), self.rotation.latest.load(Ordering::SeqCst));
+        let rotation = self.reads.lock().unwrap().rotation.unwrap_or(mirrored);
+        Box::pin(async move { Ok(rotation) })
+    }
+}

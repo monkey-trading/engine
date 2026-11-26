@@ -20,6 +20,7 @@ use crate::checkpoints::{CheckpointChain, CheckpointRpc};
 use crate::config::{NodeConfig, TeeProvider};
 use crate::handover::assigned::{Assigned, Assignments};
 use crate::handover::evidence::{self, Quoting, same_policy};
+use crate::handover::quorum::ReleaseQuorum;
 use crate::handover::tail::{TailMiss, read_tail, send_tail, tail_report_data};
 use crate::handover::{
     Confirm, REPLY_TIMEOUT, Reply, Request, bound_report_data, confirm_digest, confirmed_digest, keys_report_data,
@@ -75,6 +76,9 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     tail_evidence: std::sync::Mutex<tail::Evidence>,
     /// The turn's latest assignment, with `[log_heads]`: what a successor's request must bind (#596).
     assignments: Option<Arc<dyn Assignments>>,
+    /// The custody quorum, which must read what `vault`, the single checkpoint endpoint, reads of the
+    /// release and the rotation switch an admission rests on (`handover::quorum`).
+    quorum: Arc<dyn ReleaseQuorum>,
 }
 
 /// How one connection ended.
@@ -89,8 +93,8 @@ enum Served {
 impl Predecessor {
     /// The listener `[tee.sealing.handover]` asks for, bound; none without the section.
     /// Error cases:
-    /// - the section is set without `[checkpoints]` or EVM custody, or the vault client or the
-    ///   listener cannot be built
+    /// - the section is set without `[checkpoints]` or EVM custody, or the vault client, the custody
+    ///   quorum or the listener cannot be built
     pub(crate) async fn bind(
         cfg: &NodeConfig,
         store: &Arc<KeyStore>,
@@ -131,6 +135,7 @@ impl Predecessor {
             retained: std::sync::Mutex::new(None),
             tail_evidence: Default::default(),
             assignments: crate::handover::assigned::for_config(cfg, "handover_assignments")?,
+            quorum: Arc::new(crate::custody::ReleaseReader::connect(&cfg.custody)?),
         }))
     }
 }
@@ -315,7 +320,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// once its quote binds `report_data` from a CPU model `tee.cpu_models` lists at that model's
     /// minimum TCB, its policy is this release's, and the vault names that release at finality, or
     /// the finalised schedule names it for the turn trusted time has reached (`turns`) and this
-    /// release's log accepted it, or the latest agreed block's assignment does as `admit_turn` states.
+    /// release's log accepted it, as the checkpoint endpoint and the custody quorum both read them
+    /// (`quorum`), or the latest agreed block's assignment does as `admit_turn` states.
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(

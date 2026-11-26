@@ -42,6 +42,8 @@ mod operators;
 pub(crate) use operators::tests as tests_support;
 pub use operators::{OperatorList, OperatorsFeed, OperatorsReader, Unavailable};
 mod registry;
+mod release_reads;
+pub(crate) use release_reads::ReleaseReader;
 mod rpc;
 pub(crate) mod staking;
 mod staking_terms;

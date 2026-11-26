@@ -90,6 +90,33 @@ async fn from_its_boundary_the_turns_member_takes_the_keys_under_the_schedules_g
     timeout(Duration::from_secs(5), exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
 }
 
+/// The checkpoint endpoint names the successor's turn, but the custody quorum reads none at the same
+/// block, or another member's: the keys stay, sequencing goes on, and once they agree the member takes
+/// them.
+#[tokio::test]
+async fn a_turn_the_endpoint_names_and_the_custody_quorum_does_not_gets_no_keys() {
+    let logged = Logged::start("handover-turn-quorum-log");
+    let mut exchange = Exchange::start_logged("handover-turn-quorum", Some(logged.engine.clone())).await;
+    exchange.schedule_successor(logged.turn, logged.key, logged.boundary);
+    exchange.reach(logged.boundary);
+    let scheduled = exchange.scheduled.lock().unwrap().clone().expect("the turn is drawn");
+    let other = ScheduledTurn { candidate: AccountId([0xd1; 20]), release: [0x77; 32], ..scheduled };
+    for (what, turn) in [("no turn", None), ("another member's", Some(other))] {
+        exchange.majority.reads.lock().unwrap().turn = Some(turn);
+        let err = exchange.take().await.err().unwrap_or_else(|| panic!("{what}: the successor took the keys"));
+        assert!(format!("{err:#}").contains("the custody quorum reads"), "{what}: {err:#}");
+        assert!(exchange.drains.try_recv().is_err(), "{what}: sequencing stopped");
+        assert!(!exchange.run.is_finished(), "{what}: the predecessor stopped serving");
+        assert!(std::fs::read_dir(&exchange.successor_dir).is_err(), "{what}: the successor sealed keys");
+    }
+    exchange.majority.reads.lock().unwrap().turn = None;
+    let head = write_log_tail(&exchange.successor_log, 9, &exchange.old.enclave_key().unwrap());
+    let answer = exchange.answer_drain(Ok(head));
+    let store = exchange.take().await.expect("the member took the keys where the quorum agrees");
+    assert_eq!((store.release(), store.generation()), (exchange.upgrade(), TURN_GENERATION));
+    assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
+}
+
 #[tokio::test]
 async fn a_turns_member_takes_the_keys_and_the_account_but_no_certificate_of_the_incumbents() {
     let logged = Logged::start("handover-turn-certificate-log");
