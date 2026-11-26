@@ -131,7 +131,8 @@ impl Follower {
                 Ok(mut follower) => {
                     info!(seq, snapshot = %path.display(), %signer, "built the replica from a daily snapshot");
                     let (_, _, _, rows) = records;
-                    follower.rows_before = rows.clone().and_then(|store| RowsBefore::start(dir, seq, store));
+                    let now = follower.replica().engine().now();
+                    follower.rows_before = rows.clone().and_then(|store| RowsBefore::start(dir, (seq, now), store));
                     return Ok(follower);
                 }
                 Err(e) if observing_failed.get() => return Err(e),

@@ -114,6 +114,32 @@ impl PublishedLog {
     }
 }
 
+impl PublishedLog {
+    /// `local`, with the segments a log directory lacks, as a node's local window removes them, put back into it
+    /// first from the archive the node config at `config` names (`archive::restore_whole`), so the directory reads
+    /// from genesis.
+    /// Error cases:
+    /// - as `local`, or the config does not load or names no `[archive]`, or a lacking segment cannot be read from
+    ///   the archive or written
+    pub fn local_filled(&self, through: Option<(u64, B256)>, config: Option<&Path>) -> anyhow::Result<LocalLog> {
+        let local = self.local(through)?;
+        if let (Self::Path(dir), Some(config)) = (self, config)
+            && dir.is_dir()
+        {
+            let cfg = crate::config::NodeConfig::load(config)?;
+            ensure!(
+                cfg.archive.is_some(),
+                "{} names no [archive] to put the log's segments back from",
+                config.display()
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+            let put = runtime.block_on(crate::archive::restore_whole(&cfg, dir))?;
+            eprintln!("put back {put} segments of {} from the archive", dir.display());
+        }
+        Ok(local)
+    }
+}
+
 impl LocalLog {
     /// Where the log is on disk.
     pub fn path(&self) -> &Path {

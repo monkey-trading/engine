@@ -60,13 +60,15 @@ case_ pull_request "rust scenario_tests" crates/node/src/archive/uploader.rs cra
   crates/node/src/archive/read/segments/tests.rs scripts/dev-archive-read.sh \
   crates/node/src/sequencer/recovery_scale/snapshot_archive.rs scripts/dev-snapshot-archive.sh \
   crates/node/src/archive/uploader/tails.rs crates/node/src/archive/read/tail.rs \
-  crates/node/src/archive/read/tail/scenario.rs scripts/dev-log-tail.sh
+  crates/node/src/archive/read/tail/scenario.rs scripts/dev-log-tail.sh crates/node/src/archive/window/mod.rs \
+  crates/node/src/archive/window/scenario.rs crates/node/src/archive/window/tests/restore.rs scripts/dev-log-window.sh
 for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crates/node/src/node/price_feeds.rs; do
   case_ pull_request "rust $feeds scenario_tests metrics_alerts production_secrets engine_build" "$feed"
 done
 for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/turn.rs crates/node/src/seed_relay/mod.rs \
   crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs \
-  crates/node/src/api/awards.rs crates/node/src/archive/read/segments.rs crates/node/src/archive/read/source.rs; do
+  crates/node/src/api/awards.rs crates/node/src/archive/read/segments.rs crates/node/src/archive/read/source.rs \
+  crates/node/src/archive/window/restore.rs crates/node/src/archive/window/bounds.rs; do
   case_ pull_request "rust $anvil log_heads scenario_tests recovery_scale engine_build" "$rotation"
 done
 for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
@@ -84,7 +86,7 @@ done
 case_ pull_request "rust vault_deposits $api" crates/node/src/api/stream/quotes/mod.rs crates/node/src/limits/mod.rs
 case_ pull_request "rust $api" crates/node/src/api/account.rs crates/node/src/tls/mod.rs
 case_ pull_request "rust attestation_verifier $api" crates/node/src/api/attestation.rs
-case_ pull_request "rust recovery_scale $api" crates/node/src/api/stream/mod.rs
+case_ pull_request "rust recovery_scale $api" crates/node/src/api/stream/mod.rs crates/node/src/api/stream/backfill.rs
 case_ pull_request "rust snapshot_restart recovery_scale soak engine_build" crates/node/src/snapshot/mod.rs
 case_ pull_request "rust production_secrets engine_build" crates/node/src/secrets/mod.rs
 case_ pull_request "rust attestation_verifier wasm_verifier signed_api dashboard_data ct_watch engine_build" \

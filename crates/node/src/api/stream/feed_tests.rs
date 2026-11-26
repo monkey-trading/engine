@@ -2,6 +2,7 @@
 
 use super::*;
 use std::fs;
+use std::path::Path;
 use std::sync::mpsc;
 
 use engine_core::command::{Command, Sequenced};
@@ -9,6 +10,7 @@ use futures_util::FutureExt;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 
+use super::backfill::BACKFILL_BATCH;
 use super::tests::permits;
 use crate::log::{CommandEntry, LogEntry, SegmentedLog, segment_seq};
 use crate::test_support::{TestSequencer, deposit, log_entries, log_messages, scratch_dir, withdraw};

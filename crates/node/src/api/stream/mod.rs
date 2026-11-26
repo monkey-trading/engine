@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 use std::future::pending;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,7 +26,6 @@ use serde::Deserialize;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, watch};
 use tokio::task::coop::consume_budget;
-use tokio::task::{JoinHandle, spawn_blocking};
 use tokio::time::timeout;
 use tracing::field::display;
 use tracing::{Instrument, Span, error, info};
@@ -34,6 +33,8 @@ use tracing::{Instrument, Span, error, info};
 use crate::api::{ApiError, ApiState};
 use crate::log::{LogReader, Manifest, Offset};
 use crate::sequencer::StreamMsg;
+mod backfill;
+use backfill::{read_batch, read_holding};
 mod notice;
 mod quotes;
 mod signed;
@@ -44,8 +45,6 @@ use quotes::Quotes;
 use signed::Framing;
 use status::StatusFeed;
 
-/// Most messages read from disk per blocking call.
-const BACKFILL_BATCH: usize = 256;
 /// Subscribers reading a batch from disk at once, each holding one checked chunk of a segment while
 /// it reads. A subscriber keeps up to `BACKFILL_BATCH` decoded messages after it reads them.
 pub const MAX_BACKFILLS: usize = 16;
@@ -97,6 +96,8 @@ pub(crate) struct Feed {
     backlog: VecDeque<Arc<StreamMsg>>,
     /// Where each live message's time from its stamp to its send goes, when timed (`timed`).
     sent: Option<Histogram>,
+    /// Whether its reads of the disk hold the segments they read from the local window (`unheld`).
+    holding: bool,
 }
 
 impl Feed {
@@ -111,7 +112,14 @@ impl Feed {
         start: Option<Offset>,
     ) -> Self {
         let (catching_up, reader, backlog) = (start.is_some(), None, VecDeque::new());
-        Self { live, log_dir, manifest, backfills, next: start, catching_up, reader, backlog, sent: None }
+        let (sent, holding) = (None, true);
+        Self { live, log_dir, manifest, backfills, next: start, catching_up, reader, backlog, sent, holding }
+    }
+
+    /// This feed, its reads of the disk holding no segment: a stream client paces its backfill, so the local window
+    /// lets a segment go under it, and the backfill then fails with `NotLocal`, naming the archive.
+    pub(crate) fn unheld(self) -> Self {
+        Self { holding: false, ..self }
     }
 
     /// This feed, timing each live message it is sent from its stamp into `sent`.
@@ -140,7 +148,8 @@ impl Feed {
                 // sent before this read is on disk for it.
                 self.live = self.live.resubscribe();
                 let (dir, manifest, reader) = (self.log_dir.clone(), self.manifest.clone(), self.reader.take());
-                let (reader, batch) = read_holding(permit, move || read_batch(&dir, manifest, from, reader))
+                let holding = self.holding;
+                let (reader, batch) = read_holding(permit, move || read_batch(&dir, manifest, (from, holding), reader))
                     .await
                     .context("log reader task")??;
                 self.catching_up = reader.is_some();
@@ -238,7 +247,8 @@ pub async fn stream(
     start::ensure_held(&s.log_dir, &s.manifest, start).await?;
     let place = s.limits.subscribe()?;
     let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start)
-        .timed(s.limits.stream_seconds());
+        .timed(s.limits.stream_seconds())
+        .unheld();
     let (send_timeout, span) = (s.limits.send_timeout, Span::current());
     let ws = ws.max_message_size(s.limits.max_body_bytes).max_frame_size(s.limits.max_body_bytes);
     Ok(ws.on_upgrade(move |socket| {
@@ -448,44 +458,6 @@ async fn send_text<S: Sink<Message> + Unpin>(
             false
         }
     }
-}
-
-/// Runs `read` on the blocking pool holding `permit` until it returns, so a subscriber that leaves
-/// mid-read does not free its backfill permit while the read still runs.
-fn read_holding<T: Send + 'static>(
-    permit: OwnedSemaphorePermit,
-    read: impl FnOnce() -> T + Send + 'static,
-) -> JoinHandle<T> {
-    spawn_blocking(move || {
-        let _held = permit;
-        read()
-    })
-}
-
-/// Up to `BACKFILL_BATCH` messages from disk, opening a reader at `from` when there is none yet,
-/// and the reader to go on with, released so it holds no segment in memory, or `None` once it has
-/// read everything written.
-/// Error cases:
-/// - the log cannot be read (see `LogReader`)
-fn read_batch(
-    dir: &Path,
-    manifest: watch::Receiver<Manifest>,
-    from: Offset,
-    reader: Option<LogReader>,
-) -> anyhow::Result<(Option<LogReader>, Vec<Arc<StreamMsg>>)> {
-    let mut reader = match reader {
-        Some(reader) => reader,
-        None => LogReader::open(dir, from, manifest)?,
-    };
-    let mut batch = Vec::new();
-    while batch.len() < BACKFILL_BATCH {
-        let Some((offset, entry)) = reader.next_entry()? else {
-            return Ok((None, batch));
-        };
-        batch.push(Arc::new(StreamMsg::new(offset, entry)));
-    }
-    reader.release();
-    Ok((Some(reader), batch))
 }
 
 #[cfg(test)]

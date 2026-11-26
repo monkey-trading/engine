@@ -155,9 +155,11 @@ jobs:
                   | crates/node/src/trusted_time/tests/*)
                   areas+=" rust $lib_tests" ;;
                 crates/node/src/feeds/tests/*) areas+=" rust $feeds" ;;
-                # The archive's readers, which every standby, member and handover backfill reads through.
+                # The archive's readers, which every standby, member and handover backfill reads through, and the
+                # window's restore and history start, which a start reads through.
                 crates/node/src/archive/read/mod.rs | crates/node/src/archive/read/segments.rs \
-                  | crates/node/src/archive/read/source.rs)
+                  | crates/node/src/archive/read/source.rs | crates/node/src/archive/window/restore.rs \
+                  | crates/node/src/archive/window/bounds.rs)
                   areas+=" rust $anvil log_heads scenario_tests recovery_scale" ;;
                 # The log archive: its uploader, its bucket's stand-in, its readers' tests and its dev scenarios,
                 # which no other scenario turns on.
@@ -234,7 +236,8 @@ jobs:
                   areas+=" rust $api vault_deposits" ;;
                 crates/node/src/api/attestation.rs) areas+=" rust $api attestation_verifier" ;;
                 # The stream's feed, which the recovery scenario's history catch-up reads the log through.
-                crates/node/src/api/stream/mod.rs) areas+=" rust $api recovery_scale" ;;
+                crates/node/src/api/stream/mod.rs | crates/node/src/api/stream/backfill.rs)
+                  areas+=" rust $api recovery_scale" ;;
                 crates/node/src/api/* | crates/node/src/tls/*) areas+=" rust $api" ;;
                 # Checkpoint caches.
                 crates/node/src/snapshot/* | crates/node/src/sequencer/snapshots* \
@@ -334,7 +337,8 @@ jobs:
                   | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh \
                   | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh | scripts/dev-storage-alerts.sh \
                   | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh | scripts/dev-snapshot-start.sh \
-                  | scripts/dev-archive-read.sh | scripts/dev-snapshot-archive.sh | scripts/dev-log-tail.sh)
+                  | scripts/dev-archive-read.sh | scripts/dev-snapshot-archive.sh | scripts/dev-log-tail.sh \
+                  | scripts/dev-log-window.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -914,6 +918,8 @@ jobs:
         run: ./scripts/dev-snapshot-archive.sh
       - name: Run the log tail dev scenario
         run: ./scripts/dev-log-tail.sh
+      - name: Run the log local window dev scenario
+        run: ./scripts/dev-log-window.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Check the same wait over 100k accounts each holding a hedged pair under portfolio margin

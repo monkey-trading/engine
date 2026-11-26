@@ -10,7 +10,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use crate::config::HistorySection;
 use crate::history::store::{check_integrity, check_schema, expected_schema, harden};
 use crate::history::{History, HistoryCheck, INDEX_FILE};
-use crate::log::{CommandEntry, LogEntry};
+use crate::log::{CommandEntry, LogEntry, Offset};
 
 pub(crate) struct HistoryPlan {
     dir: PathBuf,
@@ -20,6 +20,8 @@ pub(crate) struct HistoryPlan {
     authenticated: Option<crate::history::startup::Plan>,
     /// Whether this plan checked the index's integrity, so `finish` need not (`for_member`).
     checked: bool,
+    /// Where an index that holds nothing, or is discarded, starts taking the log (`fresh_from`).
+    fresh_from: Offset,
 }
 
 impl HistoryPlan {
@@ -97,7 +99,8 @@ impl HistoryPlan {
                 .transpose()
         })();
         let checked = check && progress.is_ok();
-        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None, authenticated: None, checked })
+        let fresh_from = Offset::start_of(0);
+        Ok(Self { dir: cfg.dir.clone(), retention_ms, progress, found: None, authenticated: None, checked, fresh_from })
     }
 
     /// Keeps paired recovery entirely separate from the legacy eager SQL integrity scan.
@@ -111,6 +114,7 @@ impl HistoryPlan {
             found: None,
             authenticated: Some(plan),
             checked: false,
+            fresh_from: Offset::start_of(0),
         })
     }
 
@@ -136,6 +140,19 @@ impl HistoryPlan {
             // The same command however its seal is spelt, as the command prefix reads it.
             self.found = Some(crate::log::same_command(command, last));
         }
+    }
+
+    /// This plan, a new or discarded legacy index taking the log from the command at `seq` rather than the log's
+    /// start: the first a log whose oldest segments left the host re-derives from what it holds
+    /// (`archive::window::fresh_start`). The commands before it are past the index's retention.
+    pub(crate) fn fresh_from(self, seq: Option<u64>) -> Self {
+        Self { fresh_from: Offset::start_of(seq.unwrap_or(0)), ..self }
+    }
+
+    /// Whether the index resumes after its last command, at or after `seq`: it holds one, which the log observed
+    /// holds unchanged.
+    pub(crate) fn resumes_from(&self, seq: u64) -> bool {
+        self.found == Some(true) && self.last_seq().is_some_and(|last| last.saturating_add(1) >= seq)
     }
 
     /// The seq of the last command the index took, when it holds one that reads.
@@ -169,7 +186,7 @@ impl HistoryPlan {
             retention: std::time::Duration::from_millis(u64::try_from(self.retention_ms)?),
             marks: None,
         };
-        let mut check = HistoryCheck::open_with(&section, !self.checked)?;
+        let mut check = HistoryCheck::open_with(&section, !self.checked)?.fresh_from(self.fresh_from);
         match self.progress {
             Err(reason) => check.opened = Err(reason),
             Ok(expected) => {

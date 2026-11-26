@@ -174,8 +174,8 @@ pub struct NodeConfig {
 pub struct NodeSection {
     pub listen: SocketAddr,
     /// The log's segment files and `manifest.jsonl`. Completed segments and the manifest are the
-    /// public archive, served at `/v1/archive/`; every segment is kept, since recovery replays the
-    /// log from genesis.
+    /// public archive, served at `/v1/archive/`; every segment is kept, unless `[archive]
+    /// local_window` lets one the archive's bucket holds leave the host.
     pub log_dir: PathBuf,
     /// Start a new log segment once the current one holds this many commands.
     pub segment_commands: u64,

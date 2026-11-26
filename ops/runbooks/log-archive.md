@@ -13,6 +13,11 @@ the bucket keeps every one. Commands, configuration keys and their output call a
 - [When `archive_upload_lagging` fires](#when-archive_upload_lagging-fires)
 - [When `archive_object_mismatch` fires](#when-archive_object_mismatch-fires)
 - [When `archive_copy_superseded` fires](#when-archive_copy_superseded-fires)
+- [When `archive_segment_missing` fires](#when-archive_segment_missing-fires)
+- [Keep a window of the log on the host](#keep-a-window-of-the-log-on-the-host)
+- [When `log_segment_missing` fires](#when-log_segment_missing-fires)
+- [When `log_window_held` fires](#when-log_window_held-fires)
+- [When `log_window_failing` fires](#when-log_window_failing-fires)
 - [How the archive works](#how-the-archive-works)
 
 The steps use the shell variables that [Variables](reference.md#variables) sets up, and the ones
@@ -301,13 +306,148 @@ a member's next stint, the next handover attempt.
    node has confirmed was never uploaded: the node in office uploads it once the vault finalizes a
    checkpoint past it, and a member uploads it from its copy while it follows.
 4. If a node redirects the segment, `GET /v1/archive/<segment>` answering 308, but no node holds it
-   and the bucket lacks its range, the host dropped the segment before its upload. Restore the
-   segment file from a member's copy or a backup to the host's log directory, keep the evidence, as
-   [Keep the evidence](incident-response.md#keep-the-evidence) describes, and tell the owner.
+   and the bucket lacks its range, the host dropped the segment before its upload, and that node
+   pages `log_segment_missing`. Follow [When `log_segment_missing` fires](#when-log_segment_missing-fires).
 
 **How to tell it is resolved.** The reader's next attempt succeeds: the standby follows, the member
 builds its replica, or the handover completes. The alert does not resolve itself, and a later failure
 for the same object pages again after `alerts.episode_quiet`.
+
+## Keep a window of the log on the host
+
+`archive.local_window` keeps that much of the log, in sequenced time, on the host, and leaves the
+rest to the bucket. Without it, the host keeps every segment. The release configurations set 30
+days, the history index's retention.
+
+A completed segment leaves the host, oldest first, only when all of these hold:
+
+- the bucket holds every range the segment holds sequence numbers of, as this process's uploader
+  counts them once it has found what the bucket holds, so a segment of a range not yet whole or not
+  yet finalized stays, whatever else holds its commands;
+- every command of it is older than the window, counted back from the first command of the newest
+  completed segment: the log's own stamps, never the host's clock;
+- it ends before the checkpoint of the newest daily snapshot a start may go on from, and before the
+  checkpoint of the newest daily snapshot stamped before the history index's retention whose file
+  hashes as its manifest line says, from which the index re-derives a retained command's rows; with
+  no daily snapshot, nothing leaves;
+- a read of its sequence numbers from the bucket's public URL, made just before it leaves, gives
+  back the bytes its manifest line names;
+- no reader of the log inside the node, such as the history index catching up, is reading it. A
+  stream client's backfill holds no segment: one that reaches a segment that left the host fails,
+  and the client reads it from the archive.
+
+The window does not run with `[snapshots]`, whose history index rebuilds from the whole log, so a
+configuration with `[snapshots]` keeps every segment, and a production build takes no window under
+four days. Every replay of the whole log first puts back every segment the window removed, read
+from the bucket, newest first, so a restore that stops part way leaves the host's segments in one
+run: a start with no daily snapshot to go on from, a `[snapshots]` start with no cache, a start whose
+posted log head is older than the newest daily snapshot's last 65,536 instructions, a member that
+builds its replica from its whole copy, and a handover's replay of a copy with no daily snapshot to
+go on from. Each needs room on the log's volume for the whole log, as does a member whose copy is
+empty, which takes every segment from the archive before its window trims it. A history index that
+rebuilds after `history.retention` grew puts back the segments its new retention holds first, at the
+start of the node or of the member's copy, and the start refuses under `history_recovery_failed`
+while the archive cannot give them back.
+
+A copy of a log directory that a window trimmed does not replay from genesis on its own. Give the
+command that reads it the node config whose `[archive]` names the bucket, and it puts the removed
+segments back into the directory first, which then needs room for the whole log:
+
+```shell
+$ENGINE replay --log <log directory> --archive-config <node config>
+$ENGINE carry --log <log directory> --seq $S --check --archive-config <node config>
+```
+
+Run either on a copy of a running node's directory, not on the directory itself, whose window would
+remove the segments again.
+
+**What the host holds.** The window, plus up to a day for the daily snapshot before the start of the
+history's retention, plus what the bucket does not hold yet: about 31 days of segments at launch
+flow, however long the node runs. A rotation member holds only the daily snapshots of its own turns
+and those it fetched, so it keeps its copy from the newest of them before the history's retention,
+and from the one before its history index's last command, which its next turn's start goes on from
+no later than: as much more as the gap between them. A member whose copy was empty keeps it whole
+until it holds a daily snapshot from before the history's retention, about 30 days.
+
+**Turn it on.** Set `archive.local_window` in the deployment's configurations under
+`config/release/`, and deploy the release, as [Deploy and rollback](deploy-and-rollback.md)
+describes. Every member must first run a release that reads the archive and starts from a daily
+snapshot. The first pass removes at most 64 segments a minute, each read back from the
+bucket first.
+
+**Check it.**
+
+```shell
+curl -s http://<metrics listener>/metrics | grep -E '^engine_log_local_|^engine_store_bytes\{store="log"\}'
+```
+
+`engine_log_local_first_seq` rises as segments leave, `engine_log_local_bytes` stays flat once the
+log is older than the window, and `engine_log_local_held_seconds` stays under two days.
+
+**Roll back.** Remove `local_window` and deploy. The segments already removed stay in the bucket, and
+readers take them from there.
+
+## When `log_segment_missing` fires
+
+**What is happening.** The node's log lists a segment that its host does not hold, and that it must
+keep: one after the oldest segment on the host, which a restart's read of the log refuses to skip,
+or one whose ranges the bucket does not hold yet. Neither the bucket nor any archive mirror gave it
+back. The alert names the newest such segment; the window tries the ones before it once that one is
+back, so each in turn may page. The host removed or lost the file, since the window removes a segment only once the bucket
+gives it back. The trading server keeps sequencing, but its uploads wait at that segment's range and
+`archive_upload_lagging` follows, and a restart refuses a log with a gap.
+
+1. Read the alert's `segment` field and the console lines around it.
+2. Check whether a member's copy holds the segment: on a member, `ls <node.log_dir>/<segment>`. A
+   member uploads its copy's ranges while it follows, so once the vault finalizes a checkpoint past
+   them, the bucket holds them, the node puts the segment back from there, and the alert resolves.
+3. If no member holds it, copy the file from a backup into the node's log directory, and check its
+   SHA-256 against its manifest line:
+
+   ```shell
+   grep '"<segment>"' <node.log_dir>/manifest.jsonl
+   sha256sum <node.log_dir>/<segment>
+   ```
+
+4. Keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and
+   tell the owner: a host that loses the log's segments is an incident.
+
+**How to tell it is resolved.** The alert resolves, and `engine_log_local_segments_restored_total` rose.
+
+## When `log_window_held` fires
+
+**What is happening.** A reader of the log, or the bucket not giving back a segment's bytes, has kept
+the oldest segment on the host past `archive.local_window` for more than two days of sequenced time;
+the message names which. The host's log grows by that much more than the capacity plan allows.
+Nothing is lost, and clients see no change. A wait for the bucket's uploads raises
+`archive_upload_lagging` instead, and a hold by the daily snapshots or the history index pages
+nothing: it lasts as long as the gap between the daily snapshots the node holds, which on a rotation
+member are its own turns', and `daily_snapshot_failed` pages a node that stops writing them.
+`engine_log_local_held_seconds` shows every hold.
+
+| The message ends with | Cause and fix |
+| --- | --- |
+| `a reader of the log holds it` | The history index is catching up, or a member link is reading that far back. It clears when the reader moves on. |
+| `the bucket does not give back the bytes ...` | The console names the read's failure. If the bucket gives back other bytes than the manifest line names, as a copy backfilled from another archive can spell them, compare the object with the segment, keep the evidence, and tell the owner. |
+
+**How to tell it is resolved.** The alert resolves, and `engine_log_local_held_seconds` falls.
+
+## When `log_window_failing` fires
+
+**What is happening.** The window's passes over the log's segments have failed for an hour, so no
+segment leaves the host and the host's log grows past its capacity plan. The message names the last
+failure. Nothing is lost, and clients see no change.
+
+1. Read the console for `the local window's pass over the log's segments failed`, which names each
+   failure.
+2. A segment that does not match its manifest line, a log directory the node cannot list or write,
+   or one that no longer holds the newest segment its writer names, is the host's: keep the
+   evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and tell the
+   owner. The window touches nothing of such a directory, and a restart refuses a log that lacks a
+   listed segment.
+
+**How to tell it is resolved.** The alert resolves at the next pass that succeeds, and
+`engine_log_local_window_failures_total` stops rising.
 
 ## How the archive works
 

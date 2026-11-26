@@ -40,15 +40,16 @@ use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
+mod history;
+pub use history::TestHistory;
 mod written;
 pub use written::Written;
 
-use crate::api::{Feed, MAX_BACKFILLS, Signing};
+use crate::api::Signing;
 use crate::clock::test_clock::TestClock;
 use crate::clock::{Clock, SystemClock};
 use crate::config::{HistorySection, NodeConfig};
-use crate::history::derived::Deriver;
-use crate::history::{History, HistoryCheck, HistoryEvent, Reader};
+use crate::history::{History, HistoryCheck, HistoryEvent};
 use crate::log::{self, LogEntry, LogReader, Manifest, Offset, SegmentedLog};
 use crate::metrics::Metrics;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg, genesis_commands};
@@ -108,6 +109,14 @@ impl TestSequencer {
         )
     }
 
+    /// As `start_at` with the dev genesis, publishing a daily snapshot into `daily` at the first checkpoint of each
+    /// UTC day, as a node with `[daily_snapshots]` does.
+    pub fn start_publishing(dir: &Path, stream_capacity: usize, clock: Arc<dyn Clock>, daily: &Path) -> Self {
+        let genesis = genesis_commands(&dev_config().genesis);
+        let ceilings = dev_config().genesis.close_spread_ceilings;
+        Self::boot_in(dir, stream_capacity, clock, (genesis, ceilings), ProtocolVersion::LATEST, Some(daily))
+    }
+
     /// As `start`, activating `V18`: a version that signs each withdrawal when it is approved, as logs
     /// written before `V22` do.
     pub fn start_v18(dir: &Path, stream_capacity: usize) -> Self {
@@ -146,6 +155,18 @@ impl TestSequencer {
         ceilings: Vec<CloseSpreadCeiling>,
         version: ProtocolVersion,
     ) -> Self {
+        Self::boot_in(dir, stream_capacity, clock, (genesis, ceilings), version, None)
+    }
+
+    /// `boot`, publishing daily snapshots into `daily`, if given.
+    fn boot_in(
+        dir: &Path,
+        stream_capacity: usize,
+        clock: Arc<dyn Clock>,
+        (genesis, ceilings): (Vec<Command>, Vec<CloseSpreadCeiling>),
+        version: ProtocolVersion,
+        daily: Option<&Path>,
+    ) -> Self {
         let (stream, _) = broadcast::channel(stream_capacity);
         let (withdrawals_tx, withdrawals) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
@@ -154,6 +175,7 @@ impl TestSequencer {
             clock: clock.clone(),
             genesis,
             close_spread_ceilings: ceilings,
+            daily_snapshots: daily.map(Path::to_owned),
             ..sequencer_config(dir, manifest_tx)
         };
         let metrics = cfg.metrics.clone();
@@ -218,47 +240,6 @@ impl TestSequencer {
             }
             self.submit(Command::Tick).await;
         }
-    }
-}
-
-/// A history index following a `TestSequencer`'s log: its reader, where it resumed, and its task.
-pub struct TestHistory {
-    pub reader: Reader,
-    pub resume_at: Offset,
-    task: JoinHandle<anyhow::Result<()>>,
-}
-
-impl TestHistory {
-    /// Opens the index in `index` against the log `node` writes in `dir`, and runs it, letting
-    /// readers in once it has taken the log's last command now.
-    /// Error cases:
-    /// - the index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
-    pub async fn start(node: &TestSequencer, dir: &Path, index: &Path) -> anyhow::Result<Self> {
-        let tip = node.next_seq().await.checked_sub(1);
-        Self::start_with_tip(node, dir, index, tip)
-    }
-
-    /// As `start`, but readers are let in once the index has taken `tip`.
-    /// Error cases:
-    /// - the index cannot be opened, nor a fresh one in its place (see `HistoryCheck`)
-    pub fn start_with_tip(node: &TestSequencer, dir: &Path, index: &Path, tip: Option<u64>) -> anyhow::Result<Self> {
-        let cfg = HistorySection { dir: index.to_owned(), retention: RETENTION, marks: None };
-        let mut history = open_history(&cfg, dir)?;
-        history.catch_up_to(tip);
-        let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
-        let (reader, resume_at) = (history.reader(), history.resume_at());
-        let feed =
-            Feed::new(node.stream.subscribe(), dir.to_owned(), node.manifest.clone(), backfills, Some(resume_at));
-        let deriver = Deriver::new(node.derived.clone(), Some((dir.to_owned(), node.manifest.clone())));
-        Ok(Self { reader, resume_at, task: tokio::spawn(history.run(feed, deriver)) })
-    }
-
-    /// The task's result once it has taken the whole log, which it ends with after the sequencer
-    /// stops.
-    /// Error cases:
-    /// - the history task failed (see `History::run`)
-    pub async fn finish(self) -> anyhow::Result<()> {
-        timeout(Duration::from_secs(10), self.task).await.expect("the history task ends in time").expect("history task")
     }
 }
 

@@ -190,5 +190,41 @@ fn checkpoint_candidates(
     Ok(candidates)
 }
 
+/// `engine replay`'s replay of the log at `path` under the trust its flags give, `custody_config` with the
+/// pinned signer, else the attestations `verified`, else the pinned signer, or none, in `domain`: in ranges
+/// from a directory of daily snapshots, so many at once, or whole, its seals checked as `seals` says.
+/// Error cases:
+/// - the custody config cannot be loaded, or names no signer, or the replay fails
+pub fn audit(
+    path: &Path,
+    ranges: Option<(std::path::PathBuf, NonZeroUsize)>,
+    seals: SealChecks,
+    custody_config: Option<std::path::PathBuf>,
+    (signer, domain): (Option<AccountId>, Option<CheckpointDomain>),
+    verified: &[crate::VerifiedAttestation],
+) -> anyhow::Result<Audited> {
+    if let Some(config) = custody_config {
+        let cfg = NodeConfig::load(&config)?;
+        let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        return match ranges {
+            Some((dir, jobs)) => runtime.block_on(replay_ranges_with_custody(path, &dir, &cfg, signer, jobs)),
+            None => runtime.block_on(replay_path_with_custody(path, &cfg, signer, seals)).map(Audited::from),
+        };
+    }
+    if verified.len() > 1 {
+        let attested = verified.iter().map(|v| v.enclave_address).collect();
+        return match ranges {
+            Some((dir, jobs)) => crate::replay_ranges_with_attested(path, &dir, domain, attested, jobs),
+            None => crate::replay_path_with_attested(path, domain, attested, seals).map(Audited::from),
+        };
+    }
+    let trusted = crate::reconcile_signer(signer, verified.first())?;
+    match ranges {
+        Some((dir, jobs)) => crate::replay_ranges_with_trust(path, &dir, domain, trusted, jobs),
+        None => crate::replay_path_with_trust(path, domain, trusted, seals).map(Audited::from),
+    }
+}
+
 #[cfg(test)]
 mod tests;

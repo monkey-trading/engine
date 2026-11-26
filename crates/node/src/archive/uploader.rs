@@ -7,13 +7,16 @@
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
 //! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise. While no
 //! range can go up, it puts the tails of the checkpoints the vault may still hold as its latest in the bucket (`tails`).
+//! A range whose segments are no longer on the host, which the log's local window removes only once the bucket holds
+//! every range they hold, counts once the bucket holds it, with nothing of this copy's left to read it back against.
+//! The uploader publishes how many ranges, from the first, the bucket holds (`archived`), which the window reads.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, ensure};
 use tokio::sync::watch;
 use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep};
@@ -21,8 +24,8 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes,
-    range_key, same_root, stored_bound, whole_ranges,
+    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, absent_segments, checkpoint_root, compress, holds, log_prefix,
+    range_bytes, range_key, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, Values};
@@ -75,6 +78,9 @@ struct Work<F> {
     unread: Option<u64>,
     /// The tails of the checkpoints the vault may still hold as its latest.
     tails: Tails,
+    /// How many ranges, from the first, the bucket holds as this process found or confirmed them; unknown until
+    /// the first resume ends.
+    archived: watch::Sender<Option<u64>>,
 }
 
 /// The vault's finalized checkpoints, as the copy in use holds them.
@@ -146,8 +152,16 @@ impl<F: Finality> Uploader<F> {
             stalled_at,
             unread: None,
             tails: Tails::default(),
+            archived: watch::channel(None).0,
         };
         (Self { sources: handed, work }, sources)
+    }
+
+    /// How many ranges, from the first, the bucket holds as this process found them at a resume or confirmed them
+    /// since, unknown until its first resume ends: the log's local window removes no segment holding a seq of a range
+    /// at or past it, and does nothing while it is unknown.
+    pub(crate) fn archived(&self) -> watch::Receiver<Option<u64>> {
+        self.work.archived.subscribe()
     }
 
     /// Uploads from each manifest handed to it in turn, until its sources close.
@@ -198,6 +212,7 @@ impl<F: Finality> Work<F> {
         next = self.stalled_at.map_or(next, |at| next.min(at));
         info!(ranges = next, stalled = ?self.stalled_at, "the archive holds the log's ranges up to here");
         self.backlog.restart(next);
+        self.archived.send_replace(Some(next));
         loop {
             let view = manifest.borrow_and_update().clone();
             let whole = match self.backlog.observe(&view) {
@@ -222,6 +237,7 @@ impl<F: Finality> Work<F> {
                 Ok(below) if next < below => self.upload(&view, next).instrument(span.clone()).await.map(|found| {
                     if found == Found::Confirmed {
                         next += 1;
+                        self.archived.send_replace(Some(next));
                     }
                 }),
                 Ok(_) => {
@@ -294,12 +310,26 @@ impl<F: Finality> Work<F> {
         self.range(view, index).await
     }
 
-    /// Reads range `index`'s object back against the node's copy of it.
+    /// Reads range `index`'s object back against the node's copy of it; one whose segments are no longer on the
+    /// host, which the bucket holds as the resume found, has nothing to read it back against, and counts.
     /// Error cases:
-    /// - see `build` and `check`
+    /// - see `absent`, `build` and `check`
     async fn read_back(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
+        if let Some(segment) = self.absent(view, index).await? {
+            info!(%segment, "this host no longer holds a segment of the range the bucket holds, which is not read back");
+            return Ok(Found::Confirmed);
+        }
         let raw = self.build(view, index).await?;
         self.check(index, raw).await
+    }
+
+    /// The first listed segment holding a seq of range `index` whose file is not on the host, if any.
+    /// Error cases:
+    /// - see `absent_segments`
+    async fn absent(&self, view: &Manifest, index: u64) -> anyhow::Result<Option<String>> {
+        let (dir, read) = (self.dir.clone(), view.clone());
+        let absent = spawn_blocking(move || absent_segments(&dir, &read, index)).await??;
+        Ok(absent.into_iter().next().map(|listed| listed.file))
     }
 
     /// How many ranges, from the first, end below the newest finalized checkpoint that `view`'s copy holds at the
@@ -358,10 +388,20 @@ impl<F: Finality> Work<F> {
         );
     }
 
-    /// Uploads range `index`, and reads it back.
+    /// Uploads range `index`, and reads it back. A range with a segment no longer on the host is not built: it counts
+    /// once the bucket holds it, as another copy's uploader puts it there, and waits for that otherwise, while the
+    /// log's local window restores the segment (`archive::window`).
     /// Error cases:
     /// - the range cannot be built, or the bucket cannot take or serve it
+    /// - a segment of it is not on the host, and the bucket does not hold it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
+        if let Some(segment) = self.absent(view, index).await? {
+            let key = range_key(&self.prefix, index);
+            ensure!(self.store.holds(&key).await?, "{segment} is not on this host, and the bucket does not hold {key}");
+            self.backlog.passed();
+            info!(%segment, "the bucket holds the range, a segment of which is not on this host");
+            return Ok(Found::Confirmed);
+        }
         let raw = self.build(view, index).await?;
         let (created, length) = self.create(&self.store, &range_key(self.store.prefix(), index), &raw).await?;
         let bytes = raw.len() as u64;

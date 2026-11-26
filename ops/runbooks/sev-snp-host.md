@@ -130,9 +130,10 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 
 The trading server keeps six stores on disk, and its log's archive in a bucket. This section sizes each from
 the soak's measurements and, for the history index, a recorded log's, says what the server alerts on, and says
-what can and cannot be relied on in the figures it reports. **The log grows without a bound. The history index
-keeps 30 days of account events, and with `[archive]` the host keeps 30 days of daily snapshots; each is bounded
-by its window.** Until the log has a bound, plan a node that must run for months on these figures.
+what can and cannot be relied on in the figures it reports. **With `archive.local_window` and without `[snapshots]`,
+the log on the host is bounded by its window: 30 days, up to a day more, and what the archive's bucket does not hold
+yet. The history index keeps 30 days of account events, and with `[archive]` the host keeps 30 days of daily
+snapshots; each is bounded by its window.**
 
 ### What each store grows by
 
@@ -145,7 +146,7 @@ launch-flow rows assume the soak's bytes a command hold at the launch mix.
 
 | Store | Per command | Launch flow, a day | Ten times launch flow, a day | Bounded |
 | --- | --- | --- | --- | --- |
-| Log | 715 to 800 bytes | 5.7 GB | 18 GB | No: every segment is kept, since recovery replays from genesis |
+| Log | 715 to 800 bytes | 5.7 GB | 18 GB | Yes, with `archive.local_window`: about 31 days, see [The log's bound](#the-logs-bound); without it, no |
 | History index | see [The history index's bound](#the-history-indexs-bound) | about 2.8 GB with `[snapshots]`, 0.6 GB without | about 22 GB with `[snapshots]`, 4.7 GB without | Yes: 30 days of events, by `history.retention` |
 | Recovery caches | none | flat | flat | Yes: `snapshots.retain` of them; two were about 38 MB each at 10,000 accounts, and the sizing above allows up to 4 GiB in all at 100,000 |
 | Daily snapshots | none | about 0.4 GB, estimated | about 0.4 GB, estimated | Yes, with `[archive]`: see [The daily snapshots' bound](#the-daily-snapshots-bound). The 420 MB is an estimate at 100,000 accounts and **has not been measured** |
@@ -156,10 +157,11 @@ On the two drives, the log's own and the data drive that holds everything else:
 
 | One 1.92 TB drive | Launch flow | Ten times launch flow |
 | --- | --- | --- |
-| Log drive full in | about 337 days | about 107 days |
+| Log drive, with the 30-day window | holds about 177 GB, 9% of it | holds about 560 GB, 29% of it |
+| Log drive full in, without the window | about 337 days | about 107 days |
 | Data drive full in (history index and snapshots) | never, once both hold their window | never, once both hold their window |
 | Data drive's Warning (15% free) in | never, once both hold their window | never, once both hold their window |
-| Log drive's Warning (15% free) in | about 286 days | about 91 days |
+| Log drive's Warning (15% free) in, without the window | about 286 days | about 91 days |
 | History index once it holds 30 days, with `[snapshots]` | about 85 GB, up to 97 GB | about 655 GB, up to 750 GB |
 | History index once it holds 30 days, without `[snapshots]` | about 18 GB | about 142 GB |
 | Daily snapshots once the host holds their window | about 13 GB | about 13 GB |
@@ -168,6 +170,32 @@ The data drive's rows take the larger index, the one with `[snapshots]`, and the
 both hold 30 days, up to about 110 GB at launch flow and 765 GB at ten times it, nothing grows the drive. A drive's
 usable size is below its label, since the filesystem keeps some of it, so each figure is a little optimistic.
 The three guests of the test host share its two drives, so a table for one node does not hold for three.
+
+### The log's bound
+
+With `archive.local_window = "30d"`, a segment leaves the host once every command in it is 30 days old in
+sequenced time, the archive's bucket gives back its bytes, and no daily snapshot or history need holds it
+([Keep a window of the log on the host](log-archive.md#keep-a-window-of-the-log-on-the-host)). The host keeps:
+
+| Part | Launch flow | Ten times launch flow |
+| --- | --- | --- |
+| The window, 30 days | about 171 GB | about 540 GB |
+| Up to a day more, to the daily snapshot before the start of the history's retention | up to 5.7 GB | up to 18 GB |
+| What the bucket does not hold yet, the ranges past the vault's finalized checkpoint | minutes of flow | minutes of flow |
+| In all | about 177 GB | about 560 GB |
+
+The window does not run with `[snapshots]`: a configuration with recovery caches keeps every segment, as without
+the window. An outage of the bucket holds segments back for as long as it lasts, about 5.7 GB a day at launch flow,
+under `archive_upload_lagging`. A rotation member holds only the daily snapshots of its own turns and those it
+fetched, so it keeps its copy from the newest of them before the history's retention and from the one before its
+history index's last command: one drawn every few days keeps a few days more, and one not drawn for weeks keeps
+weeks more. A member whose copy was empty keeps it whole until it holds a daily snapshot from before the history's
+retention, about 30 days. Three things need room for the whole log, about 2.1 TB a year at launch flow, while they run:
+a start that replays the whole log, which a start from a daily snapshot avoids, and which first puts back every
+segment the window removed; a member whose copy is empty, which takes every segment from the archive before its
+window trims it; and a member's whole-log take, which does the same. From about the eleventh month at launch flow
+the whole log no longer fits one 1.92 TB drive, so keep each member's copy rather than start one empty, and check
+that starts go on from a daily snapshot (`snapshot_start_refused` stays quiet).
 
 ### The archive's bucket
 
@@ -283,11 +311,13 @@ do not replace the log's own checks: a host that stalls or fills the disk is als
    one that grows.
 2. For the history index, the lever is `history.retention`, which a new release sets. For the daily
    snapshots, check that the archive takes them, as [Daily snapshots](restart-and-recovery.md#daily-snapshots)
-   step 4 describes: the host removes only those the bucket holds. For the log, nothing removes segments: add
+   step 4 describes: the host removes only those the bucket holds. For the log, the window removes segments once
+   the archive's bucket holds them: check `engine_log_local_held_seconds`, and follow `log_window_held` or
+   `archive_upload_lagging` if either is open. Without `archive.local_window`, nothing removes segments: add
    disk, or move the data to a larger drive during a planned stop.
-3. Do not delete the log's segments or a recovery cache by hand to make room. A segment missing from the log
-   fails recovery, as [The trading server will not start](restart-and-recovery.md#the-trading-server-will-not-start)
-   describes.
+3. Do not delete the log's segments or a recovery cache by hand to make room. A segment missing after the oldest
+   on the host fails recovery, as [The trading server will not start](restart-and-recovery.md#the-trading-server-will-not-start)
+   describes, and one the bucket does not hold yet is not in the archive.
 4. Tell the owner for any `disk_space_critical`, with the volume, the free space and the largest store.
 
 ## Set up the host

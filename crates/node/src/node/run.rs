@@ -2,7 +2,8 @@
 //! rotation-set member, the wait for each holding between runs (`member`). Beside them run the
 //! process's own tasks, one each for its life, while a member follows as well as while it holds a
 //! turn: the metrics listener, bound once, the disk watcher, the seed relayer with `[seed_relay]`, and
-//! with `[archive]` the log archive's uploader and, with `[daily_snapshots]`, the daily snapshots'; any of them
+//! with `[archive]` the log archive's uploader, beside it the log's local window with `local_window`, and, with
+//! `[daily_snapshots]`, the daily snapshots' uploader; any of them
 //! stopping ends the process.
 
 use std::sync::Arc;
@@ -54,6 +55,10 @@ pub(crate) async fn run_with_cpu(
     let storage = crate::storage::run(crate::storage::Layout::of(&cfg), cfg.alerts.storage.clone(), metrics.clone());
     process.spawn(async move { ("disk watcher", storage.await) });
     if let Some((uploader, sources)) = crate::archive::Uploader::for_config(&cfg, &delivered.values, &metrics)? {
+        // The window removes only what this process's uploader counts in the bucket, so it runs only beside it.
+        if let Some(window) = crate::archive::Window::for_config(&cfg, &uploader, &sources, &metrics)? {
+            process.spawn(async move { ("log local window", window.run().await) });
+        }
         delivered.archive = Some(sources);
         process.spawn(async move { ("log archive uploader", uploader.run().await) });
     }

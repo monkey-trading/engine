@@ -6,6 +6,9 @@ use prometheus_client::registry::Registry;
 
 use crate::metrics::FloatGauge;
 
+mod log_window;
+pub use log_window::LogWindowMetrics;
+
 /// What the archive's uploader measures of the bucket it uploads to.
 #[derive(Default)]
 pub struct ArchiveMetrics {
@@ -18,10 +21,12 @@ pub struct ArchiveMetrics {
     pub failures: Counter,
     pub mismatches: Counter,
     pub tail_seq: Gauge,
+    /// The log's local window on the host.
+    pub window: LogWindowMetrics,
 }
 
 impl ArchiveMetrics {
-    /// Registers each metric under the `archive_` names.
+    /// Registers each metric under the `archive_` names, and the window's under the `log_local_` names.
     pub(super) fn register(&self, r: &mut Registry) {
         r.register(
             "archive_confirmed_ranges",
@@ -74,5 +79,6 @@ impl ArchiveMetrics {
              alone holds the log",
             self.tail_seq.clone(),
         );
+        self.window.register(r);
     }
 }

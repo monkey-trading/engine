@@ -13,7 +13,7 @@ use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use serde::Deserialize;
 
-use crate::log::{LogEntry, Manifest, open_active_archive, open_segment_archive};
+use crate::log::{LogEntry, Manifest, SegmentInfo, open_active_archive, open_segment_archive};
 
 /// How many sequence numbers one object of the archive holds: 10,000, about 5.5 MB of launch flow and under a
 /// megabyte compressed; six in tests, so ranges cross the test log's four-command segments.
@@ -114,6 +114,29 @@ pub(crate) fn checkpoint_root(dir: &Path, view: &Manifest, seq: u64) -> anyhow::
         Ok(())
     })?;
     Ok(root)
+}
+
+/// The listings of `view`'s completed segments that hold seqs of range `index` and whose files are not in `dir`, as
+/// when the log's local window removed them once the bucket held every range they hold, or the host lost them.
+/// Error cases:
+/// - no completed segment holds the range's first or last seq, a listing cannot be read, or `dir` cannot be probed
+pub(crate) fn absent_segments(dir: &Path, view: &Manifest, index: u64) -> anyhow::Result<Vec<SegmentInfo>> {
+    let (first, last) = (index * RANGE_SEQS, (index + 1) * RANGE_SEQS - 1);
+    ensure!(last < view.unlisted_from()?, "seq {last} is not in a completed segment yet");
+    let (mut ordinal, _) =
+        view.containing(first)?.with_context(|| format!("no completed segment holds seq {first}"))?;
+    let mut absent = Vec::new();
+    loop {
+        let listed = view.completed_at(ordinal)?;
+        let path = dir.join(&listed.file);
+        if !path.try_exists().with_context(|| format!("probing {}", path.display()))? {
+            absent.push(listed.clone());
+        }
+        if listed.last_seq >= last {
+            return Ok(absent);
+        }
+        ordinal += 1;
+    }
 }
 
 /// Calls `each` with every line of `view`'s segments in `dir` whose entry belongs to a seq in `seqs`, in log order:

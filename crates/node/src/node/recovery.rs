@@ -53,7 +53,9 @@ pub(super) async fn recover(
         let promoted = ready.promoted.is_some();
         let (log, pending) = from_replica(cfg, key, parent, replica.follower, (ready.heads, promoted))?;
         let anchor = ready.anchor.clone();
-        return Ok(Recovered { log, history: replica.history, pending, anchor, stats: replica.stats });
+        let from = fresh_start(cfg, &log, &replica.history).await?;
+        let history = replica.history.fresh_from(from);
+        return Ok(Recovered { log, history, pending, anchor, stats: replica.stats });
     }
     // A start from a daily snapshot reads no log before its checkpoint; none means a whole replay. Without
     // `[snapshots]` it is chosen now, so the dashboard record and the marks cache start from the history it carries;
@@ -110,7 +112,47 @@ pub(super) async fn recover(
     // A vault checkpoint the log holds no entry for anchors as the replay found it (#595).
     let unheld = log.replayed.recovery_anchor_work.as_ref().map(|work| &work.checkpoint);
     let anchor = anchor.or_else(|| unheld.filter(|checkpoint| Some(checkpoint.seq) == posted_seq).cloned());
+    let from = fresh_start(cfg, &log, &history).await?;
+    let history = history.fresh_from(from);
     Ok(Recovered { log, history, pending, anchor, stats })
+}
+
+/// The posted head `capture` bound to the history the daily snapshot `start` carries
+/// (`log_heads::prefix::under_daily`), reading the log from a head older than the links the snapshot carries; the
+/// segments the local window removed since the head are put back from the archive first, as a head that stopped
+/// posting for longer than the window needs.
+/// Error cases:
+/// - as `under_daily`, or the segments it reads cannot be put back (`archive::restore_whole`)
+async fn under_daily(
+    cfg: &NodeConfig,
+    capture: Option<crate::log_heads::Head>,
+    start: &crate::daily_snapshots::Signed,
+) -> anyhow::Result<Option<engine_core::types::Millis>> {
+    let dir = &cfg.node.log_dir;
+    match crate::log_heads::prefix::under_daily(dir, capture, start) {
+        Err(e) if e.is::<crate::log::NotLocal>() && crate::archive::restore_whole(cfg, dir).await? > 0 => {
+            crate::log_heads::prefix::under_daily(dir, capture, start)
+        }
+        bound => bound,
+    }
+}
+
+/// Where a new or discarded history index takes `cfg`'s log, `log` as recovered, from: where the host holds what it
+/// re-derives, once the log's oldest segments left the host, the segments from there put back first when `history`
+/// rebuilds and the host lacks them (`archive::history_start`), or the log's start. One look at the first segment's
+/// file decides it for a log the host holds whole, so a member's start from its replica reads nothing the log's size
+/// sets.
+/// Error cases:
+/// - the segments the rebuilt index takes cannot be put back
+async fn fresh_start(
+    cfg: &NodeConfig,
+    log: &ReplayedLog,
+    history: &crate::history::HistoryPlan,
+) -> anyhow::Result<Option<u64>> {
+    let view = log.manifest_view();
+    crate::archive::history_start(cfg, &view, |from| history.resumes_from(from))
+        .await
+        .inspect_err(|e| error!(alert = "history_recovery_failed", "refusing to serve: {e:#}"))
 }
 
 /// A member's replica as the recovered log, finished at the vault's finalized checkpoint `parent`
@@ -190,6 +232,8 @@ pub(super) async fn read_log_and_history_authorities(
             // With no cache to take, the history index is rebuilt from the whole log, which this start then
             // replays whole too, so the history it indexes is the log it verified.
             None => {
+                // That whole log includes the segments a local window removed before `[snapshots]` was set.
+                crate::archive::restore_whole(cfg, &cfg.node.log_dir).await.inspect_err(recovery_failed)?;
                 let (authorities, stats) = (authorities(None).await?, Some(stats.clone()));
                 Sequencer::replay_paired_log(cfg, signer, parent, authorities, stats, capture, observe)
                     .inspect_err(recovery_failed)?
@@ -240,6 +284,12 @@ async fn replay(
     stats: &Stats,
     mut observe: impl FnMut(&crate::log::LogEntry),
 ) -> anyhow::Result<(ReplayedLog, HistoryPlan)> {
+    // A whole replay reads the segments the local window removed, which the archive holds.
+    if start.is_none() {
+        crate::archive::restore_whole(cfg, &cfg.node.log_dir)
+            .await
+            .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?;
+    }
     let from = start.as_ref().map(|start| {
         let prior = start.snapshot.carried.as_ref().map(|carried| carried.checkpoint_signers.clone());
         (start.snapshot.offset, start.snapshot.checkpoint.clone(), prior.unwrap_or_default())
@@ -247,7 +297,8 @@ async fn replay(
     // A head at or under the snapshot's checkpoint, which the replay after it never reaches, is bound to the history
     // the snapshot carries.
     let posted_ts = match &start {
-        Some(start) => crate::log_heads::prefix::under_daily(&cfg.node.log_dir, capture, start)
+        Some(start) => under_daily(cfg, capture, start)
+            .await
             .inspect_err(|e| error!(alert = "log_recovery_failed", "refusing to serve: {e:#}"))?,
         None => None,
     };
@@ -316,3 +367,5 @@ mod snapshot;
 mod history_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod window_tests;

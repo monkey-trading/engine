@@ -240,7 +240,26 @@ an index: load only the rule whose hint matches the current action.
   through a store narrowed to the tail's directory (`Store::within`) (`archive/uploader/tails.rs`, `archive_tail_seq`); none from a copy stalled at a range or superseded; so `engine
   replay` and `engine exit-proof` read a log's URL in the bucket, `.../log/<chain id>/<vault>/`, from the bucket alone
   through the vault's `latestSeq` and `latestRoot`, `--seq` and `--state-root`: its ranges until the first it lacks,
-  then the tail's pieces, the checkpoint's entry holding the root (`archive/read/tail.rs`)), `engine
+  then the tail's pieces, the checkpoint's entry holding the root (`archive/read/tail.rs`); with `[archive] local_window`,
+  the log's local window (`archive/window/`) runs
+  beside the uploader and, once the uploader's resume has found what the bucket holds, removes a completed segment from
+  the host, oldest first, only once every range it holds seqs of is below the count the uploader publishes
+  (`Uploader::archived`), its every command is older than the window by the log's own stamps, it ends before the newest
+  daily snapshot a start may go on from and the newest before the history index's retention whose file hashes as listed
+  (`window/bounds.rs`), a read of it from the bucket just before gives back its listing's bytes, and no reader inside the
+  node holds it (`log/holds.rs`, which `LogReader` takes before it opens a segment, checked under the lock the removal
+  holds; a stream client's feed is `unheld`); a listed segment the host must keep and lacks is put back from the bucket or
+  a mirror, newest first and none after one that fails (one before the oldest on the host only while the bucket lacks a
+  range of it), else Critical `log_segment_missing` for that one, a reader or the bucket's read-back holding a segment two
+  days past the window Warning `log_window_held`, passes failing for an hour, as over a directory without the newest
+  segment its writer names, Warning `log_window_failing`; every whole replay (a start with no snapshot, a posted head
+  older than a snapshot's links, a member replica, a handover's copy) first puts back what the window removed, newest
+  first (`window/restore.rs`, `restore_whole`), a new or discarded legacy history index on a trimmed log starts after the
+  daily snapshot before its retention, putting back the segments from there that the host lacks, as after the retention
+  grew (`archive::history_start`), and a member's rows before its replica's snapshot derive from the retention of its
+  newest command (`RowsStore::derive_retained`); `engine replay` and `engine carry` take `--archive-config <node
+  config>` to put a trimmed directory's segments back first (`PublishedLog::local_filled`); not with `[snapshots]`; the
+  uploader counts a range whose segments left the host once the bucket holds it), `engine
   replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
   one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
   catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at
@@ -790,7 +809,9 @@ an index: load only the rule whose hint matches the current action.
   unknown keys are refused. `api.operators_interval` (default 60 s) spaces the operator list's reads.
   The optional `[archive]` names the log archive's bucket: its S3 API endpoint, name, region and public origin, and the
   delivered secrets that hold its keys; the release configs name a bucket per deployment with markers, and segments of
-  10,000 commands, the size of an archive range (`ops/runbooks/log-archive.md`).
+  10,000 commands, the size of an archive range (`ops/runbooks/log-archive.md`). Its optional `local_window` (30 days in
+  the release configs) keeps that much of the log on the host; it needs `[daily_snapshots]`, must cover
+  `history.retention`, and a production build takes no window under four days.
   The optional `[daily_snapshots]` names a directory of its own, apart from the log, the history index, the alert
   outbox and the recovery caches, where the node keeps a daily snapshot of each UTC day for
   `engine replay --snapshots`, and with `[archive]` its `local_window` (30 days by default and in the release
@@ -1256,7 +1277,7 @@ an index: load only the rule whose hint matches the current action.
   batch orders, dashboard data, Certificate Transparency watcher, snapshot restart, production secrets,
   on-chain log heads and signed API scenarios only run the node and its fixture tools, so they take one `engine-build` job's build as
   an artifact with `ENGINE_PREBUILT=1` instead of each compiling it),
-  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload, read and tails and the daily snapshots' archive on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
+  the browser-origin scenario, the proxy protocol scenario, the dev scenarios that are engine-node lib tests on deterministic time, which `test` also runs (corporate-action, operator bounds, parameter notice, holding-time fee, volume tier, weekend margin, earned leverage, tier limits, volume benefits, portfolio margin, position levels, spreads, daily snapshots, member snapshot start, snapshot start, disk alerts and history retention), the log archive's upload, read and tails, the daily snapshots' archive and the log's local window on loopback stand-ins, with the command latency budgets against 100k-account fixtures, on one build of the node's tests (`dev-scenario-tests`), the batch orders scenario, the dashboard data scenario, the Certificate Transparency watcher scenario, the snapshot restart scenario, the RWA price feeds dev scenario, the toxicity
   score dev scenario (`dev-toxicity`), the venue load dev scenario (`dev-venue-load`), the node load dev scenario at 10,000 accounts (`dev-load`), the soak dev scenario at 10,000 accounts for nine minutes (`dev-soak`), the recovery dev scenario at 10,000 accounts and twenty-one minutes of flow (`dev-recovery-scale`), the house loss trigger dev scenario (`dev-loss-trigger`), the CME Group feed dev scenario, the US share feeds dev scenario (`dev-share-feeds`), the signed API answers dev scenario and the status notice dev scenario (`dev-signed-api`, both on its `engine-build` artifact), the public certificate dev scenario, the executable quotes dev
   scenario, the production secrets dev scenario, the on-chain log heads dev scenario, the review-delta helper's test, the merge approval gate's test, the `changes` classifier's test (`ci-changes`), the SEV-SNP host scripts' fixture tests (`snp-host`), the release's
   dry run (`release-dry-run`, `release-build.yaml` called on a PR or merge group only) and actionlint over every
@@ -1451,6 +1472,12 @@ Run from the repo root:
   from the vault's history uploads its own tail under another key, and with the node, the copy and their uploaders
   stopped, `engine exit-proof` and `engine replay` from the bucket alone, through the vault's latest checkpoint, match the
   node's log)
+- Log local window dev scenario: `./scripts/dev-log-window.sh` (needs only Cargo; a dev node with a six-hour window, which
+  only a development build takes, writes days of flow on accelerated sequenced time and keeps on its host the window and no
+  more than a day past it; with the bucket's stand-in down for a day nothing leaves and `archive_upload_lagging` fires; a
+  segment the host loses before the bucket holds it pages `log_segment_missing` until a member's copy uploads it and the
+  node puts it back; the node and a member each start from the newest snapshot; and a replay from the node's URL reaches
+  its last root)
 - Member snapshot start dev scenario: `./scripts/dev-member-snapshot-start.sh` (needs only Cargo; a node writing
   launch flow on a small book across a UTC midnight publishes signed snapshots, a member with an empty copy backfills
   its archive and fetches the newest snapshot its copy holds over HTTP, builds its replica from it with no whole

@@ -50,15 +50,20 @@ pub struct CarryArgs {
     /// Only check that the checkpoint can be carried: write nothing, and fail naming the first refusal.
     #[arg(long)]
     check: bool,
+    /// A node config whose `[archive]` names the log's bucket: the segments a `--log` directory lacks, as a node's
+    /// local window removes them, are put back into it from there first.
+    #[arg(long)]
+    archive_config: Option<PathBuf>,
 }
 
 /// Runs `engine carry`: builds the carry file and writes it to `--out` or standard output, printing what it
 /// carries and its SHA-256 to standard error; with `--check`, only builds it and prints what it would carry.
 /// Error cases:
-/// - the archive `--log` names by URL cannot be downloaded (`PublishedLog::local`)
+/// - the archive `--log` names by URL cannot be downloaded, or a directory's segments put back
+///   (`PublishedLog::local_filled`)
 /// - see `build` and `write`
 pub fn run(args: CarryArgs) -> anyhow::Result<()> {
-    let file = build(args.log.local(None)?.path(), args.seq)?;
+    let file = build(args.log.local_filled(None, args.archive_config.as_deref())?.path(), args.seq)?;
     let totals = file.totals;
     let summary = format!(
         "seq {}, root {}, {} accounts, {} entitled, {} staked, {} awards",

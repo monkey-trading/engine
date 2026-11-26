@@ -192,6 +192,34 @@ async fn a_member_whose_snapshot_is_refused_replays_its_whole_copy() {
     }
 }
 
+/// A member whose snapshot its replica refuses as it resumes from it, or that has no daily snapshot to start from, on
+/// a copy whose oldest segments the local window removed, puts them back from the archive and replays its whole copy,
+/// rather than refuse the copy.
+#[tokio::test]
+async fn a_member_whose_snapshot_is_refused_on_a_trimmed_copy_puts_the_copy_back_and_replays_it() {
+    for snapshot in [true, false] {
+        let mut fixture = Fixture::start("member-snapshot-trimmed", true).await;
+        let daily = scratch_dir("member-snapshot-trimmed-daily");
+        let listing = publish_one(&fixture.log, &daily, &recorded(), |carried| _ = carried.links.pop());
+        fixture.cfg.daily_snapshots = snapshot.then(|| DailySnapshotsSection::at(daily));
+        *fixture.registry.finalized.lock().unwrap() = Some((listing.seq, listing.root.clone()));
+        let copy = fixture.cfg.node.log_dir.clone();
+        let listed = crate::log::Manifest::load(&copy).unwrap().segments;
+        let removed: Vec<_> = listed.iter().filter(|segment| segment.last_seq < listing.seq).cloned().collect();
+        assert!(!removed.is_empty(), "the copy holds segments before the snapshot");
+        removed.iter().for_each(|segment| std::fs::remove_file(copy.join(&segment.file)).unwrap());
+        // The archive's bucket, which lacks them, and the archive mirror, which serves them.
+        let bucket = crate::archive::stand_in::StandIn::start().await;
+        let mut section = bucket.section(std::time::Duration::from_secs(3600));
+        section.public_url = bucket.plain.clone();
+        fixture.cfg.archive = Some(section);
+        let member = fixture.member();
+        let (follower, ..) = member.open(None).await.expect("the member opens its copy");
+        assert_eq!(follower.replays(), 1, "the whole copy replayed once its segments were back: {snapshot}");
+        assert!(removed.iter().all(|segment| copy.join(&segment.file).exists()), "put back: {snapshot}");
+    }
+}
+
 /// A replica's snapshot precedes the first seq it keeps, and stands close enough after the posted head that the links
 /// it carries reach back to it; with neither, any snapshot will do.
 #[test]

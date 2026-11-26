@@ -13,6 +13,7 @@ use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_a
 /// How long a test waits for the uploader before it fails.
 const WAIT: Duration = Duration::from_secs(30);
 
+mod absent;
 mod finality;
 mod tails;
 

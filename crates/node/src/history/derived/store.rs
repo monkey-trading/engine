@@ -20,7 +20,7 @@ use engine_core::types::{AccountId, Millis};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 use tracing::warn;
 
-use crate::daily_snapshots::{Listed, entry_at};
+use crate::daily_snapshots::Listed;
 use crate::history::derived::{Derived, aggregates, apply_logged, engine_from};
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset, SegmentedLog, Stop};
 use crate::paced::Paced;
@@ -99,15 +99,31 @@ impl RowsStore {
     /// - the log cannot be read, from where the engine starts included (`log::NotLocal` before the first segment
     ///   on this host), a command does not apply, or logs no events, or its logged events differ from the engine's
     /// - a command's rows are not those its events' aggregates cover
+    #[cfg(test)]
     pub(crate) fn derive_through(&self, dir: &Path, through: u64, stop: &AtomicBool) -> anyhow::Result<Option<u64>> {
         let stamped = match self.snapshots {
-            Some(_) => match entry_at(dir, Offset::start_of(through))? {
+            Some(_) => match crate::daily_snapshots::entry_at(dir, Offset::start_of(through))? {
                 Some(LogEntry::Command(command)) => Some(command.sequenced.ts),
                 _ => None,
             },
             None => None,
         };
-        let kept_from = stamped.map(|ts| ts.saturating_sub(self.retention_ms));
+        self.derive_retained(dir, (through, stamped), stop)
+    }
+
+    /// `derive_through`, its engine starting at the newest daily snapshot stamped more than the retention before
+    /// `now`, the stamp of the log's newest command, rather than before `through`'s, when given: the rows of the
+    /// commands before that are past the retention, and a copy the local window trimmed keeps the log from that
+    /// snapshot on (`archive::window::Floors`), not from an earlier one.
+    /// Error cases:
+    /// - as `derive_through`
+    pub(crate) fn derive_retained(
+        &self,
+        dir: &Path,
+        (through, now): (u64, Option<Millis>),
+        stop: &AtomicBool,
+    ) -> anyhow::Result<Option<u64>> {
+        let kept_from = now.map(|ts| ts.saturating_sub(self.retention_ms));
         let before = |listing: &Listed| listing.seq < through && kept_from.is_some_and(|from| listing.ts < from);
         let mut engine = engine_from(self.snapshots(), before);
         let from = engine.last_seq().map_or(0, |last| last + 1);

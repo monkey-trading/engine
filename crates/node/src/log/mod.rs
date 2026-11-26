@@ -4,9 +4,9 @@
 //! signed by the enclave key. The same entries stream live over `/v1/stream`, each at an
 //! [`Offset`].
 //!
-//! Every segment is kept, for audit, fallback recovery and rebuilding history. A log written as one
-//! file before segments existed continues as the first segment once moved to
-//! `<log_dir>/00000000000000000000.jsonl`.
+//! Every segment is kept on the host, unless `[archive] local_window` lets a segment the archive holds leave it
+//! (`archive::window`). A log written as one file before segments existed continues as the first segment once
+//! moved to `<log_dir>/00000000000000000000.jsonl`.
 
 mod ahead;
 use ahead::by_entry;
@@ -43,9 +43,11 @@ mod seals_ahead;
 pub(crate) use seals_ahead::SealsAhead;
 pub use seals_ahead::{ReplayWorkers, SealChecks};
 mod segments;
-pub(crate) use segments::{segment_name, segment_seq};
+pub(crate) use segments::{list_segments, segment_name, segment_seq};
 mod local;
 pub(crate) use local::{NotLocal, ensure_local};
+mod holds;
+pub use holds::{Hold, Holds};
 mod scan;
 pub(crate) use scan::uncommanded;
 mod span;

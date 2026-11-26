@@ -173,6 +173,11 @@ pub(crate) async fn sync_predecessor_log(
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
     let start = copy_start(snapshots, dir, (domain, &signers), finalized).await;
+    // A whole replay reads the segments the local window removed, which the archive holds; the refresh above
+    // fetches only what the copy does not list.
+    if start.is_none() {
+        crate::archive::restore_whole(cfg, dir).await?;
+    }
     let (_, from) = crate::sequencer::replay_copy_from(start, dir, domain, signers, cfg.node.replay_workers)
         .context("the restored log copy does not replay")?;
     match from {
