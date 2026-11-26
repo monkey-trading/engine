@@ -490,8 +490,8 @@ engine's arithmetic stops the replay with a panic rather than an error; it never
 
 A trading server starts from its newest usable daily snapshot and the log's segments on its host
 after the snapshot's checkpoint, and reads none of the log before it; nor does a rotation member's
-replica, a standby's copy, a handover successor's copy, or the re-derivation of a rollover's financing
-rows. Two reads still need older segments: a posted log head older than the last 65,536 instructions
+replica, a standby's copy, a handover successor's copy, or the re-derivation of the financing rows of a
+rollover after the checkpoint. Two reads still need older segments: a posted log head older than the last 65,536 instructions
 before the snapshot's checkpoint, whose links the snapshot carries, is checked by hashing the log's
 instructions from the head onto the checkpoint, and a rebuild or repair of the account history index
 reads the log from its start. So the host keeps the segments from the earlier of the posted head and
@@ -499,7 +499,8 @@ the snapshot's checkpoint, and every segment while the history index may need re
 snapshot is one
 that carries the replay state, whose checkpoint the log holds signed, its signature verified, by the
 key the vault names at its sequence number (the signer of the checkpoint the vault accepted there, or
-else the vault's signer now; under mock custody, the trading server's own key), whose own signature is
+else of the checkpoint the vault finalized, which the snapshot rests on; under mock custody, the
+trading server's own key), whose own signature is
 by that key, so a key the vault has since retired vouches for none, whose checkpoint is at or before
 the checkpoint the vault finalized and, where the vault accepted one at that sequence number, has the
 root the vault accepted, and whose checkpoint the log on the host holds at the snapshot's offset. The
@@ -529,12 +530,17 @@ state, so the daily snapshots go on after it.
 The segments before the snapshot's checkpoint are what the host says they are, but for those the
 start checks: a replay from the snapshot reads none of them, and without `[snapshots]` no signed
 catalog vouches for them. The start checks the instructions before the checkpoint whose links the
-snapshot carries, the last 65,536, that the log on the host holds: each must extend the link before
-it as the snapshot says, and each checkpoint and withdrawal entry among them must be signed by a
-recorded signer. Nothing the trading server vouches for is read from before the first instruction it
-checked: a stream's backfill from earlier is refused with 400, naming the public archive, as one from
-before the log's first segment on the host is, and a financing charge's rows are re-derived, or
-checked against their file, only from there on. A rotation member or a standby whose copy trails that
+snapshot carries, the last 65,536, that the log on the host holds, from the first after the
+activation of the protocol version that keeps every withdrawal approval in the engine: each must
+extend the link before it as the snapshot says, which binds its bytes, events and seal; each
+checkpoint among them must follow its own instruction, with the root the snapshot carries for it, and
+none the snapshot carries may be missing; each withdrawal entry must follow its approval and the
+checkpoint its authorization names, with that checkpoint's root; and each checkpoint and withdrawal
+entry must be signed by a recorded signer. A whole replay checks no more of where a withdrawal
+authorization sits, and neither checks that every one is present. Nothing the trading server vouches for is read
+from before the first instruction it checked: a stream's backfill from earlier is refused with 400,
+naming the public archive, as one from before the log's first segment on the host is, and a financing
+charge's rows are checked against their file only from there on. A rotation member or a standby whose copy trails that
 instruction is refused too: it then fetches the completed segments past its copy's head from the
 public archive and its mirrors, takes each entry after the head only once its seal and link continue
 the copy, as a streamed entry's must, a member's replica applying it first, and follows the stream
@@ -804,8 +810,8 @@ Known limits:
   instruction, the newest it has taken. SQLite reads it in defensive mode, and each event it serves
   names its place in the log, where anyone can check it. An index behind the daily snapshot a start
   went on from, as one rebuilt after its directory was removed, catches up through the host's
-  segments before the snapshot, which the start did not check; the index trusts the host's disk
-  either way.
+  segments before the snapshot, which the start did not check, and derives the financing rows of a
+  rollover there from them; the index trusts the host's disk either way.
 
 ## The log's archive
 

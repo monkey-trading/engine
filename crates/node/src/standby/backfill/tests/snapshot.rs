@@ -77,7 +77,7 @@ async fn a_takeover_finalizes_a_copy_from_a_snapshot_without_its_segments_before
         trusted(),
         &origins,
         copy,
-        &takeover,
+        (&takeover, Default::default()),
         chain(&dir, &listed),
     )
     .await
@@ -117,7 +117,7 @@ async fn a_takeover_refuses_from_a_snapshot_a_refreshed_segment_the_whole_replay
         trusted(),
         &origins,
         copy,
-        &takeover,
+        (&takeover, Default::default()),
         chain(&dir, &listed),
     )
     .await
@@ -127,6 +127,25 @@ async fn a_takeover_refuses_from_a_snapshot_a_refreshed_segment_the_whole_replay
     assert!(!dir.join(&last.file).exists(), "the refreshed segment is still there");
     assert!(!needed(&dir), "the copy the stream gave is not marked checked");
     assert!(alerts.try_recv().is_err(), "the snapshot was refused");
+}
+
+/// A copy start takes a daily snapshot by the key that signed the checkpoint the vault accepted at its seq, though
+/// the finalized checkpoint is another key's, as after a signer change since the snapshot; with no checkpoint the
+/// vault accepted at its seq, the snapshot must be by the finalized checkpoint's signer, and one by another key is
+/// passed over.
+#[tokio::test]
+async fn a_copy_takes_a_snapshot_by_the_signer_the_vault_accepted_at_its_seq() {
+    let (operator, snapshots, listed) = logged("backfill-snapshot-rotated").await;
+    let dir = archive_of(&operator, "backfill-snapshot-rotated-copy");
+    remove_segments_before(&dir, listed.seq);
+    let rotated = Finalized { signer: AccountId(EnclaveKey::generate().address()), ..finalized(&operator) };
+    let (signers, snapshots) = (signers(), Some(snapshots.as_path()));
+    let refused = copy_start(snapshots, &dir, (DOMAIN, &signers), Some(&rotated)).await;
+    assert!(refused.is_none(), "a snapshot by a key other than the finalized checkpoint's");
+    let accepted = Finalized { accepted: [(listed.seq, signer())].into(), ..rotated };
+    let taken = copy_start(snapshots, &dir, (DOMAIN, &signers), Some(&accepted)).await;
+    let taken = taken.map(|signed| signed.snapshot.offset.seq);
+    assert_eq!(taken, Some(listed.seq), "the snapshot by the key the vault accepted at its seq");
 }
 
 // ── Helpers ──
@@ -158,7 +177,8 @@ fn finalized(operator: &Path) -> Finalized {
         _ => None,
     });
     let last = last.expect("the log holds a checkpoint");
-    Finalized { seq: last.seq, root: last.root, signer: last.signer.parse().expect("the checkpoint's signer") }
+    let signer = last.signer.parse().expect("the checkpoint's signer");
+    Finalized { seq: last.seq, root: last.root, signer, accepted: Default::default() }
 }
 
 /// The last checkpoint the segment `bytes` holds.

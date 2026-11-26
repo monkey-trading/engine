@@ -18,6 +18,8 @@ mod start;
 #[cfg(test)]
 pub(crate) use start::snapshot_start;
 pub(crate) use start::{AcceptedRoots, Bounds, NoRoots, entry_at, snapshot_start_against};
+mod vault;
+pub(crate) use vault::{VaultRoots, accepted_signers, anchor_signer};
 mod writer;
 #[cfg(test)]
 pub(crate) use writer::publish_now;

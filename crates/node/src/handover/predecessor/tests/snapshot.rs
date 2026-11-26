@@ -100,6 +100,6 @@ async fn snapshot_of(exchange: &mut Exchange, mirror: &std::path::Path, name: &s
     assert!(remove_segments_before(&exchange.successor_log, listed.seq) > 0, "the copy holds earlier segments");
     *exchange.finalized.lock().unwrap() = Some((listed.seq, listed.root.clone()));
     let signer = engine_core::types::AccountId(crate::tee::EnclaveKey::test_key().address());
-    let finalized = Finalized { seq: listed.seq, root: listed.root.clone(), signer };
+    let finalized = Finalized { seq: listed.seq, root: listed.root.clone(), signer, accepted: Default::default() };
     (listed, finalized)
 }

@@ -268,8 +268,8 @@ impl Deriver {
     /// `command`'s rows from a replay of the log, opened from the newest daily snapshot before it, or from the
     /// log's start, unless the one kept is behind it and not behind that snapshot.
     /// Error cases:
-    /// - there is no log to replay, or the replay fails or is stopped (`Replay::rows`)
-    /// - the replay starts before the first segment on this host (`log::NotLocal`)
+    /// - there is no log to replay, or the replay fails or is stopped (`Replay::rows`), as when it starts before
+    ///   the first segment on this host (`log::NotLocal`)
     fn replayed(&mut self, command: &CommandEntry) -> anyhow::Result<Vec<FinancingRow>> {
         let seq = command.sequenced.seq;
         let (dir, manifest) = self.log.as_ref().with_context(|| format!("no rows kept for seq {seq}"))?;
@@ -286,8 +286,8 @@ impl Deriver {
                 if from == 0 {
                     self.replays.inc();
                 }
-                // Rows are vouched for only from the log this node's start verified.
-                manifest.borrow().ensure_served(from)?;
+                // The index reads the same segments, so a command before the snapshot this node started from is
+                // derived from the host's segments as the index takes it from them.
                 let reader = LogReader::open(dir, Offset::start_of(from), manifest.clone())?;
                 Replay { reader, engine }
             }

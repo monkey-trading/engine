@@ -166,9 +166,9 @@ async fn serve(cfg: &NodeConfig, standby: &StandbySection) -> anyhow::Result<()>
                 writer.flush().context("flushing the copy before the takeover")?;
                 drop(writer);
                 let checked = (domain, signers, cfg.node.replay_workers);
-                let finalized =
-                    finalize(&archive, checked, &operator.origins(), (dir, snapshots), &takeover, copied).await;
-                if let Err(e) = finalized {
+                let origins = operator.origins();
+                let taken = (&takeover, crate::handover::accepted_before(&chain, snapshots, takeover.seq).await);
+                if let Err(e) = finalize(&archive, checked, &origins, (dir, snapshots), taken, copied).await {
                     error!(alert = "standby_takeover_failed", "the takeover could not finalize: {e:#}");
                     return Err(e);
                 }
@@ -350,8 +350,9 @@ fn open_copy_replayed<R>(
 /// vault's last accepted checkpoint posted after the stream last delivered, taking only segments
 /// that extend `copied`, then replays the copy in `domain` against `signers`, every command
 /// sealed by one of them, its seals checked ahead by `workers`, from the daily snapshot in `snapshots`
-/// that `handover::copy_start` gives at or before the takeover's checkpoint, the vault's latest at
-/// finality, or whole; requires that checkpoint and truncates the copy after it, dropping the unsigned tail.
+/// that `handover::copy_start` gives at or before the takeover's checkpoint, the vault's latest at finality, by the
+/// signer `accepted` holds at its seq, or else the takeover's, or whole; requires that checkpoint and truncates the
+/// copy after it, dropping the unsigned tail.
 /// Error cases:
 /// - the archive refresh fails hard, the copy does not replay against `signers`, or it holds no
 ///   checkpoint at the vault's latest
@@ -360,12 +361,11 @@ async fn finalize(
     (domain, signers, workers): (CheckpointDomain, std::collections::BTreeSet<AccountId>, ReplayWorkers),
     origins: &[String],
     (dir, snapshots): (&std::path::Path, Option<&std::path::Path>),
-    takeover: &Takeover,
+    (takeover, accepted): (&Takeover, std::collections::BTreeMap<u64, AccountId>),
     mut copied: Chain,
 ) -> anyhow::Result<()> {
     // The snapshot is of the copy the stream gave, which the refresh only extends and its undo restores.
-    let finalized =
-        crate::handover::Finalized { seq: takeover.seq, root: takeover.root.clone(), signer: takeover.signer };
+    let finalized = crate::handover::Finalized::over(takeover, accepted);
     let start = crate::handover::copy_start(snapshots, dir, (domain, &signers), Some(&finalized)).await;
     // The refresh adds archive bytes no check has replayed yet: until the replay commits them, what the
     // copy held before is recorded, and any start drops what the refresh added.

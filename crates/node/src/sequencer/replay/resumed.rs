@@ -2,11 +2,19 @@
 //! state it carries stand for every entry before the checkpoint, which is not read (`Replay::resume`), and the
 //! entries after it are read and replayed as a whole replay replays them.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use anyhow::{Context, ensure};
+use engine_core::Fixed;
+use engine_core::eip712::B256;
+use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
+use engine_core::types::AccountId;
 
 use crate::daily_snapshots::{DailySnapshot, Signed};
 use crate::log::{LogEntry, SealChecks, SegmentedLog};
 use crate::sequencer::replay::Replay;
+use crate::sequencer::replay::live::Link;
 
 /// Marks a replay that cannot go on from a daily snapshot at all, before it reads the log after it: the
 /// snapshot carries no replay state, or does not stand for its engine and checkpoint (`Replay::resume`). A
@@ -65,32 +73,44 @@ impl Replay {
     }
 }
 
+/// What a replay that went on from a daily snapshot holds of the log before the snapshot's checkpoint, which it did
+/// not read: the links its carried state names, each protocol version's activation, and every checkpoint's root.
+pub(crate) struct Behind<'a> {
+    pub(crate) links: &'a [Link],
+    pub(crate) activations: &'a [(ProtocolVersion, u64)],
+    pub(crate) roots: &'a BTreeMap<u64, B256>,
+}
+
 /// The first seq from which the log in `dir` holds, checked, the entries before a daily snapshot's checkpoint that a
-/// replay going on from it did not read: those of the commands whose links its carried state names, `links`, ending
-/// at the checkpoint's command, from the one after the first link, or after the last segment `held` lists that this
-/// host no longer holds.
+/// replay going on from it did not read: those of the commands whose links `behind` names, ending at the checkpoint's
+/// command, from the one after the first link and after the version that keeps every approval in the engine
+/// (`ProtocolVersion::V22`, so every withdrawal entry is a typed or a deferred one), or after the last segment `held`
+/// lists that this host no longer holds.
 /// Each segment is read and its bytes checked against `held`'s descriptor of it, the one the node then serves it by,
-/// so what is checked is what is served; each command's link must extend the one before it as `links` says, so its
-/// bytes are those the snapshot's signer sequenced, and each checkpoint's and withdrawal's signature must be by one
-/// of `signers` in `domain`. None when the links name too few commands, `held` lists none of them, or a read or
-/// check fails: the start then vouches only for what it replayed.
+/// so what is checked is what is served; each command's link must extend the one before it as `behind` says, so its
+/// bytes, events and seal are those the snapshot's signer sequenced; each checkpoint must follow its own command,
+/// with the root `behind` holds for it, and none `behind` holds may be missing; and each withdrawal must follow its
+/// approval and the checkpoint its authorization names, with that checkpoint's root. Each checkpoint's and
+/// withdrawal's signature must be by one of `signers` in `domain`. None when the links name too few commands, `held`
+/// lists none of them, or a read or check fails: the start then vouches only for what it replayed.
 pub(crate) fn verified_back(
     dir: &std::path::Path,
-    links: &[crate::sequencer::replay::live::Link],
+    behind: Behind<'_>,
     held: &crate::log::Manifest,
-    (domain, signers): (crate::log::CheckpointDomain, &std::collections::BTreeSet<engine_core::types::AccountId>),
+    (domain, signers): (crate::log::CheckpointDomain, &BTreeSet<AccountId>),
 ) -> Option<u64> {
-    let (first, last) = (links.first()?.seq.checked_add(1)?, links.last()?.seq);
-    let linked: std::collections::BTreeMap<u64, [u8; 32]> = links.iter().map(|link| (link.seq, link.link.0)).collect();
+    let typed = behind.activations.iter().find(|(version, _)| *version >= ProtocolVersion::V22)?.1;
+    let (first, last) = (behind.links.first()?.seq.max(typed).checked_add(1)?, behind.links.last()?.seq);
     let listed = held.segments.iter().chain(held.active.as_ref().map(|active| &active.info));
-    let window: Vec<_> = listed.filter(|info| info.last_seq >= first && info.first_seq <= last).collect();
+    let segments: Vec<_> = listed.filter(|info| info.last_seq >= first && info.first_seq <= last).collect();
     let checked = (|| {
-        let (mut verified, mut at) = (None, None);
-        for info in window {
+        let mut window = Window::new(&behind, (domain, signers));
+        let mut at = None;
+        for info in segments {
             // The checked range starts again after a segment this host no longer holds.
             let bytes = match std::fs::read(dir.join(&info.file)) {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    (verified, at) = (None, None);
+                    (window, at) = (Window::new(&behind, (domain, signers)), None);
                     continue;
                 }
                 read => read.with_context(|| format!("reading {}", info.file))?,
@@ -105,15 +125,12 @@ pub(crate) fn verified_back(
                 }
                 let Some(seq) = at.filter(|seq| *seq >= first) else { continue };
                 if seq > last {
-                    return Ok(verified);
+                    return window.ended(last);
                 }
-                checked_entry(&entry, seq, &linked, (domain, signers))?;
-                if matches!(entry, LogEntry::Command(_)) {
-                    verified.get_or_insert(seq);
-                }
+                window.check(&entry, seq)?;
             }
         }
-        anyhow::Ok(verified)
+        window.ended(last)
     })();
     checked
         .inspect_err(|e| {
@@ -125,39 +142,95 @@ pub(crate) fn verified_back(
         .flatten()
 }
 
-/// Checks `entry`, at `seq`, of the log before a daily snapshot's checkpoint: a command's link must extend the one
-/// before it as `linked` says, and a checkpoint's or withdrawal's signature must be by one of `signers` in `domain`.
-/// Error cases:
-/// - any of those fails, or the command's link before it is not in `linked`
-fn checked_entry(
-    entry: &LogEntry,
-    seq: u64,
-    linked: &std::collections::BTreeMap<u64, [u8; 32]>,
-    (domain, signers): (crate::log::CheckpointDomain, &std::collections::BTreeSet<engine_core::types::AccountId>),
-) -> anyhow::Result<()> {
-    match entry {
-        LogEntry::Command(command) => {
-            let previous = linked.get(&(seq - 1)).context("no carried link before the command")?;
-            let digest = crate::log::command_digest(command)?;
-            ensure!(
-                Some(&crate::log::extend_command_prefix(*previous, digest)) == linked.get(&seq),
-                "the command at seq {seq} is not the one the snapshot's links name"
-            );
-        }
-        LogEntry::Checkpoint(checkpoint) => {
-            crate::checkpoints::signature::verify_domain(checkpoint, domain)?;
-            let signer = checkpoint.signer.parse().ok();
-            ensure!(
-                signer.is_some_and(|signer| signers.contains(&signer)),
-                "the checkpoint at seq {seq} is by another signer"
-            );
-        }
-        LogEntry::Withdrawal(withdrawal) => {
-            let verifies = |signer: &engine_core::types::AccountId| {
-                crate::checkpoints::signature::verify_withdrawal(withdrawal, Some(domain), Some(*signer)).is_ok()
-            };
-            ensure!(signers.iter().any(verifies), "the withdrawal entry at seq {seq} is by another signer");
-        }
+/// The entries of the log before a daily snapshot's checkpoint checked so far, from the first command checked.
+struct Window<'a> {
+    linked: BTreeMap<u64, [u8; 32]>,
+    roots: &'a BTreeMap<u64, B256>,
+    trust: (crate::log::CheckpointDomain, &'a BTreeSet<AccountId>),
+    /// The first command checked.
+    from: Option<u64>,
+    /// The seq of each checkpoint checked.
+    checkpoints: BTreeSet<u64>,
+    /// Each withdrawal a checked command approved, by account and nonce: its amount and the command's seq.
+    approved: BTreeMap<(AccountId, u64), (Fixed, u64)>,
+}
+
+impl<'a> Window<'a> {
+    /// A window that has checked nothing, against `behind` and the signers `trust` names in its domain.
+    fn new(behind: &Behind<'a>, trust: (crate::log::CheckpointDomain, &'a BTreeSet<AccountId>)) -> Self {
+        let linked = behind.links.iter().map(|link| (link.seq, link.link.0)).collect();
+        let (from, checkpoints, approved) = (None, BTreeSet::new(), BTreeMap::new());
+        Self { linked, roots: behind.roots, trust, from, checkpoints, approved }
     }
-    Ok(())
+
+    /// Checks `entry`, after the command at `seq`, as `verified_back` says.
+    /// Error cases:
+    /// - any check `verified_back` names fails for it, or the command's link before it is not in `linked`
+    fn check(&mut self, entry: &LogEntry, seq: u64) -> anyhow::Result<()> {
+        let (domain, signers) = self.trust;
+        match entry {
+            LogEntry::Command(command) => {
+                let previous = self.linked.get(&(seq - 1)).context("no carried link before the command")?;
+                let digest = crate::log::command_digest(command)?;
+                ensure!(
+                    Some(&crate::log::extend_command_prefix(*previous, digest)) == self.linked.get(&seq),
+                    "the command at seq {seq} is not the one the snapshot's links name"
+                );
+                for event in command.events.iter().flatten() {
+                    if let Event::WithdrawalApproved { account, amount, nonce } = event {
+                        self.approved.insert((*account, *nonce), (*amount, seq));
+                    }
+                }
+                self.from.get_or_insert(seq);
+            }
+            LogEntry::Checkpoint(checkpoint) => {
+                crate::checkpoints::signature::verify_domain(checkpoint, domain)?;
+                let signer = checkpoint.signer.parse().ok();
+                ensure!(
+                    signer.is_some_and(|signer| signers.contains(&signer)),
+                    "the checkpoint at seq {seq} is by another signer"
+                );
+                ensure!(checkpoint.seq == seq, "a checkpoint for seq {} after seq {seq}", checkpoint.seq);
+                let root = checkpoint.root.parse::<B256>().ok();
+                ensure!(
+                    root.is_some() && root.as_ref() == self.roots.get(&seq),
+                    "the checkpoint at seq {seq} has another root than the snapshot's replay state holds"
+                );
+                self.checkpoints.insert(seq);
+            }
+            LogEntry::Withdrawal(withdrawal) => {
+                let verifies = |signer: &AccountId| {
+                    crate::checkpoints::signature::verify_withdrawal(withdrawal, Some(domain), Some(*signer)).is_ok()
+                };
+                ensure!(signers.iter().any(verifies), "the withdrawal entry at seq {seq} is by another signer");
+                let approved = withdrawal.approved_seq.context("an untyped withdrawal entry after V22")?;
+                ensure!(approved <= seq, "the withdrawal entry at seq {seq} comes before its approval at {approved}");
+                let Some(auth) = &withdrawal.authorization else { return Ok(()) };
+                let key = (withdrawal.account, withdrawal.nonce);
+                ensure!(
+                    self.from.is_none_or(|from| approved < from)
+                        || self.approved.get(&key) == Some(&(withdrawal.amount, approved)),
+                    "the withdrawal entry at seq {seq} is not the one its command approved"
+                );
+                let named = auth.checkpoint_seq;
+                ensure!(
+                    self.roots.get(&named) == Some(&auth.checkpoint_root)
+                        && (self.from.is_none_or(|from| named < from) || self.checkpoints.contains(&named)),
+                    "the withdrawal entry at seq {seq} names a checkpoint at {named} the log does not hold before it"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The first command checked, once the window reached the snapshot's command at `last`.
+    /// Error cases:
+    /// - a checkpoint the snapshot's replay state holds between the first command checked and `last` is missing
+    fn ended(&self, last: u64) -> anyhow::Result<Option<u64>> {
+        if let Some(from) = self.from {
+            let missing = self.roots.range(from..last).find(|(seq, _)| !self.checkpoints.contains(seq));
+            ensure!(missing.is_none(), "the checkpoint at seq {:?} is missing", missing.map(|(seq, _)| seq));
+        }
+        Ok(self.from)
+    }
 }

@@ -41,6 +41,24 @@ fn a_commands_rows_are_derived_again_from_the_newest_snapshot_before_it() {
     assert!(error.downcast_ref::<NotLocal>().is_some(), "from the log's start: {error:#}");
 }
 
+/// A command before the first seq this node's start verified, as an index rebuilt after a start from a later snapshot
+/// takes it again, has its rows derived from the host's segments as the index reads it from them, not refused.
+#[test]
+fn a_commands_rows_before_the_seq_a_start_verified_are_derived_for_the_index() {
+    let (rig, at, kept) = rolled("snapshot-rows-unverified");
+    let entries = log_entries(&rig.dir);
+    let snapshots = scratch_dir("snapshot-rows-unverified-daily");
+    let older = *checkpoints_before(&entries, at).last().expect("a checkpoint before the rollover");
+    publish(&snapshots, &entries, older);
+    let mut held = rig.manifest.borrow().clone();
+    held.verified_from = at + 1;
+    let (_published, manifest) = watch::channel(held);
+    assert!(manifest.borrow().ensure_served(at).is_err(), "the stream serves none of it");
+    let gone = watch::channel(DerivedRows::default()).1;
+    let mut deriver = Deriver::new(gone, Some((rig.dir.clone(), manifest))).with_snapshots(Some(snapshots));
+    assert_eq!(deriver.rows(&command_at(&entries, at)).unwrap(), Some(kept), "the rows from the older snapshot");
+}
+
 /// A repair derives the rows of a rollover its store lacks from the newest daily snapshot before it, reading the log
 /// only from there on, and stores them; a store that holds them gives them with no read of the log.
 #[test]

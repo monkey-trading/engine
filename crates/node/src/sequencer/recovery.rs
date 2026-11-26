@@ -208,9 +208,14 @@ impl Sequencer {
         // It is checked against the descriptors the node serves those segments by.
         let verified_from = log.replayed.takings.applied_from().map(|applied| {
             let domain = crate::log::CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
-            let (held, signers) = (log.log.manifest_view(), &log.replayed.checkpoint_signers);
-            let links = &log.replayed.carried_links;
-            let back = crate::sequencer::replay::verified_back(cfg.log_dir, links, &held, (domain, signers));
+            let (held, replayed) = (log.log.manifest_view(), &log.replayed);
+            let behind = crate::sequencer::replay::Behind {
+                links: &replayed.carried_links,
+                activations: &replayed.activations,
+                roots: &replayed.checkpoint_roots,
+            };
+            let trust = (domain, &replayed.checkpoint_signers);
+            let back = crate::sequencer::replay::verified_back(cfg.log_dir, behind, &held, trust);
             back.map_or(applied, |back| back.min(applied))
         });
         let ReplayedLog { log, replayed, snapshot_seq, legacy_authorizations } = log;

@@ -39,8 +39,8 @@ pub(crate) trait AcceptedRoots {
     async fn root_at(&self, seq: u64) -> Option<B256>;
 
     /// The key the checkpoint at `seq`, and so its snapshot, must be signed by: the signer of the checkpoint the vault
-    /// accepted there, or, where it accepted none, the vault's signer now; none where the start reads no vault, which
-    /// leaves the snapshot to the signers it is given.
+    /// accepted there, or, where it accepted none, of the one it finalized, which the snapshot rests on; none where the
+    /// start reads no vault, which leaves the snapshot to the signers it is given.
     async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
         None
     }
@@ -164,6 +164,15 @@ pub(crate) async fn snapshot_start_against(
         }
     }
     None
+}
+
+/// The seqs of the newest daily snapshots in `dir` at or before `finalized` that a start from them without origins
+/// tries (`snapshot_start_against`), newest first.
+pub(super) fn candidate_seqs(dir: &Path, finalized: u64) -> Vec<u64> {
+    let held = read_manifest(dir).unwrap_or_default();
+    let fits = |listing: &&Listed| listing.seq <= finalized && carries_state(&dir.join(&listing.file));
+    let seqs: BTreeSet<u64> = held.iter().filter(fits).map(|listing| listing.seq).collect();
+    seqs.into_iter().rev().take(ATTEMPTS).collect()
 }
 
 /// Whether the held snapshot at `path` may carry the replay state: its first bytes, where every writer puts its

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use engine_core::eip712::B256;
 
 use crate::checkpoints::Observation;
-use crate::daily_snapshots::AcceptedRoots;
+use crate::daily_snapshots::{AcceptedRoots, VaultRoots};
 use crate::sequencer::replay::RETAINED_LINKS;
 use crate::standby::archive::archive_client;
 
@@ -15,32 +15,6 @@ use super::*;
 /// How many turns back the start of the in-office member's run of turns is read: one that held more is treated as
 /// holding every turn, so no snapshot is taken, since the member's own log check would not count.
 const RUN_TURNS: usize = 32;
-
-/// The roots the vault accepted, read at the finalized observation `at`.
-struct VaultRoots<'a, C> {
-    vault: &'a C,
-    at: &'a Observation,
-}
-
-impl<C: CheckpointChain> AcceptedRoots for VaultRoots<'_, C> {
-    /// The root the vault accepted at `seq`; none where it accepted none there, or the read fails.
-    async fn root_at(&self, seq: u64) -> Option<engine_core::eip712::B256> {
-        let accepted = self.vault.accepted_checkpoints(self.at, &[seq]).await.ok()?;
-        accepted.into_iter().find(|checkpoint| checkpoint.seq == seq)?.root.parse().ok()
-    }
-
-    /// The signer of the checkpoint the vault accepted at `seq`, or, where it accepted none, of its finalized one, which
-    /// a snapshot before it rests on, or the vault's signer at `at`; none where the read fails, which leaves the
-    /// candidate to the signers the start was given.
-    async fn signer_at(&self, seq: u64) -> Option<AccountId> {
-        let anchor = self.at.state.checkpoint.as_ref().map(|(anchor, _)| *anchor);
-        let seqs: Vec<u64> = std::iter::once(seq).chain(anchor.filter(|anchor| *anchor != seq)).collect();
-        let accepted = self.vault.accepted_checkpoints(self.at, &seqs).await.ok()?;
-        let signer_of =
-            |at: u64| accepted.iter().find(|checkpoint| checkpoint.seq == at).map(|checkpoint| checkpoint.signer);
-        Some(signer_of(seq).or_else(|| anchor.and_then(signer_of)).unwrap_or(self.at.state.signer))
-    }
-}
 
 impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Opens the copy, bootstrapping an empty one from `operator`'s archive when given, and builds its

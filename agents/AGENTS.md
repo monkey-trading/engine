@@ -343,10 +343,12 @@ an index: load only the rule whose hint matches the current action.
   derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
   dashboard record restored from the snapshot and the marks cache from the frozen copy
   its anchors match, written by the marks task between the marks before the checkpoint and those after, synced in steps,
-  nothing the enclave vouches for read from the segments before the snapshot (`Manifest::verified_from`: the stream's
-  backfill, re-derived rows; a member or standby refused for it catching its copy up from the archive, each entry's seal
-  and link checked as a streamed one's, `standby/catch_up.rs`), a snapshot taken only when the vault's signer at its seq
-  signed its checkpoint (`AcceptedRoots::signer_at`), a `[snapshots]` start with no cache replaying the whole log,
+  nothing the enclave vouches for read from the segments before the snapshot but the window of its carried links,
+  checked against them, the carried roots and the descriptors served by (`Manifest::verified_from`,
+  `replay::verified_back`: the stream's backfill, a financing read's rows; a member or standby refused for it catching its
+  copy up from the archive, each entry's seal and link checked as a streamed one's, `standby/catch_up.rs`), a snapshot
+  taken only when the signer the vault accepted at its seq, or at its finalized checkpoint, signed its checkpoint
+  (`AcceptedRoots::signer_at`, `daily_snapshots/vault.rs`), a `[snapshots]` start with no cache replaying the whole log,
   a `[snapshots]` start under `[daily_snapshots]` taking only a recovery cache that carries its replay state, the entries
   a recovery logs before the stats worker starts folded into its seed (`Captures::fold_before_worker`), a member
   answering a log-check question only for a range that starts after its snapshot (`Checked::from`), and the log's

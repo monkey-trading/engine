@@ -112,7 +112,7 @@ pub(crate) async fn take_with(
     };
     let signers = crate::handover::vault_signers(vault, &observation).await?;
     let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
-    let finalized = Finalized::of(&observation.state);
+    let finalized = Finalized::read(vault, &observation, snapshots).await;
     let trust = (signers, finalized.as_ref());
     let taken = take_segments(
         &mut stream,

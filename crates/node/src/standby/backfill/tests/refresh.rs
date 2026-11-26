@@ -23,7 +23,7 @@ async fn a_failed_takeover_leaves_the_copy_marked_as_it_was() {
             (DOMAIN, signers, Default::default()),
             &origins,
             (&dir, None),
-            &unheld,
+            (&unheld, Default::default()),
             copied,
         )
         .await
@@ -123,7 +123,7 @@ async fn a_takeover_drops_a_refreshed_segment_its_replay_refuses() {
         (DOMAIN, signers(), Default::default()),
         &origins,
         (&dir, None),
-        &unheld,
+        (&unheld, Default::default()),
         copied,
     )
     .await
@@ -169,7 +169,7 @@ async fn a_takeover_refused_a_refreshed_segment_goes_on_from_the_copy_the_stream
             (DOMAIN, signers(), Default::default()),
             origins,
             (&dir, None),
-            &takeover,
+            (&takeover, Default::default()),
             copied,
         )
         .await

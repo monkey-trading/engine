@@ -339,7 +339,7 @@ async fn a_takeover_refuses_a_copy_that_dropped_or_replaced_a_seal() {
             (DOMAIN, [enclave()].into(), Default::default()),
             &origins,
             (&dir, None),
-            &takeover,
+            (&takeover, Default::default()),
             copied,
         )
         .await

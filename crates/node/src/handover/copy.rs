@@ -3,7 +3,7 @@
 //! and replayed from the newest daily snapshot this node holds whose checkpoint the copy holds, rather than from
 //! the copy's first entry, so the copy's segments before it need not be on this host (`copy_start`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::Context;
@@ -11,7 +11,7 @@ use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use tracing::{info, warn};
 
-use crate::checkpoints::VaultState;
+use crate::checkpoints::{CheckpointChain, Observation, VaultState};
 use crate::config::NodeConfig;
 use crate::daily_snapshots::{AcceptedRoots, Bounds, Signed, snapshot_start_against};
 use crate::handover::Source;
@@ -24,8 +24,11 @@ pub(crate) struct Finalized {
     pub seq: u64,
     pub root: String,
     /// The key that signed the finalized checkpoint, where it is known, as a takeover's is, or else the vault's signer:
-    /// a snapshot of an earlier checkpoint rests on it.
+    /// a snapshot of an earlier checkpoint the vault accepted none at rests on it.
     pub signer: AccountId,
+    /// The signer of the checkpoint the vault accepted at each seq a copy start may go on from, where it accepted one
+    /// there (`daily_snapshots::accepted_signers`).
+    pub accepted: BTreeMap<u64, AccountId>,
 }
 
 impl AcceptedRoots for Finalized {
@@ -35,17 +38,65 @@ impl AcceptedRoots for Finalized {
         (seq == self.seq).then(|| self.root.parse().ok()).flatten()
     }
 
-    /// `signer` at every seq: a snapshot another key signed is passed over, after a signer change before the
-    /// finalized checkpoint too, and the copy replays from an earlier one, or whole.
-    async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
-        Some(self.signer)
+    /// The signer the vault accepted at `seq`, or else `signer`: a snapshot of a checkpoint the vault accepted none at
+    /// that another key signed is passed over, after a signer change before the finalized checkpoint too, and the
+    /// copy replays from an earlier one, or whole.
+    async fn signer_at(&self, seq: u64) -> Option<AccountId> {
+        Some(self.accepted.get(&seq).copied().unwrap_or(self.signer))
     }
 }
 
 impl Finalized {
-    /// The checkpoint the vault's finalized `state` names; none before the vault has accepted one.
+    /// The checkpoint the vault's finalized `state` names, signed by its signer; none before the vault has accepted
+    /// one.
     pub(crate) fn of(state: &VaultState) -> Option<Self> {
-        state.checkpoint.as_ref().map(|(seq, root)| Self { seq: *seq, root: root.clone(), signer: state.signer })
+        let (seq, root) = state.checkpoint.as_ref()?;
+        Some(Self { seq: *seq, root: root.clone(), signer: state.signer, accepted: BTreeMap::new() })
+    }
+
+    /// The checkpoint a standby takes over at, `takeover`, the vault's latest at finality, signed by its signer, with
+    /// the signers the vault `accepted` at earlier seqs.
+    pub(crate) fn over(takeover: &crate::checkpoints::Takeover, accepted: BTreeMap<u64, AccountId>) -> Self {
+        Self { seq: takeover.seq, root: takeover.root.clone(), signer: takeover.signer, accepted }
+    }
+
+    /// The checkpoint `vault`, read at `at`, finalized, with the key that signed it and those it accepted at each
+    /// seq a copy start from the daily snapshots in `snapshots` may go on from; none before it has accepted one.
+    pub(crate) async fn read(vault: &impl CheckpointChain, at: &Observation, snapshots: Option<&Path>) -> Option<Self> {
+        let finalized = Self::of(&at.state)?;
+        let signer = crate::daily_snapshots::anchor_signer(vault, at).await;
+        Some(Self { signer, ..finalized }.accepting(vault, at, snapshots).await)
+    }
+
+    /// `self` with the signers `vault`, read at `at`, accepted at each seq a copy start from the daily snapshots in
+    /// `snapshots` may go on from at or before its seq.
+    pub(crate) async fn accepting(
+        self,
+        vault: &impl CheckpointChain,
+        at: &Observation,
+        snapshots: Option<&Path>,
+    ) -> Self {
+        let Some(snapshots) = snapshots else { return self };
+        let accepted = crate::daily_snapshots::accepted_signers(vault, at, (snapshots, self.seq)).await;
+        Self { accepted, ..self }
+    }
+}
+
+/// The signer of the checkpoint `vault` accepted, at its finalized block, at each seq a copy start from the daily
+/// snapshots in `snapshots` may go on from at or before `finalized`; none when that block cannot be read, so each
+/// snapshot must be by the finalized checkpoint's signer.
+pub(crate) async fn accepted_before(
+    vault: &impl CheckpointChain,
+    snapshots: Option<&Path>,
+    finalized: u64,
+) -> BTreeMap<u64, AccountId> {
+    let Some(snapshots) = snapshots else { return BTreeMap::new() };
+    match vault.observe(crate::checkpoints::View::Finalized, &[]).await {
+        Ok(at) => crate::daily_snapshots::accepted_signers(vault, &at, (snapshots, finalized)).await,
+        Err(e) => {
+            warn!("the vault's accepted checkpoints cannot be read for a copy's daily snapshot: {e:#}");
+            BTreeMap::new()
+        }
     }
 }
 

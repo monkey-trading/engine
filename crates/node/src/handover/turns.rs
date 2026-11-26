@@ -216,7 +216,8 @@ pub(crate) async fn take_keys(
         turn.turn
     );
     let signers = crate::handover::vault_signers(vault, at).await?;
-    let finalized = crate::handover::Finalized::of(&at.state);
+    let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
+    let finalized = crate::handover::Finalized::read(vault, at, snapshots).await;
     let mut failures = Vec::new();
     for source in sources {
         info!(turn = turn.turn, predecessor = %source.handover_endpoint, "daily turn: taking the keys");
