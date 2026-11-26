@@ -5,6 +5,15 @@
 use super::*;
 
 use std::collections::BTreeSet;
+use std::fmt::Debug;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use tracing::field::{Field, Visit};
+use tracing::subscriber::DefaultGuard;
+use tracing::{Event, Subscriber};
+use tracing_subscriber::Registry;
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 
 use crate::archive::read::origin::upload;
 use crate::archive::read::read_through;
@@ -134,6 +143,7 @@ async fn a_failed_read_of_the_copy_queues_its_checkpoints_once_it_reads_again() 
 /// is uploaded and read back once.
 #[tokio::test]
 async fn a_reread_of_the_copy_queues_no_tail_twice() {
+    let (_guard, failed_reads) = count_failed_reads();
     let (bucket, dir, vault) = (StandIn::start().await, scratch_dir("archive-tail-reread"), Vault::default());
     let node = node_with(&dir, 2).await;
     let finalized = vault.finalize_past(&node, &dir, 1).await;
@@ -155,8 +165,7 @@ async fn a_reread_of_the_copy_queues_no_tail_twice() {
     let changed = std::fs::metadata(&open).unwrap().len() - 2;
     flip_byte(&open, changed);
     node.submit(Command::Tick).await;
-    let failures = metrics.archive.failures.get();
-    until("two more failures, one of them a read", || metrics.archive.failures.get() >= failures + 2).await;
+    until("a failed read of the copy", || failed_reads.load(Ordering::Relaxed) > 0).await;
     // The copy reads again: the next read starts afresh and passes every checkpoint again.
     flip_byte(&open, changed);
     // A checkpoint past those the first read queued comes last in every read's queue, so once its tail is confirmed
@@ -313,4 +322,26 @@ fn flip_byte(path: &Path, offset: u64) {
     byte[0] ^= 1;
     file.seek(SeekFrom::Start(offset)).unwrap();
     file.write_all(&byte).unwrap();
+}
+
+/// Counts, until the guard drops, the uploader's failed steps that name a read of the copy for checkpoints, which
+/// `tracing` records only as a log line.
+fn count_failed_reads() -> (DefaultGuard, Arc<AtomicU64>) {
+    struct Reads(Arc<AtomicU64>);
+    struct Message(bool);
+    impl Visit for Message {
+        fn record_debug(&mut self, field: &Field, value: &dyn Debug) {
+            self.0 |= field.name() == "message" && format!("{value:?}").contains("reading the copy for checkpoints");
+        }
+    }
+    impl<S: Subscriber> Layer<S> for Reads {
+        fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+            let mut message = Message(false);
+            event.record(&mut message);
+            self.0.fetch_add(u64::from(message.0), Ordering::Relaxed);
+        }
+    }
+    crate::test_tracing::keep_callsites_interested();
+    let count = Arc::new(AtomicU64::new(0));
+    (tracing::subscriber::set_default(Registry::default().with(Reads(count.clone()))), count)
 }
