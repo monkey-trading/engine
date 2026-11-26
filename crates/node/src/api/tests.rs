@@ -345,32 +345,12 @@ pub(super) fn mock_attestation() -> Arc<Attestation> {
 /// Serves the API for `node`, with `dir` as its log directory and `manifest` as the writer's.
 async fn serve_with(node: &TestSequencer, dir: &Path, manifest: watch::Receiver<Manifest>) -> SocketAddr {
     serve_state(ApiState {
-        protocol: engine_core::protocol::ProtocolVersion::V23,
-        access: None,
         tx: node.tx.clone(),
         stream: node.stream.clone(),
-        attestation: mock_attestation(),
-        auth: ClientAuth::Unsigned,
-        operator: dev_config().operator().unwrap(),
-        mock_custody: true,
-        payouts_enabled: true,
-        clock: Arc::new(SystemClock),
         log_dir: dir.to_owned(),
-        daily_snapshots: None,
         manifest,
-        backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
-        limits: Arc::new(ApiLimits::new(&dev_config().api)),
         history: Reader::new(dir.join(INDEX_FILE), watch::channel(true).1),
-        marks: crate::test_support::marks_reader(),
-        stats: crate::test_support::stats(),
-        emission_budget: None,
-        staking_terms: None,
-        status: Default::default(),
-        collateral: None,
-        listing: Default::default(),
-        operators: None,
-        operator_hostname: None,
-        signing: crate::test_support::signing(),
+        ..api_state(true).0
     })
     .await
 }
@@ -485,6 +465,7 @@ pub(crate) fn api_state(mock_custody: bool) -> (ApiState, mpsc::Receiver<sequenc
         status: Default::default(),
         collateral: None,
         listing: Default::default(),
+        archive_objects: None,
         operators: None,
         operator_hostname: None,
         signing: crate::test_support::signing(),

@@ -365,6 +365,7 @@ impl Node {
             payouts_enabled: post_checkpoints,
             collateral: None,
             listing: Default::default(),
+            archive_objects: None,
             operators: feed,
             operator_hostname: None,
             signing: Arc::new(Signing::new(

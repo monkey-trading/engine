@@ -12,6 +12,7 @@ use crate::checkpoints::APPROVAL_PAGE_SIZE;
 use crate::log::{Manifest, SegmentedLog};
 use crate::test_support::{TRADER, dev_config, scratch_dir};
 
+mod archive;
 mod attested;
 mod fixture;
 mod ranges;

@@ -155,8 +155,12 @@ jobs:
                   | crates/node/src/trusted_time/tests/*)
                   areas+=" rust $lib_tests" ;;
                 crates/node/src/feeds/tests/*) areas+=" rust $feeds" ;;
-                # The log archive: its uploader, its bucket's stand-in and its dev scenario, which no other
-                # scenario turns on.
+                # The archive's readers, which every standby, member and handover backfill reads through.
+                crates/node/src/archive/read/mod.rs | crates/node/src/archive/read/segments.rs \
+                  | crates/node/src/archive/read/source.rs)
+                  areas+=" rust $anvil log_heads scenario_tests recovery_scale" ;;
+                # The log archive: its uploader, its bucket's stand-in, its readers' tests and its dev scenarios,
+                # which no other scenario turns on.
                 crates/node/src/archive/*) areas+=" rust scenario_tests" ;;
                 crates/node/src/verify/tests/* | crates/node/src/api/tests.rs | crates/node/src/api/tests/* \
                   | crates/node/src/log/authenticated_tests*)
@@ -327,7 +331,8 @@ jobs:
                   | scripts/dev-earned-leverage.sh | scripts/dev-tier-limits.sh | scripts/dev-volume-benefits.sh \
                   | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh \
                   | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh | scripts/dev-storage-alerts.sh \
-                  | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh | scripts/dev-snapshot-start.sh)
+                  | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh | scripts/dev-snapshot-start.sh \
+                  | scripts/dev-archive-read.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -901,6 +906,8 @@ jobs:
         run: ./scripts/dev-history-retention.sh
       - name: Run the log archive dev scenario
         run: ./scripts/dev-log-archive.sh
+      - name: Run the log archive read dev scenario
+        run: ./scripts/dev-archive-read.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Check the same wait over 100k accounts each holding a hedged pair under portfolio margin

@@ -49,6 +49,37 @@ async fn with_rotation_off_the_follower_keeps_the_operator_standby_names() {
     assert!(format!("{err:#}").contains("[standby]"), "{err:#}");
 }
 
+/// A follower reads the operator's archive from the bucket its own `[archive]` names first, under the log's chain and
+/// vault, with rotation on or off, and from no bucket without the section.
+#[tokio::test]
+async fn a_follower_reads_the_bucket_its_own_archive_section_names_first() {
+    let mut cfg = dev_config();
+    cfg.standby = Some(standby());
+    let registry = Registry { hostname: Mutex::new("a.operator.example".into()), signer: AccountId([0x51; 20]) };
+    assert_eq!(resolve(&cfg, &registry).await.unwrap().bucket, None);
+    let public: reqwest::Url = "https://archive.example".parse().unwrap();
+    cfg.archive = Some(crate::config::ArchiveSection {
+        endpoint: "https://account.r2.example".parse().unwrap(),
+        bucket: "engine-log".into(),
+        region: "auto".into(),
+        public_url: public.clone(),
+        access_key_id_secret: "archive_key_id".to_owned().try_into().unwrap(),
+        secret_access_key_secret: "archive_secret_key".to_owned().try_into().unwrap(),
+        lag_alert: Duration::from_secs(3600),
+    });
+    let prefix = crate::archive::log_prefix(cfg.custody.chain_id, cfg.custody.vault.parse().unwrap());
+    let bucket = crate::archive::Bucket::new(&public, &prefix).unwrap();
+    for rotation in [false, true] {
+        cfg.operator.rotation_enabled = rotation;
+        let followed = resolve(&cfg, &registry).await.unwrap();
+        assert_eq!(followed.bucket.as_ref(), Some(&bucket), "rotation {rotation}");
+        assert_eq!(
+            followed.archive(),
+            crate::archive::Origins { bucket: Some(bucket.clone()), nodes: followed.origins() }
+        );
+    }
+}
+
 /// A `--standby` node with rotation on follows the registry's operator in effect, read again as the
 /// turn moves, with `[standby]`'s archive mirrors and certificate setting; with rotation off, the
 /// operator `[standby]` names.

@@ -112,6 +112,8 @@ const SECRET_KEY: &str = "stand-in-secret-access-key";
 pub(crate) struct StandIn {
     /// Its S3 API's and public origin's URL, the same server.
     pub url: Url,
+    /// The same server over plain `http`, for a reader whose client trusts only the public roots.
+    pub plain: Url,
     /// A client that trusts the stand-in's CA alone.
     pub client: reqwest::Client,
     bucket: Arc<Mutex<Bucket>>,
@@ -151,7 +153,8 @@ impl StandIn {
     pub(crate) async fn start() -> Self {
         let bucket = Arc::new(Mutex::new(Bucket::default()));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
-        let plain = format!("ws://{}", listener.local_addr().expect("local addr"));
+        let address = listener.local_addr().expect("local addr");
+        let plain = format!("ws://{address}");
         let app = Router::new().fallback(answer).with_state(bucket.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("the stand-in serves") });
         let front = TlsFront::new();
@@ -162,7 +165,8 @@ impl StandIn {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("a client of the stand-in");
-        Self { url, client, bucket, tasks: [server.abort_handle(), relay] }
+        let plain_url = Url::parse(&format!("http://{address}/")).expect("the stand-in's plain URL");
+        Self { url, plain: plain_url, client, bucket, tasks: [server.abort_handle(), relay] }
     }
 
     /// The `[archive]` section that reaches the stand-in, warning after `lag_alert`.

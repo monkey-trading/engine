@@ -113,6 +113,40 @@ async fn an_unsigned_host_manifest_is_never_served_as_an_authoritative_archive()
     ));
 }
 
+/// A listed segment the host no longer holds answers `308` to the bucket's object of the range that holds its first
+/// seq, which the archive does not relay; a segment the host holds is served, and one that fails its check, or is
+/// gone from a node that names no bucket, is still an internal error.
+#[tokio::test]
+async fn a_listed_segment_the_host_no_longer_holds_redirects_to_its_range_object() {
+    let mut f = fixture("lazy-archive-redirect", 2);
+    for seq in 0..9 {
+        f.writer.append(&command(seq)).expect("append");
+    }
+    f.writer.sync().expect("sync");
+    let (mut state, _rx) = api_state(true);
+    state.log_dir = f.dir.clone();
+    state.manifest = f.view.clone();
+    let view = f.view.borrow().clone();
+    let (gone, held, altered) =
+        (view.completed_at(1).unwrap(), view.completed_at(2).unwrap(), view.completed_at(3).unwrap());
+    fs::remove_file(f.dir.join(&gone.file)).expect("the host drops a segment");
+    let text = fs::read_to_string(f.dir.join(&altered.file)).expect("segment bytes");
+    fs::write(f.dir.join(&altered.file), text.replacen("\"ts\":", "\"ts\": ", 1)).expect("host tamper");
+    let ask =
+        |state: &ApiState, file: &str| crate::api::archive::archive(State(state.clone()), FilePath(file.to_owned()));
+    assert!(matches!(ask(&state, &gone.file).await, Err(ApiError::Internal)), "a node with no bucket keeps it");
+    let bucket = crate::archive::Bucket::new(&"https://archive.example".parse().unwrap(), "log/31337/0x00/").unwrap();
+    state.archive_objects = Some(bucket.clone());
+    let moved = ask(&state, &gone.file).await.expect("a redirect");
+    assert_eq!(moved.status(), 308);
+    let object = bucket.object(gone.first_seq / crate::archive::RANGE_SEQS).unwrap();
+    assert_eq!(moved.headers()[axum::http::header::LOCATION], object.as_str());
+    assert!(to_bytes(moved.into_body(), usize::MAX).await.unwrap().is_empty(), "nothing relayed");
+    let served = ask(&state, &held.file).await.expect("a held segment");
+    assert_eq!(to_bytes(served.into_body(), usize::MAX).await.unwrap(), fs::read(f.dir.join(&held.file)).unwrap());
+    assert!(matches!(ask(&state, &altered.file).await, Err(ApiError::Internal)), "an altered segment pages");
+}
+
 /// A segment download that has opened but whose body the client has not read holds no backfill
 /// permit, so slow archive clients cannot starve stream backfill.
 #[tokio::test]

@@ -54,7 +54,13 @@ async fn archived(dir: &Path) -> Followed {
         }),
     );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    Followed { origin, enclave: AccountId([1; 20]), mirrors: Vec::new(), danger_accept_invalid_certs: true }
+    Followed {
+        origin,
+        enclave: AccountId([1; 20]),
+        mirrors: Vec::new(),
+        danger_accept_invalid_certs: true,
+        bucket: None,
+    }
 }
 
 /// The archived genesis is read across its segments: the carried log's source, a dev log's nothing, and, while the

@@ -57,6 +57,7 @@ async fn serve_history_signing(history: Reader, signing: Arc<crate::api::Signing
         status: Default::default(),
         collateral: None,
         listing: Default::default(),
+        archive_objects: None,
         operators: None,
         operator_hostname: None,
         signing,

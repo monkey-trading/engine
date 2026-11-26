@@ -36,9 +36,10 @@ const MAX_FILE_BYTES: u64 = crate::standby::MAX_ARCHIVE_BYTES / 4 * 3;
 /// `engine carry`'s arguments.
 #[derive(Args)]
 pub struct CarryArgs {
-    /// The source's published log: a log directory, a downloaded archive, or a single log file.
+    /// The source's published log: a log directory, a downloaded archive, a single log file, or an archive's URL,
+    /// as `engine replay --log` takes it.
     #[arg(short, long)]
-    log: PathBuf,
+    log: crate::PublishedLog,
     /// The checkpoint to carry from: the one the source vault last accepted. The log's last checkpoint when
     /// absent.
     #[arg(long)]
@@ -54,9 +55,10 @@ pub struct CarryArgs {
 /// Runs `engine carry`: builds the carry file and writes it to `--out` or standard output, printing what it
 /// carries and its SHA-256 to standard error; with `--check`, only builds it and prints what it would carry.
 /// Error cases:
+/// - the archive `--log` names by URL cannot be downloaded (`PublishedLog::local`)
 /// - see `build` and `write`
 pub fn run(args: CarryArgs) -> anyhow::Result<()> {
-    let file = build(&args.log, args.seq)?;
+    let file = build(args.log.local()?.path(), args.seq)?;
     let totals = file.totals;
     let summary = format!(
         "seq {}, root {}, {} accounts, {} entitled, {} staked, {} awards",

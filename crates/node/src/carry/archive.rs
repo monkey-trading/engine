@@ -6,10 +6,11 @@ use engine_core::carry::{CarryPart, CarrySource};
 use engine_core::command::{AdminCommand, Command};
 use tracing::{error, warn};
 
+use crate::archive::{ArchiveOrigins, Segments};
 use crate::config::NodeConfig;
 use crate::log::LogEntry;
 use crate::standby::Followed;
-use crate::standby::archive::{archive_client, fetch_archive_bytes, fetch_manifest};
+use crate::standby::archive::archive_client;
 
 /// Refuses the log `operator` archives when its genesis carried from another source than the config's
 /// `[genesis.carry]`, from any when the config names none, or from none when it names one
@@ -20,7 +21,7 @@ use crate::standby::archive::{archive_client, fetch_archive_bytes, fetch_manifes
 /// - the archived genesis carried from another source than the config names
 pub(crate) async fn check_archived(cfg: &NodeConfig, operator: &Followed) -> anyhow::Result<()> {
     let archive = archive_client(operator.danger_accept_invalid_certs)?;
-    let source = archived_source(&archive, &operator.origins())
+    let source = archived_source(&archive, &operator.archive())
         .await
         .inspect_err(|e| warn!("reading the archived genesis to check [genesis.carry] failed: {e:#}"))?;
     let (carried, open) = source.map_or((None, true), |carried| (carried, false));
@@ -39,16 +40,17 @@ pub(crate) async fn held(cfg: &NodeConfig, operator: Option<&Followed>, checked:
 }
 
 /// The source the genesis of the log `origins` archive carried from, read from its segments in order up to the
-/// house capital credit that ends genesis: `Some(None)` for a genesis that carries nothing, `None` while the
-/// archive holds no whole genesis.
+/// house capital credit that ends genesis, from the bucket first when `origins` names one: `Some(None)` for a
+/// genesis that carries nothing, `None` while the archive holds no whole genesis.
 /// Error cases:
 /// - the manifest or a segment cannot be fetched, differs from its listing, or holds a line that does not parse
 pub(crate) async fn archived_source(
     archive: &reqwest::Client,
-    origins: &[String],
+    origins: &(impl ArchiveOrigins + ?Sized),
 ) -> anyhow::Result<Option<Option<CarrySource>>> {
-    for listed in fetch_manifest(archive, origins).await? {
-        let bytes = fetch_archive_bytes(archive, origins, &listed.file, Some(&listed)).await?;
+    let mut segments = Segments::new(archive, origins);
+    for listed in segments.manifest().await? {
+        let bytes = segments.segment(&listed).await?;
         for line in bytes.split(|b| *b == b'\n').filter(|line| !line.trim_ascii().is_empty()) {
             let entry: LogEntry = serde_json::from_slice(line).with_context(|| format!("parsing {}", listed.file))?;
             let LogEntry::Command(command) = entry else { continue };

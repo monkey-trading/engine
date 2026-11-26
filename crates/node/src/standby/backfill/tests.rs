@@ -384,6 +384,7 @@ fn followed(origin: &str, mirror: &str) -> Followed {
         enclave: AccountId(EnclaveKey::test_key().address()),
         mirrors: vec![mirror.to_owned()],
         danger_accept_invalid_certs: false,
+        bucket: None,
     }
 }
 

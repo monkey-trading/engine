@@ -8,6 +8,7 @@ pub mod admin;
 mod alerts;
 mod api;
 mod archive;
+pub use archive::{LocalLog, PublishedLog};
 pub(crate) mod authenticated;
 mod benchmarks;
 pub mod carry;

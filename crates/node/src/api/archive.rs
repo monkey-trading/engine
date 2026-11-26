@@ -1,4 +1,6 @@
-//! Public canonical manifest and authenticated completed-segment bytes, and the daily snapshots beside them.
+//! Public canonical manifest and authenticated completed-segment bytes, and the daily snapshots beside them. A
+//! listed segment the host no longer holds is redirected to the archive's bucket, whose objects readers read
+//! themselves: the enclave relays none of them.
 
 use std::io::{self, Read};
 use std::path::PathBuf;
@@ -6,7 +8,8 @@ use std::sync::Arc;
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::StatusCode;
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream::try_unfold;
 use sha2::{Digest, Sha256};
@@ -16,8 +19,9 @@ use tracing::field::display;
 use tracing::{Span, error, warn};
 
 use crate::api::{ApiError, ApiState};
+use crate::archive::RANGE_SEQS;
 use crate::daily_snapshots;
-use crate::log::{MANIFEST, open_segment_archive, segment_seq};
+use crate::log::{ArchiveReader, MANIFEST, SegmentInfo, open_segment_archive, segment_seq};
 
 const JSON_LINES: &str = "application/x-ndjson";
 const JSON: &str = "application/json";
@@ -34,15 +38,25 @@ pub struct ServedSnapshots {
     checks: Arc<Semaphore>,
 }
 
+/// What the archive serves for a listed segment.
+enum Served {
+    /// The segment, checked against its listing, and its reader.
+    Segment(SegmentInfo, ArchiveReader),
+    /// The bucket's object of the range holding the segment's first seq, which the host no longer holds.
+    Moved(reqwest::Url),
+}
+
 impl ServedSnapshots {
     pub fn new(dir: PathBuf) -> Self {
         Self { dir, checks: Arc::new(Semaphore::new(SNAPSHOT_CHECKS)) }
     }
 }
 
-/// Serves a pinned canonical catalog listing or an authenticated completed segment.
+/// Serves a pinned canonical catalog listing or an authenticated completed segment, or redirects (`308`) a listed
+/// segment the host no longer holds to the bucket's object of the range holding its first seq.
 /// Error cases:
 /// - the file is not a completed segment, a required proof fails, or disk bytes changed
+/// - the segment is not on disk and the node names no bucket
 pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Result<Response, ApiError> {
     Span::current().record("id", display(&file));
     if file == MANIFEST {
@@ -79,16 +93,26 @@ pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Res
         let Some(listed) = listed else {
             return anyhow::Ok(None);
         };
-        let reader = open_segment_archive(&s.log_dir, &listed)?;
-        Ok(Some((listed, reader)))
+        match open_segment_archive(&s.log_dir, &listed) {
+            Ok(reader) => Ok(Some(Served::Segment(listed, reader))),
+            // Only a file that is gone is in the bucket's keeping: one that is there and fails its check pages.
+            Err(e) => match (&s.archive_objects, s.log_dir.join(&listed.file).try_exists()) {
+                (Some(bucket), Ok(false)) => Ok(Some(Served::Moved(bucket.object(listed.first_seq / RANGE_SEQS)?))),
+                _ => Err(e),
+            },
+        }
     })
     .await
     .map_err(|e| unreadable(format!("archive task: {e}")))?
     .map_err(|e| unreadable(format!("archive: {e:#}")))?
     .ok_or(ApiError::NotFound)?;
-    let (listed, reader) = opened;
-    let headers = [(CONTENT_TYPE, JSON_LINES.to_owned()), (CONTENT_LENGTH, listed.bytes.to_string())];
-    Ok((headers, chunked(reader, "checked segment", false)).into_response())
+    match opened {
+        Served::Segment(listed, reader) => {
+            let headers = [(CONTENT_TYPE, JSON_LINES.to_owned()), (CONTENT_LENGTH, listed.bytes.to_string())];
+            Ok((headers, chunked(reader, "checked segment", false)).into_response())
+        }
+        Served::Moved(object) => Ok((StatusCode::PERMANENT_REDIRECT, [(LOCATION, object.to_string())]).into_response()),
+    }
 }
 
 /// A body streaming `reader`'s bytes in chunks, each read on the blocking pool, paging for a read of `what`

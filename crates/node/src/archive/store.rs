@@ -113,27 +113,9 @@ impl Store {
 
     /// The object `key` as the bucket's public origin serves it, read up to `limit` bytes.
     /// Error cases:
-    /// - the request fails or times out, or the origin answers other than `200` or `404`
+    /// - see `read_public`
     pub(crate) async fn read(&self, key: &str, limit: u64) -> anyhow::Result<Object> {
-        let url = self.public_object(key)?;
-        let response = self.http.get(url.clone()).send().await.with_context(|| format!("reading {url}"))?;
-        match response.status() {
-            StatusCode::OK => {}
-            StatusCode::NOT_FOUND => return Ok(Object::Absent),
-            status => bail!("reading {url}: the origin answered {status} {}", error_code(response).await),
-        }
-        if response.content_length().is_some_and(|length| length > limit) {
-            return Ok(Object::Oversized);
-        }
-        let (mut body, mut stream) = (Vec::new(), response.bytes_stream());
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.with_context(|| format!("reading {url}"))?;
-            if body.len() as u64 + chunk.len() as u64 > limit {
-                return Ok(Object::Oversized);
-            }
-            body.extend_from_slice(&chunk);
-        }
-        Ok(Object::Read(body))
+        read_public(&self.http, self.public_object(key)?, limit, REQUEST_TIMEOUT).await
     }
 
     /// Whether the bucket's public origin serves an object at `key`.
@@ -155,6 +137,34 @@ impl Store {
     fn public_object(&self, key: &str) -> anyhow::Result<Url> {
         self.public.join(key).with_context(|| format!("the public URL of {key}"))
     }
+}
+
+/// The object at `url`, a key at a bucket's public origin, read over `http` up to `limit` bytes, as every reader of
+/// the archive reads it, its answer's headers within `answered`.
+/// Error cases:
+/// - the request fails or times out, the headers take longer than `answered`, or the origin answers other than
+///   `200` or `404`
+pub(crate) async fn read_public(http: &Client, url: Url, limit: u64, answered: Duration) -> anyhow::Result<Object> {
+    let sent = tokio::time::timeout(answered, http.get(url.clone()).send()).await;
+    let response = sent.map_err(|_| anyhow::anyhow!("{url} did not answer within {answered:?}"))?;
+    let response = response.with_context(|| format!("reading {url}"))?;
+    match response.status() {
+        StatusCode::OK => {}
+        StatusCode::NOT_FOUND => return Ok(Object::Absent),
+        status => bail!("reading {url}: the origin answered {status} {}", error_code(response).await),
+    }
+    if response.content_length().is_some_and(|length| length > limit) {
+        return Ok(Object::Oversized);
+    }
+    let (mut body, mut stream) = (Vec::new(), response.bytes_stream());
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("reading {url}"))?;
+        if body.len() as u64 + chunk.len() as u64 > limit {
+            return Ok(Object::Oversized);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Object::Read(body))
 }
 
 /// The S3 error code an error answer names, for the log, as `(<code>)`, read from at most `ERROR_BYTES` of its body.

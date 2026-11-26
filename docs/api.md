@@ -176,7 +176,7 @@ maximum `limit`.
 | POST | `/v1/admin` | The operator's signed administrative commands |
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
-| GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment |
+| GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment, or a redirect to the bucket's object that holds it |
 | GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
 | GET | `/v1/stream` | The WebSocket stream of the log, quotes, status and notices |
 
@@ -1485,7 +1485,7 @@ is too old.
 | GET | `/v1/health` | Answers `ok` while the server runs |
 | GET | `/v1/attestation` | The enclave's attestation |
 | GET | `/v1/attestation/collateral` | The processor vendor's certificates and revocation list for the attestation |
-| GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment |
+| GET | `/v1/archive/{file}` | The log archive's manifest, or one completed log segment, or a redirect to the bucket's object that holds it |
 | GET | `/v1/archive/snapshots/{file}` | The daily snapshots' manifest, or one daily snapshot |
 
 None of these answers is signed, and `/v1/health` answers the text `ok`.
@@ -1533,6 +1533,20 @@ JSON line for each completed segment:
 file that the manifest does not list answers 404. The segment still being written is not in the
 archive, and the stream carries it instead. `engine replay` verifies a downloaded archive, and the
 server checks each segment against the manifest before serving it.
+
+A server with an archive bucket keeps the whole log there as well as on its host. A listed segment
+that the host no longer holds answers 308, and its `Location` is the bucket's object for the range
+of 10,000 sequence numbers that holds the segment's first sequence number. The server does not relay
+the object. The bucket holds the log in these ranges, not in the server's segments: range `k` holds
+sequence numbers `k × 10,000` to `k × 10,000 + 9,999`, at
+`log/<chain id>/<vault>/<first sequence number, 20 digits>.jsonl.zst` under the bucket's public URL.
+Each object holds, in log order, the lines of every entry whose sequence number its range covers,
+compressed with zstd. The redirect's target sits beside every other range's object, so a reader
+derives each key it needs from the sequence numbers it needs. The segment's bytes are its lines in
+the objects of the ranges that hold its sequence numbers, and they match its manifest line. The
+bucket holds the ranges below a checkpoint the vault has finalized, so a 404 for one of these keys
+means the object is missing, not that the log ends there. A server without a bucket answers 500 for
+a listed segment that its host no longer holds.
 
 ### Daily snapshots
 

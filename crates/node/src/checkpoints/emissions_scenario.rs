@@ -20,7 +20,7 @@ use axum::Router;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::StatusCode;
 use engine_core::Engine;
-use engine_core::auth::{ClientAuth, Operator};
+use engine_core::auth::Operator;
 use engine_core::command::{AdminCommand, Command, OrderKind, OrderRequest};
 use engine_core::emissions::{EmissionSchedule, Emissions, PERIODS_PER_HALVING, TokenUnits};
 use engine_core::event::Event;
@@ -28,11 +28,11 @@ use engine_core::price::SourceQuote;
 use engine_core::types::{AccountId, Millis, Side};
 use governor::{Quota, clock::DefaultClock};
 use serde_json::{Value, json};
-use tokio::sync::{Semaphore, broadcast, mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use crate::api::{ApiState, MAX_BACKFILLS, router};
+use crate::api::{ApiState, router};
 use crate::checkpoints::scenario::{Anvil, deploy};
 use crate::checkpoints::{CheckpointChain, CheckpointRpc, Health, Poster, View};
 use crate::clock::{Clock, test_clock::TestClock};
@@ -332,32 +332,18 @@ impl Scenario {
             tls_public_key_sha256: [0; 32],
         };
         let state = ApiState {
-            protocol: engine_core::protocol::ProtocolVersion::V23,
-            access: None,
             tx,
             stream,
             attestation: Arc::new(attest_bundle(&MockAttestor, &bundle).unwrap()),
-            auth: ClientAuth::Unsigned,
             operator: self.operator,
-            mock_custody: false,
             payouts_enabled: true,
             clock: Arc::new(TestClock::at(NOW)),
             log_dir: self.dir.clone(),
-            daily_snapshots: None,
             manifest,
-            backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: Arc::new(ApiLimits::with_quota(&dev_config().api, unlimited, DefaultClock::default())),
             history: Reader::new(self.dir.join(INDEX_FILE), watch::channel(true).1),
-            marks: crate::test_support::marks_reader(),
-            stats: crate::test_support::stats(),
             emission_budget: Some(emission_budget),
-            staking_terms: None,
-            status: Default::default(),
-            collateral: None,
-            listing: Default::default(),
-            operators: None,
-            operator_hostname: None,
-            signing: crate::test_support::signing(),
+            ..crate::api::tests::api_state(false).0
         };
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([127, 0, 0, 1], 9))));
         self.node = Some(Node { app, state, sequencer, poster, status });

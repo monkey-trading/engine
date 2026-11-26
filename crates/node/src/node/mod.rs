@@ -406,8 +406,7 @@ async fn serve_node(
     let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())));
     let deriver = deriver.storing(rows, metrics.full_replays.clone()).with_snapshots(daily);
     let (history_task, history_stopper) = shutdown::spawn_history(history, history_feed, deriver);
-    let history_finished = false;
-    let handing_over = None;
+    let (history_finished, handing_over) = (false, None);
 
     let monitoring = monitor::run(tx.clone(), metrics.clone(), cfg.alerts.no_price_after, sources, samples_rx.clone());
     tasks.spawn(async move { ("monitor", monitoring.await) });
@@ -441,6 +440,7 @@ async fn serve_node(
         status,
         collateral: served,
         listing: Default::default(),
+        archive_objects: crate::archive::Bucket::for_config(cfg)?,
         operators: ticker::start_operators(&cfg.custody, &cfg.api, &mut tasks)?,
         operator_hostname,
         signing: Arc::new(serving.signing(signing)),
