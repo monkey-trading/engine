@@ -56,7 +56,7 @@ async fn a_freeze_copies_the_marks_before_it_and_none_after() {
     let (reply, anchors) = std::sync::mpsc::sync_channel(1);
     let ts = 1_792_489_800_000;
     live.take(Report::Sample((1, ts, "67000".parse().unwrap())));
-    live.take(Report::Freeze(Freeze { offset, reply }));
+    live.take(Report::Freeze(Freeze { offset, reply, snapshots: None }));
     live.take(Report::Sample((1, ts + 2_000, "67100".parse().unwrap())));
     drop(samples);
     let (sequencer, _) = tokio::sync::mpsc::channel(1);

@@ -5,6 +5,7 @@ use std::path::Path;
 
 use engine_core::Engine;
 use engine_core::eip712::B256;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
 use tokio::sync::watch;
 
@@ -175,14 +176,27 @@ async fn a_carried_state_that_does_not_stand_for_its_snapshot_is_refused() {
     let at = *snapshot_starts(&entries).last().unwrap();
     let carried = whole_carried(&entries).remove(&at).unwrap();
     assert!(!carried.payout_order.is_empty(), "the snapshot holds approvals");
+    assert!(!carried.authorized.is_empty(), "the snapshot holds authorizations");
     type Alter = fn(&mut Carried);
-    let cases: [(&str, Alter); 6] = [
+    let cases: [(&str, Alter); 11] = [
         ("payout order is not the engine's approvals", |carried| _ = carried.payout_order.pop()),
         ("lacks its checkpoint's root", |carried| carried.checkpoint_roots.clear()),
         ("lacks its checkpoint's signer", |carried| carried.checkpoint_signers.clear()),
         ("do not end at the checkpoint's command", |carried| _ = carried.links.pop()),
         ("do not end at the checkpoint's command", |carried| carried.command_prefix = B256::repeat_byte(7)),
         ("names no command", |carried| carried.commands = 0),
+        ("not the last activation's", |carried| carried.activations.push((ProtocolVersion::V22, u64::MAX))),
+        ("of no approval the engine holds", |carried| carried.authorized.iter_mut().for_each(|w| w.nonce = u64::MAX)),
+        ("not of consecutive commands", |carried| _ = carried.links.remove(1)),
+        ("deferred approval is after the checkpoint", |carried| {
+            carried.deferred.push((u64::MAX, AccountId([1; 20]), engine_core::Fixed::ONE, 1))
+        }),
+        // Custody finality activated after an approval the snapshot owes: its credits' provenance needs the log.
+        ("approved before custody finality", |carried| {
+            let finality = carried.activations.iter_mut().find(|(version, _)| version.supports_deposit_finality());
+            finality.expect("the log activates custody finality").1 = u64::MAX;
+            carried.deferred.push((1, AccountId([1; 20]), engine_core::Fixed::ONE, 1));
+        }),
     ];
     for (said, alter) in cases {
         let mut altered = carried.clone();

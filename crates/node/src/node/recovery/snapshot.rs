@@ -28,6 +28,7 @@ pub(super) async fn chosen(cfg: &NodeConfig, key: &EnclaveKey, setup: Option<&Se
     };
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault };
     let log = cfg.node.log_dir.as_path();
+    let keep_from = framed(snapshots, &cfg.history.dir).map(|seq| seq.saturating_add(1));
     match setup {
         Some(setup) => {
             let parent = setup.parent.has_checkpoint.then_some(setup.parent)?;
@@ -39,14 +40,26 @@ pub(super) async fn chosen(cfg: &NodeConfig, key: &EnclaveKey, setup: Option<&Se
                     return None;
                 }
             };
-            let bounds = Bounds { finalized: parent.seq, before: None, keep_from: None };
+            let bounds = Bounds { finalized: parent.seq, before: None, keep_from };
             let roots = VaultRoots { vault: chain, at };
             snapshot_start_against(None, (snapshots, log), (domain, &signers), bounds, &roots).await
         }
         None => {
             let signers = BTreeSet::from([AccountId(key.address())]);
-            let bounds = Bounds { finalized: u64::MAX, before: None, keep_from: None };
+            let bounds = Bounds { finalized: u64::MAX, before: None, keep_from };
             snapshot_start_against(None, (snapshots, log), (domain, &signers), bounds, &NoRoots).await
         }
     }
+}
+
+/// The seq of the newest daily snapshot in `snapshots` whose frozen marks copy this node holds in `history`, which a
+/// start then goes on from no later than: one fetched from another node, as a member keeps them, has no copy here,
+/// and a start from it would set the chart history before it aside. None when this node holds no copy.
+fn framed(snapshots: &std::path::Path, history: &std::path::Path) -> Option<u64> {
+    let listed = crate::daily_snapshots::read_manifest(snapshots).ok()?;
+    let copied = |listing: &&crate::daily_snapshots::Listed| {
+        let offset = crate::log::Offset { seq: listing.seq, index: listing.index };
+        crate::history::marks::store::frozen_path(history, offset).exists()
+    };
+    listed.iter().rev().find(copied).map(|listing| listing.seq)
 }

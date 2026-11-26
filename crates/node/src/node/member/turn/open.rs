@@ -23,8 +23,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// the vault recorded, with the dashboard record and the history index's check beside it, and the latest
     /// posted head pinned.
     /// Error cases:
-    /// - the archive, the vault, the schedule, trusted time, the history index or the copy cannot be read, or
-    ///   the copy does not replay (`CopyRefused`)
+    /// - the archive, the vault, the history index or the copy cannot be read, or, for a copy that holds nothing yet,
+    ///   the schedule or trusted time under `[daily_snapshots]`, or the copy does not replay (`CopyRefused`)
     pub(in crate::node::member) async fn open(&self, operator: Option<&Followed>) -> anyhow::Result<Opened> {
         self.open_admitting(operator, None, &[]).await
     }
@@ -52,12 +52,21 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         signers.insert(enclave);
         signers.extend(admitted);
         let domain = CheckpointDomain { chain_id: self.cfg.custody.chain_id, vault: self.cfg.custody.vault.parse()? };
+        // A copy that holds the log builds its replica whole when the bound cannot be read, rather than not at all.
+        let bound = async {
+            let now_ms = self.time.sample().await?.earliest_ms;
+            in_office_since(&self.vault, &at, now_ms, self.release.id()).await
+        };
         let before = match self.cfg.daily_snapshots {
-            Some(_) => {
-                let now_ms = self.time.sample().await?.earliest_ms;
-                in_office_since(&self.vault, &at, now_ms, self.release.id()).await?
-            }
-            None => None,
+            Some(_) => match bound.await {
+                Ok(before) => Some(before),
+                Err(e) if dir.join(MANIFEST).exists() => {
+                    warn!(alert = "snapshot_start_refused", "the replica replays the whole copy: {e:#}");
+                    None
+                }
+                Err(e) => return Err(e),
+            },
+            None => Some(None),
         };
         // The posted head is pinned as the replay passes it, so a rebuilt replica still holds it.
         let posted = match &self.heads {
@@ -72,9 +81,18 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         let roots = VaultRoots { vault: &self.vault, at: &at };
         let fetching = archive.as_ref().map(|archive| (archive, origins.as_slice()));
         let finalized = at.state.checkpoint.as_ref().map(|(seq, _)| *seq);
-        let bounds = (finalized, before, keep_from(keep, posted));
-        let snapshot = self.snapshot_start(fetching, bounds, (domain, &signers), &roots).await;
         let (stats, mut history) = (Stats::new(self.cfg)?, HistoryPlan::for_member(&self.cfg.history)?);
+        // A snapshot at or before the history index's last command, where this member's marks cache ended too, so the
+        // replica passes it and folds every mark after it: one past it would leave both a gap the start cannot fill.
+        let held_to = history.last_seq().map(|last| last.saturating_add(1));
+        let keep_from = keep_from(keep, posted).into_iter().chain(held_to).min();
+        let snapshot = match before {
+            Some(before) => {
+                self.snapshot_start(fetching, (finalized, before, keep_from), (domain, &signers), &roots).await
+            }
+            None => None,
+        };
+        let snapshot_seq = snapshot.as_ref().map(|signed| signed.snapshot.offset.seq);
         // The marks the replica applies, folded for the cache this member cannot write while it follows.
         let marks = Rc::new(RefCell::new(MarkFold::new(Retentions::of(self.cfg.history.marks.as_ref())?)));
         let started = Instant::now();
@@ -104,6 +122,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             observe,
         )
         .map_err(|e| e.context(CopyRefused))?;
+        // A replica from a snapshot observed none of the copy before it, where the history index may have stopped.
+        if let Some(seq) = snapshot_seq {
+            history.observe_before(dir, seq);
+        }
         self.metrics.full_replays.inc_by(follower.replays());
         if let Some(archive) = self.delivered.and_then(|delivered| delivered.archive.as_ref()) {
             archive.send_replace(Some(follower.manifest()));

@@ -488,8 +488,9 @@ deferred before a range, and the replay does not compute the running digest of e
 the checkpoint accounting. A snapshot crafted so that building its indexes or its root overflows the
 engine's arithmetic stops the replay with a panic rather than an error; it never passes.
 
-A trading server starts from its newest usable daily snapshot and the log's segments on its host
-after the snapshot's checkpoint, and reads none of the log before it; nor does a rotation member's
+A trading server starts from its newest usable daily snapshot, no later than the newest one whose
+frozen copy of the chart history it holds, and the log's segments on its host after the snapshot's
+checkpoint, and reads none of the log before it; nor does a rotation member's
 replica, a standby's copy, a handover successor's copy, or the re-derivation of the financing rows of a
 rollover after the checkpoint. Two reads still need older segments: a posted log head older than the last 65,536 instructions
 before the snapshot's checkpoint, whose links the snapshot carries, is checked by hashing the log's
@@ -626,7 +627,9 @@ A rotation member whose copy is empty backfills it from the archives of the oper
 with `[daily_snapshots]`, starts its replica from the newest snapshot, of those it holds and those the
 archives list, whose checkpoint the copy holds and the vault has finalized, and whose state is from
 before the turns of the member in office began, the first of the turns in a row that the finalized
-schedule draws for that member at trusted time. It fetches a listed one
+schedule draws for that member at trusted time. A member that has held the log before takes none
+after the last instruction its account history index took, so its replica passes where its index and
+its chart history stopped. It fetches a listed one
 whole, checking its length and hash against its listing, and takes a snapshot only when its signature,
 which it checks before it decodes the state, covers the state's bytes and is by the key that signed its
 checkpoint, a key the vault recorded, and the copy holds that checkpoint at the snapshot's offset. It

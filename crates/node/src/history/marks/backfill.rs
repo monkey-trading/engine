@@ -321,16 +321,24 @@ fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
         store.observe(&live.buffered).context(StoreFault)?;
         live.buffered.clear();
         let freezes = std::mem::take(&mut live.freezes);
-        std::thread::scope(|scope| {
-            let copy = scope.spawn(|| write_freezes(store, freezes));
-            while !copy.is_finished() {
-                while let Ok(report) = live.samples.try_recv() {
-                    live.take(report);
+        let write = || {
+            std::thread::scope(|scope| {
+                let copy = scope.spawn(|| write_freezes(store, freezes));
+                while !copy.is_finished() {
+                    while let Ok(report) = live.samples.try_recv() {
+                        live.take(report);
+                    }
+                    std::thread::sleep(FREEZE_POLL);
                 }
-                std::thread::sleep(FREEZE_POLL);
-            }
-            copy.join().map_err(|_| anyhow::anyhow!("the marks freeze's thread panicked"))?
-        })
+                copy.join().map_err(|_| anyhow::anyhow!("the marks freeze's thread panicked"))?
+            })
+        };
+        // The copy takes as long as the cache's size sets: the runtime moves its other tasks off this worker meanwhile.
+        let flavor = tokio::runtime::Handle::try_current().map(|runtime| runtime.runtime_flavor());
+        match flavor {
+            Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(write),
+            _ => write(),
+        }
         .context(StoreFault)?;
         live.flushed_at = tokio::time::Instant::now();
     }

@@ -85,6 +85,19 @@ fn a_read_from_an_offset_hands_on_an_entry_after_it_that_goes_back() {
     assert_eq!(seqs(&read), [3, 4, 1], "and read ahead");
 }
 
+/// A listing of a segment a read skips that claims seqs a later segment holds is refused at the log's open, so no
+/// lookup by seq finds it for a seq the read checked.
+#[test]
+fn a_skipped_listing_that_claims_a_later_seq_is_refused() {
+    let (dir, _) = archived("local-skipped-claims", 6);
+    let mut listed = Manifest::load(&dir).unwrap().segments.to_vec();
+    listed[0].last_seq = 3;
+    let text: String = listed.iter().map(|info| serde_json::to_string(info).unwrap() + "\n").collect();
+    fs::write(dir.join(MANIFEST), text).unwrap();
+    let refused = SegmentedLog::open_from(&dir, Offset::start_of(3), |_| Ok(())).err().expect("the listing is taken");
+    assert!(format!("{refused:#}").contains("not from seq Some(4)"), "{refused:#}");
+}
+
 /// A whole read, a read from before the first segment here, the scan and the reader refuse a log whose oldest
 /// segments are absent, each with `NotLocal`, which names the archive.
 #[test]

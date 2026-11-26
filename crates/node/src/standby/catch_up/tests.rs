@@ -71,12 +71,33 @@ async fn an_archive_segment_another_key_signed_is_refused() {
         let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [enclave()].into());
         let take = |after, bytes: &[u8]| take_into((&mut writer, &mut copied), (DOMAIN, &signers), after, bytes);
         let refused = catch_up(&client, &followed.origins(), copied_head(&copy), take).await;
-        assert!(refused.is_err(), "{case}: the forged segment was taken");
+        let refused = format!("{:#}", refused.err().unwrap_or_else(|| panic!("{case}: the forged segment was taken")));
+        let named = ["which no checkpoint the copy holds names", "which the vault never named"];
+        assert!(named.iter().any(|said| refused.contains(said)), "{case}: refused for another reason: {refused}");
         drop(writer);
         let kept = log_entries(&copy);
         assert_eq!(kept[..held.len()], held[..], "{case}: the copy keeps what it held");
         assert!(last_seq(&copy) < next_first(&operator, &held), "{case}: the copy took nothing of the forged segment");
     }
+}
+
+/// A mirror that stopped at the copy's head, though it answers, gives way to the next origin whose manifest lists
+/// segments past it, from which the copy catches up.
+#[tokio::test]
+async fn a_mirror_that_stopped_gives_way_to_the_next_origin() {
+    let operator = scratch_dir("catch-up-stale-operator");
+    ticks(&operator, 2).await;
+    let (standby, stale) = (scratch_dir("catch-up-stale-standby"), scratch_dir("catch-up-stale-mirror"));
+    copy_log(&operator, &standby);
+    copy_log(&operator, &stale);
+    ticks(&operator, 12).await;
+    let followed = refusing_operator_after(&operator, vec![serve(&stale, Router::new()).await]).await;
+    let (mut writer, mut copied) = open_copy(&standby, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
+    let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [enclave()].into());
+    let take = |after, bytes: &[u8]| take_into((&mut writer, &mut copied), (DOMAIN, &signers), after, bytes);
+    catch_up(&client, &followed.origins(), copied_head(&standby), take).await.expect("the copy catches up");
+    drop(writer);
+    assert_eq!(log_entries(&standby), log_entries(&operator)[..completed(&operator)], "from the operator");
 }
 
 /// A stream refused for a start before what the operator's start verified is told apart from any other failure.
@@ -121,11 +142,29 @@ fn config() -> NodeConfig {
 /// A stand-in operator, on loopback, that started from a daily snapshot past every copy: it refuses every stream
 /// with the 400 that names the archive, and serves its log in `dir` as its archive.
 async fn refusing_operator(dir: &Path) -> Followed {
+    refusing_operator_after(dir, Vec::new()).await
+}
+
+/// As `refusing_operator`, after the archive `mirrors`.
+async fn refusing_operator_after(dir: &Path, mirrors: Vec<String>) -> Followed {
+    let refusal = "seq 3 is before seq 4000, the first this host's log holds: read it from the log's public archive";
+    let refuses = Router::new().route("/v1/stream", get(move || async move { (StatusCode::BAD_REQUEST, refusal) }));
+    let standby = StandbySection {
+        operator: serve(dir, refuses).await,
+        mirrors,
+        enclave: enclave(),
+        poll_interval: Duration::from_millis(50),
+        danger_accept_invalid_certs: false,
+    };
+    Followed::from_standby(&standby)
+}
+
+/// Serves the log in `dir` as an archive on loopback, beside `app`'s routes, and gives its URL.
+async fn serve(dir: &Path, app: Router) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let dir = dir.to_owned();
-    let refusal = "seq 3 is before seq 4000, the first this host's log holds: read it from the log's public archive";
-    let app = Router::new().route("/v1/stream", get(move || async move { (StatusCode::BAD_REQUEST, refusal) })).route(
+    let app = app.route(
         "/v1/archive/{file}",
         get(move |axum::extract::Path(file): axum::extract::Path<String>| {
             let path = dir.join(&file);
@@ -138,14 +177,7 @@ async fn refusing_operator(dir: &Path) -> Followed {
         }),
     );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let standby = StandbySection {
-        operator: url,
-        mirrors: Vec::new(),
-        enclave: enclave(),
-        poll_interval: Duration::from_millis(50),
-        danger_accept_invalid_certs: false,
-    };
-    Followed::from_standby(&standby)
+    url
 }
 
 /// How many entries the completed segments the manifest in `dir` lists hold.
@@ -176,7 +208,7 @@ fn copied_head(dir: &Path) -> Option<Offset> {
 /// How a test forges an archive segment.
 #[derive(Clone, Copy)]
 enum Forge {
-    /// Its commands' seals name another signer.
+    /// Its first command is sealed, validly over the link it continues, by another key.
     Seals,
     /// Its first checkpoint is signed by another key, named as its signer.
     Checkpoint,
@@ -185,8 +217,21 @@ enum Forge {
 /// Forges the segment `file` in `dir` as `forge` says, and lists its new bytes, so the archive serves it whole and
 /// true to its listing.
 fn forge_segment(dir: &Path, file: &str, forge: Forge) {
+    use crate::log::command_seal::{checkpoint_link, command_link, seal_digest};
     use sha2::Digest;
     let (other, path) = (EnclaveKey::generate(), dir.join(file));
+    // The link the segment's first command continues: the chain restarts at each checkpoint.
+    let first = Manifest::load(dir).unwrap().segments.iter().find(|listed| listed.file == file).unwrap().first_seq;
+    let mut link = engine_core::eip712::B256::default();
+    for entry in
+        log_entries(dir).iter().take_while(|entry| !matches!(entry, LogEntry::Command(c) if c.sequenced.seq == first))
+    {
+        link = match entry {
+            LogEntry::Command(command) => command_link(link, command).unwrap(),
+            LogEntry::Checkpoint(checkpoint) => checkpoint_link(checkpoint).unwrap(),
+            LogEntry::Withdrawal(_) => link,
+        };
+    }
     let mut forged = false;
     let lines: Vec<String> = std::fs::read_to_string(&path)
         .unwrap()
@@ -194,11 +239,12 @@ fn forge_segment(dir: &Path, file: &str, forge: Forge) {
         .map(|line| {
             let mut entry: LogEntry = serde_json::from_str(line).unwrap();
             match (&mut entry, forge) {
-                (LogEntry::Command(command), Forge::Seals) => {
-                    if let Some(seal) = &mut command.seal {
-                        seal.signer = engine_core::types::AccountId(other.address());
-                        forged = true;
-                    }
+                (LogEntry::Command(command), Forge::Seals) if !forged => {
+                    let sealed = seal_digest(DOMAIN, command_link(link, command).unwrap());
+                    let seal = command.seal.as_mut().expect("the operator seals its commands");
+                    (seal.signer, seal.signature) =
+                        (engine_core::types::AccountId(other.address()), other.sign_digest(sealed));
+                    forged = true;
                 }
                 (LogEntry::Checkpoint(checkpoint), Forge::Checkpoint) if !forged => {
                     let root: [u8; 32] = checkpoint.root.parse::<engine_core::eip712::B256>().unwrap().0;

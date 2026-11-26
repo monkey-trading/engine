@@ -138,6 +138,11 @@ impl HistoryPlan {
         }
     }
 
+    /// The seq of the last command the index took, when it holds one that reads.
+    pub(crate) fn last_seq(&self) -> Option<u64> {
+        self.progress.as_ref().ok().and_then(|last| last.as_ref()).map(|last| last.sequenced.seq)
+    }
+
     /// Notes the entry the log in `dir` holds at the index's last command, when that command is at or before `seq`:
     /// the checkpoint of the daily snapshot a start took, which observed only the log after it. The one entry is
     /// read, so an index the log still holds unchanged resumes; one whose command cannot be read, as before the

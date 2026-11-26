@@ -50,6 +50,8 @@ pub(crate) enum Report {
 pub(crate) struct Freeze {
     pub offset: crate::log::Offset,
     pub reply: std::sync::mpsc::SyncSender<store::Frozen>,
+    /// The directory of the daily snapshots, whose newest listed keep their frozen copies (`Store::freeze_keeping`).
+    pub snapshots: Option<std::path::PathBuf>,
 }
 /// The sink recovery's replay hands each changed mark to, to seed the cache.
 pub(crate) type MarkSink = Box<dyn FnMut(MarketId, Millis, Fixed)>;

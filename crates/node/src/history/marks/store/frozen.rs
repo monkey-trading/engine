@@ -1,6 +1,7 @@
 //! Frozen copies of the marks cache at a daily snapshot's checkpoint. The marks task writes one once the cache
 //! holds the marks of every command the checkpoint covers (`Store::freeze`): a copy of the file beside it
-//! (`VACUUM INTO`, synced in steps as it is written), named for the checkpoint's offset, of which the newest `KEPT` stay, and the cache's committed
+//! (`VACUUM INTO`, synced in steps as it is written), named for the checkpoint's offset, of which those of the newest
+//! `KEPT` listed snapshots and of the one being written stay (`Store::freeze_keeping`), and the cache's committed
 //! chain anchors as they stand then (`Frozen`), which the snapshot carries under its signature. A start from the
 //! snapshot takes the copy in place of the cache (`Store::import_frozen`) only once every pair's chain in it is
 //! the one those anchors name, so a copy the host rolled back, or altered in any row, is refused whole.
@@ -76,12 +77,23 @@ struct Walk {
 }
 
 impl Store {
+    /// `freeze_keeping` with no daily snapshots' directory, which keeps the newest `KEPT` copies.
+    /// Error cases:
+    /// - as `freeze_keeping`
+    #[cfg(test)]
+    pub(crate) fn freeze(&self, offset: Offset) -> anyhow::Result<Frozen> {
+        self.freeze_keeping(offset, None)
+    }
+
     /// Writes a frozen copy of the cache beside it for the checkpoint at `offset`, synced as it is written (`paced`)
-    /// and at its end, removing the copies past the newest `KEPT`, and gives the committed anchors it holds. The cache's writes all run on this store, so
-    /// nothing commits between the copy and the anchors read after it.
+    /// and at its end, and gives the committed anchors it holds. The cache's writes all run on this store, so nothing
+    /// commits between the copy and the anchors read after it. It removes the other copies but, with `snapshots`, the
+    /// directory of the daily snapshots, those of the newest `KEPT` snapshots it lists and this one, whose snapshot is
+    /// not listed yet, or without it the newest `KEPT`: a copy whose snapshot was never published, as when its writing
+    /// failed, then takes no place a published one needs.
     /// Error cases:
     /// - the copy cannot be written, synced or renamed into place, or its directory listed
-    pub(crate) fn freeze(&self, offset: Offset) -> anyhow::Result<Frozen> {
+    pub(crate) fn freeze_keeping(&self, offset: Offset, snapshots: Option<&Path>) -> anyhow::Result<Frozen> {
         let dir = self.path.parent().context("the marks cache has no directory")?;
         let path = frozen_path(dir, offset);
         let staged = path.with_extension("tmp");
@@ -91,7 +103,7 @@ impl Store {
         File::open(&staged).and_then(|file| file.sync_all()).context("syncing the frozen marks cache")?;
         fs::rename(&staged, &path).with_context(|| format!("publishing {}", path.display()))?;
         File::open(dir).and_then(|opened| opened.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
-        prune(dir)?;
+        prune(dir, snapshots.and_then(|snapshots| listed_copies(dir, snapshots, offset)))?;
         let epoch = read_epoch(&self.conn)?;
         let anchors = self.prior_anchors();
         let pairs = anchors
@@ -335,10 +347,22 @@ fn paced<T>(path: &Path, write: impl FnOnce() -> T) -> T {
     })
 }
 
-/// Removes the frozen copies in `dir` past the newest `KEPT`, and any a crash left staged.
+/// The frozen copies in `dir` a start from the daily snapshots in `snapshots` may take: those of the newest `KEPT` it
+/// lists, and that at `offset`, whose snapshot is not listed yet; none when the listing cannot be read, which keeps
+/// the newest `KEPT` copies.
+fn listed_copies(dir: &Path, snapshots: &Path, offset: Offset) -> Option<BTreeSet<PathBuf>> {
+    let listed = crate::daily_snapshots::read_manifest(snapshots)
+        .inspect_err(|e| warn!("the daily snapshots cannot be listed for their frozen marks copies: {e:#}"))
+        .ok()?;
+    let newest = listed.iter().rev().take(KEPT).map(|listing| Offset { seq: listing.seq, index: listing.index });
+    Some(newest.chain(std::iter::once(offset)).map(|offset| frozen_path(dir, offset)).collect())
+}
+
+/// Removes the frozen copies in `dir` but those in `keep`, or without it past the newest `KEPT`, and any a crash left
+/// staged.
 /// Error cases:
 /// - the directory cannot be listed
-fn prune(dir: &Path) -> anyhow::Result<()> {
+fn prune(dir: &Path, keep: Option<BTreeSet<PathBuf>>) -> anyhow::Result<()> {
     let mut copies = Vec::new();
     for entry in fs::read_dir(dir).with_context(|| format!("listing {}", dir.display()))? {
         let name = entry.with_context(|| format!("listing {}", dir.display()))?.file_name();
@@ -352,7 +376,11 @@ fn prune(dir: &Path) -> anyhow::Result<()> {
     // Names order as their offsets do.
     copies.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     let held = copies.iter().filter(|(staged, _)| !staged).count();
-    let stale = copies.iter().filter(|(staged, _)| !staged).skip(KEPT).map(|(_, path)| path);
+    let held_copies = copies.iter().filter(|(staged, _)| !staged).map(|(_, path)| path);
+    let stale: Vec<&PathBuf> = match &keep {
+        Some(keep) => held_copies.filter(|path| !keep.contains(*path)).collect(),
+        None => held_copies.skip(KEPT).collect(),
+    };
     for path in copies.iter().filter(|(staged, _)| *staged).map(|(_, path)| path).chain(stale) {
         if let Err(e) = store::discard(path) {
             warn!(held, "a frozen marks cache could not be removed: {e:#}");

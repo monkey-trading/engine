@@ -176,7 +176,8 @@ impl Sequencer {
     /// marks task has frozen it behind the marks of every command the checkpoint covers (`Marks::freeze`).
     fn history_anchors(&mut self, offset: Offset) -> crate::daily_snapshots::Pending {
         let stats = self.marks.stats().map(crate::stats::Stats::capture);
-        crate::daily_snapshots::Pending::new(stats, self.marks.freeze(offset))
+        let snapshots = self.captures.daily.as_ref().map(|daily| daily.dir().to_owned());
+        crate::daily_snapshots::Pending::new(stats, self.marks.freeze(offset, snapshots))
     }
 
     /// Collects retired catalog versions, warning when the catalog cannot take the work.

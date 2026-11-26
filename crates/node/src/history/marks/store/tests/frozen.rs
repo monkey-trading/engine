@@ -113,6 +113,37 @@ fn the_newest_frozen_copies_are_kept() {
     assert_eq!(held, [vec![false; kept], vec![true; KEPT]].concat());
 }
 
+/// With the daily snapshots' directory, the copies of the newest `KEPT` snapshots it lists stay however many later
+/// freezes no published snapshot names, and so does the newest freeze's, whose snapshot is not listed yet.
+#[test]
+fn the_copies_of_the_newest_listed_snapshots_are_kept() {
+    let (path, mut store) = fresh_store_at("marks-frozen-listed", Retentions::defaults());
+    let offsets: Vec<Offset> = (1..=KEPT as u64 + 3).map(|seq| Offset { seq: seq * 10, index: 1 }).collect();
+    let snapshots = crate::test_support::scratch_dir("marks-frozen-listed-daily");
+    std::fs::create_dir_all(&snapshots).unwrap();
+    let listed: Vec<crate::daily_snapshots::Listed> = offsets[..KEPT]
+        .iter()
+        .map(|offset| crate::daily_snapshots::Listed {
+            file: format!("snapshot-{}.json", offset.seq),
+            seq: offset.seq,
+            index: offset.index,
+            ts: 0,
+            root: String::new(),
+            bytes: 0,
+            sha256: String::new(),
+        })
+        .collect();
+    crate::daily_snapshots::write_listing(&snapshots, &listed);
+    for (n, offset) in offsets.iter().enumerate() {
+        store.observe(&[(1, BASE + n as i64 * 1_000, fixed("67000"))]).unwrap();
+        store.freeze_keeping(*offset, Some(&snapshots)).unwrap();
+    }
+    let dir = path.parent().unwrap();
+    let held: Vec<bool> = offsets.iter().map(|offset| frozen_path(dir, *offset).exists()).collect();
+    let unpublished = offsets.len() - KEPT - 1;
+    assert_eq!(held, [vec![true; KEPT], vec![false; unpublished], vec![true]].concat());
+}
+
 // ── Helpers ──
 
 /// Marks in two markets over five minutes, a late mark that rewrites a minute below the head, and a provider seed

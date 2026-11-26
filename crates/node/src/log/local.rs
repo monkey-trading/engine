@@ -110,6 +110,8 @@ impl SegmentedLog {
     ) -> anyhow::Result<Self> {
         let (mut manifest, manifest_len) = Manifest::read(dir)?;
         let files = pair(dir, &mut manifest, files, writing)?;
+        // The listings of segments a read from `from` skips are checked by nothing else, yet a lookup by seq reads them.
+        follow_on(&manifest.segments)?;
         let first = first_read(&manifest, &files, from.map(|from| from.seq))?;
         let (mut last, mut open, mut cursor, mut reached) = (None, None, None, from.is_none());
         for (i, (first_seq, path, listed)) in files.iter().enumerate().skip(first) {
@@ -163,6 +165,32 @@ impl SegmentedLog {
     ) -> anyhow::Result<Self> {
         Self::open_listed(dir, list_segments(dir)?, false, Some(from), crate::log::by_entry(visit))
     }
+}
+
+/// Checks that each of `listed`, a manifest's listings, is named for its first seq and holds a seq, and that each
+/// starts at the seq after the one before it ends, so no listing, of a segment read or one a read skips, claims a
+/// seq another holds.
+/// Error cases:
+/// - a listing is misnamed, holds no seq, or does not start where the one before it ends
+fn follow_on(listed: &[SegmentInfo]) -> anyhow::Result<()> {
+    let mut next = None;
+    for info in listed {
+        ensure!(
+            info.file == crate::log::segment_name(info.first_seq) && info.first_seq <= info.last_seq,
+            "{MANIFEST} lists {} for seqs {} to {}",
+            info.file,
+            info.first_seq,
+            info.last_seq
+        );
+        ensure!(
+            next.is_none_or(|next| info.first_seq == next),
+            "{MANIFEST} lists {} from seq {}, not from seq {next:?}, after the one before it",
+            info.file,
+            info.first_seq
+        );
+        next = Some(info.last_seq.checked_add(1).context("a listing's last seq overflows")?);
+    }
+    Ok(())
 }
 
 /// The index in `files` of the first segment a read from `from` reads: the one holding it, or the first,

@@ -902,8 +902,9 @@ leaf and node hashes.
 The route answers only once the command is durable in the log. The server keeps the charges of the
 newest eight commands that ran a rollover, which is a week of rollovers, and stores older ones for
 the period that `history.retention` sets. It answers 404 for a command that is not yet durable, that
-charged nothing, or whose charges it no longer holds. A replay of the public log derives those
-charges again.
+charged nothing, or whose charges it no longer holds, and, after a start from a daily snapshot, for
+a command before those the start checked, since the server proves stored charges only against the
+log it checked. A replay of the public log derives those charges again.
 
 ### Proof of an account
 

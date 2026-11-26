@@ -119,10 +119,12 @@ pub(crate) fn verified_back(
             let bytes = bytes.get(..usize::try_from(info.bytes)?).context("a segment shorter than its listing")?;
             let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(bytes));
             ensure!(digest == info.sha256, "{} differs from the listing the node serves it by", info.file);
+            let mut held = None;
             for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
                 let entry: LogEntry = serde_json::from_slice(line).context("a line is not a log entry")?;
                 if let LogEntry::Command(command) = &entry {
                     at = Some(command.sequenced.seq);
+                    held = Some((held.map_or(command.sequenced.seq, |(from, _)| from), command.sequenced.seq));
                 }
                 let Some(seq) = at.filter(|seq| *seq >= first) else { continue };
                 if seq > last {
@@ -130,6 +132,12 @@ pub(crate) fn verified_back(
                 }
                 window.check(&entry, seq)?;
             }
+            // A lookup by seq finds a segment by its listing, so the commands it holds must be the ones listed.
+            ensure!(
+                held == Some((info.first_seq, info.last_seq)),
+                "{} holds other commands than it is listed for",
+                info.file
+            );
         }
         window.ended(last)
     })();

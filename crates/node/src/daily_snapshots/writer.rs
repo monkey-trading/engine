@@ -61,6 +61,8 @@ const DROP_WAIT: Duration = Duration::from_secs(2);
 
 /// The sequencer's end of the writer.
 pub(crate) struct Writer {
+    /// The directory the snapshots are written to.
+    dir: std::path::PathBuf,
     /// Closed when the writer is dropped, which ends the thread once it has published what it holds.
     jobs: Option<SyncSender<(Job, bool)>>,
     /// The sequenced time of the newest snapshot listed, handed over, or of a day skipped.
@@ -157,7 +159,12 @@ impl Writer {
                 tracing::dispatcher::with_default(&logging, || run(&owned, listed, taken, &set));
             })
             .context("starting the daily snapshot writer")?;
-        Ok(Self { jobs: Some(jobs), last_ts, idle, ended, thread: Some(thread), failing: false })
+        Ok(Self { jobs: Some(jobs), last_ts, idle, ended, thread: Some(thread), failing: false, dir: dir.to_owned() })
+    }
+
+    /// The directory the snapshots are written to.
+    pub(crate) fn dir(&self) -> &Path {
+        &self.dir
     }
 
     /// Closes the queue and waits for the thread to publish what it holds, however long that takes, for a test

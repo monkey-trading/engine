@@ -327,8 +327,9 @@ host.
 The trading server keeps every day's snapshot, so the directory grows without a bound, by about
 420 MB a day at 100,000 accounts. Size the data disk for the months it must hold, or move old
 snapshots off the host, as step 4 describes. Beside the marks cache in `history/`, the marks task
-keeps a frozen copy of the cache at each of the three newest snapshots' checkpoints, from which a
-start restores the chart history, so `history/` holds up to four times the cache's size.
+keeps a frozen copy of the cache at each of the three newest listed snapshots' checkpoints, and at
+the checkpoint of the snapshot being written, from which a start restores the chart history, so
+`history/` holds up to five times the cache's size.
 
 1. Read what the trading server lists:
 

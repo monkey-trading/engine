@@ -14,7 +14,7 @@ use engine_core::types::{AccountId, Millis};
 use serde::Serialize;
 use tokio::task::spawn_blocking;
 use tracing::field::display;
-use tracing::{Span, error, warn};
+use tracing::{Span, debug, error, warn};
 
 use crate::api::{ApiError, ApiResult, ApiState};
 use crate::history::derived::Derived;
@@ -70,7 +70,14 @@ pub async fn financing(
         let (_held, _turn, _span) = (permit, turn, span.enter());
         let found = kept.or_else(|| {
             stored?.derived_at(&dir, manifest, seq).unwrap_or_else(|e| {
-                warn!(alert = "financing_rows_rejected", seq, "the financing read cannot prove the stored rows: {e:#}");
+                // A command before the first this node's start verified answers no rows, as one not on this host does.
+                match e.downcast_ref::<crate::log::NotLocal>() {
+                    Some(_) => debug!(seq, "the financing read is before what this node serves: {e:#}"),
+                    None => warn!(
+                        alert = "financing_rows_rejected",
+                        seq, "the financing read cannot prove the stored rows: {e:#}"
+                    ),
+                }
                 None
             })
         });

@@ -52,11 +52,16 @@ impl Marks {
 
     /// Buffers a daily snapshot's freeze for the checkpoint at `offset`, behind the reports of every command it
     /// covers, for `release` with them, and gives the end the cache's anchors come back on once the marks task has
-    /// written the frozen copy; `None` when no marks task runs, as on a member.
-    pub(super) fn freeze(&mut self, offset: Offset) -> Option<std::sync::mpsc::Receiver<Frozen>> {
+    /// written the frozen copy, keeping those of the newest snapshots listed in `snapshots`; `None` when no marks task
+    /// runs, as on a member.
+    pub(super) fn freeze(
+        &mut self,
+        offset: Offset,
+        snapshots: Option<std::path::PathBuf>,
+    ) -> Option<std::sync::mpsc::Receiver<Frozen>> {
         self.tx.as_ref()?;
         let (reply, frozen) = std::sync::mpsc::sync_channel(1);
-        self.pending.push(Report::Freeze(Freeze { offset, reply }));
+        self.pending.push(Report::Freeze(Freeze { offset, reply, snapshots }));
         Some(frozen)
     }
 
@@ -224,12 +229,12 @@ mod tests {
         let (mut marks, mut rx) = marks_with(8);
         marks.pending = samples(&[(1, 10, 1)]);
         let offset = Offset { seq: 5, index: 2 };
-        assert!(marks.freeze(offset).is_some());
+        assert!(marks.freeze(offset, None).is_some());
         let pending = marks.take_pending();
         marks.release(pending);
         assert_eq!(sample(rx.try_recv().unwrap()).0, 1, "the mark before the freeze goes first");
         assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
-        assert!(Marks::default().freeze(offset).is_none(), "no marks task, no freeze");
+        assert!(Marks::default().freeze(offset, None).is_none(), "no marks task, no freeze");
     }
 
     /// A freeze the full queue has no room for is held back, not dropped, with the samples behind it dropped so none
@@ -239,7 +244,7 @@ mod tests {
         let (mut marks, mut rx) = marks_with(1);
         let offset = Offset { seq: 5, index: 2 };
         marks.pending = samples(&[(1, 10, 1)]);
-        assert!(marks.freeze(offset).is_some());
+        assert!(marks.freeze(offset, None).is_some());
         marks.pending.extend(samples(&[(2, 11, 2)]));
         let pending = marks.take_pending();
         marks.release(pending);

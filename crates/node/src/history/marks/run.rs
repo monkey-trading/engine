@@ -184,8 +184,8 @@ async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
 /// Error cases:
 /// - the samples after a freeze cannot be written
 pub(super) fn write_freezes(store: &mut Store, freezes: Vec<(Freeze, Vec<MarkSample>)>) -> anyhow::Result<()> {
-    for (Freeze { offset, reply }, mut after) in freezes {
-        match store.freeze(offset) {
+    for (Freeze { offset, reply, snapshots }, mut after) in freezes {
+        match store.freeze_keeping(offset, snapshots.as_deref()) {
             Ok(frozen) => drop(reply.try_send(frozen)),
             Err(e) => warn!(seq = offset.seq, "no frozen marks cache for the daily snapshot at {offset}: {e:#}"),
         }

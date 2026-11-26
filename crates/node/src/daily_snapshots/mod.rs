@@ -148,6 +148,12 @@ pub(crate) fn list(dir: &Path) -> anyhow::Result<Vec<(Offset, PathBuf)>> {
     Ok(found)
 }
 
+/// Lists `listed` as the daily snapshots in `dir`, as the writer lists them.
+#[cfg(test)]
+pub(crate) fn write_listing(dir: &Path, listed: &[Listed]) {
+    writer::write_manifest(dir, listed).expect("the listing is written");
+}
+
 /// The manifest in `dir`, or no listing when it has none.
 /// Error cases:
 /// - the manifest cannot be read, or a line is not a listing
