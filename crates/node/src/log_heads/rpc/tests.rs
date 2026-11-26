@@ -299,7 +299,7 @@ async fn a_v2_head_carries_gas_for_a_turns_first_head_whatever_its_estimate() {
     assert_eq!(restarted.post_v2(1, &heartbeat(6), &signature).await.unwrap(), PostOutcome::Accepted);
     let gas: Vec<_> = endpoint.sent().iter().map(|tx| tx["gas"].as_str().unwrap().to_string()).collect();
     assert_eq!(gas, [format!("{HEAD_GAS_FLOOR:#x}"), format!("{:#x}", 500_000)]);
-    assert!(HEAD_GAS_FLOOR >= 224_188, "the floor covers a first head's measured cost");
+    const _: () = assert!(HEAD_GAS_FLOOR >= 224_188, "the floor covers a first head's measured cost");
 }
 
 // ── Helpers ──
