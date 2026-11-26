@@ -85,6 +85,28 @@ async fn a_member_fetches_a_snapshot_whole_or_not_at_all() {
     }
 }
 
+/// A listing under another name than its offset gives, as one with another index or one that climbs out of the
+/// member's directory, is refused before anything is fetched or written, though the origin serves the file it names.
+#[tokio::test]
+async fn a_listing_under_another_name_than_its_offsets_is_neither_fetched_nor_written() {
+    let origin = scratch_dir("fetch-misnamed-origin");
+    let listing = publish(&origin, 5, 0);
+    let url = serve(&origin).await;
+    let client = crate::standby::archive::archive_client(false).unwrap();
+    let member = scratch_dir("fetch-misnamed-member").join("snapshots");
+    let mut renumbered = listing.clone();
+    renumbered.index += 1;
+    let mut climbing = listing.clone();
+    climbing.file = format!("../{}", listing.file);
+    for misnamed in [renumbered, climbing] {
+        let error = download(&client, &url, &member, &misnamed, START).await.unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("under another name than its offset gives"), "{}: {error}", misnamed.file);
+    }
+    assert!(!member.exists(), "nothing is written, the directory included");
+    assert!(!member.parent().unwrap().join(&listing.file).exists(), "nor where the name leads");
+}
+
 /// A node that no longer holds a snapshot it lists redirects it to the bucket's object, which the fetch reads in its
 /// place, checked against the listing as the node's own bytes are: to the reader's own bucket only where it names
 /// one; an object that holds other bytes than the listing names is refused, and nothing of a refused fetch stays.
@@ -111,8 +133,8 @@ async fn a_snapshot_the_node_redirects_is_read_from_the_bucket() {
     let error = refused(&bucket.client, &url, &listing, takes, "fetch-moved-foreign").await;
     assert!(error.contains("leaves the bucket [archive] names"), "{error}");
     // An object that holds other bytes than the listing names is refused, as the node's own would be.
-    let mut misdirected = elsewhere.clone();
-    misdirected.file = listing.file.clone();
+    let mut misdirected = listing.clone();
+    (misdirected.bytes, misdirected.sha256) = (elsewhere.bytes, elsewhere.sha256.clone());
     let error = refused(&bucket.client, &url, &misdirected, START, "fetch-moved-other-bytes").await;
     assert!(error.contains("differs from its listing"), "{error}");
 }

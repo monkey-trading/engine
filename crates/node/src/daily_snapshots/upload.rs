@@ -1,14 +1,16 @@
-//! The daily snapshots' uploader: for the node's life, under `[daily_snapshots]` and `[archive]` with both of its
-//! keys, it reads the snapshots' manifest every `POLL_EVERY` and puts each listed snapshot the host holds into the
-//! bucket as it is published, newest first, at `snapshots/<chain id>/<vault>/<file>` (`SnapshotBucket`), the file as
-//! written. An upload is create-only and sends only the bytes the listing names: the file is hashed as it streams,
-//! and its last chunk goes only once the whole matches, so a file that differs from its listing creates nothing, and
-//! pages Warning `daily_snapshot_unreadable`. A snapshot counts as confirmed only once a read of its object from the
-//! bucket's public origin, over TLS that ends in the enclave, has the listing's length and SHA-256; one the bucket
-//! already holds, as another member's upload or this node's before a restart, is read back with no upload. An object
-//! that reads back otherwise stays, since nothing may replace it, and pages Warning `archive_object_mismatch`. A
-//! failure is retried with backoff, and a snapshot that waits `[archive] lag_alert` for its confirmation pages
-//! Warning `archive_upload_lagging`, keyed `objects = "daily_snapshots"` apart from the log's ranges.
+//! The daily snapshots' uploader: for the node's life, under `[daily_snapshots]` and `[archive]` with both of its keys,
+//! it reads the snapshots' manifest every `POLL_EVERY` and puts each listed snapshot the host holds into the bucket as
+//! it is published, newest first, at `snapshots/<chain id>/<vault>/<file>` (`SnapshotBucket`), the file as written. A
+//! listing under a name its offset does not give, which no writer writes, has no key: no listing under it goes up, is
+//! read or is removed, however many the manifest holds, and its name pages Warning `daily_snapshot_unreadable` once. An
+//! upload is create-only and sends only the bytes the listing names: the file is hashed as it streams, and its last
+//! chunk goes only once the whole matches, so a file that differs from its listing creates nothing, and pages Warning
+//! `daily_snapshot_unreadable`. A snapshot counts as confirmed only once a read of its object from the bucket's public
+//! origin, over TLS that ends in the enclave, has the listing's length and SHA-256; one the bucket already holds, as
+//! another member's upload or this node's before a restart, is read back with no upload. An object that reads back
+//! otherwise stays, since nothing may replace it, and pages Warning `archive_object_mismatch`. A failure is retried
+//! with backoff, and a snapshot that waits `[archive] lag_alert` for its confirmation pages Warning
+//! `archive_upload_lagging`, keyed `objects = "daily_snapshots"` apart from the log's ranges.
 //!
 //! The host's copy of a snapshot is removed once this process has confirmed it and it is stamped more than
 //! `local_window` before the newest listed, but for the newest such one, from which a replay of the window's
@@ -63,9 +65,8 @@ const JSON: &str = "application/json";
 
 /// The uploader, and what it knows of the bucket.
 pub(crate) struct SnapshotUploader {
+    /// The bucket, under the key prefix of this log's snapshots (`snapshots_prefix`).
     store: Store,
-    /// The key prefix of this log's snapshots (`snapshots_prefix`).
-    prefix: String,
     dir: PathBuf,
     /// How long, in sequenced time, the host keeps a confirmed snapshot (`local_window`).
     window_ms: Millis,
@@ -76,6 +77,8 @@ pub(crate) struct SnapshotUploader {
     /// The snapshots whose object reads back otherwise, or whose file differs from its listing, by file, as they were
     /// listed then: the host keeps them, and they are not tried again while so listed.
     refused: BTreeMap<String, Listed>,
+    /// The names the manifest lists a snapshot under that its offset does not give, each paged once while it does.
+    misnamed: BTreeSet<String>,
     /// When each snapshot waiting for its confirmation was first seen waiting.
     waiting: BTreeMap<String, Instant>,
     /// The snapshots the window keeps that neither the host nor the bucket held when last asked, by file: paged once,
@@ -127,32 +130,33 @@ impl SnapshotUploader {
         let (Some(daily), Some(section)) = (&cfg.daily_snapshots, &cfg.archive) else { return Ok(None) };
         let keys = (values.get(&section.access_key_id_secret), values.get(&section.secret_access_key_secret));
         let (Some(key_id), Some(secret)) = keys else { return Ok(None) };
-        let store = Store::new(section, (key_id, secret), Store::client()?)?;
         let prefix = snapshots_prefix(cfg.custody.chain_id, cfg.custody.vault.parse().context("custody.vault")?);
+        let store = Store::new(section, (key_id, secret), Store::client()?, prefix)?;
         let timing = (daily.local_window, section.lag_alert);
-        Ok(Some(Self::new((store, prefix), daily.dir.clone(), timing, metrics.clone())))
+        Ok(Some(Self::new(store, daily.dir.clone(), timing, metrics.clone())))
     }
 
-    /// An uploader of the snapshots in `dir` to `store` under the log's key `prefix`, keeping each on the host for
+    /// An uploader of the snapshots in `dir` to `store`, under the log's snapshot prefix, keeping each on the host for
     /// `local_window`, and warning once one has waited `lag_alert` for its confirmation.
     pub(crate) fn new(
-        (store, prefix): (Store, String),
+        store: Store,
         dir: PathBuf,
         (local_window, lag_alert): (Duration, Duration),
         metrics: Arc<Metrics>,
     ) -> Self {
         let window_ms = Millis::try_from(local_window.as_millis()).unwrap_or(Millis::MAX);
-        let (confirmed, refused, waiting) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+        let (confirmed, refused, misnamed, waiting) =
+            (BTreeMap::new(), BTreeMap::new(), BTreeSet::new(), BTreeMap::new());
         let (raised, unremovable, lost) = (None, None, BTreeSet::new());
         Self {
             store,
-            prefix,
             dir,
             window_ms,
             lag_alert,
             metrics,
             confirmed,
             refused,
+            misnamed,
             waiting,
             lost,
             raised,
@@ -211,42 +215,46 @@ impl SnapshotUploader {
         self.confirmed.retain(|file, _| files.contains(file.as_str()));
         self.refused.retain(|file, _| files.contains(file.as_str()));
         // A name its offset does not give is no path or key of a snapshot's, as one the host wrote over the manifest.
-        for listing in listed.iter().filter(|listing| !canonical(listing)) {
-            if self.refused.insert(listing.file.clone(), listing.clone()).as_ref() != Some(listing) {
+        let misnamed: BTreeSet<&str> =
+            listed.iter().filter(|listing| !canonical(listing)).map(|listing| listing.file.as_str()).collect();
+        self.misnamed.retain(|file| misnamed.contains(file.as_str()));
+        for file in misnamed {
+            if self.misnamed.insert(file.to_owned()) {
                 warn!(
                     alert = "daily_snapshot_unreadable",
-                    snapshot = %listing.file,
+                    snapshot = %file,
                     "the manifest lists a daily snapshot under a name its offset does not give, so it does not go up to \
                      the archive"
                 );
             }
         }
-        // Every snapshot to confirm waits from when it was first seen waiting, before any transfer of the pass. The
-        // host removes no snapshot the window keeps, so one of them it no longer holds is due too, for the bucket to
-        // be asked.
+        // Only a listing with a key is a snapshot to confirm, however many others share its name; each waits from when
+        // it was first seen waiting, before any transfer of the pass. The host removes no snapshot the window keeps, so
+        // one of them it no longer holds is due too, for the bucket to be asked.
         let (kept, _) = self.window(listed);
         let mut due = Vec::new();
         for listing in listed.iter().rev() {
+            let Some(key) = self.key(listing) else { continue };
             let known = |taken: &BTreeMap<String, Listed>| taken.get(&listing.file) == Some(listing);
             if known(&self.confirmed) || known(&self.refused) {
                 continue;
             }
             let held = tokio::fs::try_exists(self.dir.join(&listing.file)).await?;
             if held || kept.contains(&listing) {
-                due.push(listing);
+                due.push((listing, key));
             }
         }
-        let waits: BTreeSet<&str> = due.iter().map(|listing| listing.file.as_str()).collect();
+        let waits: BTreeSet<&str> = due.iter().map(|(listing, _)| listing.file.as_str()).collect();
         self.lost.retain(|file| waits.contains(file.as_str()));
         self.waiting.retain(|file, _| waits.contains(file.as_str()));
-        for listing in &due {
+        for (listing, _) in &due {
             self.waiting.entry(listing.file.clone()).or_insert_with(Instant::now);
         }
         let mut failed = None;
-        for listing in due {
+        for (listing, key) in due {
             self.check();
-            let span = info_span!("archive_snapshot", id = %self.key(listing));
-            match self.archive(listing).instrument(span).await {
+            let span = info_span!("archive_snapshot", id = %key);
+            match self.archive(listing, &key).instrument(span).await {
                 Ok(Outcome::Lost) => {
                     self.lost.insert(listing.file.clone());
                 }
@@ -273,18 +281,19 @@ impl SnapshotUploader {
         }
     }
 
-    /// The object key of `listing`'s snapshot.
-    fn key(&self, listing: &Listed) -> String {
-        format!("{}{}", self.prefix, listing.file)
+    /// The object key of `listing`'s snapshot: its file under the prefix, where the file is the name its offset gives,
+    /// and none otherwise, since such a name is no snapshot's.
+    fn key(&self, listing: &Listed) -> Option<String> {
+        canonical(listing).then(|| format!("{}{}", self.store.prefix(), listing.file))
     }
 
-    /// Uploads `listing`'s snapshot unless the bucket holds it, then reads it back against the listing; with neither
-    /// the bucket's object nor the host's file, pages `daily_snapshot_lost` once and uploads nothing.
+    /// Uploads `listing`'s snapshot to `key`, its key, unless the bucket holds it, then reads it back against the
+    /// listing; with neither the bucket's object nor the host's file, pages `daily_snapshot_lost` once and uploads
+    /// nothing.
     /// Error cases:
     /// - the file cannot be opened, or the bucket cannot take or serve the snapshot, or serves none
-    async fn archive(&mut self, listing: &Listed) -> anyhow::Result<Outcome> {
-        let key = self.key(listing);
-        if !self.store.holds(&key).await? {
+    async fn archive(&mut self, listing: &Listed, key: &str) -> anyhow::Result<Outcome> {
+        if !self.store.holds(key).await? {
             if !tokio::fs::try_exists(self.dir.join(&listing.file)).await? {
                 if !self.lost.contains(&listing.file) {
                     warn!(
@@ -299,7 +308,7 @@ impl SnapshotUploader {
             }
             let damaged = Arc::new(AtomicBool::new(false));
             let body = checked_body(&self.dir.join(&listing.file), listing, damaged.clone()).await?;
-            match self.store.create_from(&key, (body, listing.bytes), JSON, TRANSFER_TIMEOUT).await {
+            match self.store.create_from(key, (body, listing.bytes), JSON, TRANSFER_TIMEOUT).await {
                 Ok(created) => info!(?created, bytes = listing.bytes, "uploaded a daily snapshot to the archive"),
                 Err(_) if damaged.load(Ordering::Acquire) => {
                     warn!(
@@ -313,7 +322,7 @@ impl SnapshotUploader {
                 Err(e) => return Err(e),
             }
         }
-        let read = self.store.digest(&key, listing.bytes, TRANSFER_TIMEOUT).await?;
+        let read = self.store.digest(key, listing.bytes, TRANSFER_TIMEOUT).await?;
         match read {
             Digested::Absent => Err(anyhow!("{key} is not in the bucket")),
             Digested::Read { bytes, sha256 } if bytes == listing.bytes && hex::encode(sha256) == listing.sha256 => {

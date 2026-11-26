@@ -75,7 +75,7 @@ fn the_signer_gives_the_presigned_url_aws_documents() {
 #[tokio::test]
 async fn an_object_is_created_once_and_never_replaced() {
     let bucket = StandIn::start().await;
-    let store = bucket.store();
+    let store = bucket.store("log/");
     assert_eq!(store.create("log/a.zst", b"first".to_vec(), ZSTD).await.unwrap(), Created::New);
     assert_eq!(store.create("log/a.zst", b"second".to_vec(), ZSTD).await.unwrap(), Created::Existing);
     assert_eq!(bucket.with(|b| (b.created, b.refused, b.objects["log/a.zst"].clone())), (1, 1, b"first".to_vec()));
@@ -91,7 +91,7 @@ async fn an_object_is_created_once_and_never_replaced() {
 #[tokio::test]
 async fn a_conflicting_upload_counts_the_object_already_there() {
     let bucket = StandIn::start().await;
-    let store = bucket.store();
+    let store = bucket.store("log/");
     assert_eq!(store.create("log/a.zst", b"first".to_vec(), ZSTD).await.unwrap(), Created::New);
     bucket.with(|b| b.conflict = true);
     assert_eq!(store.create("log/a.zst", b"second".to_vec(), ZSTD).await.unwrap(), Created::Existing);
@@ -101,7 +101,7 @@ async fn a_conflicting_upload_counts_the_object_already_there() {
 #[tokio::test]
 async fn an_upload_signed_with_another_key_is_refused() {
     let bucket = StandIn::start().await;
-    let refused = bucket.store_with("another-secret").create("log/a.zst", b"first".to_vec(), ZSTD).await;
+    let refused = bucket.store_with("log/", "another-secret").create("log/a.zst", b"first".to_vec(), ZSTD).await;
     let message = format!("{:#}", refused.unwrap_err());
     assert!(message.contains("403") && message.contains("(SignatureDoesNotMatch)"), "{message}");
     assert!(!message.contains("another-secret") && !message.contains("X-Amz"), "no credential is logged: {message}");
@@ -111,7 +111,7 @@ async fn an_upload_signed_with_another_key_is_refused() {
 #[tokio::test]
 async fn an_unavailable_bucket_is_a_failure_never_an_absence() {
     let bucket = StandIn::start().await;
-    let store = bucket.store();
+    let store = bucket.store("log/");
     bucket.with(|b| b.down = true);
     assert!(store.create("log/a.zst", b"first".to_vec(), ZSTD).await.is_err());
     assert!(store.read("log/a.zst", 5).await.is_err());
@@ -126,8 +126,89 @@ async fn an_unavailable_bucket_is_a_failure_never_an_absence() {
 async fn a_refused_upload_names_its_code_from_the_answers_first_bytes() {
     let bucket = StandIn::start().await;
     bucket.with(|b| b.refuse_uploads = true);
-    let refused = bucket.store().create("log/a.zst", b"first".to_vec(), ZSTD).await;
+    let refused = bucket.store("log/").create("log/a.zst", b"first".to_vec(), ZSTD).await;
     let message = format!("{:#}", refused.unwrap_err());
     assert!(message.contains("403") && message.contains("(AccessDenied)"), "{message}");
     assert!(message.len() < 300, "nothing of the answer's padding is kept: {} bytes", message.len());
+}
+
+/// A store reads and writes only plain names under its caller's key prefix: a key that climbs out of it, reaches a
+/// segment below it, names another prefix or names nothing is refused before any request reaches the bucket.
+#[tokio::test]
+async fn a_key_that_is_no_plain_name_under_the_stores_prefix_is_refused_before_any_request() {
+    let bucket = StandIn::start().await;
+    let store = bucket.store("log/1/");
+    let keys = [
+        "log/1/../2/a.zst",
+        "log/1/./a.zst",
+        "log/1/sub/a.zst",
+        "log/1/..",
+        "log/1/.a",
+        "log/1/",
+        "log/1/a%2Fb.zst",
+        "log/1/a?b.zst",
+        "log/2/a.zst",
+        "/log/1/a.zst",
+        "snapshots/1/a.json",
+    ];
+    for key in keys {
+        let created = store.create(key, b"first".to_vec(), ZSTD).await.map(|_| ());
+        let read = store.read(key, 5).await.map(|_| ());
+        let digested = store.digest(key, 5, std::time::Duration::from_secs(5)).await.map(|_| ());
+        let held = store.holds(key).await.map(|_| ());
+        for (what, refused) in [("created", created), ("read", read), ("digested", digested), ("asked for", held)] {
+            let message = format!("{:#}", refused.expect_err(&format!("{key} is {what}")));
+            assert!(message.contains("is not an object name under log/1/"), "{key} {what}: {message}");
+        }
+    }
+    let requests = bucket.with(|b| (b.created, b.refused, b.unsigned, b.asked, b.read, b.objects.len()));
+    assert_eq!(requests, (0, 0, 0, 0, 0, 0), "no request reaches the bucket");
+    assert_eq!(store.create("log/1/a-0_b.zst", b"first".to_vec(), ZSTD).await.unwrap(), Created::New, "a plain name");
+}
+
+/// A store narrows only to a directory below its own prefix, each segment it adds a plain name, and a narrowed store, as
+/// a checkpoint's tail's, reads and writes only plain names directly under that directory: neither the log's ranges
+/// beside it, another tail's pieces, nor a key climbing out of it or reaching below it.
+#[tokio::test]
+async fn a_tails_store_writes_only_directly_under_its_checkpoints_directory() {
+    let bucket = StandIn::start().await;
+    let log = bucket.store("log/1/");
+    let directories = [
+        "log/1/",
+        "log/1/tail",
+        "log/1/tail//",
+        "log/1/./",
+        "log/1/../2/",
+        "log/1/tail/../",
+        "log/1/.tail/",
+        "log/1/tail/a b/",
+        "log/2/tail/",
+        "tail/x/",
+    ];
+    for directory in directories {
+        let message = format!("{:#}", log.within(directory).err().unwrap_or_else(|| panic!("{directory} is taken")));
+        assert!(message.contains("is not a directory under log/1/"), "{directory}: {message}");
+    }
+    let root = engine_core::eip712::B256::repeat_byte(0xab);
+    let tail = log.within(&tail_prefix(log.prefix(), 12, &root)).unwrap();
+    assert_eq!(tail.prefix(), format!("log/1/tail/{:020}-0x{}/", 12, "ab".repeat(32)));
+    let piece = format!("{}{}", tail.prefix(), range_key("", 2));
+    let outside = [
+        range_key(log.prefix(), 2),
+        format!("{}{}", tail_prefix(log.prefix(), 18, &root), range_key("", 2)),
+        format!("{}../{}", tail.prefix(), range_key("", 2)),
+        format!("{}sub/{}", tail.prefix(), range_key("", 2)),
+    ];
+    for key in &outside {
+        let created = tail.create(key, b"first".to_vec(), ZSTD).await.map(|_| ());
+        let held = tail.holds(key).await.map(|_| ());
+        for (what, refused) in [("created", created), ("asked for", held)] {
+            let message = format!("{:#}", refused.expect_err(&format!("{key} is {what}")));
+            assert!(message.contains("is not an object name under log/1/tail/"), "{key} {what}: {message}");
+        }
+    }
+    let requests = bucket.with(|b| (b.created, b.asked, b.read, b.tail_created, b.tail_read, b.objects.len()));
+    assert_eq!(requests, (0, 0, 0, 0, 0, 0), "no request reaches the bucket");
+    assert_eq!(tail.create(&piece, b"first".to_vec(), ZSTD).await.unwrap(), Created::New, "a piece of the tail");
+    assert_eq!(bucket.with(|b| b.objects.keys().cloned().collect::<Vec<_>>()), [piece]);
 }

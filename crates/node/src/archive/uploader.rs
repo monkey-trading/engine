@@ -55,9 +55,8 @@ pub(crate) struct Uploader<F = CheckpointRpc> {
 
 /// What the uploader works with across sources.
 struct Work<F> {
+    /// The bucket, under the key prefix of this log's objects (`log_prefix`).
     store: Store,
-    /// The key prefix of this log's objects (`log_prefix`).
-    prefix: String,
     dir: PathBuf,
     metrics: Arc<Metrics>,
     backlog: Backlog,
@@ -114,19 +113,19 @@ impl Uploader<CheckpointRpc> {
         let Some(section) = &cfg.archive else { return Ok(None) };
         let keys = (values.get(&section.access_key_id_secret), values.get(&section.secret_access_key_secret));
         let (Some(key_id), Some(secret)) = keys else { return Ok(None) };
-        let store = Store::new(section, (key_id, secret), Store::client()?)?;
         let prefix = log_prefix(cfg.custody.chain_id, cfg.custody.vault.parse().context("custody.vault")?);
+        let store = Store::new(section, (key_id, secret), Store::client()?, prefix)?;
         let finality = crate::handover::vault_reader(cfg)?;
         let (dir, lag) = (cfg.node.log_dir.clone(), section.lag_alert);
-        Ok(Some(Self::new((store, prefix), dir, lag, metrics.clone(), finality)))
+        Ok(Some(Self::new(store, dir, lag, metrics.clone(), finality)))
     }
 }
 
 impl<F: Finality> Uploader<F> {
-    /// An uploader of the log in `dir` to `store` under the log's key `prefix`, below the vault's `finality` where
+    /// An uploader of the log in `dir` to `store`, under the log's key prefix, below the vault's `finality` where
     /// there is one, warning once a range has waited `lag_alert`.
     pub(crate) fn new(
-        (store, prefix): (Store, String),
+        store: Store,
         dir: PathBuf,
         lag_alert: Duration,
         metrics: Arc<Metrics>,
@@ -137,7 +136,6 @@ impl<F: Finality> Uploader<F> {
         let (anchor, read_at, mismatched, stalled_at) = (Anchor::default(), None, BTreeSet::new(), None);
         let work = Work {
             store,
-            prefix,
             dir,
             metrics,
             backlog,
@@ -219,7 +217,7 @@ impl<F: Finality> Work<F> {
                 }
                 continue;
             }
-            let span = info_span!("archive_range", id = %range_key(&self.prefix, next));
+            let span = info_span!("archive_range", id = %range_key(self.store.prefix(), next));
             let step = match self.below_finality(&view, next).instrument(span.clone()).await {
                 Ok(below) if next < below => self.upload(&view, next).instrument(span.clone()).await.map(|found| {
                     if found == Found::Confirmed {
@@ -265,7 +263,7 @@ impl<F: Finality> Work<F> {
         let (mut low, mut high) = (0, whole_ranges(view)?);
         while low < high {
             let middle = low + (high - low) / 2;
-            match self.store.holds(&range_key(&self.prefix, middle)).await? {
+            match self.store.holds(&range_key(self.store.prefix(), middle)).await? {
                 true => low = middle + 1,
                 false => high = middle,
             }
@@ -365,7 +363,7 @@ impl<F: Finality> Work<F> {
     /// - the range cannot be built, or the bucket cannot take or serve it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
         let raw = self.build(view, index).await?;
-        let (created, length) = self.create(&range_key(&self.prefix, index), &raw).await?;
+        let (created, length) = self.create(&self.store, &range_key(self.store.prefix(), index), &raw).await?;
         let bytes = raw.len() as u64;
         let found = self.check(index, raw).await?;
         if found == Found::Confirmed {
@@ -388,22 +386,22 @@ impl<F: Finality> Work<F> {
     /// Error cases:
     /// - the bucket cannot serve the object, or serves none
     async fn check(&mut self, index: u64, raw: Arc<Vec<u8>>) -> anyhow::Result<Found> {
-        let found = self.found_at(&range_key(&self.prefix, index), raw).await?;
+        let found = self.found_at(&self.store, &range_key(self.store.prefix(), index), raw).await?;
         if found == Found::Mismatched {
             self.mismatch(index);
         }
         Ok(found)
     }
 
-    /// Creates the object `key` holding `raw` compressed, unless an object already stands there, and returns which,
-    /// with the compressed length.
+    /// Creates the object `key` of `store` holding `raw` compressed, unless an object already stands there, and returns
+    /// which, with the compressed length.
     /// Error cases:
     /// - libzstd refuses the bytes, or the bucket cannot take them
-    async fn create(&self, key: &str, raw: &Arc<Vec<u8>>) -> anyhow::Result<(Created, u64)> {
+    async fn create(&self, store: &Store, key: &str, raw: &Arc<Vec<u8>>) -> anyhow::Result<(Created, u64)> {
         let kept = raw.clone();
         let stored = spawn_blocking(move || compress(&kept)).await??;
         let length = stored.len() as u64;
-        let created = self.store.create(key, stored, ZSTD).await?;
+        let created = store.create(key, stored, ZSTD).await?;
         if created == Created::New {
             self.metrics.archive.objects_created.inc();
             self.metrics.archive.stored_bytes.inc_by(length);
@@ -411,11 +409,11 @@ impl<F: Finality> Work<F> {
         Ok((created, length))
     }
 
-    /// Whether the object `key` holds `raw`, the node's copy of it, as the bucket's public origin serves it.
+    /// Whether the object `key` of `store` holds `raw`, the node's copy of it, as the bucket's public origin serves it.
     /// Error cases:
     /// - the bucket cannot serve the object, or serves none
-    async fn found_at(&self, key: &str, raw: Arc<Vec<u8>>) -> anyhow::Result<Found> {
-        Ok(match self.store.read(key, stored_bound(&raw).saturating_mul(2)).await? {
+    async fn found_at(&self, store: &Store, key: &str, raw: Arc<Vec<u8>>) -> anyhow::Result<Found> {
+        Ok(match store.read(key, stored_bound(&raw).saturating_mul(2)).await? {
             Object::Absent => return Err(anyhow!("{key} is not in the bucket")),
             Object::Oversized => Found::Mismatched,
             Object::Read(object) => match spawn_blocking(move || holds(&object, &raw)).await? {
@@ -432,7 +430,7 @@ impl<F: Finality> Work<F> {
         if self.mismatched.insert(index) {
             warn!(
                 alert = "archive_object_mismatch",
-                object = %range_key(&self.prefix, index),
+                object = %range_key(self.store.prefix(), index),
                 first_seq = index * RANGE_SEQS,
                 "the archive's object for this range differs from this node's copy of it and cannot be replaced, so \
                  this node uploads nothing past it and its host keeps the log: compare the two"

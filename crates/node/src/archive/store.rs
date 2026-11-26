@@ -1,9 +1,10 @@
 //! The archive's bucket: create-only uploads signed for its S3 API, and plain reads from its public
-//! origin, as any reader of the archive makes them.
+//! origin, as any reader of the archive makes them, each of a key its caller owns: a plain name under the key prefix
+//! the store was made for, so no name taken from the host leads a request out of it.
 
 use std::time::Duration;
 
-use anyhow::{Context, bail};
+use anyhow::{Context, bail, ensure};
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, IF_NONE_MATCH};
 use reqwest::{Body, Client, RequestBuilder, StatusCode, Url, redirect};
@@ -59,27 +60,51 @@ enum Streamed {
     Oversized,
 }
 
-/// The bucket the archive uploads to and reads back from.
+/// The bucket the archive uploads to and reads back from, under one key prefix.
 pub(crate) struct Store {
     http: Client,
     bucket: Bucket,
     credentials: Credentials,
     public: Url,
+    /// The key prefix of the objects the store reads and writes: its caller's.
+    prefix: String,
 }
 
 impl Store {
-    /// The bucket `section` names, written with the delivered `key_id` and `secret`, over `http`.
+    /// The bucket `section` names, written with the delivered `key_id` and `secret`, over `http`, at keys under
+    /// `prefix` alone.
     /// Error cases:
     /// - the endpoint and bucket do not form a bucket URL
     pub(crate) fn new(
         section: &ArchiveSection,
         (key_id, secret): (&SecretValue, &SecretValue),
         http: Client,
+        prefix: String,
     ) -> anyhow::Result<Self> {
         let (name, region) = (section.bucket.clone(), section.region.clone());
         let bucket = Bucket::new(section.endpoint.clone(), UrlStyle::Path, name, region).context("archive.bucket")?;
         let credentials = Credentials::new(key_id.expose(), secret.expose());
-        Ok(Self { http, bucket, credentials, public: section.public_url.clone() })
+        Ok(Self { http, bucket, credentials, public: section.public_url.clone(), prefix })
+    }
+
+    /// The key prefix of the objects the store reads and writes.
+    pub(crate) fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// The same bucket under `prefix`, a directory below this store's own: its prefix followed by one or more plain
+    /// names (`plain`), each ending in `/`. A caller narrows the keys it owns this way, and never widens them.
+    /// Error cases:
+    /// - `prefix` is not such a directory below the store's prefix
+    pub(crate) fn within(&self, prefix: &str) -> anyhow::Result<Self> {
+        let below = prefix.strip_prefix(self.prefix.as_str()).and_then(|below| below.strip_suffix('/'));
+        ensure!(
+            below.is_some_and(|below| below.split('/').all(plain)),
+            "{prefix:?} is not a directory under {}",
+            self.prefix
+        );
+        let (http, bucket, credentials) = (self.http.clone(), self.bucket.clone(), self.credentials.clone());
+        Ok(Self { http, bucket, credentials, public: self.public.clone(), prefix: prefix.to_owned() })
     }
 
     /// The client for a bucket's requests: TLS to the public roots alone, no redirect and no proxy, so a
@@ -107,6 +132,7 @@ impl Store {
     /// there. The request is signed over its `If-None-Match: *`, so the bucket creates or refuses it
     /// atomically: `412`, or `409` from a bucket lock, is an object already there.
     /// Error cases:
+    /// - the key is not the store's (`owned`), before any request
     /// - the request fails or times out, or the bucket answers anything else
     pub(crate) async fn create(&self, key: &str, body: Vec<u8>, content_type: &'static str) -> anyhow::Result<Created> {
         let length = body.len() as u64;
@@ -124,6 +150,7 @@ impl Store {
         content_type: &'static str,
         timeout: Duration,
     ) -> anyhow::Result<Created> {
+        self.owned(key)?;
         let mut action = self.bucket.put_object(Some(&self.credentials), key);
         action.headers_mut().insert("content-type", content_type);
         action.headers_mut().insert("if-none-match", "*");
@@ -148,6 +175,7 @@ impl Store {
 
     /// The object `key` as the bucket's public origin serves it, read up to `limit` bytes.
     /// Error cases:
+    /// - the key is not the store's (`owned`), before any request
     /// - see `read_public`
     pub(crate) async fn read(&self, key: &str, limit: u64) -> anyhow::Result<Object> {
         read_public(&self.http, self.public_object(key)?, limit, REQUEST_TIMEOUT).await
@@ -156,6 +184,7 @@ impl Store {
     /// The length and SHA-256 of the object `key` as the bucket's public origin serves it, read up to `limit` bytes
     /// within `timeout`, body included, and held a chunk at a time.
     /// Error cases:
+    /// - the key is not the store's (`owned`), before any request
     /// - as `read_public`, or the read takes longer than `timeout`
     pub(crate) async fn digest(&self, key: &str, limit: u64, timeout: Duration) -> anyhow::Result<Digested> {
         let url = self.public_object(key)?;
@@ -172,6 +201,7 @@ impl Store {
 
     /// Whether the bucket's public origin serves an object at `key`.
     /// Error cases:
+    /// - the key is not the store's (`owned`), before any request
     /// - the request fails or times out, or the origin answers other than `200` or `404`
     pub(crate) async fn holds(&self, key: &str) -> anyhow::Result<bool> {
         let url = self.public_object(key)?;
@@ -185,10 +215,29 @@ impl Store {
 
     /// The public URL of the object at `key`.
     /// Error cases:
-    /// - the key does not form a URL with the origin
+    /// - the key is not the store's (`owned`), or does not form a URL with the origin
     fn public_object(&self, key: &str) -> anyhow::Result<Url> {
+        self.owned(key)?;
         self.public.join(key).with_context(|| format!("the public URL of {key}"))
     }
+
+    /// Requires `key` to be a plain name (`plain`) directly under the store's prefix, so no key climbs out of the
+    /// prefix, reaches below it or names another's.
+    /// Error cases:
+    /// - the key is not such a name under the prefix
+    fn owned(&self, key: &str) -> anyhow::Result<()> {
+        let name = key.strip_prefix(self.prefix.as_str()).unwrap_or_default();
+        ensure!(plain(name), "{key:?} is not an object name under {}", self.prefix);
+        Ok(())
+    }
+}
+
+/// Whether `name` is one plain path segment: ASCII letters, digits, `-`, `_` and `.`, not empty and not starting with
+/// `.`, so neither `.` nor `..`.
+fn plain(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
 }
 
 /// The object at `url`, a key at a bucket's public origin, read over `http` up to `limit` bytes, as every reader of

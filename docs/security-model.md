@@ -503,7 +503,10 @@ disk; a rotation member's start follows a 308 only to the bucket its own `[archi
 names one, and otherwise to any object of the snapshot's file, which it checks as any other. The snapshot
 files and the manifest are the host's. A host can remove or alter a snapshot before its upload, as it
 can remove one at any time, and the upload sends only the bytes the file's line names, so an altered
-file creates no object. Wherever a reader takes a snapshot from, it checks it as above.
+file creates no object. A line whose file name is not the one its offset gives names no key: however
+many lines share that name, none is uploaded, read or removed, and the name pages
+`daily_snapshot_unreadable`. Wherever a reader takes a snapshot from, it checks it as above, and it
+fetches, writes or redirects to a snapshot only under the name its offset gives.
 
 A trading server starts from its newest usable daily snapshot, no later than the newest one whose
 frozen copy of the chart history it holds, and the log's segments on its host after the snapshot's
@@ -858,8 +861,14 @@ vault's history, and a copy that holds another history after an earlier checkpoi
 it. It builds a range only from segments checked against the listing its log writer publishes. It counts the range as archived only once a read of its object
 from the bucket's public origin, over TLS that ends in the enclave, decompresses to those entries.
 Every upload is create-only, and the bucket's lock keeps each object under `log/` from being
-replaced or deleted, whoever holds the keys. The bucket is not trusted: a reader replays what it
-reads, as it does any copy of the log.
+replaced or deleted, whoever holds the keys. The trading server writes keys of three kinds: a range's,
+worked out from its first sequence number, a tail's piece, below, worked out from its checkpoint's
+sequence number and root and its own first sequence number, and a daily snapshot's under
+`snapshots/<chain id>/<vault>/`, named by the offset its manifest line gives. Each upload refuses,
+before any request, a key that is not a plain file name directly under its own prefix, a tail's being
+the directory named for its checkpoint, so no name the host writes leads an upload out of it or onto
+another object's key. The bucket is not trusted: a reader replays what it reads, as it does any copy
+of the log.
 
 Readers take the log from the bucket's public origin themselves, and the enclave relays none of it.
 A listed segment that the host no longer holds is redirected to the bucket's object for the range
