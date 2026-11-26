@@ -321,7 +321,8 @@ an index: load only the rule whose hint matches the current action.
   root, turn takings, approvals in payout order with their latest authorizations and deferred approvals), which the stats
   worker folds beside its copy (`sequencer/replay/fold.rs`, seeded from the replay a start ends with), and the history
   anchors (`daily_snapshots/history.rs`: the dashboard record at the checkpoint, and the marks cache's chain anchors, as
-  the marks task's frozen copy of the cache at the checkpoint holds them, `history/marks/store/frozen.rs`); each signed by
+  the marks task's frozen copy of the cache at the checkpoint holds them, with a Merkle-Patricia root over the copy's
+  rows, read back under the key that wrote them, `history/marks/store/frozen/`); each signed by
   the enclave key over the deployment, its checkpoint's offset and root and the SHA-256s of the engine's encoding, the
   replay state and the anchors as written (`daily_snapshots/signature.rs`, schema 3 in the file, the manifest line
   unchanged, schemas 1 and 2 still read by ranges and passed over by starts); served at
@@ -351,7 +352,10 @@ an index: load only the rule whose hint matches the current action.
   it bound to the prefix it carries (`log_heads/prefix.rs`), the takeover cut read from the vault's checkpoint on,
   derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
   dashboard record restored from the snapshot and the marks cache from the frozen copy
-  its anchors match, written by the marks task between the marks before the checkpoint and those after, synced in steps,
+  its anchors match and, under any key, a `--new-key` start's included, whose rows prove against its root as they
+  import, tagged under a run nonce the cache takes once they all do (or, for a snapshot that carries none, whose tags
+  authenticate under the node's key), written by the marks task between the marks before the checkpoint and those
+  after, synced in steps,
   nothing the enclave vouches for read from the segments before the snapshot but the window of its carried links,
   checked against them, the carried roots and the descriptors served by (`Manifest::verified_from`,
   `replay::verified_back`: the stream's backfill, a financing read's rows; a member or standby refused for it catching its
@@ -1421,8 +1425,10 @@ Run from the repo root:
   what a whole replay gives, and sequences; a member with an empty copy builds its replica from the snapshot and takes
   the node's turn; a snapshot with altered carried state is passed over with Warning `snapshot_start_refused`; the
   whole log replays in ranges, each snapshot's carried state checked; then a node's chart history and dashboard series
-  answer the same across a start from a snapshot, a deleted marks row before it is refused at serve time, and an
-  altered frozen copy of the cache is refused at the start; it prints the snapshot's sizes and the start's entries)
+  answer the same across a start from a snapshot, a deleted marks row before it is refused at serve time, an
+  altered frozen copy of the cache is refused at the start, and a start under new keys on the same host keeps the chart
+  history before the snapshot, while a snapshot without the root over its copy's rows starts it at the snapshot; it
+  prints the snapshot's sizes and the start's entries)
 - Daily snapshots dev scenario: `./scripts/dev-daily-snapshots.sh` (needs only Cargo; a node writing launch
   flow on a small book across a UTC midnight publishes two snapshots, the log replays in three ranges to what
   it replays to whole, under a pinned and an attested signer, a snapshot past the log's last checkpoint, or of a

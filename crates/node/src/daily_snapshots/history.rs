@@ -1,8 +1,9 @@
 //! What a daily snapshot carries of the history the node derives from the log (`History`): the dashboard record at
 //! its checkpoint (`stats::Record`), and the marks cache's committed chain anchors there, as the frozen copy taken
-//! at it holds the cache (`Frozen`). The snapshot's signature covers both (`Covered::history`), so a start from the
-//! snapshot restores the record and takes the copy on its signer's word, and reads no log before the snapshot for
-//! either. A part the node holds none of is left out: a node with no marks task, as a member, freezes no copy.
+//! at it holds the cache, with the root over that copy's rows (`Frozen`). The snapshot's signature covers both
+//! (`Covered::history`), so a start from the snapshot restores the record and takes the copy on its signer's word,
+//! under whatever key the start holds, and reads no log before the snapshot for either. A part the node holds none of
+//! is left out: a node with no marks task, as a member, freezes no copy.
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -22,7 +23,8 @@ pub(crate) struct History {
     /// The dashboard record at the checkpoint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stats: Option<Record>,
-    /// The marks cache's committed chain anchors at the checkpoint, as its frozen copy holds it.
+    /// The marks cache's committed chain anchors at the checkpoint, as its frozen copy holds it, and the root over the
+    /// copy's rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub marks: Option<Frozen>,
 }

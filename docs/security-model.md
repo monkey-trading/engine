@@ -519,9 +519,16 @@ the next newest, three at most; one whose state's root or replay state then does
 to a whole replay, as does the start when none passes; each is paged with Warning
 `snapshot_start_refused`. Its dashboard record continues from the one the snapshot carries, and its chart
 history from a frozen copy of the cache the marks task wrote at the snapshot's checkpoint, which the
-start takes only when every row authenticates under the cache's key and every chain matches the
-anchors the snapshot carries; a copy that does not is set aside with Warning `marks_cache_rebuilt`,
-and the chart history before the snapshot is then lost until a provider backfill restores what it can.
+start takes only when every chain matches the anchors the snapshot carries and the copy's rows are the
+ones whose root the snapshot carries. That root is a Merkle-Patricia trie root over every row, keyed by
+its market, resolution and bucket, which the marks task computes from the copy after checking each
+row's tag under the key that wrote it. The start computes the root again from the rows as it imports
+them, in one transaction that commits only when the root matches, so a row that the host changed,
+added, removed or moved, before the start or while SQLite reads the file, leaves nothing imported. The
+check needs no key, so a start under new keys on the same host keeps the chart history. A snapshot
+written before it carried the root is taken only when every row authenticates under the cache's key. A
+copy that does not pass is set aside with Warning `marks_cache_rebuilt`, and the chart history before
+the snapshot is then lost until a provider backfill restores what it can.
 The marks task writes the copy after the marks of every instruction through the checkpoint and before
 any later one. With `[snapshots]`, a start with no recovery cache that verifies replays the whole log,
 as it rebuilds the account history index from the whole log, which must index only what the start

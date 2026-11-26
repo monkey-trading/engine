@@ -121,7 +121,8 @@ impl MarksStartup {
 
     /// Starts the seed from the frozen copy of the cache at the checkpoint of the daily snapshot a start goes on
     /// from, at `offset`, once every chain in it is the one `frozen`, the anchors the snapshot carries under its
-    /// signature, names (`Store::import_frozen`), for the replay of the log after it to extend (`extending_sink`).
+    /// signature, names, and its rows are the ones their root covers, under whatever key this start holds
+    /// (`Store::import_frozen`), for the replay of the log after it to extend (`extending_sink`).
     /// A snapshot that carries no anchors, a copy that is missing or fails the check, starts the seed empty, paging
     /// Warning `marks_cache_rebuilt`: the log-derived history starts at the snapshot, and the provider backfill
     /// fills what it can.

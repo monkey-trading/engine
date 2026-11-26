@@ -2055,6 +2055,7 @@ dependencies = [
  "alloy",
  "alloy-rpc-client",
  "alloy-transport-http",
+ "alloy-trie",
  "anyhow",
  "axum",
  "base64 0.23.1",
