@@ -977,6 +977,7 @@ posts is its heartbeat. A member whose operator misses the heartbeat is promoted
 | --- | --- |
 | `liveness_start_refused`, `liveness_unconfirmed` or `liveness_fenced` | [What the operator's trading server does](#what-the-operators-trading-server-does) |
 | `liveness_caller_unfunded` | [Configure the liveness caller](#configure-the-liveness-caller) |
+| `liveness_key_holder_unknown` | [An unowned release](#an-unowned-release) |
 | `standby_unregistered` | [Register your standby key](#register-your-standby-key) |
 | `standby_certificates_unreadable` | [Your standby key's certificate](#your-standby-keys-certificate) |
 | `promotion_start_refused` or `promotion_reorged` | [A promotion](#a-promotion) |
@@ -1225,6 +1226,25 @@ cast call $REGISTRY 'releaseOwner(bytes32)(address)' $RELEASE --rpc-url $RPC
 
 The last command prints zero for such a release. The refusal ends when a member takes the keys, or
 when the timelock approves that release for the candidate whose enclave runs it.
+
+### An unowned release
+
+Use this procedure when `liveness_key_holder_unknown` fires. A member's liveness caller estimated a
+skip or promotion that is due, and the schedule refused it with `KeyHolderUnknown`. The alert names
+the newest head's release. While it lasts, no skip or promotion can pass.
+
+1. Read the release's owner, as the commands above show. The last command prints zero.
+
+2. Clear it in one of two ways. Each changes the live system, so the owner must approve it, with the
+   pattern in [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock).
+
+   - Bind the release to its candidate: the timelock calls `setReleaseApproval` on the registry for
+     the candidate whose enclave runs it, as [Stand for election](#stand-for-election) step 8 shows.
+   - Set the vault's current release to one that is bound, with `setCurrentRelease`, as
+     [Key recovery](key-recovery.md) shows, so that a member whose release is bound takes the keys.
+
+**How to tell it is resolved.** `liveness_key_holder_unknown` resolves once a skip or promotion is no
+longer refused, or none is due.
 
 - An unwitnessed slot, as during a chain outage, restarts the window.
 - A promotion's assignment is never skipped.

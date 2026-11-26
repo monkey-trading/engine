@@ -14,6 +14,7 @@ use crate::liveness::chain::{
     relayedSeedCall, rotationStateCall, rotationStateReturn, rotationSwitchCall, seedReceiverCall, setOfCall,
     setOfReturn, skipDueAtCall,
 };
+use crate::liveness::unowned::headReleaseCall;
 use crate::standby_key::chain::{
     AgreedBlock, CandidateReturn, StandbyChain, StandbyDomain, TurnReturn, candidateOfCall, checkpointSignerCall,
     heldTurnCall, promotableCall, registryCall, releaseApprovedCall, scheduleCall, signerEpochCall, standbyHolderCall,
@@ -41,6 +42,8 @@ pub(crate) struct ChainState {
     /// The registry's operator generation: zero while no turn names the operator.
     pub generation: u64,
     pub release: B256,
+    /// The release of the epoch's newest head.
+    pub head_release: B256,
     pub interval: u64,
     pub misses: u16,
     pub due_at: u64,
@@ -99,6 +102,7 @@ impl Default for ChainState {
             signer: Address::repeat_byte(0x51),
             generation: 3,
             release: B256::repeat_byte(0x5e),
+            head_release: B256::repeat_byte(0xee),
             interval: 60,
             misses: 5,
             due_at: 1_800_000_300,
@@ -278,6 +282,8 @@ pub(crate) fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Re
         fallbackBlockCall::abi_encode_returns(&U256::from(if turn == chain.seed.0 { chain.seed.3 } else { 0 }))
     } else if to == REGISTRY && is::<keyHolderCall>(data) {
         keyHolderCall::abi_encode_returns(&chain.named.0)
+    } else if to == LOG_HEADS && is::<headReleaseCall>(data) {
+        headReleaseCall::abi_encode_returns(&chain.head_release)
     } else if to == LOG_HEADS && is::<headsCall>(data) {
         let (seq, signed_at, posted_at) = chain.head;
         headsCall::abi_encode_returns(&headsReturn {

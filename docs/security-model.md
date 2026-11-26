@@ -1782,7 +1782,8 @@ Known limits:
   send it is not promotable. The operator nonetheless counts that member's confirmations on the key
   once its enclave has verified the key's attestation.
 - A newest head whose release belongs to no candidate leaves the key holder unknown. Skips and
-  promotions are then refused with `KeyHolderUnknown` until a member takes the keys, or until the
+  promotions are then refused with `KeyHolderUnknown`, which a member's liveness caller pages as
+  `liveness_key_holder_unknown`, until a member takes the keys, or until the
   timelock approves that release for the candidate whose enclave runs it. Only the timelock can cause
   this, by naming on the vault, while rotation is off, a release it never approved or installed for a
   candidate, whose enclave then keeps the keys into the turns.

@@ -25,6 +25,9 @@ struct Sent {
     balance: Arc<Mutex<U256>>,
     /// Estimates refused: the chain would refuse every call.
     refused: Arc<Mutex<bool>>,
+    /// Estimates refused with `KeyHolderUnknown`, as the schedule does while the newest head's release is no
+    /// candidate's.
+    unowned: Arc<Mutex<bool>>,
     /// The endpoint fails every request, as one down or not signing for the caller does.
     down: Arc<Mutex<bool>>,
     /// The balance reads asked for, one a chain read.
@@ -34,6 +37,9 @@ struct Sent {
 impl Sending for Sent {
     async fn send(&self, to: Address, data: Vec<u8>) -> anyhow::Result<Option<B256>> {
         anyhow::ensure!(!*self.down.lock().unwrap(), "liveness RPC failed: connection refused");
+        if *self.unowned.lock().unwrap() {
+            return Err(KeyHolderRefused.into());
+        }
         if *self.refused.lock().unwrap() {
             return Ok(None);
         }
@@ -408,4 +414,68 @@ pub(crate) fn signed(epoch: u64, seq: u64) -> SignedHead {
         block_hash: B256::ZERO,
     };
     SignedHead { epoch, head, signature: format!("0x{}", "11".repeat(65)) }
+}
+
+fn unowned_caller(chain: Arc<FakeChain>, sent: &Sent) -> Caller<Arc<FakeChain>, Sent> {
+    Caller {
+        chain,
+        sending: sent.clone(),
+        domain: DOMAIN,
+        copy: Copy::default(),
+        min_balance: U256::ZERO,
+        poll: TEST_POLL,
+        clock: Arc::new(crate::clock::test_clock::TestClock::at(0)),
+        sends: Arc::default(),
+    }
+}
+
+/// A promotion the schedule refuses with `KeyHolderUnknown` pages `liveness_key_holder_unknown` once, naming the
+/// newest head's release, and the page resolves under the key it was raised with once a call is not refused.
+#[tokio::test(start_paused = true)]
+async fn a_promotion_refused_for_an_unowned_release_pages_once_until_a_call_passes() {
+    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
+    let chain = Arc::new(FakeChain::new(ChainState { due_at: 1_800_000_000, ..Default::default() }));
+    let sent = Sent { unowned: Arc::new(Mutex::new(true)), ..Default::default() };
+    let task = tokio::spawn(unowned_caller(chain, &sent).run());
+    // Reads at 0, 15 and 30 s find the promotion refused.
+    tokio::time::sleep(SLOT_READ * 5 / 2).await;
+    *sent.unowned.lock().unwrap() = false;
+    tokio::time::sleep(SLOT_READ).await;
+    task.abort();
+    let raised: Vec<_> = std::iter::from_fn(|| alerts.try_recv().ok()).collect();
+    let unowned: Vec<_> = raised.iter().filter(|alert| alert["alert"] == "liveness_key_holder_unknown").collect();
+    assert_eq!(unowned.len(), 1, "{raised:?}");
+    assert!(unowned[0]["message"].contains(&B256::repeat_byte(0xee).to_string()), "{unowned:?}");
+    assert!(!raised.iter().any(|alert| alert["alert"] == "liveness_caller_send_failed"), "{raised:?}");
+    let resolved: Vec<_> = std::iter::from_fn(|| resolutions.try_recv().ok()).collect();
+    let resolution = resolved.iter().find(|alert| alert["alert_resolved"] == "liveness_key_holder_unknown");
+    assert!(crate::alerts::resolution::ends_episode(unowned[0], resolution.expect("a resolution")), "{resolved:?}");
+}
+
+/// The refusal ends once no skip or promotion is due, though the chain still refuses them.
+#[tokio::test(start_paused = true)]
+async fn the_unowned_release_page_resolves_when_no_skip_or_promotion_is_due() {
+    let (_guard, mut alerts, mut resolutions) = crate::test_support::capture_alerts_and_resolutions();
+    let chain = Arc::new(FakeChain::new(ChainState { due_at: 1_800_000_000, ..Default::default() }));
+    let sent = Sent { unowned: Arc::new(Mutex::new(true)), ..Default::default() };
+    let task = tokio::spawn(unowned_caller(chain.clone(), &sent).run());
+    tokio::time::sleep(SLOT_READ / 2).await;
+    chain.set(|state| state.due_at = u64::MAX);
+    tokio::time::sleep(SLOT_READ).await;
+    task.abort();
+    assert!(std::iter::from_fn(|| alerts.try_recv().ok()).any(|alert| alert["alert"] == "liveness_key_holder_unknown"));
+    let resolved: Vec<_> = std::iter::from_fn(|| resolutions.try_recv().ok()).collect();
+    assert!(resolved.iter().any(|alert| alert["alert_resolved"] == "liveness_key_holder_unknown"), "{resolved:?}");
+}
+
+/// Any other revert, a promotion not yet due or no qualified position, keeps its debug log and pages nothing.
+#[tokio::test(start_paused = true)]
+async fn a_refusal_for_another_reason_pages_nothing() {
+    let (_guard, mut alerts, _resolutions) = crate::test_support::capture_alerts_and_resolutions();
+    let chain = Arc::new(FakeChain::new(ChainState { due_at: 1_800_000_000, ..Default::default() }));
+    let sent = Sent { refused: Arc::new(Mutex::new(true)), ..Default::default() };
+    let task = tokio::spawn(unowned_caller(chain, &sent).run());
+    tokio::time::sleep(SLOT_READ * 5 / 2).await;
+    task.abort();
+    assert_eq!(std::iter::from_fn(|| alerts.try_recv().ok()).count(), 0);
 }
