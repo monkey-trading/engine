@@ -403,6 +403,15 @@ impl Node {
 
     /// `release`, with the vault in signer epoch `signer_epoch`.
     fn release_at(&mut self, signer_epoch: u64) {
+        let evidence = self.evidence(signer_epoch);
+        self.seq.checkpoint_status(evidence.checkpoint_seq, Some(Health::Healthy)).unwrap();
+        self.seq.release_payouts(&evidence).unwrap();
+        self.seq.flush().unwrap();
+    }
+
+    /// Finalized evidence, in signer epoch `signer_epoch`, that the vault holds the latest checkpoint and
+    /// every loaded approval is unpaid.
+    fn evidence(&self, signer_epoch: u64) -> LifecycleEvidence {
         let approvals = self.seq.gate.as_ref().unwrap().payouts.values().map(|payout| ApprovalStatus {
             approval: ApprovalId {
                 account: payout.approval.account,
@@ -412,7 +421,7 @@ impl Node {
             claimed: false,
         });
         let latest = self.last_checkpoint();
-        let evidence = LifecycleEvidence {
+        LifecycleEvidence {
             height: 10,
             block_hash: B256::repeat_byte(1),
             signer: AccountId(self.seq.key.address()),
@@ -422,10 +431,7 @@ impl Node {
             checkpoint_seq: Some(latest.seq),
             checkpoint_root: Some(latest.root),
             approvals: approvals.collect(),
-        };
-        self.seq.checkpoint_status(evidence.checkpoint_seq, Some(Health::Healthy)).unwrap();
-        self.seq.release_payouts(&evidence).unwrap();
-        self.seq.flush().unwrap();
+        }
     }
 
     /// The test access source's clear screening of the trader's request to reissue approval `nonce`,
@@ -437,7 +443,7 @@ impl Node {
         ReissueScreening { request_hash, evidence }
     }
 
-    /// The boundary the trader's approval `nonce` waits for, as the payouts read says.
+    /// What the trader's approval `nonce`'s next signature waits for, as the payouts read says.
     fn check_of(&self, nonce: u64) -> Option<CheckWait> {
         let page = self.seq.account_payouts(trader(), None, 10);
         page.payouts.into_iter().find(|payout| payout.nonce == nonce).expect("the approval is unpaid").check

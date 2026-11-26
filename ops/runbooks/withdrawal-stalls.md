@@ -334,15 +334,16 @@ that it holds waits for the installation. Its payouts read then shows `waits` as
      checkpoint it was handed before it started. Nothing needs to be done.
    - **While the operator holds its turn,** the operator's trading server asks the members of the
      turn's order, first to last, to verify a checkpoint: at a boundary through which it keeps its
-     turn, the one that it wrote after its `TurnTaken`, and within the turn, the first one written at
-     or after the earliest approval waiting past the verified head. It keeps asking about that
-     checkpoint until a member verifies it, and approvals after it then wait for the next one's check.
+     turn, the one that it wrote after its `TurnTaken`, and within the turn, the latest one written once
+     a checkpoint covers the earliest approval waiting past the verified head. It keeps asking about
+     that checkpoint until a member verifies it, and approvals after it then wait for the next check.
      Its enclave signs each question, and each answer is an attested verification. It skips its own
      candidate, each member with no handover endpoint, and each member that sequenced part of the
      range since the last verified head under any release, or that runs a release that did.
-     `log_check_pending` fires when no member has verified the checkpoint for 30 minutes. Check that the members' trading servers follow the operator, and that their registered
-     handover endpoints are reachable from the operator's trading server. A member answers only once
-     its replica has verified that checkpoint, so a member that lags answers once it catches up.
+     `log_check_pending` fires when no member has verified the checkpoint for 30 minutes. Check that
+     the members' trading servers follow the operator, and that their registered handover endpoints
+     are reachable from the operator's trading server. A member answers only once its replica has
+     verified that checkpoint, so a member that lags answers once it catches up.
    - **After a restart,** the trading server restores the verified head that it sealed with its
      keys, if its log holds that checkpoint. Otherwise, it asks for the check again.
    - **After a start from a snapshot past the verified head,** the trading server cannot tell who

@@ -902,8 +902,8 @@ drawn turns, and the check, in place until that installation.
 - **Your own upgrade's start is no check,** because your member sequenced the range. The approvals
   it holds wait for the next check, as they would have without the upgrade.
 - **At a boundary that you hold on through,** your trading server writes a checkpoint after its
-  `TurnTaken`. **Within your turn,** it takes the first checkpoint written at or after the earliest
-  approval waiting past the last check, and keeps it until a member verifies it. In both cases it
+  `TurnTaken`. **Within your turn,** it takes the latest checkpoint written once one covers the
+  earliest approval waiting past the last check, and keeps it until a member verifies it. In both cases it
   asks the members of the turn's order, first to last, for an attested verification of that
   checkpoint, in questions that your enclave signs. It skips your own
   candidate, members with no handover endpoint, and members that sequenced part of the range since

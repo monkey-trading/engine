@@ -9,8 +9,8 @@
 //!   (`node::keys::check_predecessor_head`);
 //! - while the operator holds a turn, an attested verification from a following member, of the first
 //!   checkpoint at or after its `TurnTaken` when the verified head does not reach it, as at a boundary it
-//!   holds on through, and then of the checkpoint that covers the earliest approval waiting past the
-//!   verified head once one is written, reusing the checkpoints the node writes anyway: the operator's
+//!   holds on through, and then of the latest checkpoint once one covers the earliest approval waiting
+//!   past the verified head, reusing the checkpoints the node writes anyway: the operator's
 //!   node asks the members of the turn's order, first to last (`ask`), and a member answers from the
 //!   checkpoints its replica verified (`answer`). A quiet turn asks for none past its boundary's.
 //!

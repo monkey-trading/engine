@@ -520,9 +520,9 @@ an index: load only the rule whose hint matches the current action.
   applying; at a handover the check is the successor's own, sealed with the keys as its first start
   passes the predecessor's head, unless its member sequenced part of the range, as after its own
   upgrade, and while the operator holds a turn, at a boundary it holds on through its node writes a checkpoint after
-  `TurnTaken`, and from #1079 within the turn it takes the first checkpoint it writes anyway at or after the
-  earliest approval waiting past the verified head (`Schedule::first_due_after`; none on a quiet turn), fixed
-  until verified, and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
+  `TurnTaken`, and from #1079 within the turn it takes the latest checkpoint it has written, once one covers
+  the earliest approval waiting past the verified head (`Schedule::first_due_after`; none on a quiet turn),
+  fixed until verified, the refresh following every batch, and asks the turn's order (`turn_order`), first to last, in questions its enclave signs,
   for a quote-bound verification of it from a member that sequenced none of the range since the last
   verified head under any release, nor runs a release that did, as the log's `TurnTaken` commands and
   mirrored promotions and skips record, and the keys record of each release that handed them on past

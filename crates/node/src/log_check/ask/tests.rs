@@ -170,9 +170,11 @@ async fn a_verified_check_ends_its_page_and_the_next_due_in_the_turn_pages_afres
         };
         assert_eq!(verified, head());
         due_tx.send_replace(Some(later));
+        let taken = std::time::Instant::now();
         reply.send(true).unwrap();
         assert_eq!(next_named(&mut resolved, "log_check_pending").await["turn"], TURN.to_string());
         assert_eq!(next_named(&mut alerts, "log_check_pending").await["turn"], TURN.to_string());
+        assert!(taken.elapsed() >= PENDING_ALERT_AFTER, "the later check paged before its own wait");
     };
     tokio::select! {
         () = drive => {}

@@ -76,7 +76,7 @@ pub(super) struct Node {
     pub(super) handover: Option<(Published, watch::Receiver<bool>)>,
     /// A seat's API served over TLS.
     api: Option<JoinHandle<anyhow::Result<()>>>,
-    /// A seat's asking for the boundary's log check, and the checks its sequencer publishes as due.
+    /// A seat's asking for the log check, and the checks its sequencer publishes as due.
     pub(super) asking: Option<Asking>,
     /// The vault's latest checkpoint seq as the poster last reported it to the sequencer.
     pub(super) posted: watch::Receiver<Option<u64>>,
@@ -87,7 +87,7 @@ pub(super) struct Node {
 
 /// What a restart keeps of the node it replaces: its log directory, clock and screening source.
 type Resume = (PathBuf, Arc<TestClock>, Option<Source>);
-/// A seat's asking task for the boundary's log check, and the checks its sequencer publishes as due.
+/// A seat's asking task for the log check, and the checks its sequencer publishes as due.
 type Asking = (JoinHandle<anyhow::Result<()>>, watch::Receiver<Option<Due>>);
 /// A seat, the replica it starts from, if any, its metrics and its sealed keys.
 type Seated = (Seat, Option<Replica>, Arc<Metrics>, Arc<KeyStore>);

@@ -40,8 +40,8 @@ pub(super) struct LogCheck {
     /// The releases the sealed keys name as having handed them on past the verified head, which no
     /// check due may come from.
     holders: Vec<Holder>,
-    /// The first checkpoint written at or after the seq the next check must reach (`reach`), the target
-    /// of a check that comes due, fixed once chosen so a check asked for it is still the one due when it
+    /// The target of a check that comes due: the latest checkpoint written once one reaches the seq the
+    /// next check must (`reach`), fixed once chosen so a check asked for it is still the one due when it
     /// arrives; a restart takes the last checkpoint the log holds.
     target: Option<VerifiedHead>,
     /// The latest checkpoint written, which may be at the `TurnTaken` itself when the schedule wrote

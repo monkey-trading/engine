@@ -268,10 +268,9 @@ impl Sequencer {
                     next = self.next_queued(&mut rx);
                 }
             }
-            // A command can change rotation or the turn in effect, and so the check due.
-            if sequenced {
-                self.refresh_log_check();
-            }
+            // A command, custody evidence or a reissue request can change the turn in effect or the
+            // approvals waiting for a signature, and so the check due.
+            self.refresh_log_check();
             self.retry_waiting_checkpoints()?;
             handover_stop = handover_stop.or_else(|| self.admitted_handover());
             batch.timing = sequenced.then_some(started);

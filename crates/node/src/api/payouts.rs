@@ -57,7 +57,7 @@ mod tests {
 
     use super::*;
     use crate::api::tests::api_state;
-    use crate::sequencer::PayoutView;
+    use crate::sequencer::{CheckWait, PayoutView};
 
     const ACCOUNT: AccountId = AccountId([1; 20]);
 
@@ -111,6 +111,28 @@ mod tests {
         assert_eq!(seen, Some((ACCOUNT, Some(2), 5)));
         let (_, _, seen) = get(&format!("/v1/accounts/{ACCOUNT}/payouts"), page()).await;
         assert_eq!(seen, Some((ACCOUNT, None, DEFAULT_LIMIT)));
+    }
+
+    /// Each wait a payout's next signature can have is served as `docs/api.md` documents it: a check this
+    /// server asks for, with its checkpoint or `null`, a boundary and an installation.
+    #[tokio::test]
+    async fn each_check_wait_is_served_in_the_documented_shape() {
+        let waits = [
+            (CheckWait::Check { checkpoint_seq: Some(41) }, json!({ "waits": "check", "checkpoint_seq": 41 })),
+            (CheckWait::Check { checkpoint_seq: None }, json!({ "waits": "check", "checkpoint_seq": null })),
+            (
+                CheckWait::Boundary { turn: 9, boundary_ms: 1_000 },
+                json!({ "waits": "boundary", "turn": 9, "boundary_ms": 1_000 }),
+            ),
+            (CheckWait::Installation { turn: 9 }, json!({ "waits": "installation", "turn": 9 })),
+        ];
+        for (wait, expected) in waits {
+            let mut reply = page();
+            reply.payouts[0].check = Some(wait);
+            let (status, body, _) = get(&format!("/v1/accounts/{ACCOUNT}/payouts"), reply).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["payouts"][0]["check"], expected, "{wait:?}");
+        }
     }
 
     #[tokio::test]

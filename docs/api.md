@@ -1194,9 +1194,9 @@ field takes one of three values, and a client should treat any other value as a 
 
 - `check`: the server holds the turn in effect and asks another member to check the log through a
   checkpoint that covers the approval. `checkpoint_seq` is that checkpoint's sequence number, or
-  `null` while no checkpoint covering the approval has been written yet, or while the check of an
-  earlier checkpoint is asked for first. The check usually lands while that checkpoint is on its way
-  to the vault, so the approval is signed as soon as the vault holds the checkpoint.
+  `null` while no check of such a checkpoint is due yet, as before one is written or while the check
+  of an earlier checkpoint is asked for first. The check usually lands while that checkpoint is on its
+  way to the vault, so the approval is signed as soon as the vault holds the checkpoint.
 - `boundary`: nobody has taken the turn in effect yet, or this server does not hold it. It names the
   `turn` whose start will check the approval, and that turn's `boundary_ms`.
 - `installation`: rotation is off, no turn after the last drawn `turn` is assigned, and this server

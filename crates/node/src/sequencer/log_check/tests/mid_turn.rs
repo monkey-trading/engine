@@ -1,12 +1,16 @@
 //! Checks within a turn this node holds (#1079): an approval past the verified head comes due at the
 //! first checkpoint written at or after it, reusing that checkpoint, and none before; the check due keeps
-//! its checkpoint while later ones are written, and the next comes due once it is verified; a quiet
-//! stretch asks for none; the boundary's check comes first; and holding on through a boundary checks only
-//! the range since the last check within the turn.
+//! its checkpoint while later ones are written, and the next comes due once it is verified, at the latest
+//! checkpoint; a quiet stretch asks for none; the boundary's check comes first; holding on through a
+//! boundary checks only the range since the last check within the turn; and custody evidence that loads
+//! an approval waiting past the verified head makes its check due with no command sequenced.
 
 use super::*;
 
 use crate::checkpoints::Registry;
+use crate::sequencer::Request;
+use crate::sequencer::payouts::BACKLOG_WINDOW;
+use crate::test_support::wait_for;
 
 #[test]
 fn an_approval_within_a_held_turn_comes_due_at_the_first_checkpoint_covering_it_and_is_signed_once_verified() {
@@ -108,6 +112,53 @@ fn holding_on_through_a_boundary_checks_only_the_range_since_the_last_check_with
     let releases = BTreeSet::from([node.release]);
     let excluded = Sequencers { candidates: BTreeSet::from([CANDIDATE]), releases, in_office: (turn, CANDIDATE) };
     assert_eq!(held.excluded, excluded);
+}
+
+/// A restart loads its recovered approvals in windows, the next once custody has observed the last. Evidence
+/// that loads one waiting past the verified head, in a batch that sequences no command, as during a
+/// benchmark hold, makes its check due at the checkpoint the log ends at.
+#[tokio::test]
+async fn evidence_that_loads_an_approval_past_the_verified_head_makes_its_check_due_with_no_command() {
+    let mut node = Node::start("log-check-loaded-window", &[other()]);
+    node.approve(1);
+    node.take_turn();
+    // A whole window of approvals that checks verify, then one past them that none does.
+    let window = u64::try_from(BACKLOG_WINDOW).unwrap();
+    for nonce in 2..=window {
+        node.approve(nonce);
+    }
+    loop {
+        let due = node.due.borrow().clone();
+        let Some(due) = due else { break };
+        assert!(node.seq.log_checked(due.head, (other().candidate, OTHER)));
+    }
+    node.approve(window + 1);
+    let past = node.seq.engine.last_seq().unwrap();
+    assert_eq!(node.last_checkpoint().seq, past, "the last approval's checkpoint was not written");
+
+    // The restart loads the window the checks verified, and the last approval waits behind it.
+    let node = node.restart();
+    assert!(node.due.borrow().is_none(), "a check came due before the last approval was loaded");
+    let evidence = node.evidence(1);
+    let Node { seq, mut due, signed: _signed, _queued: _queued_work, .. } = node;
+    let (tx, rx) = mpsc::channel(4);
+    let run = tokio::spawn(seq.run(rx));
+    let lifecycle = Some(evidence);
+    let status =
+        Request::CheckpointStatus { posted: Some(past), latest: None, health: Some(Health::Healthy), lifecycle };
+    tx.send(status).await.unwrap();
+    let head = wait_for("the loaded approval's check to come due", async {
+        loop {
+            if let Some(due) = due.borrow_and_update().clone() {
+                break due.head;
+            }
+            due.changed().await.unwrap();
+        }
+    })
+    .await;
+    assert_eq!(head.seq, past, "the check is not of the checkpoint covering the loaded approval");
+    drop(tx);
+    run.await.unwrap().unwrap();
 }
 
 // ── Helpers ──

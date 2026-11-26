@@ -1590,8 +1590,8 @@ check is another member's verification of the log through a checkpoint:
   promotion fixed, unless that member sequenced part of the range, as after its own upgrade.
 - While a member holds a turn, the check is an attested verification of a checkpoint, bound to the
   turn's boundary, its assignment and the vault's signer epoch: at a boundary that the holder holds on
-  through, of the first checkpoint after its `TurnTaken`, and within the turn, of the first checkpoint
-  written at or after the earliest approval that waits past the verified head. The holder's enclave
+  through, of the first checkpoint after its `TurnTaken`, and within the turn, of the latest checkpoint
+  written once one covers the earliest approval that waits past the verified head. The holder's enclave
   asks the members of the turn's order, first to last, in questions it signs, and a member answers
   only from the checkpoints it verified under that signer. These are checkpoints that the trading
   server writes anyway, so a turn with no withdrawals asks for no check past its boundary's.
@@ -1618,8 +1618,9 @@ Known limits:
   enclave the branch it withholds, and have it verified.
 - The rule bounds neither delay nor censorship. A host that keeps its trading server from asking, or
   members that do not answer, hold payouts until one answers or until the next handover, and
-  `log_check_pending` is raised after 30 minutes. A check asked for one checkpoint stays on it until
-  a member verifies it, so approvals after that checkpoint wait for that check and then for their own.
+  `log_check_pending` is raised after 30 minutes. A check stays on its checkpoint until a member
+  verifies it or the turn changes, so approvals after that checkpoint wait for that check and then
+  for their own.
 - A boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn.
 - A start from a snapshot past the verified head cannot say who sequenced the range. It asks no one,
   and raises `log_check_unattributable` until a full replay or a handover.
