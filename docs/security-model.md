@@ -845,7 +845,7 @@ With `[archive]`, the trading server keeps the log in a bucket in object storage
 host, so the log stays public whatever the host keeps. The bucket holds the log in ranges of 10,000
 sequence numbers, each compressed with zstd at a key named for its custody chain, its vault and its
 first sequence number, so no two logs share a key. A range holds the lines of every entry whose
-sequence number it covers, in log order, so every node builds the same bytes for it, however its own
+sequence number it covers, in log order, so every trading server builds the same bytes for it, however its own
 segment files are cut; a read-back that spells the same entries otherwise, as a copy backfilled from
 another archive may, counts as the same range. The trading server uploads a range
 only once the vault has finalized a checkpoint past its last sequence number that its own copy of the
@@ -862,15 +862,15 @@ A listed segment that the host no longer holds is redirected to the bucket's obj
 that holds its first sequence number. A reader works out each key it needs from the sequence
 numbers it needs, and checks each range it reads: the range must decompress within a bound, and it
 must hold its own sequence numbers in order, from the first. A segment rebuilt from the ranges is
-taken only if its length and SHA-256 equal its manifest line, as for a segment that a node or a
+taken only if its length and SHA-256 equal its manifest line, as for a segment that a trading server or a
 mirror serves. A copy built from it then replays before anything relies on it: a standby's and a
 member's copy, a successor's copy at a handover, and a replay from the archive's URL. That replay
 checks the command seals, the links and the checkpoint signatures by recorded signers, and, with
-`--custody-config`, the vault's history. Backfills read the bucket first and fall back to the node
-origins, mirrors first, on any failure. A `404` for a key that a reader needs means the object is
+`--custody-config`, the vault's history. Backfills read the bucket first and fall back to the trading
+servers' origins, mirrors first, on any failure. A `404` for a key that a reader needs means the object is
 missing, never that the log ends there, since a cache in front of the bucket can answer a stale
-`404`: past one, the reader asks the nodes first and asks the bucket again for a segment that no
-node serves. A segment that no source serves pages `archive_segment_missing`, and the read fails.
+`404`: past one, the reader asks the trading servers first and asks the bucket again for a segment that no
+trading server serves. A segment that no source serves pages `archive_segment_missing`, and the read fails.
 
 The bucket alone holds the log through the vault's latest checkpoint, which is what the exit needs once
 every operator's host is gone. The ranges stop below the vault's finalized checkpoint, and the
@@ -902,8 +902,8 @@ Known limits:
   clock, so a skewed clock only makes the bucket refuse them.
 - The trading server takes the vault's finalized checkpoint, its sequence number and root, from the
   checkpoint endpoint, which it trusts for the vault's state, as the checkpoint poster does. An
-  endpoint that names a checkpoint the vault has not finalized, at the root a node's own copy holds,
-  can have a range uploaded that a takeover then rewrites; every node then stops at that range with
+  endpoint that names a checkpoint the vault has not finalized, at the root a trading server's own copy holds,
+  can have a range uploaded that a takeover then rewrites; every trading server then stops at that range with
   `archive_object_mismatch`, and none uploads a second version of it.
 - A holder of the bucket's keys can create an object at a key the trading server has yet to write.
   The lock then keeps it there: the trading server never counts that range as archived, pages
@@ -916,11 +916,11 @@ Known limits:
   `archive_segment_missing` and fails, so a host that drops a segment before its upload denies
   readers that segment but cannot alter it.
 - A replay from the archive's URL checks only what the archive lists. Without `--custody-config`,
-  an archive cut short, or a node that stops listing its last segments, replays to a shorter log;
+  an archive cut short, or a trading server that stops listing its last segments, replays to a shorter log;
   with it, a log that ends before the vault's finalized checkpoint fails as truncated.
 - A rebuilt segment must spell its entries as its manifest line's bytes do. Where the bucket's
   range was uploaded from a copy that spells them otherwise, as a copy backfilled from another
-  archive may, the reader takes the segment from a node, and fails where no node holds it.
+  archive may, the reader takes the segment from a trading server, and fails where none holds it.
 - The bucket holds the log through the vault's latest checkpoint only once that checkpoint's tail is
   up. A host that withholds the upload, or that is gone before it, leaves the bucket short of the
   vault's latest checkpoint until another member uploads the tail from its own copy; if every member's
