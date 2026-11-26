@@ -1,11 +1,11 @@
-//! The state root binds the whole state. At the states of the latest version's reference log, each leaf of the
+//! The state root binds the whole state. At the states of the latest version's reference log, every leaf of the
 //! engine's encoding is changed in turn, and the engine decoded from the changed encoding, as a start decodes a
 //! snapshot's, must have another root wherever it encodes otherwise. A leaf that no single change leaves decodable,
 //! such as an internally tagged enum's tag, goes unchecked; a change the decoding drops leaves no other state.
 
 mod common;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -15,8 +15,6 @@ use engine_core::Engine;
 use engine_core::protocol::ProtocolVersion;
 use serde_json::Value;
 
-/// How many leaves of each shape are changed at each state.
-const PER_SHAPE: usize = 2;
 /// The shapes of the record fields the root binds from `V91`, which the states must hold and the check reach.
 const RECORDS: [&str; 4] = [
     "pending_deposits/*/chain_ref",
@@ -47,15 +45,7 @@ fn every_leaf_of_the_encoding_moves_the_root() {
         assert_eq!((again == original, root_hex(root)), (true, logged), "the encoding decodes to itself and its root");
         let mut leaves = Vec::new();
         collect_leaves(&original, &mut Vec::new(), &mut Vec::new(), &mut leaves);
-        let pool = replacements(&leaves);
-        let mut changed: BTreeMap<&str, usize> = BTreeMap::new();
-        for (path, shape, leaf) in &leaves {
-            let count = changed.entry(shape).or_default();
-            if *count == PER_SHAPE {
-                continue;
-            }
-            *count += 1;
-            let verdict = change(&original, path, leaf, root, &pool);
+        for ((path, shape, _), verdict) in leaves.iter().zip(verdicts(&original, root, &leaves)) {
             if verdict == Verdict::Unbound {
                 unbound.push(path.join("/"));
             }
@@ -93,6 +83,36 @@ fn latest_states() -> Vec<(Value, String)> {
     }
     assert_eq!(states.len(), 2, "{name} activates the latest version before its last command");
     states
+}
+
+/// The verdict of changing each of `leaves` of `original`, whose engine's root is `root`, the leaves split across the
+/// machine's cores. The values of the encoding's pool are tried for a shape until no value of it changes a leaf of the
+/// shape to another state.
+fn verdicts(original: &Value, root: [u8; 32], leaves: &[Leaf]) -> Vec<Verdict> {
+    let pool = replacements(leaves);
+    let threads = std::thread::available_parallelism().map_or(1, |cores| cores.get());
+    std::thread::scope(|scope| {
+        let parts: Vec<_> = leaves
+            .chunks(leaves.len().div_ceil(threads).max(1))
+            .map(|part| {
+                let pool = &pool;
+                scope.spawn(move || {
+                    let mut fruitless: BTreeSet<&str> = BTreeSet::new();
+                    let mut verdicts = Vec::with_capacity(part.len());
+                    for (path, shape, leaf) in part {
+                        let tried = if fruitless.contains(shape.as_str()) { &[][..] } else { &pool[..] };
+                        let verdict = change(original, path, leaf, root, tried);
+                        if matches!(verdict, Verdict::Dropped | Verdict::Undecodable) {
+                            fruitless.insert(shape.as_str());
+                        }
+                        verdicts.push(verdict);
+                    }
+                    verdicts
+                })
+            })
+            .collect();
+        parts.into_iter().flat_map(|part| part.join().expect("a checking thread runs to its end")).collect()
+    })
 }
 
 /// The verdict of changing `leaf`, at `path` of `original`, whose engine's root is `root`: the first change that

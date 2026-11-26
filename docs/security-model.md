@@ -420,7 +420,7 @@ Known limits:
 The trading server sequences instructions, which means that it orders them, stamps them and applies
 them to the engine. It publishes every instruction, together with the events that the instruction
 produced. At regular intervals, called checkpoints, the enclave signs a root over the entire state
-and posts it to the vault. A log written before protocol `V91` signs a root that leaves out part
+and posts it to the vault. A root signed before its log activates protocol `V91` leaves out part
 of each receipt-backed pending or held deposit's record: the reference the record names inside it,
 and a held one's screened payer and the reason it is held. The signature over a daily snapshot's
 whole encoding binds them (below). Anyone can replay the log with this repository's code, and check

@@ -3,8 +3,8 @@
 //! record, or whose held receipt, from the `V77` part, names another payer or reason, decodes to an engine with the
 //! same root. A vote activates the version, and the same changes then move the root, while both receipts' exit
 //! leaves keep the form the vault checks. Under it a client's receipt waits on an unavailable screening source and is
-//! credited on a retry, and another is held, each record leaf written and removed as the deposit changes, as an
-//! engine decoded from the encoding computes it afresh.
+//! credited on a retry, its record leaf written and then removed, and another is held, its record leaf written, each
+//! root as an engine decoded from the encoding computes it afresh.
 
 use alloy_primitives::B256;
 use engine_core::Engine;
