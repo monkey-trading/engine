@@ -1,7 +1,6 @@
 //! A log whose oldest listed segments are not on this host, kept only in the public archive: reads from the
 //! first segment here on open it, and a read that reaches before it is refused naming the archive.
 
-use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 

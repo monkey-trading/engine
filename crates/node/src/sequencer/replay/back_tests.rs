@@ -60,7 +60,8 @@ async fn the_log_before_a_snapshot_is_checked_for_its_checkpoints_and_withdrawal
     let typed = entries.iter().find_map(|line| {
         let LogEntry::Withdrawal(withdrawal) = serde_json::from_str(line).ok()? else { return None };
         let named = withdrawal.authorization?.checkpoint_seq;
-        Some((line.clone(), withdrawal.approved_seq?, named)).filter(|_| in_window(named))
+        let approved = withdrawal.approved_seq?;
+        in_window(named).then(|| (line.clone(), approved, named))
     });
     let (withdrawal, approved, named) = typed.expect("a typed withdrawal naming a checkpoint in the window");
 
