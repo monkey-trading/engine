@@ -343,8 +343,10 @@ an index: load only the rule whose hint matches the current action.
   it bound to the prefix it carries (`log_heads/prefix.rs`), the takeover cut read from the vault's checkpoint on,
   derived rows and history repair replayed from the newest snapshot before the seq (`history/derived/start.rs`), the
   dashboard record restored from the snapshot and the marks cache from the frozen copy
-  its anchors match and, under any key, a `--new-key` start's included, whose rows prove against its root as they import
-  (or, for a snapshot that carries none, whose tags authenticate under the node's key), written by the marks task between the marks before the checkpoint and those after, synced in steps,
+  its anchors match and, under any key, a `--new-key` start's included, whose rows prove against its root as they
+  import, tagged under a run nonce the cache takes once they all do (or, for a snapshot that carries none, whose tags
+  authenticate under the node's key), written by the marks task between the marks before the checkpoint and those
+  after, synced in steps,
   nothing the enclave vouches for read from the segments before the snapshot but the window of its carried links,
   checked against them, the carried roots and the descriptors served by (`Manifest::verified_from`,
   `replay::verified_back`: the stream's backfill, a financing read's rows; a member or standby refused for it catching its

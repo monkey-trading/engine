@@ -2,7 +2,8 @@
 //! its checkpoint (`stats::Record`), and the marks cache's committed chain anchors there, as the frozen copy taken
 //! at it holds the cache, with the root over that copy's rows (`Frozen`). The snapshot's signature covers both
 //! (`Covered::history`), so a start from the snapshot restores the record and takes the copy on its signer's word,
-//! under whatever key the start holds, and reads no log before the snapshot for either. A part the node holds none of is left out: a node with no marks task, as a member, freezes no copy.
+//! under whatever key the start holds, and reads no log before the snapshot for either. A part the node holds none of
+//! is left out: a node with no marks task, as a member, freezes no copy.
 
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};

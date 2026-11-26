@@ -100,8 +100,9 @@ async fn a_frozen_copy_with_a_row_deleted_or_restored_is_refused() {
 }
 
 /// A frozen copy imports into a cache under another marks key, as after a start under keys sealed afresh, on the root
-/// the freeze found, and the import goes on taking marks as the cache does. The anchors of a snapshot written before
-/// the root was carried, which decode with none, take the copy only under the key that wrote it.
+/// the freeze found, its rows tagged under a run nonce the import drew, and the import goes on taking marks as the
+/// cache does. The anchors of a snapshot written before the root was carried, which decode with none, take the copy
+/// only under the key that wrote it.
 #[tokio::test]
 async fn a_frozen_copy_imports_under_another_key_on_its_root() {
     let (path, mut store) = fresh_store_at("marks-frozen-new-key", Retentions::defaults());
@@ -112,7 +113,9 @@ async fn a_frozen_copy_imports_under_another_key_on_its_root() {
     let (copy, served) = (frozen_path(path.parent().unwrap(), offset), every_page(&store).await);
 
     let mut imported = other_key_store("marks-frozen-new-key-into");
+    let drawn = nonce(&imported);
     assert!(imported.import_frozen(&copy, &frozen).unwrap() > 0);
+    assert_ne!(nonce(&imported), drawn, "the rows are tagged under the nonce the cache was opened with");
     assert_eq!(every_page(&imported).await, served);
     let later = [(1, BASE + 300_000, fixed("67400")), (2, BASE + 300_000, fixed("3400"))];
     imported.observe(&later).unwrap();
@@ -134,7 +137,7 @@ async fn a_frozen_copy_imports_under_another_key_on_its_root() {
 
 /// Under another marks key, where no row's tag can be checked, a copy in which the host changed a row, swapped two
 /// rows' prices, or removed a row and relinked the chain around it, so every chain still meets its anchors, is refused
-/// on the root alone, and the cache it would go into is left empty.
+/// on the root alone, and the cache it would go into is left empty, under the run nonce it had.
 #[tokio::test]
 async fn a_changed_reordered_or_removed_row_is_refused_on_the_root() {
     let (path, mut store) = fresh_store_at("marks-frozen-root", Retentions::defaults());
@@ -150,16 +153,18 @@ async fn a_changed_reordered_or_removed_row_is_refused_on_the_root() {
         std::fs::write(&copy, &pristine).unwrap();
         alter(&Connection::open(&copy).unwrap());
         let mut imported = other_key_store(name);
+        let drawn = nonce(&imported);
         let result = imported.import_frozen(&copy, &frozen).map_err(|e| format!("{e:#}"));
-        (result, imported)
+        (result, imported, drawn)
     };
     let refused = async |name: &str, alter: &dyn Fn(&Connection)| {
-        let (result, imported) = import(name, alter);
+        let (result, imported, drawn) = import(name, alter);
         let error = result.expect_err(name);
         assert!(error.contains("root covers"), "{name}: {error}");
         assert!(every_page(&imported).await.iter().all(|page| page.entries.is_empty()), "{name} left rows");
+        assert_eq!(nonce(&imported), drawn, "{name} moved the cache's run nonce");
     };
-    let (result, _) = import("marks-frozen-root-pristine", &|_| {});
+    let (result, ..) = import("marks-frozen-root-pristine", &|_| {});
     assert_eq!(result, Ok(7), "the pristine copy: four seconds and one bucket at each other resolution");
 
     refused("marks-frozen-root-changed", &|copy| {
@@ -284,6 +289,11 @@ fn fill(store: &mut Store) {
 /// afresh.
 fn other_key_store(name: &str) -> Store {
     Store::open(&crate::test_support::scratch_dir(name).join(MARKS_FILE), Retentions::defaults(), [0x24; 32]).unwrap()
+}
+
+/// The run nonce `store`'s rows are tagged under.
+fn nonce(store: &Store) -> crate::history::marks::store::auth::Epoch {
+    crate::history::marks::store::setup::read_epoch(&store.conn).unwrap()
 }
 
 /// Every page of markets 1 and 2 at every resolution.

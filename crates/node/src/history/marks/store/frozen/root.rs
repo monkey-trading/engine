@@ -24,7 +24,7 @@ type Key = [u8; 13];
 
 /// The root over a frozen copy's rows, built as they are read in key order.
 #[derive(Default)]
-pub(crate) struct Root {
+pub(super) struct Root {
     builder: HashBuilder,
     last: Option<Key>,
 }
@@ -33,7 +33,7 @@ impl Root {
     /// Takes `row`, of `market` at `resolution`, which must come after the last row taken.
     /// Error cases:
     /// - the row does not come after the last one in key order
-    pub(crate) fn add(&mut self, market: MarketId, resolution: Resolution, row: &SnapRow) -> anyhow::Result<()> {
+    pub(super) fn add(&mut self, market: MarketId, resolution: Resolution, row: &SnapRow) -> anyhow::Result<()> {
         let key = key(market, resolution, row.bucket);
         ensure!(
             self.last.is_none_or(|last| last < key),
@@ -47,7 +47,7 @@ impl Root {
     }
 
     /// The root over the rows taken: alloy-trie's empty root over none.
-    pub(crate) fn finish(mut self) -> B256 {
+    pub(super) fn finish(mut self) -> B256 {
         self.builder.root()
     }
 }

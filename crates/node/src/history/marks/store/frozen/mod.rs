@@ -22,6 +22,8 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::{MarketId, Millis};
+use rand::RngCore;
+use rand::rngs::OsRng;
 use rusqlite::{TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -145,9 +147,12 @@ impl Store {
     /// and head are its anchor's, with no pair more or fewer, and the root over the rows read, in order, is
     /// `frozen`'s. That holds under any key, so a start under keys sealed afresh takes the copy. For a snapshot that
     /// carries no root, each row's tag must instead authenticate under the copy's run nonce, `frozen`'s, and this
-    /// cache's marks key, as the key that wrote it. Each row is re-tagged under this cache's run key as it is taken,
-    /// as a prior cache is (`import_prior`), with the backfill markers. One transaction, which a refusal rolls back,
-    /// so a row that fails leaves nothing imported; the copy is opened read-only and never modified.
+    /// cache's marks key, as the key that wrote it. Each row is re-tagged as it is taken, as a prior cache's rows are
+    /// (`import_prior`), under a run nonce drawn for the import, which the cache takes only once every row is proven:
+    /// rows proven only at the end, against the root, are written before then, and SQLite may spill them to the
+    /// host's disk, so no tag under a nonce the cache keeps is ever given to a row before it is proven. With the
+    /// backfill markers, in one transaction, which a refusal rolls back, so a row that fails leaves nothing imported
+    /// and the cache's nonce as it was; the copy is opened read-only and never modified.
     /// Error cases:
     /// - the copy cannot be read, holds another schema or another run nonce, or a row or pair fails the check
     /// - the rows read are not the ones `frozen`'s root covers
@@ -165,9 +170,11 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )
             .context("preparing the frozen marks import")?;
-        let (mac, mut imported) = (&self.mac, 0);
+        let mut nonce = Epoch::default();
+        OsRng.fill_bytes(&mut nonce);
+        let (next, mut imported) = (run_mac(&self.mac_key, &nonce), 0);
         let (pairs, root) = walk(&from, frozen, tags.as_ref(), |Passed { market, resolution, row, prev_tag }| {
-            let retagged = tag(mac, market, resolution, row.bucket, &Row { prev_tag, ..row.fields() });
+            let retagged = tag(&next, market, resolution, row.bucket, &Row { prev_tag, ..row.fields() });
             insert
                 .execute(params![
                     i64::from(market),
@@ -190,11 +197,14 @@ impl Store {
             ensure!(root == signed, "its rows are not the ones the daily snapshot's root covers");
         }
         drop(insert);
+        tx.execute("UPDATE epoch SET nonce = ?1 WHERE id = 0", [nonce]).context("drawing the run nonce")?;
         copy_markers(&from, &tx)?;
         let updates = anchor_updates(&tx, &pairs, &Default::default(), false)?;
         let mut committed = self.anchors.lock().expect("the marks chain anchors are never poisoned");
         tx.commit().context("committing the frozen marks import")?;
         committed.apply(updates);
+        drop(committed);
+        self.mac = next;
         Ok(imported)
     }
 }

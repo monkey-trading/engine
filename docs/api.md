@@ -1552,7 +1552,8 @@ its sequenced time and `root` its state root. `GET /v1/archive/snapshots/{file}`
 snapshot as a JSON object: `schema` (3), `offset`, `checkpoint`, the checkpoint entry as the log
 holds it, `engine`, the engine's state, `state`, the SHA-256 of `engine`'s bytes as the file holds
 them, `carried`, what a replay of the log holds after the checkpoint besides the engine, `history`, the
-dashboard record and the chart history's anchors at the checkpoint, and `signature`, the enclave key's
+dashboard record and the chart history's anchors at the checkpoint with the root over its frozen copy's
+rows, and `signature`, the enclave key's
 65-byte signature over the keccak-256 of `engine.daily-snapshot.v2`, the chain id as 8 bytes and the
 vault's 20 bytes, `seq` as 8 bytes and `index` as 4, all big-endian, the root's 32 bytes, `state`'s, and
 the SHA-256s of `carried`'s and `history`'s bytes as the file holds them. A snapshot of schema 2 has
