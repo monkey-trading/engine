@@ -309,7 +309,8 @@ impl Engine {
         Ok(())
     }
 
-    /// `End`: checks every total, then takes the source's emissions and staking frontier and records the source.
+    /// `End`: checks every total, then takes the source's emissions and staking frontier and records the source;
+    /// from `V92` also the frontier's block as the carried one (`carry::frontier`).
     /// Error cases:
     /// - any error case of `carry_at`
     /// - awards not closed by the proof of the next id
@@ -335,6 +336,9 @@ impl Engine {
         let staking = self.staking.as_mut().expect("Begin checked staking");
         staking.mirrored_through = progress.mirrored_through;
         staking.completed_through = Some(progress.completed_through);
+        if self.protocol_version >= ProtocolVersion::V92 {
+            staking.carried_through = Some(progress.completed_through.block);
+        }
         let (entitled, staked) = (progress.emissions.entitled, progress.staked);
         self.emissions = Some(progress.emissions);
         self.carried_from = Some(progress.source);

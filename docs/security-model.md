@@ -1274,6 +1274,11 @@ it has claimed already. No emission period before the new log's first instructio
 allocates MONKEY. The first instruction past the carried period closes that period with no weight,
 and cancels every later period up to its own.
 
+The old log mirrored every staking and registry event up to the carried point, under references the
+new log does not hold, so mirroring one of them again would count it twice. The trading server's
+scan starts above that point, and the engine refuses a staking, registry, schedule, vote or fault
+proof event from a block at or below it, and a completed scan there.
+
 Replaying the new log alone verifies that every carried value is in the logged root, that the root
 is the state after the logged sequence number of a log whose custody was the logged vault, and that
 the carried sets are complete. `engine replay --carry-source` also replays the old log to the
@@ -1299,6 +1304,9 @@ Known limits:
   can replace a failed operator in that time.
 - The old log's schedule and vote contract stay on chain. Once rotation is on, anyone can draw turns
   on that schedule, and its rotation set can vote there. The new log mirrors neither.
+- A log carried under protocol V90 or V91 has the engine's refusal only once it activates V92, from
+  the point its own scan has completed then, as the
+  [version list](../crates/core/src/protocol/versions.rs) describes.
 
 ## The enclave and its keys
 

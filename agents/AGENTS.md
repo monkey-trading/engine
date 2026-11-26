@@ -132,9 +132,13 @@ an index: load only the rule whose hint matches the current action.
   frontier, the emission schedule and every award, unpaid, from another log's checkpoint root, each proven against
   it, the sets checked complete against the source's totals and an absent next award id, consecutive commands only
   and nothing else credited first; the first command after it closes the carried period with no weight; the staking
-  state's total staked, set at activation and kept by every mirrored stake; `Engine::carry_parts` builds the parts,
-  `tests/carried_genesis.rs` and `tests/carried_genesis/`, and `tests/reference/v90-carried.jsonl` is a log whose
-  genesis carries the reference session's frozen state, which `examples/reference_log` writes given a second path),
+  state's total staked, set at activation and kept by every mirrored stake; from `V92` no staking, registry,
+  schedule, vote or fault proof mirror, nor a completed scan, at or below the carried frontier's block, which the
+  genesis records, or a log carried before `V92` records at the activation (`carry/frontier.rs`,
+  `tests/carried_genesis/frontier.rs`); `Engine::carry_parts` builds the parts, `tests/carried_genesis.rs` and
+  `tests/carried_genesis/`, and `tests/reference/v90-carried.jsonl` and `v92-carried.jsonl` are logs whose genesis
+  carries the reference session's frozen state, the newest of which `examples/reference_log` writes given a second
+  path),
   from `V78` the operator's status notice (`notice.rs`: one 1 to 280 character plain-text message, no markup or link, set and cleared by the operator's signed `SetNotice` and `ClearNotice` whether or not votes govern, held in state with the time it was set, `tests/notice.rs`),
   protocol versions, and the
   state tree (a keccak-256 sparse Merkle tree over the state, with account and entitlement proofs, in

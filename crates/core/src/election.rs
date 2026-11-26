@@ -186,7 +186,7 @@ impl Engine {
         chain_ref: &str,
         events: &mut Vec<Event>,
     ) {
-        let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
+        let reason = self.registry_mirror_refusal(chain_ref, block).or_else(|| {
             let last = self.operator_election.last.filter(|last| !last.cancelled);
             let reached = self.finalised_chain_time();
             if enabled == self.operator_election.rotation_enabled {
@@ -245,7 +245,7 @@ impl Engine {
     /// rotation set (`turns`).
     pub(crate) fn elect_operator(&mut self, election: &RegistryElection, events: &mut Vec<Event>) {
         let RegistryElection { epoch, candidate, admin_key, effective_at, block, ref chain_ref } = *election;
-        let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
+        let reason = self.registry_mirror_refusal(chain_ref, block).or_else(|| {
             let zero = AccountId([0; 20]);
             if !self.operator_election.rotation_enabled {
                 Some("an election while rotation is off".into())
@@ -304,7 +304,7 @@ impl Engine {
     /// effect seven days after it is logged and waits no finalised frontier.
     pub(crate) fn install_operator(&mut self, installation: &RegistryInstallation, events: &mut Vec<Event>) {
         let RegistryInstallation { candidate, admin_key, block, ref chain_ref } = *installation;
-        let reason = self.registry_mirror_refusal(chain_ref).or_else(|| {
+        let reason = self.registry_mirror_refusal(chain_ref, block).or_else(|| {
             let zero = AccountId([0; 20]);
             if self.protocol_version < ProtocolVersion::V48 {
                 Some(format!("an operator installation needs protocol {:?}", ProtocolVersion::V48))
@@ -444,8 +444,9 @@ impl Engine {
         self.operator_election.rotation_enabled || self.turns_run()
     }
 
-    /// Why a registry mirror under `chain_ref` cannot apply, if it cannot.
-    pub(crate) fn registry_mirror_refusal(&self, chain_ref: &str) -> Option<String> {
+    /// Why a registry mirror under `chain_ref`, from `block`, cannot apply, if it cannot: from `V92` a block at
+    /// or below the carried frontier among the reasons.
+    pub(crate) fn registry_mirror_refusal(&self, chain_ref: &str, block: u64) -> Option<String> {
         if self.protocol_version < ProtocolVersion::V37 {
             Some(format!("operator elections need protocol {:?}", ProtocolVersion::V37))
         } else if self.staking.is_none() {
@@ -453,7 +454,8 @@ impl Engine {
         } else if self.staking_refs.contains(chain_ref) {
             Some(format!("chain reference {chain_ref} is already mirrored"))
         } else {
-            None
+            self.carried_frontier_covering(block)
+                .map(|through| format!("block {block} is at or below the carried staking frontier at block {through}"))
         }
     }
 

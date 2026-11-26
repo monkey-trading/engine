@@ -544,4 +544,9 @@ pub enum ProtocolVersion {
     /// reference and, for a held one, its payer and the reason it is held. The activation commits every deposit
     /// then pending or held (`merkle::records`).
     V91,
+    /// A carried genesis records the block of the staking frontier it carried, and a log that carried state before
+    /// takes its completed frontier's at this activation. A staking, registry, schedule, vote or fault proof event
+    /// mirrored from a block at or below it is refused, as is a completed scan there: the source log mirrored
+    /// every event of the contracts it followed there, under references this log does not hold (`carry`).
+    V92,
 }

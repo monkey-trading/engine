@@ -174,7 +174,12 @@ fn switch_rotation(h: &mut Harness, enabled: bool, block: u64) {
 /// A new log's genesis before its carry, a day after `source`'s last command: client auth, the operator, `V90`,
 /// the parameters and markets, the access policy, and staking initialised.
 pub fn destination(source: &Harness) -> Harness {
-    let mut h = node_genesis(ProtocolVersion::V90, source.ts + DAY_MS);
+    destination_at(source, ProtocolVersion::V90)
+}
+
+/// `destination` under `version`.
+pub fn destination_at(source: &Harness, version: ProtocolVersion) -> Harness {
+    let mut h = node_genesis(version, source.ts + DAY_MS);
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 30 * DAY_MS }));
     h.admin(AdminCommand::InitStaking(staking_config(h.ts)));
     h
