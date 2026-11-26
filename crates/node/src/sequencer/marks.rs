@@ -90,7 +90,8 @@ impl Marks {
     /// Sends `reports`, whose commands are durable, after any freeze held back. A full queue drops a
     /// sample: the cache is derived, and the next change or a whole replay reseeds it; one alert per
     /// episode says so, and the first batch the queue takes whole ends the episode. A freeze it has no
-    /// room for is held back for the next release, and the samples behind it are dropped meanwhile.
+    /// room for is held back for the next release, and the samples behind it are dropped meanwhile, so
+    /// the episode lasts while one is held.
     pub(super) fn release(&mut self, reports: Vec<Report>) {
         if reports.is_empty() && self.held.is_empty() {
             return;
@@ -115,6 +116,8 @@ impl Marks {
                 Err(TrySendError::Closed(_)) => closed = true,
             }
         }
+        // A freeze still held found the queue full, and the samples behind it go, though this call dropped none.
+        dropped |= !self.held.is_empty();
         // The cache task ended (a shutdown, which it flushes through, or a failure its supervisor
         // stops the node for): nothing is lost to a full queue, so no alert, and no more sends.
         if closed {
@@ -235,6 +238,27 @@ mod tests {
         assert_eq!(sample(rx.try_recv().unwrap()).0, 1, "the mark before the freeze goes first");
         assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
         assert!(Marks::default().freeze(offset, None).is_none(), "no marks task, no freeze");
+    }
+
+    /// A freeze still held back on a full queue keeps the overflow episode open through a batch that moves no mark, so
+    /// the next batch's dropped samples do not page it again.
+    #[test]
+    fn an_episode_stays_open_while_a_freeze_is_held() {
+        let (mut marks, mut rx) = marks_with(1);
+        let offset = Offset { seq: 5, index: 2 };
+        marks.pending = samples(&[(1, 10, 1)]);
+        assert!(marks.freeze(offset, None).is_some());
+        marks.pending.extend(samples(&[(2, 11, 2)]));
+        let pending = marks.take_pending();
+        marks.release(pending);
+        assert!(!marks.held.is_empty(), "the freeze found the queue full");
+        assert!(marks.overflow_warned, "the mark behind the freeze was dropped");
+        marks.release(Vec::new());
+        assert!(marks.overflow_warned, "a batch that moves no mark leaves the freeze held and the episode open");
+        assert_eq!(sample(rx.try_recv().unwrap()).0, 1);
+        marks.release(Vec::new());
+        assert!(matches!(rx.try_recv().unwrap(), Report::Freeze(freeze) if freeze.offset == offset));
+        assert!(!marks.overflow_warned, "the freeze went, so the queue takes everything it was given");
     }
 
     /// A freeze the full queue has no room for is held back, not dropped, with the samples behind it dropped so none
