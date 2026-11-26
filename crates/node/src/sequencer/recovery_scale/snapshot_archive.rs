@@ -84,23 +84,31 @@ fn dev_scenario_snapshot_archive() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
+    // The newest, which the window always keeps on the host, is in the bucket as the node wrote it.
+    let newest_up = || {
+        let newest = daily_snapshots::read_manifest(&snapshots).expect("the manifest").pop().expect("a snapshot");
+        let object = bucket.with(|b| b.objects.get(&format!("{prefix}{}", newest.file)).cloned());
+        assert_eq!(object, Some(std::fs::read(snapshots.join(&newest.file)).unwrap()), "{}", newest.file);
+    };
     confirmed(1);
+    newest_up();
     for day in 1..=4u64 {
         let to_midnight = DAY_MS - node.clock.now_ms().rem_euclid(DAY_MS);
         flow.skip(&mut node, Duration::from_millis(u64::try_from(to_midnight).unwrap()) - BEFORE_MIDNIGHT);
         flow.run(&mut node, FLOW, 1.0, |_, _, _| {});
         node.checkpoint_now();
         confirmed(day + 1);
+        newest_up();
     }
     let listed = daily_snapshots::read_manifest(&snapshots).expect("the manifest");
     assert_eq!(listed.len(), 5, "a snapshot on each day: {listed:?}");
-    for listing in &listed {
-        let object = bucket.with(|b| b.objects.get(&format!("{prefix}{}", listing.file)).cloned());
-        let held = std::fs::read(snapshots.join(&listing.file)).ok();
-        assert!(object.is_some(), "{} is in the bucket", listing.file);
-        assert!(held.is_none() || held == object, "{} is in the bucket as written", listing.file);
-    }
-    println!("    {} snapshots, {} bytes in all, each confirmed", listed.len(), listed.iter().map(|l| l.bytes).sum::<u64>());
+    let days: Vec<i64> = listed.iter().map(|listing| daily_snapshots::day(listing.ts)).collect();
+    assert!(days.windows(2).all(|pair| pair[1] == pair[0] + 1), "one a day: {days:?}");
+    println!(
+        "    {} snapshots, {} bytes in all, each confirmed",
+        listed.len(),
+        listed.iter().map(|l| l.bytes).sum::<u64>()
+    );
 
     println!("==> 2. those older than the window leave the host, but the newest of them, and are served by 308");
     let held = |listing: &Listed| snapshots.join(&listing.file).exists();

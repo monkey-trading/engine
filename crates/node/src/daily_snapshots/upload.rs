@@ -19,6 +19,9 @@
 //!
 //! The snapshots and their manifest are the host's. What makes a snapshot usable is its signature and its root, which
 //! every reader checks, so the uploader checks only that what goes up, and what reads back, is what the listing names.
+//! A snapshot goes up before the vault finalizes its checkpoint, so one of a tail a takeover sets aside can hold the key
+//! of a later snapshot of the same offset in the successor's log: that one then reads back otherwise, and stays on the
+//! host, which serves it, while every reader refuses the object, whose checkpoint the log does not hold.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;

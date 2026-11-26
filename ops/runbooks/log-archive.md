@@ -167,8 +167,11 @@ holder of the bucket's keys or by Cloudflare. Treat it as an incident.
 
 When the alert's `object` is under `snapshots/`, with a `seq` field, the object of a daily snapshot
 reads back as other bytes than the snapshot's line in this trading server's manifest. The host keeps
-that snapshot whatever its age and serves it from its disk, and the other days go on. Only the node
-that sequenced a snapshot's checkpoint writes the snapshot, so this is an incident too.
+that snapshot whatever its age and serves it from its disk, and the other days go on. A snapshot goes
+up as soon as it is published, before the vault finalizes its checkpoint, so a failed operator's
+snapshot of a tail that a promotion set aside can hold the name of its successor's snapshot at the
+same offset. Readers refuse that object, since the log holds another checkpoint there. Otherwise,
+treat it as an incident.
 
 1. Keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes,
    with the alert's `object` and its `first_seq` or `seq` field.
@@ -187,9 +190,11 @@ that sequenced a snapshot's checkpoint writes the snapshot, so this is an incide
    curl -sf https://<archive.public_url's host>/<object> | jq -c '.checkpoint | {seq, root, signer}'
    ```
 
-   An object whose checkpoint is not at the alert's `seq`, or is not the one the log holds there, was
-   not written by this deployment's log. Either way, rotate the bucket's API token and deliver the new
-   keys to every member, as step 6 of [Set up the bucket](#set-up-the-bucket) describes.
+   An object whose checkpoint is at the alert's `seq` and signed by the vault's signer before a
+   promotion is a set-aside tail's: keep the evidence, and nothing else needs doing. An object whose
+   checkpoint is not at the alert's `seq`, or is signed by no signer the vault recorded, was not
+   written by a node. For a range or a snapshot that no node wrote, rotate the bucket's API token and
+   deliver the new keys to every member, as step 6 of [Set up the bucket](#set-up-the-bucket) describes.
 3. Tell the owner, with the evidence. Readers of the archive check a range by replaying it, and a
    snapshot against its signature and its checkpoint's root.
 

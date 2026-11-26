@@ -107,22 +107,13 @@ async fn a_snapshot_the_node_redirects_is_read_from_the_bucket() {
         assert_eq!(std::fs::read(path).unwrap(), written, "{case}");
     }
     let foreign = SnapshotBucket::new(&bucket.url, "snapshots/elsewhere/").unwrap();
-    let refused = |takes: Takes<'_>, listing: Listed, name: &'static str| {
-        let (client, url) = (bucket.client.clone(), url.clone());
-        async move {
-            let member = scratch_dir(name);
-            let error = download(&client, &url, &member, &listing, takes).await.unwrap_err();
-            assert!(std::fs::read_dir(&member).unwrap().next().is_none(), "{name}: nothing stays");
-            format!("{error:#}")
-        }
-    };
-    let error =
-        refused(Takes { bucket: Some(&foreign), this_format: true }, listing.clone(), "fetch-moved-foreign").await;
+    let takes = Takes { bucket: Some(&foreign), this_format: true };
+    let error = refused(&bucket.client, &url, &listing, takes, "fetch-moved-foreign").await;
     assert!(error.contains("leaves the bucket [archive] names"), "{error}");
     // An object that holds other bytes than the listing names is refused, as the node's own would be.
     let mut misdirected = elsewhere.clone();
     misdirected.file = listing.file.clone();
-    let error = refused(START, misdirected, "fetch-moved-other-bytes").await;
+    let error = refused(&bucket.client, &url, &misdirected, START, "fetch-moved-other-bytes").await;
     assert!(error.contains("differs from its listing"), "{error}");
 }
 
@@ -130,6 +121,14 @@ async fn a_snapshot_the_node_redirects_is_read_from_the_bucket() {
 
 /// What a member's start takes: snapshots of this build's format, from any bucket a node redirects to.
 const START: Takes<'static> = Takes { bucket: None, this_format: true };
+
+/// The error of a fetch of `listing` from `url` under `takes` into a new directory named `name`, which it leaves empty.
+async fn refused(client: &reqwest::Client, url: &str, listing: &Listed, takes: Takes<'_>, name: &str) -> String {
+    let member = scratch_dir(name);
+    let error = download(client, url, &member, listing, takes).await.unwrap_err();
+    assert!(std::fs::read_dir(&member).unwrap().next().is_none(), "{name}: nothing stays");
+    format!("{error:#}")
+}
 
 /// Serves the daily snapshots in `dir` as a node's archive does, redirecting a listed one it no longer holds to its
 /// object in `moved`, over plain HTTP on loopback: its base URL.
