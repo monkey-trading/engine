@@ -223,7 +223,7 @@ impl RowsStore {
         }
         let context = || format!("reading the log at seq {seq} for its rows file");
         // Rows are vouched for only against a command this node's start verified.
-        manifest.borrow().ensure_served(seq).with_context(context)?;
+        manifest.borrow().ensure_served(Offset::start_of(seq)).with_context(context)?;
         let mut reader = LogReader::open(dir, Offset::start_of(seq), manifest).with_context(context)?;
         while let Some((_, entry)) = reader.next_entry().with_context(context)? {
             let LogEntry::Command(command) = entry else { continue };

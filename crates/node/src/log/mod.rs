@@ -31,6 +31,7 @@ pub mod catalog_owner;
 mod catalog_prefix;
 pub mod catalog_seal;
 mod view;
+pub(crate) use view::NotVerified;
 pub use view::{ActivePrefix, ReadAuthority};
 mod suffix;
 mod writer;
@@ -125,7 +126,7 @@ pub struct CheckpointDomain {
 
 /// Where a message sits in the log: its seq, and its index among that seq's entries (the command
 /// is 0, then any checkpoint and withdrawals in the order they were written). Written `<seq>:<index>`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Offset {
     pub seq: u64,
     pub index: u32,

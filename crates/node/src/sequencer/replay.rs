@@ -99,6 +99,9 @@ pub(super) struct Replay {
     /// For a replay that went on from a daily snapshot, the links its carried state names for the commands
     /// through its checkpoint's, by which a start checks the log before the checkpoint (`verified_back`).
     carried_links: Vec<live::Link>,
+    /// For a replay that went on from a daily snapshot or a recovery cache, where its checkpoint sits in the log: the
+    /// replay applied every entry after it and none before.
+    resumed_after: Option<log::Offset>,
     /// Set for a replay from a recovery cache, which holds only part of what the log before it folds to, so
     /// it gives no fold (`Fold::of`) unless the cache carries the rest (`cached`).
     partial: bool,
@@ -403,6 +406,7 @@ impl Replay {
             checkpoint_roots: self.payout_checkpoints,
             fold,
             carried_links: self.carried_links,
+            resumed_after: self.resumed_after,
         }
     }
 }

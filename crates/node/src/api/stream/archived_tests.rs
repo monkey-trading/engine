@@ -40,10 +40,26 @@ async fn a_backfill_from_before_the_first_segment_here_is_refused_naming_the_arc
     let whole = scratch_dir("stream-whole");
     ensure_held(&whole, &all, Some(Offset::start_of(0))).await.unwrap();
     // A start from a snapshot verified nothing before seq 4: the host's segments before it are not served.
-    let verified = watch::channel(Manifest { verified_from: 4, ..Manifest::default() }).1;
+    let verified = watch::channel(Manifest { verified_from: Offset::start_of(4), ..Manifest::default() }).1;
     ensure_held(&whole, &verified, Some(Offset::start_of(4))).await.unwrap();
     let Err(ApiError::BadRequest(refusal)) = ensure_held(&whole, &verified, Some(Offset::start_of(3))).await else {
         panic!("seq 3 was served");
     };
-    assert!(refusal.contains("public archive") && refusal.contains("seq 4"), "{refusal}");
+    assert!(refusal.contains("public archive") && refusal.contains("offset 4:0"), "{refusal}");
+}
+
+/// A start from a snapshot whose checkpoint is the entry at 3:1 verified every entry after it, so a stream resumed
+/// right after that checkpoint, at 3:2, is served, as one from the checkpoint itself or the command before it is not.
+#[tokio::test]
+async fn a_stream_resumed_right_after_the_snapshots_checkpoint_is_served() {
+    let whole = scratch_dir("stream-after-checkpoint");
+    let verified = watch::channel(Manifest { verified_from: Offset { seq: 3, index: 2 }, ..Manifest::default() }).1;
+    ensure_held(&whole, &verified, Some(Offset { seq: 3, index: 2 })).await.unwrap();
+    ensure_held(&whole, &verified, Some(Offset::start_of(4))).await.unwrap();
+    for start in [Offset { seq: 3, index: 1 }, Offset::start_of(3)] {
+        let Err(ApiError::BadRequest(refusal)) = ensure_held(&whole, &verified, Some(start)).await else {
+            panic!("{start} was served");
+        };
+        assert!(refusal.contains("public archive") && refusal.contains("offset 3:2"), "{refusal}");
+    }
 }

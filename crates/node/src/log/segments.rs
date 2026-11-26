@@ -38,14 +38,14 @@ pub struct Manifest {
     /// The offset of the last entry the writer has flushed, which readers yield nothing after;
     /// `None` before the first. Only the writer's copy carries it: the file lists segments alone.
     pub flushed: Option<Offset>,
-    /// The first seq this node's start verified, with no signed catalog: one that went on from a daily snapshot
-    /// replayed nothing before its checkpoint and checked only the commands before it whose links the snapshot carries
-    /// (`sequencer::replay::verified_back`), so the segments before those are the host's word, and
-    /// neither a stream's backfill nor a financing read's rows file, which the enclave vouches for, reads them
-    /// (`ensure_served`); the archive, whose answers are not signed, serves them as the host holds them, and the
-    /// history index, which trusts the host's disk, reads them. Zero for a start that read every segment, or one whose
-    /// catalog vouches for them.
-    pub verified_from: u64,
+    /// The first offset this node's start verified, with no signed catalog: one that went on from a daily snapshot
+    /// replayed nothing before its checkpoint, so it starts at the entry after it, and checked only the commands
+    /// before it whose links the snapshot carries (`sequencer::replay::verified_back`), which lower it to the first
+    /// of them, so the segments before those are the host's word, and neither a stream's backfill nor a financing
+    /// read's rows file, which the enclave vouches for, reads them (`ensure_served`); the archive, whose answers are
+    /// not signed, serves them as the host holds them, and the history index, which trusts the host's disk, reads
+    /// them. The log's start for a start that read every segment, or one whose catalog vouches for them.
+    pub verified_from: Offset,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -10,7 +10,7 @@ use engine_core::types::AccountId;
 use tokio::sync::watch;
 
 use crate::daily_snapshots::DailySnapshot;
-use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, Offset, SegmentedLog};
+use crate::log::{CheckpointDomain, LogEntry, LogWriter, Manifest, Offset, SegmentedLog, offset_of};
 use crate::sequencer::replay::{Carried, Fold, LiveReplay, Replay, Replayed};
 use crate::tee::EnclaveKey;
 use crate::test_support::{SEGMENT_COMMANDS, log_entries, scratch_dir};
@@ -46,6 +46,12 @@ async fn a_replica_from_a_snapshot_holds_what_a_whole_replay_holds() {
         let links: Vec<_> = (0..=expected.engine.last_seq().unwrap()).map(|seq| from.link_at(seq)).collect();
         assert!(links.iter().all(Option::is_some), "the snapshot at entry {at} retains every link");
         let actual = finished(from, &dir);
+        let checkpoint_at = entries[..=at].iter().try_fold(None, |last, entry| offset_of(last, entry).map(Some));
+        assert_eq!(
+            actual.resumed_after,
+            checkpoint_at.unwrap(),
+            "the snapshot at entry {at} resumes after its checkpoint"
+        );
         assert_eq!(facts(&actual), facts(&expected), "the snapshot at entry {at}");
         for seq in 0..=expected.engine.last_seq().unwrap() {
             assert_eq!(links[seq as usize].map(|link| link.link), expected.prefix_ring.prefix_at(seq), "seq {seq}");
