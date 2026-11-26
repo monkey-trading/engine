@@ -394,7 +394,10 @@ the checkpoint of the snapshot being written, from which a start restores the ch
    archive](log-archive.md#when-archive_upload_lagging-fires) covers. A snapshot that the host cannot
    remove fires `daily_snapshot_unremovable`: check the permissions and the attributes of the file and
    of the snapshot directory, which the trading server must be able to write. Do not remove a snapshot
-   by hand: the host removes each once the bucket holds it.
+   by hand: the host removes each once the bucket holds it. A snapshot that left the host before the
+   bucket held it fires `daily_snapshot_lost` naming its file: stop the trading server, put a copy of
+   the file back into the snapshot directory, or remove its line from `manifest.jsonl`, and start it
+   again.
 
    Without `[archive]`, copy the snapshots off the host first, by downloading each file that the
    manifest lists, as [Download the public log and verify
