@@ -396,14 +396,11 @@ impl Standby {
             Ok(calldata) => {
                 self.written = Some((request.expiry, registration.voucher));
                 if !std::mem::replace(&mut self.unregistered, true) {
+                    let (key, candidate, schedule, expiry) =
+                        (self.keys.address(), self.candidate, self.domain.schedule, request.expiry);
                     warn!(
                         alert = "standby_unregistered",
-                        "the standby key {} is not registered: send registerStandby to the schedule {} from the \
-                         account of candidate {} before the vouch expires at {} (calldata {calldata}, also in {REGISTRATION})",
-                        self.keys.address(),
-                        self.domain.schedule,
-                        self.candidate,
-                        request.expiry
+                        "the standby key {key} is not registered: send registerStandby to the schedule {schedule} from the account of candidate {candidate} before the vouch expires at {expiry} (calldata {calldata}, also in {REGISTRATION})"
                     );
                 }
             }
