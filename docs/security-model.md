@@ -1606,9 +1606,10 @@ An approval made during a turn therefore waits for the check of a checkpoint tha
 latest written when its check comes due. That check usually lands while the checkpoint is on its way
 to finality, so with members answering, a withdrawal is signed as soon as the vault holds its
 checkpoint, as without the check. Payouts stay anchored to the roots that the vault accepted, and a
-member of the set cannot be paid on a branch that no other member holds. The verified head is sealed with the keys after every check while the check
-applies, so a handover carries the latest one, a host that restores an older copy only delays
-payouts, and with none the next check covers the holding of the latest `TurnTaken`.
+member of the set cannot be paid on a branch that no other member holds. The verified head is sealed
+with the keys after every check while the check applies, so a handover carries the latest one, a
+host that restores an older copy only delays payouts, and with none the next check covers the
+holding of the latest `TurnTaken`.
 
 Known limits:
 
