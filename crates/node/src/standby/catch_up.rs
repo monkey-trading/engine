@@ -38,7 +38,7 @@ pub(crate) fn before_served(error: &anyhow::Error) -> bool {
 /// Hands `take`, segment by segment, the entries the completed segments listed past `head`, the copy's last entry,
 /// hold after it, as JSON lines with the offset they follow, from the first of `origins` whose manifest lists one, so
 /// a mirror that stopped at or before the copy's head gives way to the next; each segment is fetched from the bucket
-/// `origins` names, when it names one, or that origin, and checked against its listing as a cold start's backfill
+/// `origins` names, when it names one, or that origin and then the others in turn, and checked against its listing as a cold start's backfill
 /// fetches it; `take` checks and appends them and gives
 /// the copy's new head. The copy's head once every listed segment is taken.
 /// Error cases:
@@ -73,7 +73,10 @@ pub(crate) async fn catch_up(
             None => anyhow::anyhow!("the archive lists nothing past the copy's head, {from:?}"),
         });
     };
-    let reading = Origins { bucket: origins.bucket().cloned(), nodes: origin.to_vec() };
+    // The chosen origin first, then the others in turn, so a segment it lists and cannot serve comes from another.
+    let others = origins.nodes().iter().filter(|other| !origin.contains(*other)).cloned();
+    let nodes = origin.iter().cloned().chain(others).collect();
+    let reading = Origins { bucket: origins.bucket().cloned(), nodes };
     let mut segments = Segments::new(archive, &reading);
     for listed in listings.iter().filter(|listed| from.is_none_or(|from| listed.last_seq >= from.seq)) {
         validate_listing(listed)?;
