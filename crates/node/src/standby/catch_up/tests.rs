@@ -83,6 +83,38 @@ async fn a_copy_catches_up_from_the_bucket_first() {
     assert!(bucket.with(|b| b.read) > 0, "the segments the operator no longer holds came from the bucket");
 }
 
+/// A member refused its stream catches up from the bucket its archive names, first: the segments the operator's host no
+/// longer holds come from the bucket, which its origins alone cannot give.
+#[tokio::test]
+async fn a_member_catches_up_from_the_bucket_first() {
+    use crate::archive::origin::{bucket_of, listed_below, upload};
+    let operator = scratch_dir("catch-up-member-bucket-operator");
+    ticks(&operator, 2).await;
+    let member = scratch_dir("catch-up-member-bucket");
+    copy_log(&operator, &member);
+    ticks(&operator, 12).await;
+    let view = crate::test_support::published_manifest(&operator).borrow().clone();
+    let ranges = crate::archive::whole_ranges(&view).unwrap();
+    let bucket = crate::archive::stand_in::StandIn::start().await;
+    upload(&bucket, &operator, &view, ranges);
+    let served = scratch_dir("catch-up-member-bucket-served");
+    crate::archive::origin::copy_log(&operator, &served);
+    for listed in &listed_below(&operator, ranges) {
+        std::fs::remove_file(served.join(&listed.file)).unwrap();
+    }
+    let mut followed = refusing_operator(&served).await;
+    followed.bucket = Some(bucket_of(&bucket));
+    // The stand-in's certificate is its own authority's.
+    followed.danger_accept_invalid_certs = true;
+    let mut follower = Follower::open(&member, SEGMENT_COMMANDS, DOMAIN, enclave(), [enclave()].into(), None, |_| {})
+        .expect("the member's copy opens");
+    let head = follower.stint(&config(), &followed, Duration::from_secs(5)).await.expect("the copy catches up");
+    assert_eq!(head, follower.head());
+    drop(follower);
+    assert_eq!(log_entries(&member), log_entries(&operator)[..completed(&operator)], "the member's copy");
+    assert!(bucket.with(|b| b.read) > 0, "the segments the operator no longer holds came from the bucket");
+}
+
 /// An archive segment a key the vault never named sealed or signed, though its listing matches its bytes, is refused
 /// and the copy takes nothing of it: one whose commands' seals name another signer, and one whose checkpoint another
 /// key signed, as a mirror with a key of its own could serve.
