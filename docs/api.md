@@ -1534,7 +1534,8 @@ file that the manifest does not list answers 404. The segment still being writte
 archive, and the stream carries it instead. `engine replay` verifies a downloaded archive, and the
 server checks each segment against the manifest before serving it.
 
-A server with an archive bucket keeps the whole log there as well as on its host. A listed segment
+A server with an archive bucket keeps the log there, in ranges below a checkpoint the vault has finalized and in tails from it to the
+vault's latest checkpoint, as well as on its host. A listed segment
 that the host no longer holds answers 308, and its `Location` is the bucket's object for the range
 of 10,000 sequence numbers that holds the segment's first sequence number. The server does not relay
 the object. The bucket holds the log in these ranges, not in the server's segments: range `k` holds
