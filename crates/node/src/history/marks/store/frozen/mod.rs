@@ -10,9 +10,6 @@
 //! or altered in any row, is refused whole. A snapshot written before it carried the root is taken only under the key
 //! that wrote its copy, every row's tag checked.
 
-mod root;
-mod walk;
-
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -27,6 +24,9 @@ use rand::rngs::OsRng;
 use rusqlite::{TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
+
+mod root;
+mod walk;
 
 use crate::history::marks::store::auth::{Epoch, Row, run_mac};
 use crate::history::marks::store::chain::anchor_updates;
@@ -89,34 +89,48 @@ impl Store {
         self.freeze_keeping(offset, None)
     }
 
-    /// Writes a frozen copy of the cache beside it for the checkpoint at `offset`, synced as it is written (`paced`)
-    /// and at its end, and gives the committed anchors it holds with the root over its rows, read from the copy once
-    /// it is synced and before it takes its name, each row's tag checked under this cache's run key and each pair's
-    /// chain against the anchors (`walk`): the root covers only rows this node wrote, as the anchors name them. The
-    /// cache's writes all run on this store, so nothing commits between the copy and the anchors read after it. It
-    /// removes the other copies but, with `snapshots`, the directory of the daily snapshots, those of the newest
-    /// `KEPT` snapshots it lists and this one, whose snapshot is not listed yet, or without it the newest `KEPT`: a
-    /// copy whose snapshot was never published, as when its writing failed, then takes no place a published one needs.
+    /// Writes a frozen copy of the cache beside it for the checkpoint at `offset` (`staged_copy`) and gives the
+    /// committed anchors it holds with the root over its rows. A copy that cannot be written, or does not read back as
+    /// the cache's rows, is removed, so a freeze that keeps failing leaves no copy behind it. It removes the other
+    /// copies but, with `snapshots`, the directory of the daily snapshots, those of the newest `KEPT` snapshots it
+    /// lists and this one, whose snapshot is not listed yet, or without it the newest `KEPT`: a copy whose snapshot was
+    /// never published, as when its writing failed, then takes no place a published one needs.
     /// Error cases:
-    /// - the copy cannot be written, synced or renamed into place, or its directory listed
-    /// - the copy does not read back as the cache's rows under its anchors
+    /// - as `staged_copy`
+    /// - the directory cannot be synced or listed
     pub(crate) fn freeze_keeping(&self, offset: Offset, snapshots: Option<&Path>) -> anyhow::Result<Frozen> {
         let dir = self.path.parent().context("the marks cache has no directory")?;
         let path = frozen_path(dir, offset);
         let staged = path.with_extension("tmp");
         store::discard(&staged)?;
+        let frozen = self.staged_copy(&staged, &path).inspect_err(|_| {
+            if let Err(e) = store::discard(&staged) {
+                warn!(seq = offset.seq, "a refused frozen marks cache could not be removed: {e:#}");
+            }
+        })?;
+        File::open(dir).and_then(|opened| opened.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
+        prune(dir, snapshots.and_then(|snapshots| listed_copies(dir, snapshots, offset)))?;
+        Ok(frozen)
+    }
+
+    /// Copies the cache into `staged`, synced as it is written (`paced`) and at its end, reads the copy back for the
+    /// root over its rows, each row's tag checked under this cache's run key and each pair's chain against the anchors
+    /// (`walk`), so the root covers only rows this node wrote, as the anchors name them, then renames it to `path`. The
+    /// cache's writes all run on this store, so nothing commits between the copy and the anchors read after it.
+    /// Error cases:
+    /// - the copy cannot be written, synced or renamed into place
+    /// - the copy does not read back as the cache's rows under its anchors
+    fn staged_copy(&self, staged: &Path, path: &Path) -> anyhow::Result<Frozen> {
         let target = staged.to_str().context("the frozen copy's path is not UTF-8")?;
-        paced(&staged, || self.conn.execute("VACUUM INTO ?1", [target])).context("copying the marks cache")?;
-        File::open(&staged).and_then(|file| file.sync_all()).context("syncing the frozen marks cache")?;
+        paced(staged, || self.conn.execute("VACUUM INTO ?1", [target])).context("copying the marks cache")?;
+        File::open(staged).and_then(|file| file.sync_all()).context("syncing the frozen marks cache")?;
         let mut frozen = self.anchored(read_epoch(&self.conn)?);
-        let copy = open_copy(&staged, &self.schema, &frozen).context("reading the frozen marks cache back")?;
+        let copy = open_copy(staged, &self.schema, &frozen).context("reading the frozen marks cache back")?;
         let (_, root) = walk(&copy, &frozen, Some(&self.mac), |passed| Ok(passed.row.tag))
             .context("reading the frozen marks cache back")?;
         drop(copy);
         frozen.root = Some(root);
-        fs::rename(&staged, &path).with_context(|| format!("publishing {}", path.display()))?;
-        File::open(dir).and_then(|opened| opened.sync_all()).with_context(|| format!("syncing {}", dir.display()))?;
-        prune(dir, snapshots.and_then(|snapshots| listed_copies(dir, snapshots, offset)))?;
+        fs::rename(staged, path).with_context(|| format!("publishing {}", path.display()))?;
         Ok(frozen)
     }
 

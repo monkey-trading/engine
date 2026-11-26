@@ -197,7 +197,7 @@ async fn a_changed_reordered_or_removed_row_is_refused_on_the_root() {
 }
 
 /// The freeze reads its copy back under the key that wrote the cache, so a cache whose row the host rewrote gets no
-/// root over it, and no copy takes its name.
+/// root over it, no copy takes its name, and the refused copy is removed.
 #[test]
 fn a_freeze_refuses_a_row_the_host_rewrote() {
     let (path, mut store) = fresh_store_at("marks-frozen-rewritten", Retentions::defaults());
@@ -207,7 +207,9 @@ fn a_freeze_refuses_a_row_the_host_rewrote() {
     let offset = Offset { seq: 9, index: 1 };
     let error = format!("{:#}", store.freeze(offset).unwrap_err());
     assert!(error.contains("fails authentication"), "{error}");
-    assert!(!frozen_path(path.parent().unwrap(), offset).exists(), "the refused copy took its name");
+    let copy = frozen_path(path.parent().unwrap(), offset);
+    assert!(!copy.exists(), "the refused copy took its name");
+    assert!(!copy.with_extension("tmp").exists(), "the refused copy is left staged");
 }
 
 /// The newest `KEPT` frozen copies stay beside the cache, and the older ones go.
