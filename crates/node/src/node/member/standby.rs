@@ -361,7 +361,10 @@ impl Standby {
         match read.await {
             Ok(Some(key)) if key == self.keys.address() => {
                 if std::mem::take(&mut self.unregistered) {
-                    info!(alert_resolved = "standby_unregistered", key = %key, "the schedule lists the standby key as promotable");
+                    info!(
+                        alert_resolved = "standby_unregistered",
+                        "the schedule lists the standby key {key} as promotable"
+                    );
                 }
                 return;
             }
@@ -395,11 +398,11 @@ impl Standby {
                 if !std::mem::replace(&mut self.unregistered, true) {
                     warn!(
                         alert = "standby_unregistered",
-                        key = %self.keys.address(),
-                        candidate = %self.candidate,
-                        "the standby key is not registered: send registerStandby to the schedule {} from the \
-                         candidate's account before the vouch expires at {} (calldata {calldata}, also in {REGISTRATION})",
+                        "the standby key {} is not registered: send registerStandby to the schedule {} from the \
+                         account of candidate {} before the vouch expires at {} (calldata {calldata}, also in {REGISTRATION})",
+                        self.keys.address(),
                         self.domain.schedule,
+                        self.candidate,
                         request.expiry
                     );
                 }

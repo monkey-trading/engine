@@ -365,9 +365,10 @@ impl<R: CheckpointChain> Poster<R> {
             self.episodes.raise("collateral_mismatch");
             error!(
                 alert = "collateral_mismatch",
-                distributions_paid = %state.distributions_paid,
-                distributed = %work.distributed,
-                "withdrawals paused: the vault paid more in distributions than the engine allocated"
+                "withdrawals paused: the vault paid more in distributions than the engine allocated \
+                 (paid {}, allocated {})",
+                state.distributions_paid,
+                work.distributed
             );
         } else if let Some((id, _)) = overdue {
             self.episodes.raise("collateral_mismatch");
@@ -379,9 +380,10 @@ impl<R: CheckpointChain> Poster<R> {
             self.episodes.raise("collateral_mismatch");
             error!(
                 alert = "collateral_mismatch",
-                distributions_paid = %state.distributions_paid,
-                distributed = %work.distributed,
-                "withdrawals paused: the vault holds less USDC than the ledger requires, or its deposits or payments differ from it"
+                "withdrawals paused: the vault holds less USDC than the ledger requires, or its deposits or payments differ \
+                 from it (distributions paid {}, allocated {})",
+                state.distributions_paid,
+                work.distributed
             );
         }
         let compensated = state.balance.raw().checked_add(state.distributions_paid.raw()).map(Fixed::from_raw);

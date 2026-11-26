@@ -297,8 +297,7 @@ pub(super) async fn confirm(
     if let Err(e) = confirmed.await {
         error!(
             alert = "handover_unconfirmed",
-            predecessor = address,
-            "the predecessor did not acknowledge the handover, so it may still run: the keys are sealed \
+            "the predecessor {address} did not acknowledge the handover, so it may still run: the keys are sealed \
              here, but this release must not start until the predecessor has stopped, or both may sign: \
              {e:#}"
         );

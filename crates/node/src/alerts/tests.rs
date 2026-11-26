@@ -465,4 +465,5 @@ async fn restart_delivers_committed_pages_in_route_order_with_their_original_epi
     assert_eq!((pending(&metrics, "critical"), pending(&metrics, "warning")), (0, 0));
 }
 
+mod pairs;
 mod resolves;

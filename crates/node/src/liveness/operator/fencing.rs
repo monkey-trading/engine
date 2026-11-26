@@ -50,10 +50,10 @@ pub(super) async fn fence_tick(state: Arc<Mutex<FenceState>>, gate: Gate, truste
         match (now, std::mem::replace(&mut fenced, now)) {
             (true, false) if applies.is_some() => error!(
                 alert = "liveness_fenced",
-                due_ms = ?fence.due_ms(),
-                replaced = fence.replaced(),
-                "the operator stops by its own clock: a promotion may pass within the stop margin; no command, \
-                 answer or head is signed until a later read moves it on"
+                "the operator stops by its own clock: a promotion may pass within the stop margin (earliest promotion at {:?} ms, \
+                 vault names another key: {}); no command, answer or head is signed until a later read moves it on",
+                fence.due_ms(),
+                fence.replaced()
             ),
             (false, true) => info!(alert_resolved = "liveness_fenced", "a later read moved the earliest promotion on"),
             _ => {}
