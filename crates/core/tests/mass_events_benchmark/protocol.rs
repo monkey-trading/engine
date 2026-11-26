@@ -29,8 +29,8 @@ const ORDERS: usize = 2_500_000;
 #[ignore = "100k-account benchmark: run in an isolated CPU window"]
 fn mass_activation() {
     // The version before the latest: move this with `LATEST`, so the case stays one activation.
-    let before = ProtocolVersion::V89;
-    assert_eq!(ProtocolVersion::LATEST, ProtocolVersion::V90, "move `before` to the version one back");
+    let before = ProtocolVersion::V90;
+    assert_eq!(ProtocolVersion::LATEST, ProtocolVersion::V91, "move `before` to the version one back");
     let mix = Mix { version: before, ..Mix::proposal(accounts()) };
     let mut book = build(&mix, NAMED);
     assert_eq!(book.h.engine.protocol_version(), before);

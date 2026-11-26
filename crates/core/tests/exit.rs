@@ -14,6 +14,8 @@ mod custody;
 mod fixture;
 #[path = "exit/id_zero.rs"]
 mod id_zero;
+#[path = "exit/records.rs"]
+mod records;
 #[path = "exit/root.rs"]
 mod root;
 #[path = "exit/support.rs"]
