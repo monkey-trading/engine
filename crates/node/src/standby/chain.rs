@@ -106,6 +106,12 @@ impl Chain {
         self.link = link;
     }
 
+    /// The link after the copy's last entry.
+    #[cfg(test)]
+    pub(super) fn link(&self) -> B256 {
+        self.link
+    }
+
     /// The offset of the copy's last entry, or `None` for an empty copy.
     pub(super) fn head(&self) -> Option<Offset> {
         self.tail.last().map(|(offset, _)| *offset)
