@@ -496,7 +496,8 @@ those. Its manifest keeps every line, and it answers a request for a snapshot it
 with a 308 to the object. `engine replay --snapshots <URL>`, a trading server's public origin, downloads
 every snapshot the manifest lists at or before the log's last checkpoint, from the server or from the
 object a 308 names, each only as the bytes its line names, and replays from them as from snapshots on
-disk; a rotation member's start follows a 308 only to the bucket its own `[archive]` names. The snapshot
+disk; a rotation member's start follows a 308 only to the bucket its own `[archive]` names, where it
+names one, and otherwise to any object of the snapshot's file, which it checks as any other. The snapshot
 files and the manifest are the host's. A host can remove or alter a snapshot before its upload, as it
 can remove one at any time, and the upload sends only the bytes the file's line names, so an altered
 file creates no object. Wherever a reader takes a snapshot from, it checks it as above.

@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::ensure;
 use serde::Deserialize;
 
 /// A day.
@@ -21,6 +22,21 @@ pub struct DailySnapshotsSection {
     /// commands starts from. Without `[archive]`, every day's snapshot is kept.
     #[serde(with = "humantime_serde", default = "default_local_window")]
     pub local_window: Duration,
+}
+
+impl DailySnapshotsSection {
+    /// Checks that with `[archive]` (`archived`) the window reaches back as far as `retention`, the history index's:
+    /// the history re-derives an indexed command's rows from a snapshot before it that the host holds.
+    /// Error cases:
+    /// - the bucket keeps the snapshots and the window is shorter than the history's retention
+    pub(crate) fn validate(&self, archived: bool, retention: Duration) -> anyhow::Result<()> {
+        ensure!(
+            !archived || self.local_window >= retention,
+            "daily_snapshots.local_window must be at least history.retention, {retention:?}, so the host keeps a \
+             snapshot before every command the history index holds"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]

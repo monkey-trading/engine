@@ -207,7 +207,8 @@ copy of a snapshot once that read has passed and the snapshot is stamped more th
 the window's commands starts. So the host holds at most the snapshots of the last 30 days and the one before
 them: 32, about 13 GB at 100,000 accounts. A snapshot the bucket has not taken stays on the host whatever its
 age, and `archive_upload_lagging` fires while one waits; one whose object reads back otherwise, or whose file
-differs from its listing, stays too, and fires `archive_object_mismatch` or `daily_snapshot_unreadable`. Without
+differs from its listing, stays too, and fires `archive_object_mismatch` or `daily_snapshot_unreadable`. One the
+host cannot remove fires `daily_snapshot_unremovable`. Without
 `[archive]`, or without its delivered keys, every day's snapshot stays on the host, by about 0.4 GB a day.
 
 A shorter `daily_snapshots.local_window` lowers the bound in proportion, but keep it at least `history.retention`:

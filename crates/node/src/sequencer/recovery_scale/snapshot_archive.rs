@@ -8,7 +8,7 @@
 //! the whole log replays to; a member's snapshot start takes one the node holds no longer from the bucket; and a
 //! bucket object whose bytes are altered is refused by both.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,8 +21,8 @@ use crate::clock::Clock;
 use crate::common::launch_book::{NamedCounts, build};
 use crate::common::{CHAIN_ID, VAULT};
 use crate::daily_snapshots::{
-    self, Listed, PublishedSnapshots, SnapshotBucket, SnapshotUploader, serve_snapshots, snapshot_start,
-    snapshots_prefix,
+    self, Bounds, Fetching, Listed, NoRoots, PublishedSnapshots, SnapshotBucket, SnapshotUploader, serve_snapshots,
+    snapshot_start_against, snapshots_prefix,
 };
 use crate::log::SealChecks;
 use crate::metrics::Metrics;
@@ -143,19 +143,31 @@ fn dev_scenario_snapshot_archive() {
     println!("    {} ranges, {} commands, as the whole log", in_ranges.ranges, in_ranges.commands);
     drop(local);
 
-    println!("==> 4. a member's snapshot start takes one the node no longer holds from the bucket");
+    println!("==> 4. a member's snapshot start takes one the node no longer holds from the bucket its [archive] names");
     let copy = run.join("copy");
     copy_log(&log, &copy);
-    let (client, origins, signers) = (archive_client(false).unwrap(), [url.clone()], [signer].into());
-    let member = run.join("member-snapshots");
-    let bounds = (u64::MAX, Some(listed[2].ts));
-    let signed = runtime
-        .block_on(snapshot_start(&client, &origins, (&member, &copy), DOMAIN, &signers, bounds))
-        .expect("the member starts from a snapshot");
+    let (client, origins) = (archive_client(false).unwrap(), [url.clone()]);
+    let signers: BTreeSet<AccountId> = [signer].into();
+    // A member whose `[archive]` names `bucket`, its turns in office from `before`.
+    let start = |member: &str, bucket: &SnapshotBucket, before: i64| {
+        let fetching = Fetching { client: &client, origins: &origins, bucket: Some(bucket) };
+        let bounds = Bounds { finalized: u64::MAX, before: Some(before), keep_from: None };
+        let dir = run.join(member);
+        let dirs = (dir.as_path(), copy.as_path());
+        runtime.block_on(snapshot_start_against(Some(fetching), dirs, (DOMAIN, &signers), bounds, &NoRoots))
+    };
+    let signed = start("member-snapshots", &moved, listed[2].ts).expect("the member starts from a snapshot");
     assert_eq!(signed.snapshot.offset.seq, listed[1].seq, "the newest before the bound, from the bucket");
     let object = bucket.with(|b| b.objects[&format!("{prefix}{}", listed[1].file)].clone());
-    assert_eq!(std::fs::read(member.join(&listed[1].file)).unwrap(), object);
-    println!("    the member's replica starts from {}", listed[1].file);
+    assert_eq!(std::fs::read(run.join("member-snapshots").join(&listed[1].file)).unwrap(), object);
+    let elsewhere = SnapshotBucket::new(&bucket.plain, "snapshots/elsewhere/").expect("another bucket");
+    while alerts.try_recv().is_ok() {}
+    assert!(start("member-snapshots-elsewhere", &elsewhere, listed[2].ts).is_none(), "no other bucket's");
+    let alert = std::iter::from_fn(|| alerts.try_recv().ok())
+        .find(|alert| alert.get("alert").is_some_and(|name| name == "snapshot_start_refused"))
+        .expect("the refusal is paged");
+    assert!(alert["message"].contains("leaves the bucket [archive] names"), "{alert:?}");
+    println!("    the member's replica starts from {}, and a member naming another bucket refuses it", listed[1].file);
 
     println!("==> 5. a bucket object whose bytes are altered is refused by the replay and the member's start");
     let altered_key = format!("{prefix}{}", listed[0].file);
@@ -168,10 +180,7 @@ fn dev_scenario_snapshot_archive() {
     let error = format!("{:#}", snapshots_at.local(&log).expect_err("an altered snapshot is refused"));
     assert!(error.contains(&listed[0].file) && error.contains("differs from its listing"), "{error}");
     while alerts.try_recv().is_ok() {}
-    let member = run.join("member-snapshots-altered");
-    let bounds = (u64::MAX, Some(listed[1].ts));
-    let refused = runtime.block_on(snapshot_start(&client, &origins, (&member, &copy), DOMAIN, &signers, bounds));
-    assert!(refused.is_none(), "the altered snapshot is not taken");
+    assert!(start("member-snapshots-altered", &moved, listed[1].ts).is_none(), "the altered snapshot is not taken");
     let alert = std::iter::from_fn(|| alerts.try_recv().ok())
         .find(|alert| alert.get("alert").is_some_and(|name| name == "snapshot_start_refused"))
         .expect("the refusal is paged");

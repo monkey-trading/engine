@@ -153,3 +153,19 @@ fn the_daily_snapshots_directory_is_one_of_its_own() {
     cfg.daily_snapshots = Some(DailySnapshotsSection::at(root.join("daily-snapshots")));
     cfg.validate().unwrap();
 }
+
+/// With `[archive]`, the host keeps daily snapshots for `local_window`, which must reach back as far as the history
+/// index does, so every command it holds has a snapshot before it on the host; without `[archive]` every snapshot
+/// stays, and the window is not checked.
+#[test]
+fn the_daily_snapshots_window_reaches_back_as_far_as_the_history() {
+    let (day, mut daily) = (Duration::from_secs(86_400), DailySnapshotsSection::at("data/dev/daily-snapshots".into()));
+    daily.local_window = day * 7;
+    daily.validate(false, day * 30).unwrap();
+    let refused = daily.validate(true, day * 30).expect_err("a window shorter than the history's");
+    assert!(refused.to_string().contains("local_window must be at least history.retention"), "{refused:#}");
+    daily.validate(true, day * 7).unwrap();
+    let parsed = |text: &str| toml::from_str::<DailySnapshotsSection>(text).unwrap().local_window;
+    assert_eq!(parsed("dir = 'data'"), day * 30, "30 days by default");
+    assert_eq!(parsed("dir = 'data'\nlocal_window = '45d'"), day * 45);
+}

@@ -108,7 +108,10 @@ first release that names a production bucket.
    ```
 
    The second command prints the hash the first printed. `engine_archive_snapshots_pending` is at most
-   one or two, and `engine_archive_snapshots_confirmed_total` rises by one a day.
+   one or two, and `engine_archive_snapshots_confirmed_total` rises by one a day. For some minutes
+   after the trading server starts, `engine_archive_snapshots_pending` counts every snapshot on the host
+   while it reads each back from the bucket, about 13 GB at 100,000 accounts, and the confirmed count
+   rises by as many.
 
 **A first release with the archive uploads the whole log from its first range.**
 `engine_archive_pending_ranges` falls as the backlog uploads, and `archive_upload_lagging` fires if it
@@ -129,7 +132,7 @@ bucket, so nothing is lost, and the trading server keeps sequencing. Clients see
 
    ```text
    an upload to the archive failed, and is retried in 300s: ...
-   an upload of a daily snapshot to the archive failed, and is retried in 300s: ...
+   a pass over the daily snapshots' archive failed, and is retried in 300s: ...
    ```
 
    The message names the cause:

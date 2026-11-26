@@ -66,6 +66,36 @@ async fn a_member_whose_copy_holds_the_log_starts_its_replica_from_a_snapshot() 
     );
 }
 
+/// A member with `[archive]` takes a snapshot its archive no longer holds from the object the archive redirects it to,
+/// in the bucket its own `[archive]` names, and refuses one the archive redirects to another bucket, replaying its
+/// whole copy instead.
+#[tokio::test]
+async fn a_member_follows_a_snapshots_redirect_only_to_its_own_bucket() {
+    let bucket = crate::archive::stand_in::StandIn::start().await;
+    for (case, public_url, taken) in [("its own", bucket.url.clone(), true), ("another", bucket.plain.clone(), false)] {
+        let mut fixture = Fixture::start(&format!("member-snapshot-moved-{taken}"), false).await;
+        let origin = scratch_dir(&format!("member-snapshot-moved-{taken}-origin"));
+        let [older, _] = publish(&fixture.log, &origin);
+        let daily = scratch_dir(&format!("member-snapshot-moved-{taken}-daily"));
+        fixture.cfg.daily_snapshots = Some(DailySnapshotsSection::at(daily.clone()));
+        *fixture.registry.finalized.lock().unwrap() = Some((older.seq, older.root.clone()));
+        let own = crate::daily_snapshots::SnapshotBucket::new(&bucket.url, &snapshots_prefix(&fixture.cfg)).unwrap();
+        let written = std::fs::read(origin.join(&older.file)).unwrap();
+        let key = own.object(&older.file).unwrap().path().trim_start_matches('/').to_owned();
+        bucket.with(|b| b.objects.insert(key, written.clone()));
+        std::fs::remove_file(origin.join(&older.file)).unwrap();
+        fixture.cfg.archive =
+            Some(crate::config::ArchiveSection { public_url, ..bucket.section(std::time::Duration::from_secs(60)) });
+        let followed = followed(archive_moved(&fixture.log, &origin, own).await);
+        let member = fixture.member();
+        let (follower, ..) = member.open(Some(&followed)).await.expect("the member opens its copy");
+        assert_eq!(follower.replays(), u64::from(!taken), "{case}");
+        if taken {
+            assert_eq!(std::fs::read(daily.join(&older.file)).unwrap(), written, "{case}: the bucket's object");
+        }
+    }
+}
+
 /// A member replays its whole copy, with the snapshots on offer, when it has no `[daily_snapshots]` and when the
 /// vault has finalized no checkpoint.
 #[tokio::test]
@@ -341,4 +371,41 @@ async fn archive_with(log: &std::path::Path, snapshots: &std::path::Path) -> Str
         Router::new().route("/v1/archive/{file}", files(log)).route("/v1/archive/snapshots/{file}", files(snapshots));
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     url
+}
+
+/// `archive_with`, redirecting (`308`) a listed snapshot `snapshots` no longer holds to its object in `moved`.
+async fn archive_moved(
+    log: &std::path::Path,
+    snapshots: &std::path::Path,
+    moved: crate::daily_snapshots::SnapshotBucket,
+) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (log, snapshots) = (log.to_owned(), snapshots.to_owned());
+    let segments = get(move |axum::extract::Path(file): axum::extract::Path<String>| {
+        let path = log.join(&file);
+        async move {
+            std::fs::read(path).map_or_else(|_| StatusCode::NOT_FOUND.into_response(), IntoResponse::into_response)
+        }
+    });
+    let daily = get(move |axum::extract::Path(file): axum::extract::Path<String>| {
+        let (path, moved) = (snapshots.join(&file), moved.clone());
+        async move {
+            match std::fs::read(path) {
+                Ok(bytes) => bytes.into_response(),
+                Err(_) => {
+                    let object = moved.object(&file).unwrap().to_string();
+                    (StatusCode::PERMANENT_REDIRECT, [(axum::http::header::LOCATION, object)]).into_response()
+                }
+            }
+        }
+    });
+    let app = Router::new().route("/v1/archive/{file}", segments).route("/v1/archive/snapshots/{file}", daily);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    url
+}
+
+/// The key prefix of the daily snapshots of `cfg`'s log.
+fn snapshots_prefix(cfg: &NodeConfig) -> String {
+    crate::daily_snapshots::snapshots_prefix(cfg.custody.chain_id, cfg.custody.vault.parse().unwrap())
 }

@@ -388,9 +388,13 @@ the checkpoint of the snapshot being written, from which a start restores the ch
    ```
 
    `engine_archive_snapshots_pending` is at most one or two, and `engine_archive_snapshots_removed_total`
-   rises by one a day once the host holds 30 days of snapshots. A pending count that grows comes with
-   `archive_upload_lagging`, which [Log archive](log-archive.md#when-archive_upload_lagging-fires)
-   covers. Do not remove a snapshot by hand: the host removes each once the bucket holds it.
+   rises by one a day once the host holds 30 days of snapshots. For some minutes after a start, the
+   pending count holds every snapshot on the host while the trading server reads each back from the
+   bucket. A pending count that stays up comes with `archive_upload_lagging`, which [Log
+   archive](log-archive.md#when-archive_upload_lagging-fires) covers. A snapshot that the host cannot
+   remove fires `daily_snapshot_unremovable`: check the permissions and the attributes of the file and
+   of the snapshot directory, which the trading server must be able to write. Do not remove a snapshot
+   by hand: the host removes each once the bucket holds it.
 
    Without `[archive]`, copy the snapshots off the host first, by downloading each file that the
    manifest lists, as [Download the public log and verify

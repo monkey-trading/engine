@@ -15,7 +15,8 @@
 //! commands, as the history's re-derivation of an indexed command's rows, starts. The manifest keeps every listing,
 //! so the archive redirects a request for a removed snapshot to its object (`api::archive`). A snapshot not
 //! confirmed stays whatever its age: the host holds the window's snapshots and one before them, and those the
-//! bucket has not taken.
+//! bucket has not taken. A removal that fails is tried again at each pass, and pages Warning
+//! `daily_snapshot_unremovable` until one succeeds.
 //!
 //! The snapshots and their manifest are the host's. What makes a snapshot usable is its signature and its root, which
 //! every reader checks, so the uploader checks only that what goes up, and what reads back, is what the listing names.
@@ -77,6 +78,8 @@ pub(crate) struct SnapshotUploader {
     waiting: BTreeMap<String, Instant>,
     /// Whether `archive_upload_lagging` is raised for the snapshots.
     raised: bool,
+    /// Whether `daily_snapshot_unremovable` is raised.
+    unremovable: bool,
 }
 
 /// What an attempt at a snapshot found.
@@ -132,7 +135,8 @@ impl SnapshotUploader {
     ) -> Self {
         let window_ms = Millis::try_from(local_window.as_millis()).unwrap_or(Millis::MAX);
         let (confirmed, refused, waiting) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
-        Self { store, prefix, dir, window_ms, lag_alert, metrics, confirmed, refused, waiting, raised: false }
+        let (raised, unremovable) = (false, false);
+        Self { store, prefix, dir, window_ms, lag_alert, metrics, confirmed, refused, waiting, raised, unremovable }
     }
 
     /// Uploads and removes in passes for the node's life, every `POLL_EVERY`, or after a failed pass with backoff.
@@ -146,7 +150,7 @@ impl SnapshotUploader {
                 }
                 Err(e) => {
                     self.metrics.snapshot_archive.failures.inc();
-                    warn!("an upload of a daily snapshot to the archive failed, and is retried in {retry:?}: {e:#}");
+                    warn!("a pass over the daily snapshots' archive failed, and is retried in {retry:?}: {e:#}");
                     sleep(retry).await;
                     retry = (retry * 2).min(MAX_RETRY);
                 }
@@ -303,16 +307,33 @@ impl SnapshotUploader {
             match tokio::fs::remove_file(self.dir.join(&listing.file)).await {
                 Ok(()) => {
                     self.metrics.snapshot_archive.removed.inc();
-                    info!(seq = listing.seq, file = %listing.file, "removed a daily snapshot from the host: the archive keeps it");
+                    info!(
+                        seq = listing.seq,
+                        file = %listing.file,
+                        "removed a daily snapshot from the host: the archive keeps it"
+                    );
                 }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("removing daily snapshot {}", listing.file)),
+                Err(e) => {
+                    if !std::mem::replace(&mut self.unremovable, true) {
+                        warn!(
+                            alert = "daily_snapshot_unremovable",
+                            "daily snapshot {} is in the archive and older than the host's window, but cannot be \
+                             removed from the host, so the host's snapshots grow past their bound: {e}",
+                            listing.file
+                        );
+                    }
+                    return Err(e).with_context(|| format!("removing daily snapshot {}", listing.file));
+                }
             }
             self.confirmed.remove(&listing.file);
         }
         if !gone.is_empty() {
             let dir = self.dir.clone();
             spawn_blocking(move || sync_dir(&dir)).await??;
+        }
+        if std::mem::take(&mut self.unremovable) {
+            info!(alert_resolved = "daily_snapshot_unremovable", "the host keeps only the window's daily snapshots");
         }
         Ok(())
     }

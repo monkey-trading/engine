@@ -147,8 +147,8 @@ async fn a_listing_under_another_name_than_its_offsets_is_neither_read_nor_sent(
     assert_eq!(metrics.snapshot_archive.removed.get(), 0);
 }
 
-/// A copy the window no longer keeps that cannot be removed stays confirmed, and goes once removal works, with no
-/// second read of its object.
+/// A copy the window no longer keeps that cannot be removed stays confirmed and pages `daily_snapshot_unremovable`, and
+/// goes once removal works, with no second read of its object, which resolves the alert.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_copy_that_cannot_be_removed_is_removed_later_without_another_read() {
@@ -156,16 +156,21 @@ async fn a_copy_that_cannot_be_removed_is_removed_later_without_another_read() {
     let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-unremovable"));
     let days: Vec<Listed> = (0..3).map(|day| publish_ticks(&dir, 2 + day, day as i64 * DAY_MS * 2 + 1_000)).collect();
     let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
-    let failed = uploader.pass().await;
+    let failed = (uploader.pass().await, uploader.pass().await);
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(format!("{:#}", failed.unwrap_err()).contains("removing daily snapshot"));
-    assert!(dir.join(&days[0].file).exists());
+    assert!(format!("{:#}", failed.0.unwrap_err()).contains("removing daily snapshot"));
+    assert!(failed.1.is_err() && dir.join(&days[0].file).exists());
+    let paged: Vec<String> =
+        std::iter::from_fn(|| alerts.try_recv().ok()).map(|alert| alert["alert"].clone()).collect();
+    assert_eq!(paged, ["daily_snapshot_unremovable"], "paged once");
     let reads = bucket.with(|b| b.read);
     uploader.pass().await.unwrap();
     assert!(!dir.join(&days[0].file).exists(), "removed once it can be");
     assert_eq!(bucket.with(|b| b.read), reads, "with no second read");
     assert_eq!(metrics.snapshot_archive.removed.get(), 1);
+    assert_eq!(resolved.try_recv().expect("the alert resolves")["alert_resolved"], "daily_snapshot_unremovable");
 }
 
 /// The node's uploader comes from `[daily_snapshots]`, `[archive]` and both of its delivered keys, under the custody
