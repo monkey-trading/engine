@@ -1,6 +1,7 @@
 //! The uploader's bound at the vault's finalized checkpoint, as the copy in use holds it.
 
 use super::*;
+use crate::alerts::resolution::ends_episode;
 use crate::archive::stand_in::{checkpoint_past, checkpoints};
 
 /// A root no log of the test sequencer's has.
@@ -48,14 +49,14 @@ async fn a_copy_that_holds_another_history_uploads_nothing_past_the_last_checkpo
     let (seq, root) = checkpoint_past(&node, &dir, 4).await;
     vault.finalize(seq, OTHER_ROOT);
     let alert = recv(&mut alerts, "archive_copy_superseded").await;
-    assert_eq!(alert["finalized_seq"], seq.to_string(), "{alert:?}");
     tokio::time::sleep(10 * FINALITY_EVERY).await;
     assert_eq!(bucket.with(|b| b.created), 1, "nothing past the checkpoint the copy held goes up");
     assert_eq!(metrics.archive.confirmed_ranges.get(), 1);
 
     vault.finalize(seq, &root);
     sources.send_replace(Some(node.manifest.clone()));
-    recv(&mut resolved, "archive_copy_superseded").await;
+    let resolution = recv(&mut resolved, "archive_copy_superseded").await;
+    assert!(ends_episode(&alert, &resolution), "the router ends the raised episode: {alert:?} and {resolution:?}");
     until("the ranges below the checkpoint confirmed", || metrics.archive.confirmed_ranges.get() >= 4).await;
     running.abort();
     node.stop().await;

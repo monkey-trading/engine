@@ -40,6 +40,8 @@ use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{Extensions, LookupSpan};
 
 mod episodes;
+#[cfg(test)]
+pub(crate) mod resolution;
 use crate::alerts::episodes::Episodes;
 mod outbox;
 use crate::alerts::outbox::Outbox;

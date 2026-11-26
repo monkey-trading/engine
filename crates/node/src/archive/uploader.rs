@@ -277,8 +277,7 @@ impl<F: Finality> Work<F> {
                 if std::mem::take(&mut self.anchor.raised) {
                     info!(
                         alert_resolved = "archive_copy_superseded",
-                        finalized_seq = seq,
-                        "this node's copy of the log holds the vault's finalized checkpoint"
+                        "this node's copy of the log holds the vault's finalized checkpoint at seq {seq}"
                     );
                 }
             }
@@ -292,15 +291,15 @@ impl<F: Finality> Work<F> {
     fn superseded(&mut self, seq: u64, root: &str, copy: Option<&str>) {
         (self.anchor.differs, self.anchor.raised) = (Some(seq), true);
         let held = self.anchor.held.as_ref().map(|(seq, _)| *seq);
+        // The seqs and roots are in the message, not fields, which key the alert's episode: the resolution
+        // carries none, and ends the episode whatever checkpoint the copy was raised for.
         warn!(
             alert = "archive_copy_superseded",
-            finalized_seq = seq,
-            finalized_root = root,
-            copy_root = copy.unwrap_or("none"),
-            held_seq = ?held,
-            "this node's copy of the log holds the vault's finalized checkpoint otherwise, or not at all, so it \
-             uploads none of its ranges past the last finalized checkpoint it holds: a member sets a superseded tail \
-             aside as it follows the operator, and the uploads go on from the copy it rebuilds"
+            "the vault finalized the checkpoint at seq {seq} with root {root}, and this node's copy of the log holds \
+             root {} there, so it uploads none of its ranges past the last finalized checkpoint it holds, seq \
+             {held:?}: a member sets a superseded tail aside as it follows the operator, and the uploads go on from \
+             the copy it rebuilds",
+            copy.unwrap_or("none")
         );
     }
 
