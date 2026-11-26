@@ -122,7 +122,12 @@ async fn a_waiting_snapshot_the_host_lost_is_paged_and_keeps_the_lag_alert_raise
     let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-lost"));
     let days: Vec<Listed> = (0..3).map(|day| publish_ticks(&dir, 2 + day, day as i64 * DAY_MS * 2 + 1_000)).collect();
     let kept = fs::read(dir.join(&days[1].file)).unwrap();
-    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let (_guard, mut alerts, mut resolutions) = capture_alerts_and_resolutions();
+    // A start resolves `daily_snapshot_unremovable` once; only the lag alert's resolutions count here.
+    let mut resolved = move || {
+        std::iter::from_fn(|| resolutions.try_recv().ok())
+            .find(|resolution| resolution["alert_resolved"] == "archive_upload_lagging")
+    };
     // A lag of none: every wait is paged at once.
     let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::ZERO);
     bucket.with(|b| b.down = true);
@@ -140,14 +145,14 @@ async fn a_waiting_snapshot_the_host_lost_is_paged_and_keeps_the_lag_alert_raise
     assert!(object(&bucket, &days[1]).is_none() && object(&bucket, &days[0]).is_none());
     assert!(object(&bucket, &days[2]).is_some(), "the others go up");
     assert_eq!(metrics.snapshot_archive.pending.get(), 1, "it still waits");
-    assert!(resolved.try_recv().is_err(), "the lag alert stays raised");
+    assert!(resolved().is_none(), "the lag alert stays raised");
     uploader.pass().await.unwrap();
     assert!(alerts.try_recv().is_err(), "it is not paged again");
-    assert!(resolved.try_recv().is_err(), "the lag alert stays raised");
+    assert!(resolved().is_none(), "the lag alert stays raised");
     // Another member's upload puts it in the bucket: it is confirmed, and the lag alert resolves.
     bucket.with(|b| b.objects.insert(format!("{}{}", prefix(), days[1].file), kept));
     uploader.pass().await.unwrap();
-    assert_eq!(resolved.try_recv().expect("the alert resolves")["alert_resolved"], "archive_upload_lagging");
+    assert_eq!(resolved().expect("the alert resolves")["alert_resolved"], "archive_upload_lagging");
     assert_eq!(metrics.snapshot_archive.pending.get(), 0);
 }
 
