@@ -47,7 +47,8 @@ fn an_approval_within_a_held_turn_comes_due_at_the_first_checkpoint_covering_it_
     node.release();
     assert!(node.signed.try_recv().is_err(), "an approval was signed before a member verified the log through it");
 
-    // A later approval and its checkpoint leave the check due on its checkpoint.
+    // A later approval and its checkpoint, which nothing holds back now, leave the check due on its checkpoint.
+    node.seq.gate.as_mut().expect("the checkpoint gate").registry = None;
     node.approve(3);
     let later = node.seq.engine.last_seq().unwrap();
     assert_eq!(node.last_checkpoint().seq, later, "the later approval's checkpoint was not written");
@@ -124,8 +125,10 @@ async fn evidence_that_loads_an_approval_past_the_verified_head_makes_its_check_
     node.take_turn();
     // A whole window of approvals that checks verify, then one past them that none does.
     let window = u64::try_from(BACKLOG_WINDOW).unwrap();
+    // The posting worker takes every checkpoint, so none waits for a place in its queue.
     for nonce in 2..=window {
         node.approve(nonce);
+        while node._queued.try_recv().is_ok() {}
     }
     loop {
         let due = node.due.borrow().clone();

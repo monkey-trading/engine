@@ -892,10 +892,10 @@ fires.
 While a turn is in effect whose set names two or more members, the operator's trading server signs
 a withdrawal only once a check has verified the log through the withdrawal's approval. While you hold
 a turn, your trading server asks for a check whenever a checkpoint that it writes covers an approval
-waiting past the last verified head, so an approval waits for the check of the first checkpoint that
-covers it. A turn with no withdrawals asks for no check past its boundary's. A one-member set needs no
-check, and neither does a log whose turns an installation has ended. Turning rotation off leaves the
-drawn turns, and the check, in place until that installation.
+waiting past the last verified head, so an approval waits for the check of a checkpoint that covers
+it: the latest written when its check comes due. A turn with no withdrawals asks for no check past its
+boundary's. A one-member set needs no check, and neither does a log whose turns an installation has
+ended. Turning rotation off leaves the drawn turns, and the check, in place until that installation.
 
 - **At a handover,** the successor's start is the check, because its replica verified the log
   through the checkpoint that it was handed.

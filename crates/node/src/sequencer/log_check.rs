@@ -363,9 +363,9 @@ impl Sequencer {
         }
     }
 
-    /// Notes the checkpoint just written at `seq` with `root`, which a check that comes due targets
-    /// when it is the first to reach the seq the check needs: at the boundary, the latest `TurnTaken`;
-    /// within the turn, the earliest approval waiting past the verified head.
+    /// Notes the checkpoint just written at `seq` with `root`, the latest, which a check that comes due
+    /// targets when the target falls short of the seq the check needs: at the boundary, the latest
+    /// `TurnTaken`; within the turn, the earliest approval waiting past the verified head.
     pub(super) fn log_check_checkpointed(&mut self, seq: u64, root: [u8; 32]) {
         let link = B256::from(self.command_prefix);
         self.log_check.checkpointed(VerifiedHead { seq, link, root: B256::from(root) });
