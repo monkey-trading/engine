@@ -35,7 +35,9 @@ async fn a_whole_log_handover_onto_a_copy_a_mirror_spelt_otherwise_holds_the_pre
     });
     exchange.successor.tee.sealing = Some(mirrored(&exchange, &archive(&mirror).await));
 
-    sync_predecessor_log(&exchange.successor, &incumbent(), signers(&exchange), &exchange.metrics).await.unwrap();
+    sync_predecessor_log(&exchange.successor, &incumbent(), (signers(&exchange), None), &exchange.metrics)
+        .await
+        .unwrap();
     assert_eq!(
         log_entries(&exchange.successor_log),
         log_entries(&mirror),
@@ -89,7 +91,7 @@ async fn the_archive_restore_finishes_a_marked_cut_before_it_extends_the_copy() 
     std::fs::write(log.join("takeover.json"), serde_json::to_vec(&marker).unwrap()).unwrap();
     assert!(crate::log::SegmentedLog::open(&log, |_| Ok(())).is_err(), "the interrupted cut opens by itself");
 
-    sync_predecessor_log(&exchange.successor, &incumbent(), signers(&exchange), &exchange.metrics)
+    sync_predecessor_log(&exchange.successor, &incumbent(), (signers(&exchange), None), &exchange.metrics)
         .await
         .unwrap_or_else(|e| panic!("the restore refused the copy: {e:#}"));
     assert!(!log.join("takeover.json").exists(), "the marker outlived the restore");
@@ -110,7 +112,9 @@ async fn a_whole_log_handover_finishes_a_marked_cut_before_it_takes_the_log() {
     exchange.make_upgrade_current();
     let mirror = mirror_of(&operator, "copies-handover-marked-mirror", |_, _| {});
     exchange.successor.tee.sealing = Some(mirrored(&exchange, &archive(&mirror).await));
-    sync_predecessor_log(&exchange.successor, &incumbent(), signers(&exchange), &exchange.metrics).await.unwrap();
+    sync_predecessor_log(&exchange.successor, &incumbent(), (signers(&exchange), None), &exchange.metrics)
+        .await
+        .unwrap();
     // The last checkpoint that ends a listed segment of the restored copy: a cut to it trims nothing.
     let log = &exchange.successor_log;
     let ended = Manifest::load(log).unwrap().segments.iter().rev().find_map(|listed| {
@@ -160,10 +164,11 @@ async fn a_restore_refuses_a_copy_a_mirror_dropped_or_replaced_a_seal_in() {
         });
         exchange.successor.tee.sealing = Some(mirrored(&exchange, &archive(&mirror).await));
 
-        let refused = sync_predecessor_log(&exchange.successor, &incumbent(), signers(&exchange), &exchange.metrics)
-            .await
-            .err()
-            .unwrap_or_else(|| panic!("{how}: the successor restored a copy without its writer's seals"));
+        let refused =
+            sync_predecessor_log(&exchange.successor, &incumbent(), (signers(&exchange), None), &exchange.metrics)
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{how}: the successor restored a copy without its writer's seals"));
         assert!(format!("{refused:#}").contains("seq 0 carries no seal by an accepted signer"), "{how}: {refused:#}");
         assert!(exchange.drains.try_recv().is_err(), "{how}: the predecessor was asked to stop");
         assert!(!exchange.run.is_finished(), "{how}: the predecessor stopped serving");
@@ -203,7 +208,7 @@ async fn a_successor_whose_restored_copy_dropped_or_replaced_a_seal_confirms_not
 // ── Helpers ──
 
 /// Sequences `count` ticks on `node`.
-async fn ticks(node: &TestSequencer, count: usize) {
+pub(super) async fn ticks(node: &TestSequencer, count: usize) {
     for _ in 0..count {
         node.submit(Command::Tick).await;
     }
@@ -212,7 +217,7 @@ async fn ticks(node: &TestSequencer, count: usize) {
 /// What an archive mirror of the log in `operator` serves, in a new directory named for `name`: its
 /// completed segments and their listings, changed by `alter`, which is given the last command they
 /// hold.
-fn mirror_of(operator: &Path, name: &str, alter: impl FnOnce(&Path, u64)) -> PathBuf {
+pub(super) fn mirror_of(operator: &Path, name: &str, alter: impl FnOnce(&Path, u64)) -> PathBuf {
     let mirror = scratch_dir(name);
     std::fs::create_dir_all(&mirror).unwrap();
     let listings = Manifest::load(operator).unwrap().segments;
@@ -226,7 +231,7 @@ fn mirror_of(operator: &Path, name: &str, alter: impl FnOnce(&Path, u64)) -> Pat
 }
 
 /// The successor's sealing section, with `mirror` as its only archive mirror.
-fn mirrored(exchange: &Exchange, mirror: &str) -> crate::config::SealingSection {
+pub(super) fn mirrored(exchange: &Exchange, mirror: &str) -> crate::config::SealingSection {
     let sealing = format!(
         "dir = {:?}\n[handover]\nlisten = '127.0.0.1:0'\nmirrors = [{mirror:?}]",
         exchange.successor_dir.display().to_string()
@@ -235,20 +240,20 @@ fn mirrored(exchange: &Exchange, mirror: &str) -> crate::config::SealingSection 
 }
 
 /// The signers the vault recorded, as the successor reads them before restoring the log.
-fn signers(exchange: &Exchange) -> std::collections::BTreeSet<AccountId> {
+pub(super) fn signers(exchange: &Exchange) -> std::collections::BTreeSet<AccountId> {
     let old = AccountId(exchange.old.enclave_key().unwrap().address());
     [old, AccountId(crate::tee::EnclaveKey::test_key().address())].into()
 }
 
 /// The incumbent, whose own API hostname nothing answers on: the mirror alone serves its archive.
-fn incumbent() -> Source {
+pub(super) fn incumbent() -> Source {
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
     Source { endpoint: closed.clone(), api_hostname: closed, release: [0x22; 32], candidate: AccountId([0x42; 20]) }
 }
 
 /// Answers the predecessor's stop as the node does: a final checkpoint through the sequencer, which
 /// seals the log's tail segment, then the drained head. The task ends with the head's seq.
-fn answer_stop(exchange: &mut Exchange, node: TestSequencer, operator: PathBuf) -> JoinHandle<u64> {
+pub(super) fn answer_stop(exchange: &mut Exchange, node: TestSequencer, operator: PathBuf) -> JoinHandle<u64> {
     let mut drains = std::mem::replace(&mut exchange.drains, mpsc::channel(1).1);
     tokio::spawn(async move {
         let reply = drains.recv().await.expect("the predecessor asks to stop");
@@ -265,7 +270,7 @@ fn answer_stop(exchange: &mut Exchange, node: TestSequencer, operator: PathBuf) 
 }
 
 /// Serves the files in `dir` as an archive mirror, over plain HTTP on loopback: its base URL.
-async fn archive(dir: &Path) -> String {
+pub(super) async fn archive(dir: &Path) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     let dir = dir.to_owned();

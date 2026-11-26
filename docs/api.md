@@ -902,8 +902,9 @@ leaf and node hashes.
 The route answers only once the command is durable in the log. The server keeps the charges of the
 newest eight commands that ran a rollover, which is a week of rollovers, and stores older ones for
 the period that `history.retention` sets. It answers 404 for a command that is not yet durable, that
-charged nothing, or whose charges it no longer holds. A replay of the public log derives those
-charges again.
+charged nothing, or whose charges it no longer holds, and, after a start from a daily snapshot, for
+a command before those the start checked, since the server proves stored charges only against the
+log it checked. A replay of the public log derives those charges again.
 
 ### Proof of an account
 
@@ -1437,10 +1438,12 @@ configuration sets how long each resolution is kept.
 ### Where dashboard data begins
 
 The figures behind `/v1/house`, `/v1/house/positions`, `/v1/stats/series` and the `/v1/monkey`
-routes are derived from the log and held in memory. A server rebuilds them when it starts. A server
-that starts from a recovery snapshot rather than from the whole log holds only what came after that
-snapshot. Each answer therefore states where its data begins: `begins_ms`, `begins_seq`, and
-`from_genesis`, which is true when the data covers the whole log.
+routes are derived from the log and held in memory. A server rebuilds them when it starts, from the
+whole log or from a daily snapshot, which carries them as they stood at its checkpoint under the
+enclave's signature, and the log after it; either way it answers as it did before the start. A
+server that starts from a recovery snapshot holds only what came after that snapshot. Each answer
+therefore states where its data begins: `begins_ms`, `begins_seq`, and `from_genesis`, which is true
+when the data covers the whole log.
 
 ### The operator
 
@@ -1546,12 +1549,16 @@ snapshot:
 
 `seq` and `index` are the offset of the checkpoint's entry in the log, which names the file, `ts` is
 its sequenced time and `root` its state root. `GET /v1/archive/snapshots/{file}` returns one listed
-snapshot as a JSON object: `schema` (2), `offset`, `checkpoint`, the checkpoint entry as the log
+snapshot as a JSON object: `schema` (3), `offset`, `checkpoint`, the checkpoint entry as the log
 holds it, `engine`, the engine's state, `state`, the SHA-256 of `engine`'s bytes as the file holds
-them, and `signature`, the enclave key's 65-byte signature over the keccak-256 of
-`engine.daily-snapshot.v1`, the chain id as 8 bytes and the vault's 20 bytes, `seq` as 8 bytes and
-`index` as 4, all big-endian, the root's 32 bytes and `state`'s. A snapshot of schema 1, written
-before snapshots were signed, has neither `state` nor `signature`. A file the manifest does not list
+them, `carried`, what a replay of the log holds after the checkpoint besides the engine, `history`, the
+dashboard record and the chart history's anchors at the checkpoint, and `signature`, the enclave key's
+65-byte signature over the keccak-256 of `engine.daily-snapshot.v2`, the chain id as 8 bytes and the
+vault's 20 bytes, `seq` as 8 bytes and `index` as 4, all big-endian, the root's 32 bytes, `state`'s, and
+the SHA-256s of `carried`'s and `history`'s bytes as the file holds them. A snapshot of schema 2 has
+neither `carried` nor `history`, and its signature covers the tag `engine.daily-snapshot.v1` and the
+fields to `state`; one of schema 1, written before snapshots were signed, has neither `state` nor
+`signature`. A file the manifest does not list
 answers 404, and so does every request to a server without `[daily_snapshots]`. The server checks
 each snapshot's length and hash against the manifest before serving it. `engine replay --snapshots`
 takes one only at a checkpoint the log holds, equal to the snapshot's, once the root of the
@@ -1580,7 +1587,10 @@ can also carry signed frames, executable quotes, the operating status and the st
 
 Without `from` or `after`, the stream starts with the next message. With either, it reads the log
 from storage from that point, then continues live. `from` and `after` together are refused with 400,
-as is any other value that breaks the rules above. A connection that falls behind reads from storage
+as is any other value that breaks the rules above. A server may hold only the newest segments of the
+log, the older ones being in the archive. A `from` or `after` that falls before the first seq it holds
+is refused with 400, naming that seq and the archive, and the client reads the earlier part from
+`/v1/archive/{file}` and resumes with `after`. A connection that falls behind reads from storage
 again rather than being dropped. A connection that stops reading for `api.send_timeout` is closed,
 and the client resumes with `after`.
 

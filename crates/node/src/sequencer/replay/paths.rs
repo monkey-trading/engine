@@ -5,10 +5,13 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, ensure};
+use tracing::warn;
 
 use engine_core::types::AccountId;
 
+use crate::daily_snapshots::Signed;
 use crate::log::{self, CheckpointDomain, LogEntry, ReplayWorkers, SealChecks, SegmentedLog};
+use crate::sequencer::replay::resumed::SnapshotRefused;
 use crate::sequencer::replay::{Replay, Replayed};
 
 #[cfg(test)]
@@ -144,6 +147,51 @@ pub(crate) fn replay_path_from_observing(
     Ok(replayed)
 }
 
+/// Publishes into `snapshots`, signed by `signing`, the daily snapshot a node writes of the log in `dir` at the
+/// checkpoint `pick` names among its checkpoints of a state with custody finality, given how many there are: the
+/// engine and the replay state a whole replay under `signing`'s key holds there, with no history anchors. Its
+/// listing.
+#[cfg(test)]
+pub(crate) fn publish_daily_snapshot(
+    dir: &Path,
+    snapshots: &Path,
+    signing: crate::daily_snapshots::Signing,
+    pick: impl FnOnce(usize) -> usize,
+) -> crate::daily_snapshots::Listed {
+    use crate::snapshot::sealing::Encoding;
+    let signer = AccountId(signing.key.address());
+    let mut replay = Replay::with_trust(Some(signing.domain), Some(signer));
+    let mut held = Vec::new();
+    SegmentedLog::open(dir, |entry| {
+        replay.apply(&entry)?;
+        if let LogEntry::Checkpoint(checkpoint) = &entry
+            && replay.engine.deposit_finality_enabled()
+        {
+            let (engine, carried) =
+                (serde_json::to_string(&replay.engine)?, serde_json::to_string(&replay.carried()?)?);
+            let offset = replay.last_offset.expect("the checkpoint's offset");
+            held.push((offset, checkpoint.clone(), replay.engine.now(), engine, carried));
+        }
+        Ok(())
+    })
+    .expect("the log replays");
+    let (offset, checkpoint, ts, engine, carried) = held.swap_remove(pick(held.len()));
+    let (engine, carried, history) =
+        (Encoding::Encoded(engine), Encoding::Encoded(carried), crate::daily_snapshots::Pending::none());
+    let job = crate::daily_snapshots::Job { offset, checkpoint, ts, engine, carried, history, signing };
+    crate::daily_snapshots::publish_now(snapshots, job).expect("the snapshot publishes")
+}
+
+/// Removes from the log directory `dir` every segment file before the one holding seq `seq`, leaving the manifest
+/// listing them, as a host that keeps only the segments from a daily snapshot's on does. How many it removed.
+#[cfg(test)]
+pub(crate) fn remove_segments_before(dir: &Path, seq: u64) -> usize {
+    let listed = crate::log::Manifest::load(dir).expect("the manifest").segments;
+    let held = listed.iter().rposition(|segment| segment.first_seq <= seq).expect("a segment holds the seq");
+    listed[..held].iter().for_each(|segment| fs::remove_file(dir.join(&segment.file)).expect("a segment file"));
+    held
+}
+
 /// Replays a published log whose checkpoint signer changes at signer epochs the vault records,
 /// given an independently verified attestation for each signer: every checkpoint and every typed
 /// withdrawal must be one of `attested`, unlike `replay_path_with_trust`'s single pinned signer. The
@@ -177,6 +225,41 @@ pub(crate) fn replay_copy(
     replay_attested(path, Replay::copy(domain, attested.clone()), attested, SealChecks::Every(workers))
 }
 
+/// `replay_copy` of the copy in the log directory at `path`, going on from `start`, a daily snapshot whose
+/// checkpoint the copy holds, when one is given: the copy is read only from that checkpoint on
+/// (`Replay::replay_after`), so its segments before it need not be on this host, and what follows is checked as
+/// `replay_copy` checks a whole copy. A snapshot the replay cannot go on from at all (`SnapshotRefused`) is paged
+/// as Warning `snapshot_start_refused`, and the whole copy replays instead. With the seq of the snapshot's
+/// checkpoint the replay went on from, or none for a replay of the whole copy.
+/// Error cases:
+/// - as `replay_copy`, or the copy holds another entry than the snapshot's checkpoint at its offset
+pub(crate) fn replay_copy_from(
+    start: Option<Signed>,
+    path: &Path,
+    domain: CheckpointDomain,
+    attested: BTreeSet<AccountId>,
+    workers: ReplayWorkers,
+) -> anyhow::Result<(Replayed, Option<u64>)> {
+    let Some(start) = start else {
+        return replay_copy(path, domain, attested, workers).map(|replayed| (replayed, None));
+    };
+    let (file, seq) = (start.path.clone(), start.snapshot.offset.seq);
+    let replay = Replay::copy(domain, attested.clone());
+    match replay.replay_after(start, path, SealChecks::Every(workers), |_| Ok(())) {
+        Ok((replay, _)) => Ok((attested_end(replay.finish(), path, &attested)?, Some(seq))),
+        Err(refused) if refused.is::<SnapshotRefused>() => {
+            warn!(
+                alert = "snapshot_start_refused",
+                seq,
+                "the replay of the copy does not go on from daily snapshot {}: {refused:#}; the whole copy replays",
+                file.display()
+            );
+            replay_copy(path, domain, attested, workers).map(|replayed| (replayed, None))
+        }
+        Err(refused) => Err(refused),
+    }
+}
+
 /// Runs `replay`, an attested replay of `attested`, over the log at `path`, its command seals checked
 /// as `seals` says.
 /// Error cases:
@@ -195,12 +278,19 @@ fn replay_attested(
         log::read_file_ahead(path, |entry| replay.apply(&entry))
     };
     replay.settled(read)?;
-    let replayed = replay.finish();
+    attested_end(replay.finish(), path, &attested_set)
+}
+
+/// `replayed`, an attested replay of `attested` over the log at `path`, once it holds a command and a
+/// checkpoint, and no command after its last checkpoint lacks a seal by one of `attested`.
+/// Error cases:
+/// - it holds no command or no checkpoint, or its tail is not sealed by one of `attested` (`require_attested`)
+fn attested_end(replayed: Replayed, path: &Path, attested: &BTreeSet<AccountId>) -> anyhow::Result<Replayed> {
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
     // No attested key authenticated a command tail after the last checkpoint: an unsealed
     // append must not pass as verified.
-    replayed.origin.require_attested(&attested_set)?;
+    replayed.origin.require_attested(attested)?;
     Ok(replayed)
 }
 
@@ -247,3 +337,6 @@ pub(crate) fn replay_path_with_authorities(
     ensure!(replayed.commands > 0 && replayed.checkpoints > 0, "public log has no verified command/checkpoint");
     Ok(replayed)
 }
+
+#[cfg(test)]
+mod tests;

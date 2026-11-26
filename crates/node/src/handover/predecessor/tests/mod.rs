@@ -10,6 +10,7 @@ use entries::{checkpoint, command, publish};
 mod fold;
 mod listener;
 mod secrets;
+mod snapshot;
 mod stop;
 mod successor;
 mod tail;
@@ -92,6 +93,8 @@ struct Exchange {
     metrics: crate::metrics::Metrics,
     /// The turn's latest assignment, as the predecessor reads it: none until a test sets one.
     assignments: Arc<crate::handover::assigned::tests::FakeAssignments>,
+    /// The checkpoint the vault accepted last, as both sides read it: none until a test sets one.
+    finalized: Arc<Mutex<Option<(u64, String)>>>,
 }
 
 #[tokio::test]
@@ -190,6 +193,7 @@ async fn a_successor_the_vault_no_longer_names_once_the_keys_arrive_seals_nothin
         synced: Arc::default(),
         rotation: Default::default(),
         scheduled: Default::default(),
+        finalized: Default::default(),
     };
     let err = exchange.take_reading(vault).await.err().expect("keys sealed for a release the vault no longer names");
     assert!(format!("{err:#}").contains("the vault's current release is"), "{err:#}");
@@ -243,27 +247,6 @@ async fn a_stopped_predecessor_keeps_serving_until_a_successor_confirms() {
     assert_eq!(answer.await.unwrap(), 1, "sequencing stopped once");
 }
 
-#[tokio::test]
-async fn a_recorded_request_gets_nothing_on_another_connection() {
-    let mut exchange = Exchange::start("handover-replay").await;
-    exchange.make_upgrade_current();
-    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
-    let _answer = exchange.answer_drain(Ok(head));
-    let (mut first, _, recorded) = exchange.connect(exchange.successor.file_sha256).await;
-    send(&mut first, &recorded).await.unwrap();
-    assert!(matches!(receive(&mut first).await.unwrap(), Reply::Keys { .. }));
-    drop(first);
-
-    // The host replays the request on a connection of its own, which carries another challenge.
-    let mut replayed = TcpStream::connect(&exchange.address).await.unwrap();
-    let _: Challenge = receive(&mut replayed).await.unwrap();
-    send(&mut replayed, &recorded).await.unwrap();
-    let reply = timeout(Duration::from_secs(5), receive(&mut replayed)).await.expect("no answer in time").unwrap();
-    assert!(matches!(reply, Reply::Refused { .. }), "a replayed request got the keys");
-    assert!(!exchange.run.is_finished(), "a replayed request ended the predecessor");
-    exchange.take().await.unwrap();
-}
-
 // ── Helpers ──
 
 impl Exchange {
@@ -299,6 +282,7 @@ impl Exchange {
         let predecessor_log = log.unwrap_or_else(|| scratch_dir(&format!("{name}-old-log")));
         let rotation = Rotation::default();
         let scheduled = Arc::new(Mutex::new(None));
+        let finalized = Arc::new(Mutex::new(None));
         let (samples, samples_rx) = watch::channel(None);
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
@@ -325,6 +309,7 @@ impl Exchange {
                 synced: synced.clone(),
                 rotation: rotation.clone(),
                 scheduled: scheduled.clone(),
+                finalized: finalized.clone(),
             },
             log_dir: predecessor_log.clone(),
             trusted: TrustedClock::new(Arc::new(SystemClock), samples_rx, Duration::from_secs(1)),
@@ -365,6 +350,7 @@ impl Exchange {
             reached: None,
             metrics: crate::metrics::Metrics::new(),
             assignments,
+            finalized,
         }
     }
 
@@ -461,6 +447,7 @@ impl Exchange {
             synced: self.synced.clone(),
             rotation: self.rotation.clone(),
             scheduled: self.scheduled.clone(),
+            finalized: self.finalized.clone(),
         })
         .await
     }

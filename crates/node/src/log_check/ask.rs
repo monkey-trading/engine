@@ -146,8 +146,15 @@ impl<C: CheckpointChain> Asker<C> {
         let at = self.vault.observe(View::Finalized, &[]).await?;
         let signer_epoch = at.lifecycle.as_ref().map_or(1, |lifecycle| lifecycle.signer_epoch);
         let boundary = engine_core::turns::boundary(due.turn).context("the turn has no boundary")?;
-        let statement =
-            Statement { signer_epoch, boundary, turn: due.turn, position: due.position, set: due.set, head: due.head };
+        let statement = Statement {
+            signer_epoch,
+            boundary,
+            turn: due.turn,
+            position: due.position,
+            set: due.set,
+            head: due.head,
+            from: due.from,
+        };
         let order = self.vault.turn_order(&at, due.turn).await.context("reading the turn's order")?;
         let mut failures = Vec::new();
         // A member the schedule promoted or skipped to after the in-office assignment may have sequenced

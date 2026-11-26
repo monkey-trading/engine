@@ -146,7 +146,7 @@ impl Node {
     }
 
     /// `unpaired`, publishing a daily snapshot into `daily` at the first checkpoint of each UTC day, as a
-    /// node with `[daily_snapshots]` does.
+    /// node with `[daily_snapshots]` does, with the stats worker whose fold gives each its replay state.
     pub(super) fn publishing(
         book: engine_core::Engine,
         dir: &Path,
@@ -163,7 +163,16 @@ impl Node {
         let mut seq =
             Sequencer::recover(cfg, key, broadcast::channel(16).0, mpsc::unbounded_channel().0).expect("an empty log");
         seq.trust(sample_around(clock.as_ref())).expect("a trusted time sample");
-        seq.take_over_checkpointed(book).expect("the book's first checkpoint");
+        // The worker starts from the book, before the first command, so its fold holds every entry of the log.
+        if daily.is_some() {
+            seq.take_over(book);
+            seq.track_stats(stats());
+            seq.sequence(Command::Tick).expect("the first command").expect("trusted time admits the first stamp");
+            seq.checkpoint().expect("the book's first checkpoint");
+            seq.flush().expect("the first checkpoint flushes");
+        } else {
+            seq.take_over_checkpointed(book).expect("the book's first checkpoint");
+        }
         let mut node = Node { seq, clock, queued, manifest, checkpoint: None, pending: 0 };
         node.settle();
         node
@@ -329,6 +338,16 @@ impl Flow {
         due.extend([Due::Sample, Due::Tick, Due::Request, Due::Frontier].map(|kind| Reverse((0, kind))));
         due.extend(rates.keys().map(|market| Reverse((0, Due::Price(*market)))));
         Flow { traders, rates, moves: BTreeMap::new(), published: None, due, origin_ms: None, ran_us: 0, blocks: 0 }
+    }
+
+    /// Moves the flow's time on by `by` with nothing sequenced, as a quiet stretch of a day does: its next run goes
+    /// on that much later, from where `node`'s clock, advanced as much, stands.
+    pub(super) fn skip(&mut self, node: &mut Node, by: Duration) {
+        node.clock.advance(by);
+        node.seq.trust(sample_around(node.clock.as_ref())).expect("a trusted time sample");
+        if let Some(origin) = self.origin_ms.as_mut() {
+            *origin += Millis::try_from(by.as_millis()).expect("a skip within the time range");
+        }
     }
 
     /// Sequences the next `span` of flow at `multiple` times launch flow into `node`, calling `day` with

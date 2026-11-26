@@ -11,7 +11,8 @@ use super::*;
 
 /// A vault that names `signer`, and the release `current` holds as its current one; with `synced`
 /// set it reads the fold too, and that is the release its generation has folded. Its earlier epoch's
-/// signer is the test sequencer's key, which signs the logs the tests' nodes write.
+/// signer is the test sequencer's key, which signs the logs the tests' nodes write. The checkpoint it
+/// accepted last is the one `finalized` holds, at every view.
 pub(super) struct Vault {
     pub(super) signer: AccountId,
     pub(super) current: Arc<Mutex<CurrentRelease>>,
@@ -21,6 +22,8 @@ pub(super) struct Vault {
     pub(super) rotation: Rotation,
     /// The turn the finalised schedule names, at any time at or after its boundary.
     pub(super) scheduled: Arc<Mutex<Option<ScheduledTurn>>>,
+    /// The checkpoint it accepted last, `(seq, root)`; none until a test sets one.
+    pub(super) finalized: Arc<Mutex<Option<(u64, String)>>>,
 }
 
 /// The registry's rotation switch as the vault reads it, at the latest block and at finality, and
@@ -38,7 +41,7 @@ impl CheckpointChain for Vault {
         Ok(VaultState {
             height: 1,
             signer: self.signer,
-            checkpoint: None,
+            checkpoint: self.finalized.lock().unwrap().clone(),
             balance: zero,
             deposits: 0,
             deposited: zero,
@@ -69,6 +72,23 @@ impl CheckpointChain for Vault {
     async fn scheduled_turn(&self, at: &Observation, now_ms: Millis) -> anyhow::Result<Option<ScheduledTurn>> {
         ensure!(at.view == View::Finalized, "the schedule is read at finality");
         Ok(self.scheduled.lock().unwrap().clone().filter(|turn| turn.boundary <= now_ms))
+    }
+
+    /// The checkpoint `finalized` holds, signed in the earlier epoch by the test sequencer's key, which signed it; any
+    /// other seq is one it accepted none at.
+    async fn accepted_checkpoints(
+        &self,
+        at: &Observation,
+        sequences: &[u64],
+    ) -> anyhow::Result<Vec<crate::checkpoints::AcceptedCheckpoint>> {
+        ensure!(at.view == View::Finalized, "checkpoint history is read at finality");
+        let finalized = self.finalized.lock().unwrap().clone();
+        let signer = AccountId(crate::tee::EnclaveKey::test_key().address());
+        let accepted = |seq: &u64| {
+            let (_, root) = finalized.clone().filter(|(at, _)| at == seq).context("checkpoint was not accepted")?;
+            anyhow::Ok(crate::checkpoints::AcceptedCheckpoint { seq: *seq, root, signer, signer_epoch: 1 })
+        };
+        sequences.iter().map(accepted).collect()
     }
 
     async fn epoch_signers(&self, at: &Observation, _epochs: &[u64]) -> anyhow::Result<Vec<AccountId>> {

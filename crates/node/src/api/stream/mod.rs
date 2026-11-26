@@ -37,6 +37,7 @@ use crate::sequencer::StreamMsg;
 mod notice;
 mod quotes;
 mod signed;
+mod start;
 mod status;
 use notice::NoticeFeed;
 use quotes::Quotes;
@@ -180,6 +181,7 @@ impl Feed {
 /// - `signed` is not `1`, it comes without a `challenge` or a `challenge` without it, or the
 ///   challenge is not 64 hex characters
 /// - `heads`, `status` or `notice` is not `1`, or comes without `signed=1`
+/// - `after` or `from` is before the first segment this host holds, which only the log's archive does
 /// - every subscriber place is taken
 pub async fn stream(
     State(s): State<ApiState>,
@@ -187,12 +189,7 @@ pub async fn stream(
     uri: Uri,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    let start = match (params.after, params.from) {
-        (Some(_), Some(_)) => return Err(ApiError::BadRequest("give after or from, not both".into())),
-        (Some(after), None) => Some(after.next()),
-        (None, Some(seq)) => Some(Offset::start_of(seq)),
-        (None, None) => None,
-    };
+    let start = start::offset(params.after, params.from)?;
     let heads = match (params.heads, params.signed) {
         (None, _) => false,
         (Some(1), Some(1)) => true,
@@ -238,6 +235,7 @@ pub async fn stream(
         (Some(_), _) => return Err(ApiError::BadRequest("signed must be 1".into())),
     };
     Span::current().record("id", display(start.map_or_else(|| "live".to_owned(), |from| from.to_string())));
+    start::ensure_held(&s.log_dir, &s.manifest, start).await?;
     let place = s.limits.subscribe()?;
     let feed = Feed::new(s.stream.subscribe(), s.log_dir.clone(), s.manifest.clone(), s.backfills.clone(), start)
         .timed(s.limits.stream_seconds());
@@ -490,6 +488,8 @@ fn read_batch(
     Ok((Some(reader), batch))
 }
 
+#[cfg(test)]
+mod archived_tests;
 #[cfg(test)]
 mod feed_tests;
 #[cfg(test)]

@@ -54,6 +54,7 @@ impl LogReader {
     /// Returns the next authenticated entry, or None once the published flush frontier is reached.
     /// Error cases:
     /// - disk bytes, required proofs, framing, or contiguous command seqs fail verification
+    /// - the segment to read is listed but not on this host, so only the archive holds it (`NotLocal`)
     pub fn next_entry(&mut self) -> anyhow::Result<Option<(Offset, LogEntry)>> {
         let next = match self.held.take() {
             Some(held) => held,
@@ -73,6 +74,7 @@ impl LogReader {
     /// only to open a segment or to handle its end; a legacy view lists every completed segment.
     /// Error cases:
     /// - catalog membership, exact bytes, framing, or offset continuity is invalid
+    /// - the segment to read is not on this host (`NotLocal`)
     fn read_next(&mut self) -> anyhow::Result<Option<(Offset, LogEntry)>> {
         loop {
             if self.segment.is_none() {
@@ -90,6 +92,11 @@ impl LogReader {
                 };
                 ensure!(segment.consumed <= info.bytes, "flushed prefix shrank");
                 let path = self.dir.join(&info.file);
+                // A listed segment the host no longer holds is the archive's to serve.
+                if !path.try_exists().with_context(|| format!("probing {}", path.display()))? {
+                    let not_local = crate::log::NotLocal { seq: info.first_seq.max(self.from.seq), first_local: None };
+                    return Err(anyhow::Error::new(not_local).context(format!("segment {}", info.file)));
+                }
                 let hashes = match segment.verified.take() {
                     Some((known, was_complete, hashes, progress)) if known == info && was_complete == complete => {
                         segment.verified = Some((known, was_complete, hashes.clone(), progress));

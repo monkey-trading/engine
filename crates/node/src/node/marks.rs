@@ -1,22 +1,26 @@
 //! Marks-cache startup: seed the derived cache during recovery on a hidden file, move it into
 //! place once startup commits (so a refused startup changes no persisted bytes), and hand the
-//! store, the API's reader, and the task's settings to who uses them. A member's start from its
-//! replica does none of the work its cache's size sets before its first command: it starts on an
-//! empty cache, sets its earlier holding's aside at activation, and the marks task takes it after.
+//! store, the API's reader, and the task's settings to who uses them. Recovery chooses what the
+//! seed starts from: the cache an earlier run left (`import_live`), or, for a start from a daily
+//! snapshot, the frozen copy of the cache at its checkpoint that the snapshot's anchors vouch for
+//! (`import_frozen`). A member's start from its replica does none of the work its cache's size sets
+//! before its first command: it starts on an empty cache, sets its earlier holding's aside at
+//! activation, and the marks task takes it after.
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use tracing::warn;
+use tracing::{info, warn};
 
 use engine_core::types::MarketId;
 use tokio::sync::mpsc;
 
 use crate::config::{BackfillSection, NodeConfig};
-use crate::history::marks::store::{MARKS_FILE, Store, discard_file};
-use crate::history::marks::{MarkSample, Reader, Retentions, Seeder, Source};
+use crate::history::marks::store::{Frozen, MARKS_FILE, Store, discard_file, frozen_path};
+use crate::history::marks::{Reader, Report, Retentions, Seeder, Source};
+use crate::log::Offset;
 use crate::sequencer::{Request, Sequencer};
 
 /// What startup builds for the marks cache: the shared store recovery seeds through its replay's
@@ -35,6 +39,10 @@ pub(super) struct MarksStartup {
     pub sources: BTreeMap<MarketId, Source>,
     /// Whether the prior cache waits for the marks task (a member's start from its replica).
     deferred: bool,
+    /// The cache an earlier run left, which `import_live` takes.
+    prior: Option<PathBuf>,
+    /// Whether recovery has chosen what the seed starts from (`import_live`, `import_frozen`).
+    chosen: Cell<bool>,
     active: bool,
 }
 
@@ -50,9 +58,10 @@ pub(super) type Activated = (Store, Reader, Option<BackfillSection>, BTreeMap<Ma
 
 /// Opens the cache on its hidden seed file in `cfg`'s history directory with its configured
 /// retentions, authenticating rows with `mac_key` (the enclave key's marks derivation), and
-/// resolves the backfill settings and the feed symbols a candles adapter serves. A `deferred`
-/// start imports nothing: its readers answer not ready until the marks task has taken the prior
-/// cache (`run::CatchUp`).
+/// resolves the backfill settings and the feed symbols a candles adapter serves. The seed holds
+/// nothing until recovery chooses what it starts from (`import_live`, `import_frozen`). A
+/// `deferred` start imports nothing: its readers answer not ready until the marks task has taken
+/// the prior cache (`run::CatchUp`).
 /// Error cases:
 /// - the retentions do not parse, or the cache cannot be opened
 pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32], deferred: bool) -> anyhow::Result<MarksStartup> {
@@ -64,24 +73,13 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32], deferred: bool) -> an
     if seed.exists() {
         discard_file(&seed).with_context(|| format!("clearing the leftover marks seed at {}", seed.display()))?;
     }
-    let mut store = Store::create(&seed, retentions, mac_key)?;
+    let store = Store::create(&seed, retentions, mac_key)?;
     // A previous run's cache carries provider-seeded rows and backfill markers the log cannot
     // rebuild; recovery's re-derivation resets only the log-derived content over them. A prior set
     // aside by a deferred start that never took it holds all the cache did.
     let prior = [PRIOR_FILE, MARKS_FILE].map(|file| cfg.history.dir.join(file)).into_iter().find(|path| path.exists());
     if deferred {
         store.defer();
-    } else if let Some(prior) = &prior {
-        store.import_prior(prior).context("importing the prior marks cache")?;
-        if let Err(e) = store.validate_chains() {
-            // A chain the import committed that does not validate is host-altered: rebuild from
-            // nothing. The log re-derives what it proves (a full recovery), a configured backfill
-            // re-seeds the rest, and snapshot-recovery deployments — which replay no log prefix into
-            // the cache — never inherit the hole.
-            warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
-            discard_file(&seed).with_context(|| format!("clearing the invalid marks seed at {}", seed.display()))?;
-            store = Store::create(&seed, retentions, mac_key)?;
-        }
     }
     let backfill =
         cfg.history.marks.as_ref().and_then(|marks| marks.backfill.clone()).filter(|backfill| backfill.enabled);
@@ -93,11 +91,63 @@ pub(super) fn startup(cfg: &NodeConfig, mac_key: [u8; 32], deferred: bool) -> an
         backfill,
         sources,
         deferred,
+        prior,
+        chosen: Cell::new(false),
         active: false,
     })
 }
 
 impl MarksStartup {
+    /// Starts the seed from the cache an earlier run left, if any: its rows that authenticate and its backfill
+    /// markers, for a replay of the log from its start, which re-derives the log-derived rows, or from a recovery
+    /// cache, which keeps them. A cache whose chains then fail validation is host-altered, and the seed starts
+    /// empty, paging Warning `marks_cache_rebuilt`: the log re-derives what it proves (a full recovery), a configured
+    /// backfill re-seeds the rest, and recovery-cache deployments, which replay no log prefix into the cache, never
+    /// inherit the hole.
+    /// Error cases:
+    /// - the prior cache cannot be read, or the seed cannot be cleared
+    pub(super) fn import_live(&self) -> anyhow::Result<()> {
+        self.chosen.set(true);
+        let Some(prior) = &self.prior else { return Ok(()) };
+        let shared = self.shared.as_ref().expect("the marks store opens at startup");
+        let mut store = shared.borrow_mut();
+        store.import_prior(prior).context("importing the prior marks cache")?;
+        if let Err(e) = store.validate_chains() {
+            warn!(alert = "marks_cache_rebuilt", "the prior marks cache fails validation and is rebuilt: {e:#}");
+            store.clear().context("clearing the invalid prior marks")?;
+        }
+        Ok(())
+    }
+
+    /// Starts the seed from the frozen copy of the cache at the checkpoint of the daily snapshot a start goes on
+    /// from, at `offset`, once every chain in it is the one `frozen`, the anchors the snapshot carries under its
+    /// signature, names (`Store::import_frozen`), for the replay of the log after it to extend (`extending_sink`).
+    /// A snapshot that carries no anchors, a copy that is missing or fails the check, starts the seed empty, paging
+    /// Warning `marks_cache_rebuilt`: the log-derived history starts at the snapshot, and the provider backfill
+    /// fills what it can.
+    pub(super) fn import_frozen(&self, offset: Offset, frozen: Option<&Frozen>) {
+        self.chosen.set(true);
+        let shared = self.shared.as_ref().expect("the marks store opens at startup");
+        let copy = frozen_path(&self.dir, offset);
+        let refused = match frozen {
+            None => "the daily snapshot carries no marks anchors".to_owned(),
+            Some(_) if !copy.exists() => format!("its frozen copy {} is missing", copy.display()),
+            Some(frozen) => match shared.borrow_mut().import_frozen(&copy, frozen) {
+                Ok(imported) => {
+                    info!(seq = offset.seq, imported, "the marks cache starts from the daily snapshot's frozen copy");
+                    return;
+                }
+                // The import is one transaction, so the seed it refused holds nothing.
+                Err(e) => format!("its frozen copy {} is refused: {e:#}", copy.display()),
+            },
+        };
+        warn!(
+            alert = "marks_cache_rebuilt",
+            seq = offset.seq,
+            "the marks cache starts empty at the daily snapshot, so its log-derived history begins there: {refused}"
+        );
+    }
+
     /// Moves the seeded cache into place once startup commits — after custody and recovery
     /// authorization — returning the store for the marks task, the reader the API serves from,
     /// and the task's backfill settings. The open store keeps its file after the rename, with its
@@ -105,8 +155,10 @@ impl MarksStartup {
     /// earlier one never taken is there, and returns it for the marks task; any other start's
     /// import took it, and it goes.
     /// Error cases:
-    /// - the checkpoint, a rename, or the discard fails
+    /// - recovery chose nothing for a start that is not deferred, or the checkpoint, a rename, or the discard fails
     pub(super) fn activate(mut self) -> anyhow::Result<Activated> {
+        // Moving an empty seed over the cache would drop what an earlier run left.
+        ensure!(self.deferred || self.chosen.get(), "the marks cache is activated before recovery chose its start");
         let shared = self.shared.take().expect("activate runs once");
         let mut store = match Rc::try_unwrap(shared) {
             Ok(cell) => cell.into_inner(),
@@ -182,16 +234,25 @@ pub(crate) fn recovery_sink(
     (Box::new(move |market, ts, mark| seeder.sample((market, ts, mark))), failed, reset_done)
 }
 
-/// Attaches the marks-sample channel to `sequencer`, returning the receiver the marks task drains.
-pub(super) fn track(sequencer: &mut Sequencer) -> mpsc::Receiver<MarkSample> {
+/// The sink a replay from a daily snapshot's checkpoint hands each changed mark to: it extends the cache the
+/// snapshot's frozen copy started (`MarksStartup::import_frozen`) and resets nothing. `failed` is set as for
+/// `recovery_sink`.
+pub(crate) fn extending_sink(shared: &Rc<RefCell<Store>>) -> (crate::history::marks::MarkSink, Rc<Cell<bool>>) {
+    let failed = Rc::new(Cell::new(false));
+    let mut seeder = Seeder::extending(shared.clone(), failed.clone());
+    (Box::new(move |market, ts, mark| seeder.sample((market, ts, mark))), failed)
+}
+
+/// Attaches the marks report channel to `sequencer`, returning the receiver the marks task drains.
+pub(super) fn track(sequencer: &mut Sequencer) -> mpsc::Receiver<Report> {
     let (tx, rx) = mpsc::channel(crate::history::marks::run::QUEUE);
     sequencer.track_marks(tx);
     rx
 }
 
 /// The live-sample plumbing the marks task drains.
-pub(super) fn live(rx: mpsc::Receiver<MarkSample>) -> crate::history::marks::run::Live {
-    crate::history::marks::run::Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() }
+pub(super) fn live(rx: mpsc::Receiver<Report>) -> crate::history::marks::run::Live {
+    crate::history::marks::run::Live::new(rx)
 }
 
 /// The supervised marks task: takes a member's earlier history (`catch_up`), if any, then writes live
@@ -237,6 +298,7 @@ mod tests {
                 .unwrap();
         }
         let marks = startup(&cfg, key, false).unwrap();
+        marks.import_live().unwrap();
         let reader = marks.shared.as_ref().unwrap().borrow().reader();
         let page = reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
         assert!(page.entries.is_empty(), "the invalid prior cache is not served");
@@ -293,6 +355,7 @@ mod tests {
         let (store, ..) = startup(&cfg, key, true).unwrap().activate().unwrap();
         drop(store);
         let marks = startup(&cfg, key, false).unwrap();
+        marks.import_live().unwrap();
         let (_store, reader, ..) = marks.activate().unwrap();
         assert_eq!(minutes(&reader).await.entries.len(), 2, "the next start did not import the prior set aside");
         assert!(!cfg.history.dir.join(PRIOR_FILE).exists(), "the imported prior was kept");
@@ -311,6 +374,7 @@ mod tests {
             leftover.observe(&[(7, 1_792_489_860_000, "67000".parse().unwrap())]).unwrap();
         }
         let marks = startup(&cfg, key, false).unwrap();
+        marks.import_live().unwrap();
         let reader = marks.shared.as_ref().unwrap().borrow().reader();
         let page = reader.page(7, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
         assert!(page.entries.is_empty(), "the leftover seed's rows are not served");
@@ -324,6 +388,7 @@ mod tests {
         cfg.history.dir = crate::test_support::scratch_dir("marks-activate").join("history");
         let key = crate::tee::EnclaveKey::test_key().marks_key();
         let marks = startup(&cfg, key, false).unwrap();
+        marks.import_live().unwrap();
         marks
             .shared
             .as_ref()
@@ -341,6 +406,44 @@ mod tests {
         store.observe(&[(1, 1_792_489_860_500, "67100".parse().unwrap())]).unwrap();
         let page = reader.page(1, Resolution::S1, i64::MIN, i64::MAX, 10, 10).await.unwrap();
         assert_eq!(page.entries[0].close, "67100".parse().unwrap());
+    }
+
+    /// A start from a daily snapshot takes the frozen copy the snapshot's anchors name, and starts the cache empty,
+    /// paging `marks_cache_rebuilt`, for a copy rolled back to an earlier one of the same cache, a copy that is
+    /// missing, and a snapshot that carries no anchors.
+    #[tokio::test]
+    async fn a_start_takes_only_the_frozen_copy_its_snapshot_anchors() {
+        let mut cfg = crate::test_support::dev_config();
+        cfg.history.dir = crate::test_support::scratch_dir("marks-frozen-start").join("history");
+        let key = crate::tee::EnclaveKey::test_key().marks_key();
+        let base = 1_792_489_860_000;
+        let (earlier, later) = (Offset { seq: 4, index: 1 }, Offset { seq: 8, index: 1 });
+        let frozen = {
+            let mut live = Store::create(&cfg.history.dir.join(MARKS_FILE), Retentions::defaults(), key).unwrap();
+            live.observe(&[(1, base, "67000".parse().unwrap())]).unwrap();
+            live.freeze(earlier).unwrap();
+            live.observe(&[(1, base + 60_000, "67100".parse().unwrap())]).unwrap();
+            live.freeze(later).unwrap()
+        };
+        let minutes = async |frozen: Option<&Frozen>| {
+            let marks = startup(&cfg, key, false).unwrap();
+            marks.import_frozen(later, frozen);
+            let reader = marks.shared.as_ref().unwrap().borrow().reader();
+            reader.page(1, Resolution::M1, i64::MIN, i64::MAX, 10, 10).await.unwrap().entries.len()
+        };
+        assert_eq!(minutes(Some(&frozen)).await, 2, "the copy the anchors name is taken");
+
+        let (_guard, mut alerts) = crate::test_support::capture_alerts();
+        let copy = frozen_path(&cfg.history.dir, later);
+        std::fs::copy(frozen_path(&cfg.history.dir, earlier), &copy).unwrap();
+        assert_eq!(minutes(Some(&frozen)).await, 0, "a rolled back copy is not taken");
+        assert_eq!(minutes(None).await, 0, "a snapshot with no anchors takes no copy");
+        std::fs::remove_file(&copy).unwrap();
+        assert_eq!(minutes(Some(&frozen)).await, 0, "a missing copy starts nothing");
+        let rebuilt = std::iter::from_fn(|| alerts.try_recv().ok())
+            .filter(|alert| alert["alert"] == "marks_cache_rebuilt" && alert["level"] == "WARN")
+            .count();
+        assert_eq!(rebuilt, 3, "each refusal pages");
     }
 
     use crate::history::marks::Resolution;

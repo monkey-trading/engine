@@ -197,7 +197,7 @@ impl SegmentedLog {
         // No consumer may use an incomplete candidate view before authorized publication.
         let authority = pending_catalog.is_empty().then_some(ReadAuthority(()));
         let manifest =
-            Manifest { segments: Arc::default(), catalog: Some(Arc::new(catalog)), active, authority, flushed: last };
+            Manifest { catalog: Some(Arc::new(catalog)), active, authority, flushed: last, ..Manifest::default() };
         let mut log = Self {
             dir: dir.to_owned(),
             last,

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::config::{BackfillSection, FeedsSection, Venue};
 use crate::history::marks::Resolution;
-use crate::history::marks::run::{BATCH, FLUSH_EVERY, Live};
+use crate::history::marks::run::{BATCH, FLUSH_EVERY, Live, write_freezes};
 use crate::history::marks::store::{Seed, Store};
 use anyhow::{Context, bail, ensure};
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -301,14 +301,46 @@ async fn fetch_rows(
     Ok(rows)
 }
 
+/// How often a backfill receives the queue while a freeze's copy is written.
+const FREEZE_POLL: Duration = Duration::from_millis(5);
+
 /// The run loop's live-sample service, shared with a backfill's slow fetches: drain the queue
 /// into the buffer, and flush at the batch or the one-second deadline, so a quiet market's
-/// newest mark reaches the cache within the same second it would without a backfill running.
+/// newest mark reaches the cache within the same second it would without a backfill running. A
+/// daily snapshot's freeze is written here, after the samples before it, so a backfill of minutes
+/// does not hold its snapshot's anchors past the writer's wait; the copy is written on a thread of
+/// its own while the queue is received into the buffer, so the sequencer's queue never fills and
+/// drops a sample, as the run loop's freeze does.
 /// Error cases:
 /// - the store rejects the flush
 fn service_live(live: &mut Live, store: &mut Store) -> anyhow::Result<()> {
-    while let Ok(sample) = live.samples.try_recv() {
-        live.buffered.push(sample);
+    while let Ok(report) = live.samples.try_recv() {
+        live.take(report);
+    }
+    if !live.freezes.is_empty() {
+        store.observe(&live.buffered).context(StoreFault)?;
+        live.buffered.clear();
+        let freezes = std::mem::take(&mut live.freezes);
+        let write = || {
+            std::thread::scope(|scope| {
+                let copy = scope.spawn(|| write_freezes(store, freezes));
+                while !copy.is_finished() {
+                    while let Ok(report) = live.samples.try_recv() {
+                        live.take(report);
+                    }
+                    std::thread::sleep(FREEZE_POLL);
+                }
+                copy.join().map_err(|_| anyhow::anyhow!("the marks freeze's thread panicked"))?
+            })
+        };
+        // The copy takes as long as the cache's size sets: the runtime moves its other tasks off this worker meanwhile.
+        let flavor = tokio::runtime::Handle::try_current().map(|runtime| runtime.runtime_flavor());
+        match flavor {
+            Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(write),
+            _ => write(),
+        }
+        .context(StoreFault)?;
+        live.flushed_at = tokio::time::Instant::now();
     }
     if !live.buffered.is_empty() && (live.buffered.len() >= BATCH || live.flushed_at.elapsed() >= FLUSH_EVERY) {
         store.observe(&live.buffered).context(StoreFault)?;

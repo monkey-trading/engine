@@ -4,8 +4,6 @@
 //! checkpoint gate at the vault's finalized checkpoint, and the latest commands' cumulative prefixes,
 //! the evidence that the replica holds a posted log head or a predecessor's tip.
 
-mod before;
-pub(crate) use before::Before;
 mod retained;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +27,8 @@ const RETAINED_CHECKPOINTS: usize = 4096;
 pub(crate) const RETAINED_LINKS: usize = if cfg!(test) { 256 } else { 1 << 16 };
 
 /// A command's cumulative command-prefix digest, its sequenced time, and the key that sealed it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Link {
     pub seq: u64,
     pub link: B256,
@@ -75,6 +74,34 @@ impl LiveReplay {
         }
     }
 
+    /// A replica of a copy in `domain` under `attested`, as `new`, going on from `snapshot`, a daily snapshot whose
+    /// checkpoint the copy holds: its engine with the replay state it carries (`Replay::resume`), the links it
+    /// carries retained as a replica retains them, with the links at `keep`, after the snapshot's checkpoint, and
+    /// its checkpoint's custody work, and every later checkpoint's from there on. The copy before the checkpoint
+    /// is not read.
+    /// Error cases:
+    /// - the snapshot carries no replay state, or does not stand for its engine and checkpoint (`Replay::resume`)
+    pub(crate) fn resume(
+        domain: CheckpointDomain,
+        attested: BTreeSet<AccountId>,
+        snapshot: crate::daily_snapshots::DailySnapshot,
+        keep: &[u64],
+    ) -> anyhow::Result<Self> {
+        let crate::daily_snapshots::DailySnapshot { offset, checkpoint, engine, carried, .. } = snapshot;
+        let carried = carried.context("the daily snapshot carries no replay state")?;
+        let (links, last_sealer) = (carried.links.clone(), carried.last_sealer());
+        let replay = Replay::copy(domain, attested).resume(engine, carried, checkpoint.clone(), offset)?;
+        let mut live = Self::wrapping(replay, false);
+        live.retained.keeping = keep.iter().copied().collect();
+        links.iter().skip(links.len().saturating_sub(RETAINED_LINKS)).for_each(|link| live.retained.command(*link));
+        live.retained.checkpoint(&checkpoint);
+        let engine = &live.replay.engine;
+        let work = Work::capture(checkpoint.clone(), live.replay.accounting, engine);
+        live.checkpoints.insert(checkpoint.seq, (work, engine.now()));
+        live.replay.seed_last_sealer(last_sealer);
+        Ok(live)
+    }
+
     /// `new`, starting from `engine`, a state no log holds (`Sequencer::take_over`), where a replica
     /// of a whole log starts from an empty one.
     #[cfg(test)]
@@ -118,6 +145,12 @@ impl LiveReplay {
         self.replay.record_stats_with(stats);
     }
 
+    /// Has the replica record every command it applies into `stats` as it stands (see
+    /// `Replay::record_stats_continuing`).
+    pub(crate) fn record_stats_continuing(&mut self, stats: Stats) {
+        self.replay.record_stats_continuing(stats);
+    }
+
     /// Keeps the stats worker in step with the replica from here, if it records stats, so a start from
     /// it makes no copy of the state (see `Replay::warm_stats`).
     pub(crate) fn warm_stats(&self) {
@@ -128,13 +161,6 @@ impl LiveReplay {
     /// seeds the marks cache.
     pub(crate) fn sample_marks_with(&mut self, sink: crate::history::marks::MarkSink) {
         self.replay.sample_marks_with(sink);
-    }
-
-    /// Counts the marks the engine holds now as taken, as a replay that applied the commands that set them does:
-    /// for a replica from a daily snapshot, so its first command hands on only the marks it moves.
-    pub(crate) fn count_marks_taken(&mut self) {
-        let marks = self.replay.engine.markets().iter().filter_map(|(id, market)| Some((*id, market.mark?)));
-        self.replay.last_marks = marks.collect();
     }
 
     /// Has the seals of the copy at `path` checked ahead of the replica by `workers`, from the next command
@@ -189,7 +215,8 @@ impl LiveReplay {
                     let taken = engine.daily_turns().taken.map(|taken| (taken.turn, taken.position));
                     // The replay checked the checkpoint's signature against its signer above.
                     let signer = checkpoint.signer.parse()?;
-                    checked.record(crate::log_check::answer::Checked { head, taken, signer });
+                    let from = self.replay.takings.applied_from().unwrap_or(0);
+                    checked.record(crate::log_check::answer::Checked { head, taken, signer, from });
                 }
                 if self.checkpoints.len() > RETAINED_CHECKPOINTS {
                     self.checkpoints.pop_first();

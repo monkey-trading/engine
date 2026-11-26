@@ -107,7 +107,16 @@ async fn a_takeover_replays_the_copy_against_the_vaults_signers_whatever_the_swi
     let origins = ["http://127.0.0.1:9".to_owned()];
     let finalize = async |dir: &std::path::Path, signers| {
         let copied = super::super::chain::Chain::new(domain, signer);
-        super::super::finalize(&archive, (domain, signers, Default::default()), &origins, dir, &takeover, copied).await
+        let copy = (dir, None);
+        super::super::finalize(
+            &archive,
+            (domain, signers, Default::default()),
+            &origins,
+            copy,
+            (&takeover, Default::default()),
+            copied,
+        )
+        .await
     };
     let err = finalize(&dir, BTreeSet::from([section.enclave])).await.expect_err("another enclave's set took the copy");
     assert!(format!("{err:#}").contains("refusing to truncate the copy"), "{err:#}");

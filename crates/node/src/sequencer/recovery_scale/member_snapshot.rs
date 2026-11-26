@@ -1,11 +1,12 @@
 //! A new member's start from a daily snapshot, which `scripts/dev-member-snapshot-start.sh` runs, on deterministic
-//! time with isolated temporary state: a node writing launch flow on a small book across a UTC midnight publishes a
-//! signed daily snapshot at its first checkpoint and at its first past midnight; a member with an empty copy
-//! backfills the node's archive over HTTP, fetches from it the newest snapshot its copy holds, and builds its replica
-//! from it with no whole replay, to the state, command prefix and last checkpoint a whole replay of the copy gives;
-//! it then takes the node's turn through the tail handover and stamps its first command; a member whose in-office
-//! member's turns began at midnight takes the snapshot before them; and a snapshot whose state its signer did not
-//! vouch for is passed over, paged as Warning `snapshot_start_refused`.
+//! time with isolated temporary state: a node writing launch flow on a small book across a UTC midnight has a signed
+//! daily snapshot, carrying the replay state, at its first checkpoint and at its first past midnight, written from a
+//! replay of its log as its writer would; a member with an empty copy backfills the node's archive over HTTP,
+//! fetches from it the newest snapshot its copy holds, and builds its replica from it with no whole replay, to the
+//! state, command prefix and last checkpoint a whole replay of the copy gives; it then takes the node's turn through
+//! the tail handover and stamps its first command; a member whose in-office member's turns began at midnight takes
+//! the snapshot before them; and a snapshot whose state its signer did not vouch for is passed over, paged as
+//! Warning `snapshot_start_refused`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,6 +31,7 @@ use crate::sequencer::recovery_scale::handover::{build_replica, hand_over, membe
 use crate::sequencer::recovery_scale::orders::Traders;
 use crate::sequencer::recovery_scale::restart::DOMAIN;
 use crate::sequencer::recovery_scale::{Base, mix};
+use crate::sequencer::replay::ranges::fixture::snapshot_log;
 use crate::standby::archive::{archive_client, bootstrap_archive};
 use crate::tee::EnclaveKey;
 use crate::test_support::capture_alerts;
@@ -53,14 +55,21 @@ fn dev_scenario_member_snapshot_start() {
     let key = Arc::new(EnclaveKey::generate());
     let signer = AccountId(key.address());
 
-    // The node publishes a snapshot at its first checkpoint, and at its first after midnight.
-    let mut node = Node::publishing(base.engine(), &log, key.clone(), Some(&snapshots));
+    // The node's log has a snapshot at its first checkpoint, and at its first after midnight.
+    let mut node = Node::unpaired(base.engine(), &log, key.clone());
     let to_midnight = DAY_MS - node.clock.now_ms().rem_euclid(DAY_MS);
     node.clock.advance(Duration::from_millis(u64::try_from(to_midnight).unwrap()) - BEFORE_MIDNIGHT);
     let mut flow = Flow::new(traders, BTreeMap::from([(1, 11.0)]));
     flow.run(&mut node, FLOW, 1.0, |_, _, _| {});
     node.checkpoint_now();
-    let midnight = published(&snapshots, 2).pop().expect("the snapshot past midnight");
+    let mut last_day = None;
+    let first_of_day =
+        |_: &crate::log::Checkpoint, ts| last_day.replace(daily_snapshots::day(ts)) != Some(daily_snapshots::day(ts));
+    let signing = daily_snapshots::Signing { key: key.clone(), domain: DOMAIN };
+    snapshot_log(base.engine(), &log, (&snapshots, &signing), first_of_day).expect("the snapshots are written");
+    let mut published = daily_snapshots::read_manifest(&snapshots).expect("the snapshots' manifest");
+    assert_eq!(published.len(), 2, "a snapshot on each day: {published:?}");
+    let midnight = published.pop().expect("the snapshot past midnight");
     assert!(midnight.ts.rem_euclid(DAY_MS) < 60_000, "the second is at the first checkpoint past midnight");
 
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("a runtime");
@@ -117,7 +126,7 @@ fn dev_scenario_member_snapshot_start() {
 
         // A member whose in-office member's turns began at midnight takes the snapshot before them, which a check of
         // those turns from its replica needs (`log_check::own_check`), and does not fetch the one past midnight.
-        let (first, before_turns) = (published(&snapshots, 2).remove(0), run.join("member-snapshots-before-turns"));
+        let (first, before_turns) = (published.remove(0), run.join("member-snapshots-before-turns"));
         let bounds = (held, Some(midnight.ts));
         let earlier = snapshot_start(&client, &origins, (&before_turns, &copy), DOMAIN, &signers, bounds).await;
         assert_eq!(earlier.map(|signed| signed.snapshot.offset.seq), Some(first.seq), "the snapshot before midnight");
@@ -128,7 +137,10 @@ fn dev_scenario_member_snapshot_start() {
         let mut written: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let accounts = written["engine"]["accounts"].as_object_mut().expect("the accounts");
         accounts.values_mut().next().expect("an account")["balance"] = serde_json::json!("1");
-        std::fs::write(&path, serde_json::to_vec(&written).unwrap()).unwrap();
+        // Its format first, as the writer puts it, so the start reads it as one that carries the replay state.
+        let schema = written.as_object_mut().expect("the snapshot's fields").remove("schema").expect("its format");
+        let rest = serde_json::to_string(&written).unwrap();
+        std::fs::write(&path, format!("{{\"schema\":{schema},{}", &rest[1..])).unwrap();
         let (_guard, mut alerts) = capture_alerts();
         let refused = snapshot_start(&client, &[], (&member_snapshots, &copy), DOMAIN, &signers, (held, None)).await;
         assert!(refused.is_none(), "an altered snapshot is not used");
@@ -139,23 +151,9 @@ fn dev_scenario_member_snapshot_start() {
 
 // ── Helpers ──
 
-/// The snapshots listed in `dir` once `count` are, waiting for the node's writer, which publishes on a thread of
-/// its own.
-fn published(dir: &Path, count: usize) -> Vec<daily_snapshots::Listed> {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        let listed = daily_snapshots::read_manifest(dir).expect("the manifest");
-        if listed.len() >= count {
-            return listed;
-        }
-        assert!(Instant::now() < deadline, "the writer published {} of {count} snapshots", listed.len());
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
 /// Serves the log in `log` and the daily snapshots in `snapshots` as a node's archive does, over plain HTTP on
 /// loopback: its base URL.
-async fn serve(log: &Path, snapshots: &Path) -> String {
+pub(super) async fn serve(log: &Path, snapshots: &Path) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("a loopback listener");
     let url = format!("http://{}", listener.local_addr().expect("its address"));
     let file = |dir: &Path| {

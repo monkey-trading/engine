@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use crate::history::marks::fold::MarkFold;
 use crate::history::marks::run;
 use crate::history::marks::store::Store;
-use crate::history::marks::{Resolution, Retentions};
+use crate::history::marks::{Report, Resolution, Retentions};
 use crate::test_support::scratch_dir;
 
 /// The most the test waits for the catch-up to end: a ceiling only a catch-up that never ends reaches.
@@ -36,7 +36,7 @@ async fn the_catch_up_drops_no_live_sample_while_it_merges_a_large_fold() {
         }
     }
     let (tx, rx) = mpsc::channel(run::QUEUE);
-    let live = run::Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
+    let live = run::Live::new(rx);
     let catch_up = run::CatchUp { prior: None, folded: Some(fold) };
     let (sequencer, _requests) = mpsc::channel(1);
     let task = tokio::spawn(run::run(store, sequencer.downgrade(), None, BTreeMap::new(), live, catch_up));
@@ -47,7 +47,7 @@ async fn the_catch_up_drops_no_live_sample_while_it_merges_a_large_fold() {
         // none ends only once the merge has, and is not counted as sent during it.
         let slot = tx.reserve().await.expect("the task takes samples");
         while_catching_up += i64::from(!reader.ready());
-        slot.send((5, base + 86_400_000 + sent * 1_000, mark(sent)));
+        slot.send(Report::Sample((5, base + 86_400_000 + sent * 1_000, mark(sent))));
         sent += 1;
     }
     assert!(
@@ -62,7 +62,8 @@ async fn the_catch_up_drops_no_live_sample_while_it_merges_a_large_fold() {
     };
     timeout(HANG, ended).await.expect("the catch-up ended");
     for _ in 0..2 * run::QUEUE {
-        tx.send((5, base + 86_400_000 + sent * 1_000, mark(sent))).await.expect("the task takes samples");
+        let sample = Report::Sample((5, base + 86_400_000 + sent * 1_000, mark(sent)));
+        tx.send(sample).await.expect("the task takes samples");
         sent += 1;
     }
     drop(tx);

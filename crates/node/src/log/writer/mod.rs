@@ -327,6 +327,30 @@ impl LogWriter {
         self.manifest = manifest;
     }
 
+    /// Publishes `seq` as the first this node's start verified, unless a signed catalog vouches for every
+    /// segment (`Manifest::verified_from`).
+    pub(crate) fn verified_from(&mut self, seq: u64) {
+        self.manifest.send_modify(|manifest| {
+            if manifest.catalog.is_none() {
+                manifest.verified_from = seq;
+            }
+        });
+    }
+
+    /// Lowers the `verified_from` this writer publishes to a seq given later, as a check of the log before a daily
+    /// snapshot that runs after the start finds it, unless a signed catalog vouches for every segment; it never
+    /// raises it.
+    pub(crate) fn lowers_verified_from(&self) -> impl FnOnce(u64) + Send + 'static {
+        let manifest = self.manifest.clone();
+        move |seq| {
+            manifest.send_modify(|manifest| {
+                if manifest.catalog.is_none() {
+                    manifest.verified_from = manifest.verified_from.min(seq);
+                }
+            });
+        }
+    }
+
     /// The manifest this writer has published.
     pub(crate) fn published(&self) -> Manifest {
         self.manifest.borrow().clone()

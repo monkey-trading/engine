@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::Context;
 
+use crate::log::local::{first_read, pair};
 use crate::log::segments::list_segments;
 use crate::log::{LogEntry, MANIFEST, Manifest};
 
@@ -25,7 +26,8 @@ pub(super) const COMMAND_LINE: &[u8] = br#"{"entry":"command","#;
 /// The last segment's last line with no break, a write under way, is left out, as a whole read leaves it out.
 /// The scan stops at the first segment that fails.
 /// Error cases:
-/// - the directory or the manifest cannot be read, or a segment cannot be read
+/// - the directory or the manifest cannot be read, its listings do not pair with the files by name
+///   (`local::pair`), the log's oldest segments are not here (`NotLocal`), or a segment cannot be read
 /// - a segment the manifest lists is of another length than its listing, or ends with no break
 /// - a line that does not begin as a command's is not a valid entry
 pub(crate) fn uncommanded<T: Send>(
@@ -33,9 +35,14 @@ pub(crate) fn uncommanded<T: Send>(
     jobs: NonZeroUsize,
     keep: impl Fn(LogEntry) -> Option<T> + Sync,
 ) -> anyhow::Result<Vec<T>> {
-    let files: Vec<PathBuf> = list_segments(dir)?.into_iter().map(|(_, path)| path).collect();
-    let (manifest, _) = Manifest::read(dir)?;
-    let listed = |at: usize| manifest.segments.get(at).map(|listing| listing.bytes);
+    // Listed before the manifest is read: a listing past the files is of a segment completed since.
+    let segments = list_segments(dir)?;
+    let (mut manifest, _) = Manifest::read(dir)?;
+    let segments = pair(dir, &mut manifest, segments, true)?;
+    first_read(&manifest, &segments, None)?;
+    let (files, listings): (Vec<PathBuf>, Vec<Option<u64>>) =
+        segments.into_iter().map(|(_, path, listed)| (path, listed.map(|listing| listing.bytes))).unzip();
+    let listed = |at: usize| listings[at];
     let (next, failed) = (AtomicUsize::new(0), AtomicUsize::new(usize::MAX));
     let found: Vec<Mutex<Option<anyhow::Result<Vec<T>>>>> = files.iter().map(|_| Mutex::new(None)).collect();
     std::thread::scope(|scope| {

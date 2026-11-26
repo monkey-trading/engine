@@ -151,7 +151,7 @@ struct Link(crate::liveness::link::Copy);
 impl Asking for Link {
     async fn ask(&self, _: &str, request: &Request) -> anyhow::Result<Reply> {
         let Request::Entries { after } = request else { anyhow::bail!("only entries") };
-        Ok(Reply::Entries { entries: self.0.entries(*after).await })
+        Ok(Reply::Entries { entries: self.0.entries(*after).await? })
     }
 }
 

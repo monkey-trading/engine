@@ -8,7 +8,8 @@
 //! it takes them (`RowsStore`), for its retention, as does a member's replica as it follows, so the financing
 //! read proves an older row from there and an index resuming from an older turn finds its rows there.
 //! A command the index reads back from the log once its rows are gone takes them from that store, or
-//! else from a replay of the log of its own (`Deriver`), which a stop ends and which pages a Warning.
+//! else from a replay of the log of its own (`Deriver`), from the newest daily snapshot before it the node
+//! holds, or from genesis, which a stop ends and which pages a Warning.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -28,6 +29,8 @@ use tracing::warn;
 
 use crate::log::{CommandEntry, LogEntry, LogReader, Manifest, Offset};
 
+mod start;
+pub(crate) use start::{apply_logged, engine_from, goes_on};
 mod store;
 pub(crate) use store::RowsStore;
 
@@ -72,26 +75,30 @@ pub(crate) struct Taken {
 }
 
 /// Finds the derived rows of each command the history index takes: from the rows in memory while they
-/// hold the command's, and otherwise from the rows stored on disk, or a replay of the log from its
-/// start, kept while the index reads commands whose rows are gone. It stores each command's rows.
+/// hold the command's, and otherwise from the rows stored on disk, or a replay of the log from the newest
+/// daily snapshot before the command, or from its start, kept while the index reads commands whose rows are
+/// gone. It stores each command's rows.
 pub(crate) struct Deriver {
     kept: watch::Receiver<DerivedRows>,
     /// The log a replay reads, and its writer's published frontier; none where every command's rows
     /// stay in memory until the index takes them.
     log: Option<(PathBuf, watch::Receiver<Manifest>)>,
+    /// The directory of the node's daily snapshots, from which a replay starts.
+    snapshots: Option<PathBuf>,
     replay: Option<Replay>,
     /// Set when the history stops, which ends a replay between two entries.
     stop: Arc<AtomicBool>,
     /// Where each command's rows are written as the index takes them, and read once memory lacks them.
     store: Option<Arc<RowsStore>>,
-    /// Counts each replay from the log's start (`full_replays`).
+    /// Counts each replay from the log's start, not a snapshot's (`full_replays`).
     replays: Counter,
 }
 
 /// Sets its flag when dropped: a history task that ends, or is aborted, stops its deriver's replay.
 pub(crate) struct StopOnDrop(pub Arc<AtomicBool>);
 
-/// A replay of the log from its start, applying each command to an engine of its own.
+/// A replay of the log from a daily snapshot's checkpoint or its start, applying each command to an engine of
+/// its own.
 struct Replay {
     reader: LogReader,
     engine: Engine,
@@ -158,7 +165,20 @@ impl DerivedRows {
 impl Deriver {
     /// Takes rows from `kept`, and from a replay of the log in `log` once `kept` no longer holds them.
     pub(crate) fn new(kept: watch::Receiver<DerivedRows>, log: Option<(PathBuf, watch::Receiver<Manifest>)>) -> Self {
-        Self { kept, log, replay: None, stop: Arc::default(), store: None, replays: Counter::default() }
+        Self {
+            kept,
+            log,
+            snapshots: None,
+            replay: None,
+            stop: Arc::default(),
+            store: None,
+            replays: Counter::default(),
+        }
+    }
+
+    /// This deriver, its replays starting from the daily snapshots in `dir`, when given.
+    pub(crate) fn with_snapshots(self, dir: Option<PathBuf>) -> Self {
+        Self { snapshots: dir, ..self }
     }
 
     /// This deriver, its replay ended once `stop` is set.
@@ -245,19 +265,31 @@ impl Deriver {
         }
     }
 
-    /// `command`'s rows from a replay of the log, opened from its start unless the one kept is behind it.
+    /// `command`'s rows from a replay of the log, opened from the newest daily snapshot before it, or from the
+    /// log's start, unless the one kept is behind it and not behind that snapshot.
     /// Error cases:
-    /// - there is no log to replay, or the replay fails or is stopped (`Replay::rows`)
+    /// - there is no log to replay, or the replay fails or is stopped (`Replay::rows`), as when it starts before
+    ///   the first segment on this host (`log::NotLocal`)
     fn replayed(&mut self, command: &CommandEntry) -> anyhow::Result<Vec<FinancingRow>> {
         let seq = command.sequenced.seq;
         let (dir, manifest) = self.log.as_ref().with_context(|| format!("no rows kept for seq {seq}"))?;
+        let snapshots = self.snapshots.as_deref();
         let replay = match self.replay.take() {
-            Some(replay) if replay.engine.last_seq().is_none_or(|last| last < seq) => replay,
+            Some(replay) if goes_on(replay.engine.last_seq(), seq, snapshots) => replay,
             _ => {
-                warn!(alert = "history_rows_replayed", seq, "re-deriving a command's rows by replaying the log");
-                self.replays.inc();
-                let reader = LogReader::open(dir, Offset::start_of(0), manifest.clone())?;
-                Replay { reader, engine: Engine::new() }
+                let engine = engine_from(snapshots, |listing| listing.seq < seq);
+                let from = engine.last_seq().map_or(0, |last| last + 1);
+                warn!(
+                    alert = "history_rows_replayed",
+                    seq, "re-deriving a command's rows by replaying the log from seq {from}"
+                );
+                if from == 0 {
+                    self.replays.inc();
+                }
+                // The index reads the same segments, so a command before the snapshot this node started from is
+                // derived from the host's segments as the index takes it from them.
+                let reader = LogReader::open(dir, Offset::start_of(from), manifest.clone())?;
+                Replay { reader, engine }
             }
         };
         self.replay.insert(replay).rows(command, &self.stop)
@@ -274,7 +306,7 @@ impl Replay {
     /// Applies the log's commands up to `command`'s, and returns the rows it derives.
     /// Error cases:
     /// - the log cannot be read, or ends before `command`
-    /// - a command does not apply, or its logged events differ from what the engine gives
+    /// - a command does not apply, or its logged events differ from what the engine gives (`apply_logged`)
     /// - the log holds another command at `command`'s seq
     /// - `stop` is set
     fn rows(&mut self, command: &CommandEntry, stop: &AtomicBool) -> anyhow::Result<Vec<FinancingRow>> {
@@ -283,14 +315,7 @@ impl Replay {
             ensure!(!stop.load(Ordering::Acquire), "history stopped while re-deriving the rows of seq {seq}");
             let LogEntry::Command(logged) = entry else { continue };
             let at = logged.sequenced.seq;
-            let events = self.engine.apply(&logged.sequenced).with_context(|| format!("re-deriving at seq {at}"))?;
-            // The replay never computes a root, the only thing that drains the engine's record of
-            // changed keys, so it is dropped here or it grows with every order the log ever held.
-            self.engine.discard_changed_keys();
-            ensure!(
-                logged.events.as_ref().is_none_or(|logged| *logged == events),
-                "events logged at seq {at} differ from the events replay gives"
-            );
+            apply_logged(&mut self.engine, &logged)?;
             if at == seq {
                 ensure!(logged == *command, "the log holds another command at seq {seq}");
                 return Ok(self.engine.take_derived());

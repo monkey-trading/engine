@@ -34,6 +34,17 @@ impl Manifest {
         Ok(())
     }
 
+    /// Refuses an answer the enclave vouches for, from `seq` on, that would read entries this node's start did
+    /// not verify (`verified_from`), as one from before the first segment on this host is refused.
+    /// Error cases:
+    /// - `seq` is before `verified_from` (`NotLocal`, naming the archive)
+    pub(crate) fn ensure_served(&self, seq: u64) -> Result<(), crate::log::NotLocal> {
+        match seq < self.verified_from {
+            true => Err(crate::log::NotLocal { seq, first_local: Some(self.verified_from) }),
+            false => Ok(()),
+        }
+    }
+
     /// Completed segment count, without hydrating historical descriptors.
     pub fn completed_len(&self) -> u64 {
         self.catalog.as_ref().map_or(self.segments.len() as u64, |c| c.len())

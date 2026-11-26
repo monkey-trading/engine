@@ -4,7 +4,11 @@
 //! a takeover refuses a copy that does not, once the operator is gone. A copy that does not is set aside
 //! and backfilled again from the operator in effect alone, paging Critical `standby_backfill_refused`, and
 //! so is one a mirror cut short of its first checkpoint, which no replay can check. A copy is marked
-//! checked only while every byte it holds has replayed or come from the operator's signed stream.
+//! checked only while every byte it holds after the replay's start has replayed or come from the operator's
+//! signed stream. Each replay goes on from the newest daily snapshot this node holds whose checkpoint the copy
+//! holds, at or before the vault's finalized checkpoint (`handover::copy_start`), and reads nothing of the copy
+//! before it: those segments stay the mirror's word, which the node never serves once it sequences
+//! (`log::Manifest::verified_from`), and which a whole replay of the copy, when no snapshot passes, checks.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -13,9 +17,13 @@ use anyhow::Context;
 use engine_core::types::AccountId;
 use tracing::{error, info, warn};
 
+use crate::daily_snapshots::Signed;
 use crate::log::{CheckpointDomain, LogEntry, MANIFEST, Manifest, ReplayWorkers, SegmentedLog};
 use crate::standby::archive::bootstrap_archive;
 use crate::standby::operator::Followed;
+
+mod trust;
+pub(super) use trust::{Trust, read_trust};
 
 /// Marks a copy that has replayed as a takeover would: a start that does not find it, after a crash
 /// between a backfill and its check or on a copy an earlier release backfilled, checks the copy before
@@ -37,8 +45,9 @@ enum Found {
 
 /// The standby's cold start, before it follows onto the copy in `dir`: a takeover's cut or archive refresh
 /// a crash interrupted is finished or dropped first; then a copy not marked checked (`needed`) is fetched
-/// from `operator`'s archive when it lists nothing (`fetch`) and must replay as a takeover would
-/// (`cold_start`); a copy marked checked ends any `standby_backfill_refused` episode (`resolve`).
+/// from `operator`'s archive when it lists nothing (`fetch`) and must replay as a takeover would, under what
+/// `trust` reads once it is fetched (`cold_start`); a copy marked checked ends any `standby_backfill_refused`
+/// episode (`resolve`).
 /// Error cases:
 /// - as `finish_cut`, `undo_refresh`, `fetch` and `cold_start`
 pub(super) async fn prepare(
@@ -46,7 +55,7 @@ pub(super) async fn prepare(
     operator: &Followed,
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
-    signers: impl AsyncFn() -> anyhow::Result<BTreeSet<AccountId>>,
+    trust: impl AsyncFn() -> anyhow::Result<Trust>,
 ) -> anyhow::Result<()> {
     // A takeover's cut a crash interrupted is finished first, so the copy checked is the one followed,
     // and a refresh its replay never committed is dropped, so the copy is again what the stream gave.
@@ -57,7 +66,7 @@ pub(super) async fn prepare(
     if needed(dir) {
         // The signers are read once the copy is fetched, so a signer change during the fetch counts.
         fetch(archive, operator, dir).await?;
-        cold_start(archive, operator, dir, (domain, workers), signers).await?;
+        cold_start(archive, operator, dir, (domain, workers), trust).await?;
     }
     resolve(dir);
     Ok(())
@@ -96,19 +105,22 @@ pub(super) fn begin_refresh(dir: &Path) -> anyhow::Result<()> {
     sync(dir)
 }
 
-/// `replay_as_takeover` of the copy in `dir` after a takeover's archive refresh: a copy that replays is
-/// marked checked and the refresh committed; one that does not has what the refresh added dropped
-/// (`undo_refresh`), and is marked checked again if it was before, as what the operator's stream gave.
-/// When the refresh added segments, the copy without them is then replayed in turn: an origin that served
-/// segments no replay admits, as a mirror listed first can, leaves the takeover to what the stream gave.
+/// `replay_as_takeover` of the copy in `dir` after a takeover's archive refresh, from `start`, a daily snapshot
+/// of the copy the stream gave, which the refresh only extends: a copy that replays is marked checked and the
+/// refresh committed; one that does not has what the refresh added dropped (`undo_refresh`), and is marked
+/// checked again if it was before, as what the operator's stream gave. When the refresh added segments, the copy
+/// without them is then replayed in turn, from the same snapshot, opened again: an origin that served segments
+/// no replay admits, as a mirror listed first can, leaves the takeover to what the stream gave.
 /// Error cases:
 /// - the copy does not replay, without the refresh's segments either, or cannot be marked or cut back
 pub(super) fn replay_refreshed(
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
     signers: BTreeSet<AccountId>,
+    start: Option<Signed>,
 ) -> anyhow::Result<()> {
-    match replay_as_takeover(dir, (domain, workers), signers.clone()) {
+    let again = start.as_ref().map(|start| start.path.clone());
+    match replay_as_takeover(dir, (domain, workers), signers.clone(), start) {
         Ok(()) => {
             forget(dir, REFRESH)?;
             mark(dir)
@@ -120,7 +132,8 @@ pub(super) fn replay_refreshed(
                     "the takeover's replay refused the copy with the {dropped} segments the archive refresh \
                      added, which are dropped; replaying the copy as the operator's stream gave it: {refused:#}"
                 );
-                replay_as_takeover(dir, (domain, workers), signers).and_then(|()| mark(dir)).map_err(|stream| {
+                let start = again.and_then(|path| trust::reopen(&path, domain, &signers));
+                replay_as_takeover(dir, (domain, workers), signers, start).and_then(|()| mark(dir)).map_err(|stream| {
                     stream.context(format!(
                         "the copy the operator's stream gave does not replay either, and the takeover's replay \
                          refused the {dropped} segments the archive refresh added ({refused:#})"
@@ -216,27 +229,27 @@ async fn fetch(archive: &reqwest::Client, operator: &Followed, dir: &Path) -> an
     }
 }
 
-/// Requires the copy in `dir` to replay in `domain` against the signers `signers` reads, as a takeover
-/// replays it, and marks it checked. A copy that does not is set aside to `<dir>.refused` and backfilled
+/// Requires the copy in `dir` to replay in `domain` under what `trust` reads, as a takeover replays it, and
+/// marks it checked. A copy that does not is set aside to `<dir>.refused` and backfilled
 /// again from `operator` alone, paging Critical `standby_backfill_refused`; one that holds commands but no
 /// checkpoint, as a mirror that cut it short of one serves, is set aside to `<dir>.unchecked` and
 /// backfilled again from `operator` alone the same way, with no page. A copy that holds no entry, as a
 /// fresh deployment's, has nothing to replay; one the operator serves that holds no checkpoint yet is set
 /// aside to `<dir>.unchecked`, unmarked, for the operator's stream to refill from seq 0.
 /// Error cases:
-/// - the signers cannot be read, the copy cannot be read, set aside or marked, or the backfill fails
+/// - `trust` cannot read the signers, the copy cannot be read, set aside or marked, or the backfill fails
 /// - the copy the operator itself serves does not replay: it is set aside to `<dir>.refused-operator`
 async fn cold_start(
     archive: &reqwest::Client,
     operator: &Followed,
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
-    signers: impl AsyncFn() -> anyhow::Result<BTreeSet<AccountId>>,
+    trust: impl AsyncFn() -> anyhow::Result<Trust>,
 ) -> anyhow::Result<()> {
-    let found = match check(dir, (domain, workers), signers().await?).await {
+    let found = match check(dir, (domain, workers), trust().await?).await {
         Ok(Found::Uncheckable) => {
             set_aside(dir, "unchecked")?;
-            from_operator(archive, operator, dir, (domain, workers), &signers).await?
+            from_operator(archive, operator, dir, (domain, workers), &trust).await?
         }
         Ok(found) => found,
         // With a copy set aside as refused, this one came from the operator's own origin (`fetch`).
@@ -252,7 +265,7 @@ async fn cold_start(
                 aside_of(dir, "refused").display()
             );
             set_aside(dir, "refused").with_context(|| format!("after refusing the copy: {refused:#}"))?;
-            from_operator(archive, operator, dir, (domain, workers), &signers).await?
+            from_operator(archive, operator, dir, (domain, workers), &trust).await?
         }
     };
     if found == Found::Uncheckable {
@@ -284,6 +297,17 @@ fn refuse_operator_copy(operator: &Followed, dir: &Path, refused: anyhow::Error)
     refused.context(format!("the copy the operator itself serves does not replay; {aside}"))
 }
 
+/// Drops the mark that the copy in `dir` has replayed as a takeover would, as before it takes archive bytes no replay
+/// has read: the next start checks it again (`prepare`).
+/// Error cases:
+/// - the mark cannot be removed, or the directory synced
+pub(super) fn unmark(dir: &Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(dir.join(CHECKED)) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e).context("unmarking the copy"),
+        _ => sync(dir),
+    }
+}
+
 /// Marks the copy in `dir` checked.
 /// Error cases:
 /// - the mark cannot be written, or the directory synced
@@ -299,8 +323,8 @@ fn sync(dir: &Path) -> anyhow::Result<()> {
     std::fs::File::open(dir)?.sync_all().with_context(|| format!("syncing {}", dir.display()))
 }
 
-/// Backfills the copy in `dir`, set aside, again from `operator`'s own origin alone and checks it against
-/// the signers `signers` reads again: what it found.
+/// Backfills the copy in `dir`, set aside, again from `operator`'s own origin alone and checks it under what
+/// `trust` reads again: what it found.
 /// Error cases:
 /// - the backfill fails, the signers or the copy cannot be read, or the copy does not replay: it is set
 ///   aside to `<dir>.refused-operator`
@@ -309,12 +333,10 @@ async fn from_operator(
     operator: &Followed,
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
-    signers: &impl AsyncFn() -> anyhow::Result<BTreeSet<AccountId>>,
+    trust: &impl AsyncFn() -> anyhow::Result<Trust>,
 ) -> anyhow::Result<Found> {
     backfill(archive, std::slice::from_ref(&operator.origin), dir).await?;
-    check(dir, (domain, workers), signers().await?)
-        .await
-        .map_err(|refused| refuse_operator_copy(operator, dir, refused))
+    check(dir, (domain, workers), trust().await?).await.map_err(|refused| refuse_operator_copy(operator, dir, refused))
 }
 
 /// Ends the `standby_backfill_refused` episodes once the copy in `dir` is marked checked; with none open,
@@ -334,15 +356,17 @@ fn end_refusals(why: &str) {
 }
 
 /// Replays the copy in `dir` as a takeover must before it truncates it: every checkpoint, typed
-/// withdrawal and command seal from one of `signers`, in `domain`, the seals checked ahead by `workers`.
+/// withdrawal and command seal from one of `signers`, in `domain`, the seals checked ahead by `workers`,
+/// from `start`, a daily snapshot whose checkpoint the copy holds, or from the copy's first entry.
 /// Error cases:
-/// - the copy does not replay (see `replay_copy`)
+/// - the copy does not replay (see `replay_copy_from`)
 pub(super) fn replay_as_takeover(
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
     signers: BTreeSet<AccountId>,
+    start: Option<Signed>,
 ) -> anyhow::Result<()> {
-    crate::sequencer::replay_copy(dir, domain, signers, workers).map(drop)
+    crate::sequencer::replay_copy_from(start, dir, domain, signers, workers).map(drop)
 }
 
 /// `check_now` on a blocking thread, so a long replay holds up nothing the standby runs beside it, its
@@ -352,30 +376,29 @@ pub(super) fn replay_as_takeover(
 async fn check(
     dir: &Path,
     (domain, workers): (CheckpointDomain, ReplayWorkers),
-    signers: BTreeSet<AccountId>,
+    trust: Trust,
 ) -> anyhow::Result<Found> {
     info!(dir = %dir.display(), "replaying the standby's copy as a takeover would before following onto it");
     let dir = dir.to_owned();
-    tokio::task::spawn_blocking(move || check_now(&dir, (domain, workers), signers))
+    tokio::task::spawn_blocking(move || check_now(&dir, (domain, workers), trust))
         .await
         .context("checking the copy stopped")?
 }
 
-/// `replay_as_takeover`, for a cold start: what the copy is, or why it does not replay.
+/// `replay_as_takeover` under `trust`, for a cold start: what the copy is, or why it does not replay.
 /// Error cases:
 /// - the copy cannot be read, or does not replay
-fn check_now(
-    dir: &Path,
-    (domain, workers): (CheckpointDomain, ReplayWorkers),
-    signers: BTreeSet<AccountId>,
-) -> anyhow::Result<Found> {
+fn check_now(dir: &Path, (domain, workers): (CheckpointDomain, ReplayWorkers), trust: Trust) -> anyhow::Result<Found> {
     if !holds_entries(dir)? {
         return Ok(Found::Empty);
     }
-    match replay_as_takeover(dir, (domain, workers), signers) {
+    let Trust { signers, start } = trust;
+    // A copy that holds a snapshot's checkpoint holds a checkpoint: no read of the copy before it says so.
+    let held = start.is_some();
+    match replay_as_takeover(dir, (domain, workers), signers, start) {
         Ok(()) => Ok(Found::Replays),
         // A copy that cannot be read through is refused as one that does not replay.
-        Err(refused) if holds_checkpoint(dir).unwrap_or(true) => Err(refused),
+        Err(refused) if held || holds_checkpoint(dir).unwrap_or(true) => Err(refused),
         Err(_) => Ok(Found::Uncheckable),
     }
 }

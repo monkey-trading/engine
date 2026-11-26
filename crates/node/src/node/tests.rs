@@ -302,8 +302,8 @@ pub(crate) async fn read_log_and_history_recording(
     let (log, plan, _pending) = super::read_log_and_history_authorities(
         cfg,
         key,
-        parent,
-        async { Ok(Default::default()) },
+        (parent, std::future::ready(None)),
+        async |_| Ok(Default::default()),
         &scratch,
         stats,
         |_| {},
@@ -327,8 +327,8 @@ pub(crate) async fn read_log_and_history_observe(
     let (log, plan, _pending) = super::read_log_and_history_authorities(
         cfg,
         &key,
-        parent,
-        async { Ok(Default::default()) },
+        (parent, std::future::ready(None)),
+        async |_| Ok(Default::default()),
         &scratch,
         &crate::test_support::stats(),
         &mut observe,
@@ -342,10 +342,18 @@ pub(crate) async fn read_log_and_history_observe(
 /// - the signer history is read, or the log or history index cannot be read or verified
 async fn read_refusing_signer_history(cfg: &NodeConfig) -> anyhow::Result<ReplayedLog> {
     let (key, marks) = (Arc::new(crate::tee::EnclaveKey::test_key()), marks_store(cfg)?);
-    let refused = async { Err(anyhow::anyhow!("the signer history was read")) };
+    let refused = async |_| Err(anyhow::anyhow!("the signer history was read"));
     let stats = crate::test_support::stats();
-    let (log, _plan, _pending) =
-        super::read_log_and_history_authorities(cfg, &key, None, refused, &marks, &stats, |_| {}).await?;
+    let (log, _plan, _pending) = super::read_log_and_history_authorities(
+        cfg,
+        &key,
+        (None, std::future::ready(None)),
+        refused,
+        &marks,
+        &stats,
+        |_| {},
+    )
+    .await?;
     Ok(log)
 }
 

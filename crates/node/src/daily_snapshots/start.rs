@@ -1,43 +1,54 @@
-//! The daily snapshot a member's replica starts from: the newest, among those in its own directory of them and
-//! those its origins list, whose checkpoint the copy holds and the vault has finalized, signed over its state by the
-//! vault-recorded signer that signed that checkpoint (`open_signed`). Offsets are tried newest first, and at each
-//! the sources that list it in turn: the member's own copy, then each origin's in order. A fetched one is used only
-//! once its file is whole, and one that is refused is passed over, a fetched one's file removed, since only its
-//! signature and root make it usable. One the vault has not yet finalized is not a candidate, so the checkpoint the
-//! vault finalizes next, which the member's start anchors at, is one the replica retains; nor is one from the turns
-//! of the member in office, whose commands the member's own log check at its first take must have replayed
-//! (`log_check::own_check`). Where the vault accepted a checkpoint at a candidate's seq, the candidate's root must
-//! be the one it accepted, so an orphan fork's snapshot is refused before it is fetched or decoded.
+//! The daily snapshot a start takes: the newest, among those in the node's own directory of them and, for a
+//! member whose copy is new, those its origins list, whose checkpoint the log on this host holds and the vault
+//! has finalized, of the format that carries the replay state, signed over its state and what it carries by
+//! the vault-recorded signer that signed that checkpoint (`open_signed`). Offsets are tried newest first, and at
+//! each the sources that list it in turn: the node's own directory, then each origin's in order. A fetched one
+//! is used only once its file is whole, and one that is refused is passed over, a fetched one's file removed,
+//! since only its signature and root make it usable. A snapshot of a format before that is passed over without
+//! a warning: it carries no replay state, and a replay in ranges still reads it. One the vault has not yet
+//! finalized is not a candidate, so the checkpoint the vault finalizes next, which a start anchors at, is one the
+//! start replays; nor, for a member, is one from the turns of the member in office, whose commands the member's
+//! own log check at its first take must have replayed (`log_check::own_check`); nor one after a seq the start
+//! must keep (`keep`). Where the vault accepted a checkpoint at a candidate's seq, the candidate's root must be
+//! the one it accepted, so an orphan fork's snapshot is refused before it is fetched or decoded.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, ensure};
 use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
+use crate::daily_snapshots::fetch::EarlierFormat;
 use crate::daily_snapshots::fetch::{download, offered};
 use crate::daily_snapshots::writer::write_manifest;
-use crate::daily_snapshots::{Listed, Signed, open_signed, read_manifest};
+use crate::daily_snapshots::{FORMAT_BYTES, Listed, Signed, earlier_format, open_signed, read_manifest};
 use crate::log::{self, CheckpointDomain, LogEntry, Offset, SegmentedLog, Stop};
 
-/// How many of the newest offsets are tried, each from every source that lists it, before the replica
-/// replays the whole copy.
+/// How many of the newest offsets are tried, each from every source that lists it, before the start replays the
+/// whole log.
 const ATTEMPTS: usize = 3;
 
-/// The roots of the checkpoints the vault accepted, as a start reads them.
+/// The roots of the checkpoints the vault accepted, as a start reads them, and the key it names at a seq.
 pub(crate) trait AcceptedRoots {
     /// The root of the checkpoint the vault accepted at `seq`; none where it accepted none there, or the read
     /// fails, which leaves the candidate to the checks after it.
     async fn root_at(&self, seq: u64) -> Option<B256>;
+
+    /// The key the checkpoint at `seq`, and so its snapshot, must be signed by: the signer of the checkpoint the vault
+    /// accepted there, or, where it accepted none, of the one it finalized, which the snapshot rests on; none where the
+    /// start reads no vault, which leaves the snapshot to the signers it is given.
+    async fn signer_at(&self, _seq: u64) -> Option<AccountId> {
+        None
+    }
 }
 
 /// No vault read: each candidate rests on the checks after it.
-#[cfg(test)]
 pub(crate) struct NoRoots;
 
-#[cfg(test)]
 impl AcceptedRoots for NoRoots {
     /// None.
     async fn root_at(&self, _seq: u64) -> Option<B256> {
@@ -49,6 +60,17 @@ impl AcceptedRoots for NoRoots {
 enum Source {
     Held,
     Offered(String),
+}
+
+/// Where a start looks for its snapshot, and what bounds it.
+#[derive(Clone, Copy)]
+pub(crate) struct Bounds {
+    /// The vault's finalized checkpoint's seq: no snapshot after it is a candidate.
+    pub finalized: u64,
+    /// When the turns of the member in office began, for a member's start: no snapshot stamped then or after.
+    pub before: Option<Millis>,
+    /// The first seq the start must replay, as a promotion's fixed head: no snapshot at it or after.
+    pub keep_from: Option<u64>,
 }
 
 /// The daily snapshot the replica of the copy in `copy` starts from, from the member's directory of them at `dir`
@@ -64,43 +86,53 @@ pub(crate) async fn snapshot_start(
     (dir, copy): (&Path, &Path),
     domain: CheckpointDomain,
     signers: &BTreeSet<AccountId>,
-    bounds: (u64, Option<Millis>),
+    (finalized, before): (u64, Option<Millis>),
 ) -> Option<Signed> {
-    snapshot_start_against(client, origins, (dir, copy), (domain, signers), bounds, &NoRoots).await
+    let bounds = Bounds { finalized, before, keep_from: None };
+    snapshot_start_against(Some((client, origins)), (dir, copy), (domain, signers), bounds, &NoRoots).await
 }
 
-/// `snapshot_start`, refusing a candidate whose root is not the one the vault accepted at its seq, where `roots`
-/// names one, before fetching or decoding it.
+/// `snapshot_start`, from the node's own directory alone when `fetching` names no origins, refusing a candidate
+/// whose root is not the one the vault accepted at its seq, where `roots` names one, before fetching or decoding
+/// it, and passing over one after `bounds.keep_from`.
 pub(crate) async fn snapshot_start_against(
-    client: &reqwest::Client,
-    origins: &[String],
+    fetching: Option<(&reqwest::Client, &[String])>,
     (dir, copy): (&Path, &Path),
     (domain, signers): (CheckpointDomain, &BTreeSet<AccountId>),
-    (bound, before): (u64, Option<Millis>),
+    bounds: Bounds,
     roots: &impl AcceptedRoots,
 ) -> Option<Signed> {
     let held = match read_manifest(dir) {
         Ok(held) => held,
         Err(e) => {
-            warn!(alert = "snapshot_start_refused", "the daily snapshots this member holds cannot be listed: {e:#}");
+            warn!(alert = "snapshot_start_refused", "the daily snapshots this node holds cannot be listed: {e:#}");
             return None;
         }
     };
-    let (offers, answered) = offered(client, origins, bound).await;
-    if !answered && !origins.is_empty() {
+    let (offers, answered) = match fetching {
+        Some((client, origins)) if !origins.is_empty() => offered(client, origins, bounds.finalized).await,
+        _ => (Vec::new(), true),
+    };
+    if !answered {
         warn!(alert = "snapshot_start_refused", "no origin's daily snapshot manifest could be read");
     }
-    // By offset, the member's own first, then each origin that lists it in order, each giving way to the next.
-    let early = |listing: &Listed| before.is_none_or(|before| listing.ts < before);
+    // By offset, the node's own first, then each origin that lists it in order, each giving way to the next.
+    let fits = |listing: &Listed| {
+        listing.seq <= bounds.finalized
+            && bounds.before.is_none_or(|before| listing.ts < before)
+            && bounds.keep_from.is_none_or(|keep| listing.seq < keep)
+    };
     let mut candidates: BTreeMap<(u64, u32), Vec<(Source, Listed)>> = BTreeMap::new();
-    for listing in held.iter().filter(|listing| listing.seq <= bound && early(listing)) {
+    for listing in held.iter().filter(|listing| fits(listing) && carries_state(&dir.join(&listing.file))) {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Held, listing.clone()));
     }
-    for (origin, listing) in offers.into_iter().filter(|(_, listing)| early(listing)) {
+    for (origin, listing) in offers.into_iter().filter(|(_, listing)| fits(listing)) {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Offered(origin), listing));
     }
+    let ids = (domain, signers, bounds.before);
+    let client = fetching.map(|(client, _)| client);
     for (source, listing) in candidates.into_values().rev().take(ATTEMPTS).flatten() {
-        match candidate(client, (dir, copy), &source, &listing, (domain, signers, before), roots).await {
+        match candidate(client, (dir, copy), &source, &listing, ids, roots).await {
             Ok(signed) => {
                 if matches!(source, Source::Offered(_)) {
                     let offset = (listing.seq, listing.index);
@@ -115,18 +147,18 @@ pub(crate) async fn snapshot_start_against(
                             "listing a fetched snapshot failed: {e:#}"
                         );
                     }
-                    info!(
-                        seq = listing.seq,
-                        bytes = listing.bytes,
-                        "fetched a daily snapshot for the replica to start from"
-                    );
+                    info!(seq = listing.seq, bytes = listing.bytes, "fetched a daily snapshot to start from");
                 }
                 return Some(signed);
+            }
+            // As one this node holds, a snapshot of an earlier format carries no replay state, and is passed over.
+            Err(e) if e.is::<EarlierFormat>() => {
+                debug!(seq = listing.seq, "daily snapshot {} offered: {e:#}", listing.file);
             }
             Err(e) => warn!(
                 alert = "snapshot_start_refused",
                 seq = listing.seq,
-                "the replica does not start from daily snapshot {}: {e:#}",
+                "the start does not take daily snapshot {}: {e:#}",
                 listing.file
             ),
         }
@@ -134,15 +166,39 @@ pub(crate) async fn snapshot_start_against(
     None
 }
 
+/// The seqs of the newest daily snapshots in `dir` at or before `finalized` that a start from them without origins
+/// tries (`snapshot_start_against`), newest first.
+pub(super) fn candidate_seqs(dir: &Path, finalized: u64) -> Vec<u64> {
+    let held = read_manifest(dir).unwrap_or_default();
+    let fits = |listing: &&Listed| listing.seq <= finalized && carries_state(&dir.join(&listing.file));
+    let seqs: BTreeSet<u64> = held.iter().filter(fits).map(|listing| listing.seq).collect();
+    seqs.into_iter().rev().take(ATTEMPTS).collect()
+}
+
+/// Whether the held snapshot at `path` may carry the replay state: its first bytes, where every writer puts its
+/// format, name no earlier format (`earlier_format`); one that cannot be read, or names none, is left for its
+/// check to refuse.
+fn carries_state(path: &Path) -> bool {
+    let mut head = [0u8; FORMAT_BYTES];
+    let read = File::open(path).and_then(|mut file| file.read(&mut head));
+    let Ok(read) = read else { return true };
+    let carries = !earlier_format(&head[..read]);
+    if !carries {
+        debug!(snapshot = %path.display(), "a daily snapshot of an earlier format carries no replay state for a start");
+    }
+    carries
+}
+
 /// The snapshot `listing` names, from `source`, checked as `snapshot_start` checks it: an offered one fetched into
 /// `dir` first, and its file removed when it is refused.
 /// Error cases:
 /// - the copy at `copy` holds no checkpoint at its offset with the listed root
-/// - `roots` names another root at its seq
+/// - `roots` names another root at its seq, or the checkpoint's signature does not verify, or it is signed by another
+///   key than the one `roots` names at its seq
 /// - the fetch fails (`download`), or the snapshot is refused (`open_signed`)
 /// - its checkpoint is not the one the copy holds, or its state is stamped at or after `before`
 async fn candidate(
-    client: &reqwest::Client,
+    client: Option<&reqwest::Client>,
     (dir, copy): (&Path, &Path),
     source: &Source,
     listing: &Listed,
@@ -164,9 +220,21 @@ async fn candidate(
             listing.seq
         );
     }
+    // Only the key the vault names at the checkpoint's seq vouches for the state a snapshot of it carries, and the
+    // snapshot is signed by the key its checkpoint names (`open_signed`): that checkpoint must be one it signed.
+    crate::checkpoints::signature::verify_domain(&held, domain).context("the checkpoint the copy holds there")?;
+    if let Some(required) = roots.signer_at(listing.seq).await {
+        let named: AccountId = held.signer.parse().context("the checkpoint's signer")?;
+        ensure!(
+            named == required,
+            "its checkpoint is signed by {named}, not {required}, the vault's signer at its seq"
+        );
+    }
     let path = match source {
         Source::Held => dir.join(&listing.file),
-        Source::Offered(origin) => download(client, origin, dir, listing).await?,
+        Source::Offered(origin) => {
+            download(client.context("an offered snapshot needs a client")?, origin, dir, listing).await?
+        }
     };
     let checked = open_signed(&path, domain, signers).and_then(|signed| {
         ensure!(signed.snapshot.checkpoint == held, "its checkpoint is not the one the copy holds at {offset}");

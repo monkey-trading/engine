@@ -1,11 +1,11 @@
 //! The financing rows of the rollovers before a replica's daily snapshot. A replica built from a snapshot applies
 //! only the commands after it, so it writes no rows of the rollovers before it to the history's store, which a
 //! whole replay writes as it applies them, and a member's history index, which takes every command from the log's
-//! start at its first turn, would replay the log from its start for them (`history_rows_replayed`). So, once the
-//! replica is built, a thread of its own derives them into the store while the member follows
-//! (`RowsStore::derive_through`). The replica's drop stops it without waiting for it, so a turn that comes first
-//! starts at once and leaves the rest to the history index, as before; the thread holds nothing the node reads, and
-//! ends at its next command.
+//! start at its first turn, would replay the log for them (`history_rows_replayed`). So, once the replica is built,
+//! a thread of its own derives them into the store while the member follows, from the newest daily snapshot older
+//! than the history's retention, or from genesis (`RowsStore::derive_through`). The replica's drop stops it without
+//! waiting for it, so a turn that comes first starts at once and leaves the rest to the history index; the thread
+//! holds nothing the node reads, and ends at its next command.
 
 use std::path::Path;
 use std::sync::Arc;

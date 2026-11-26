@@ -128,7 +128,7 @@ impl LogCheck {
         let first = self.takings.first(after, head.seq);
         let excluded = self.takings.sequenced(after, head.seq)?.with_holders(&self.holders, first);
         let (turn, position, set, candidate) = (in_effect.turn, in_effect.position, in_effect.set, in_effect.candidate);
-        Some(Due { turn, position, set, candidate, head, excluded })
+        Some(Due { turn, position, set, candidate, head, from: first, excluded })
     }
 
     /// The turn whose check is outstanding, its checkpoint written, while the log's records cannot say

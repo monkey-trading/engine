@@ -43,7 +43,7 @@ async fn a_backfill_a_mirror_poisoned_is_set_aside_and_backfilled_from_the_opera
     // The router keys an episode on its fields: the resolution ends the page's own, and the operator's.
     assert_eq!(served_by(&mut resolved, "alert_resolved"), ["archive", "operator"], "the episodes did not end");
     assert_eq!(log_entries(&dir), log_entries(&honest), "the standby follows onto another copy than the operator's");
-    replay_as_takeover(&dir, (DOMAIN, Default::default()), signers())
+    replay_as_takeover(&dir, (DOMAIN, Default::default()), signers(), None)
         .expect("the copy the standby follows onto does not replay");
     assert!(!needed(&dir), "the copy the standby follows onto is not marked checked");
     let aside = aside_of(&dir, "refused");
@@ -344,13 +344,14 @@ fn a_refused_copy_set_aside_earlier_is_never_replaced() {
 }
 
 mod refresh;
+mod snapshot;
 
 // ── Helpers ──
 
-/// What `serve` runs at a cold start: the fetch, then the check against `signers`.
+/// What `serve` runs at a cold start: the fetch, then the check of the whole copy against `signers`.
 async fn start(followed: &Followed, dir: &Path, signers: BTreeSet<AccountId>) -> anyhow::Result<()> {
-    prepare(&archive_client(false).unwrap(), followed, dir, (DOMAIN, Default::default()), async || Ok(signers.clone()))
-        .await
+    let trust = async || Ok(Trust { signers: signers.clone(), start: None });
+    prepare(&archive_client(false).unwrap(), followed, dir, (DOMAIN, Default::default()), trust).await
 }
 
 /// The first line `lines` holds whose `key` names `standby_backfill_refused`.

@@ -1,6 +1,6 @@
 //! The command links and checkpoints a replica keeps beyond its replay: the latest commands' cumulative
 //! prefixes, the posted head it held when it passed it, and the links and checkpoints at the seqs it was asked
-//! to keep. A replica's pass over its copy before a daily snapshot keeps them as the replay after it does.
+//! to keep. A replica from a daily snapshot starts with the links the snapshot carries.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 

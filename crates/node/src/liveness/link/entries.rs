@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use tracing::warn;
 
 use super::{Copy, ENTRIES_BYTES};
-use crate::log::{LogEntry, LogReader, Manifest, Offset};
+use crate::log::{LogEntry, LogReader, Manifest, NotLocal, Offset};
 
 /// A member's copy on disk: its directory, and the manifest its writer publishes, which bounds a read
 /// to what the copy has flushed.
@@ -51,19 +51,23 @@ impl Copy {
 
     /// `entries_after`, else the same page read from the copy's durable log: a copy that trails the
     /// asker by more than its ring, or an asker holding nothing, is served from disk.
-    pub(crate) async fn entries(&self, after: Option<Offset>) -> Vec<(Offset, LogEntry)> {
+    /// Error cases:
+    /// - the page starts before the first segment this host's copy holds, so the log's public archive holds
+    ///   it (`NotLocal`); a copy that fails to read otherwise answers an empty page
+    pub(crate) async fn entries(&self, after: Option<Offset>) -> anyhow::Result<Vec<(Offset, LogEntry)>> {
         let held = self.entries_after(after);
         let log = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).durable_log.clone();
-        let Some(log) = log.filter(|_| held.is_empty()) else { return held };
+        let Some(log) = log.filter(|_| held.is_empty()) else { return Ok(held) };
         match tokio::task::spawn_blocking(move || log.page(after)).await {
-            Ok(Ok(page)) => page,
+            Ok(Ok(page)) => Ok(page),
+            Ok(Err(e)) if e.is::<NotLocal>() => Err(e),
             Ok(Err(e)) => {
                 warn!(?after, "reading the copy's log for an entries question failed: {e:#}");
-                Vec::new()
+                Ok(Vec::new())
             }
             Err(e) => {
                 warn!(?after, "the copy's log read did not finish: {e}");
-                Vec::new()
+                Ok(Vec::new())
             }
         }
     }
@@ -72,7 +76,8 @@ impl Copy {
 impl DurableLog {
     /// The page `entries_after` gives, read from disk.
     /// Error cases:
-    /// - the log cannot be opened or read (see `LogReader`)
+    /// - the log cannot be opened or read (see `LogReader`), among them a start before the first segment here
+    ///   (`NotLocal`)
     fn page(&self, after: Option<Offset>) -> anyhow::Result<Vec<(Offset, LogEntry)>> {
         let mut reader = LogReader::open(&self.dir, after.unwrap_or(Offset::start_of(0)), self.manifest.clone())?;
         let (mut entries, mut bytes) = (Vec::new(), 0);

@@ -712,10 +712,13 @@ Use this procedure before rotation is turned on, and before each turn that you h
    - `[tee.sealing]`, with a handover listener;
    - `custody.evm.staking.registry.schedule`, naming the schedule.
 
-   **Leave `[snapshots]` unset on every rotation-set member.** A member that took the tail with
-   `[snapshots]` configured does not start from its replica. It recovers from disk, waits for
-   checkpoint finality, and may replay the whole log inside the switch. A start from a snapshot past
-   the verified head also cannot say who sequenced the range, and raises `log_check_unattributable`.
+   **Leave `[snapshots]` unset on every rotation-set member, and set `[daily_snapshots]`.** A member
+   that took the tail with `[snapshots]` configured does not start from its replica. It recovers from
+   disk, waits for checkpoint finality, and may replay the whole log inside the switch. A start from a
+   recovery cache past the verified head also cannot say who sequenced the range, and raises
+   `log_check_unattributable`. A start from a daily snapshot can, since the snapshot carries the log's
+   turn records, and `[daily_snapshots]` is what every start and every replica build goes on from, so
+   no start replays the whole log once the first snapshot is written.
 
 3. Start the trading server with no key flag, and keep it running between your turns.
 
@@ -731,15 +734,16 @@ candidate that the registry names, reached at `https://` and its registered API 
 frame is verified against the vault's signer at the latest block. Your trading server does all of
 these:
 
-- It keeps a copy of the log, with a live replica that one replay builds when it starts following. A
-  member whose copy is empty, with `[daily_snapshots]`, builds the replica from the newest signed daily
-  snapshot instead, as `docs/security-model.md` describes: it replays only the log after the snapshot,
-  derives the financing rows before it on a thread of its own, and serves marks history from the
-  snapshot on. It starts from a snapshot from before the turns of the member in office, so its own log
-  check at its first take covers them. Until a whole replay at its next start, that check counts only for
-  a range after the snapshot, and it answers no other member's log-check question, so payouts may wait for
-  another member's check. A snapshot it cannot start from raises `snapshot_start_refused`, and it
-  replays the whole copy instead.
+- It keeps a copy of the log, with a live replica that it builds when it starts following, with
+  `[daily_snapshots]` from the newest signed daily snapshot that it holds or that the operator's archive
+  lists, as `docs/security-model.md` describes: it reads only the log after the snapshot, whose
+  segments before it need not be on the host, derives the financing rows before it on a thread of its
+  own, continues the dashboard record the snapshot carries, and serves marks history from the snapshot
+  on. It starts from a snapshot from before the turns of the member in office, so its own log check at
+  its first take covers them. That check counts only for a range after the snapshot, and it answers
+  another member's log-check question only for a range that starts after the snapshot. A snapshot it
+  cannot start from raises `snapshot_start_refused`, and it replays the whole copy instead, which needs
+  every segment of the log on the host.
 - It resolves the operator again at each boundary, and after a failed stint: a second later, then
   twice as long each time, up to a stint.
 - From a minute before its own turn's boundary, it holds its keyless venue connections, such as
@@ -920,7 +924,7 @@ not open on an older release. Once an installation has ended the turns, the keys
    endpoint is reachable from the operator's trading server. A member answers only once its replica
    has verified the checkpoint that the question names.
 2. For `log_check_unattributable`, restart the trading server without `[snapshots]`, so that it
-   replays the whole log.
+   starts from a daily snapshot, which carries the log's turn records, or replays the whole log.
 
    **Changes the live system.** The owner must approve the restart.
 

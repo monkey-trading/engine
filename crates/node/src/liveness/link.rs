@@ -452,6 +452,8 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
     /// The answer to `request`.
     /// Error cases:
     /// - the copy is not yet durable through a command, or the vouch is refused
+    /// - the entries asked for are before the first segment the copy holds, which the log's public archive
+    ///   holds (`NotLocal`)
     pub(crate) async fn answer(&self, request: &Request) -> anyhow::Result<Reply> {
         match request {
             Request::Status { epoch, nonce } => {
@@ -460,7 +462,7 @@ impl<C: StandbyChain + Send + 'static> Server<C> {
                 let signature = self.standby.sign(status.digest(chain_id, vault, self.member, &nonce.0));
                 Ok(Reply::Status { member: self.member, status, signature })
             }
-            Request::Entries { after } => Ok(Reply::Entries { entries: self.copy.entries(*after).await }),
+            Request::Entries { after } => Ok(Reply::Entries { entries: self.copy.entries(*after).await? }),
             Request::Attestation => Ok(Reply::Attestation { request: self.copy.attestation(self.standby.address())? }),
             Request::Vouch { request } => {
                 let voucher = Voucher {

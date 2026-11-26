@@ -455,34 +455,109 @@ their runs.
 
 `engine replay --snapshots <dir>` replays a log in ranges, several at once, from the daily snapshots
 in `<dir>`. A trading server with `[daily_snapshots]` keeps the engine's state at the first
-checkpoint of each UTC day and serves it beside the archive. Its enclave key signs each snapshot
-over the deployment, the offset of the snapshot's checkpoint in the log, that checkpoint's root and
-the SHA-256 of the state's encoding, which a member's start requires (below) and a replay in ranges
-does not read. The replay splits the log at each snapshot's checkpoint, and starts a range from a snapshot only where the log
-holds a checkpoint at the snapshot's offset equal to the snapshot's, which it checks as it checks
-every checkpoint, and only once the root it computes over the snapshot's state, each market's index
-of resting orders rebuilt from the accounts' orders, is that checkpoint's; a snapshot of a state
-before `V27`, or before custody finality, is refused. A snapshot of a checkpoint the log does not
-hold, as one a trading server wrote in a tail it later set aside, starts no range, and the replay
-names it. Each range then replays as a whole replay
-does, through the checkpoint where the next range starts. The replay accepts the ranges only where
-each starts at the checkpoint the range before it ended at and from the state that range ended in,
-compared by the SHA-256 of the whole state's encoding, which binds the parts of the state the root
-leaves out too; so the root check only refuses a bad snapshot before its range runs. What a whole
-replay carries across that checkpoint besides the state is reset at every checkpoint, such as the
-seal chain, or recomputed from the ranges' own results in log order, such as the checkpoints that
-typed withdrawal authorizations name and the approvals deferred before a range. So a replay in
-ranges applies the log as one history from genesis, as a whole replay does, barring a SHA-256
-collision, and reports the fault of the earliest range that holds one. It does not compute the
-running digest of every instruction, or the checkpoint accounting, which only a trading server's
-start reads. A snapshot crafted so that building its indexes or its root overflows the engine's
-arithmetic stops the replay with a panic rather than an error; it never passes.
+checkpoint of each UTC day and serves it beside the archive. Beside the state, each snapshot carries
+what a replay of the log holds after that checkpoint and folds from every entry before it: the
+instruction count, the running digest of every instruction and the latest instructions' digests,
+the checkpoint accounting, the genesis progress, the protocol activations, the sequence number of the
+latest parameters, every checkpoint's signer and root, the turn takings, the withdrawal approvals in
+payout order with their latest authorizations, and the approvals a checkpoint deferred. It also
+carries the dashboard record at the checkpoint and the chain anchors of the trading server's chart
+history there. The trading server's enclave key signs each snapshot over the deployment, the offset
+of the snapshot's checkpoint in the log, that checkpoint's root, and the SHA-256 of the state's
+encoding, of the replay state and of the anchors, each as written; a start requires the signature
+(below), and a replay in ranges does not read it. The replay splits the log at each snapshot's
+checkpoint, and starts a range from a snapshot only where the log holds a checkpoint at the
+snapshot's offset equal to the snapshot's, which it checks as it checks every checkpoint, and only
+once the root it computes over the snapshot's state, each market's index of resting orders rebuilt
+from the accounts' orders, is that checkpoint's; a snapshot of a state before `V27`, or before
+custody finality, is refused. A snapshot of a checkpoint the log does not hold, as one a trading
+server wrote in a tail it later set aside, starts no range, and the replay names it. When the
+directory holds snapshots that carry the replay state, only those split the log, and each range from
+one goes on from its state and its replay state as a whole replay would hold them there, through the
+checkpoint where the next range starts. The replay accepts the ranges only where each starts at the
+checkpoint the range before it ended at, from the state that range ended in, compared by the SHA-256
+of the whole state's encoding, which binds the parts of the state the root leaves out too, and from
+the replay state that range folded, compared by the SHA-256 of its encoding. So a snapshot whose
+replay state is not the log's fails the replay, naming the snapshot, and a replay in ranges applies
+the log as one history from genesis, as a whole replay does, barring a SHA-256 collision, and reports
+the fault of the earliest range that holds one. A directory of older snapshots, which carry no replay
+state, still splits the log: there, what a whole replay carries across a checkpoint besides the state
+is reset at every checkpoint, such as the seal chain, or recomputed from the ranges' own results in
+log order, such as the checkpoints that typed withdrawal authorizations name and the approvals
+deferred before a range, and the replay does not compute the running digest of every instruction or
+the checkpoint accounting. A snapshot crafted so that building its indexes or its root overflows the
+engine's arithmetic stops the replay with a panic rather than an error; it never passes.
+
+A trading server starts from its newest usable daily snapshot, no later than the newest one whose
+frozen copy of the chart history it holds, and the log's segments on its host after the snapshot's
+checkpoint, and reads none of the log before it; nor does a rotation member's
+replica, a standby's copy, a handover successor's copy, or the re-derivation of the financing rows of a
+rollover after the checkpoint. Two reads still need older segments: a posted log head older than the last 65,536 instructions
+before the snapshot's checkpoint, whose links the snapshot carries, is checked by hashing the log's
+instructions from the head onto the checkpoint, and a rebuild or repair of the account history index
+reads the log from its start. So the host keeps the segments from the earlier of the posted head and
+the snapshot's checkpoint, and every segment while the history index may need rebuilding. A usable
+snapshot is one
+that carries the replay state, whose checkpoint the log holds signed, its signature verified, by the
+key the vault names at its sequence number (the signer of the checkpoint the vault accepted there, or
+else of the checkpoint the vault finalized, which the snapshot rests on; under mock custody, the
+trading server's own key), whose own signature is
+by that key, so a key the vault has since retired vouches for none, whose checkpoint is at or before
+the checkpoint the vault finalized and, where the vault accepted one at that sequence number, has the
+root the vault accepted, and whose checkpoint the log on the host holds at the snapshot's offset. The
+signature is checked before the state or the replay state is decoded. The start then computes the
+root over the snapshot's state, which must be its checkpoint's, checks that the replay state stands
+for that state and checkpoint, and replays the log after the checkpoint as a whole replay does: each
+instruction's seal from the checkpoint's link on, each later checkpoint's signature and root, and
+each later withdrawal authorization, whose checkpoint may be one the snapshot carries; for a recovery
+pinned to the vault's signer history, a checkpoint before the snapshot that such an authorization
+names is taken from the vault. What the start takes on trust is the state and the replay state at
+the snapshot's checkpoint, on the word of the key that signed that checkpoint; the log after it is
+checked as before, and a posted log head at or below the checkpoint is bound to the running digest
+the snapshot carries. A snapshot whose signature, root or checkpoint does not pass is passed over for
+the next newest, three at most; one whose state's root or replay state then does not check gives way
+to a whole replay, as does the start when none passes; each is paged with Warning
+`snapshot_start_refused`. Its dashboard record continues from the one the snapshot carries, and its chart
+history from a frozen copy of the cache the marks task wrote at the snapshot's checkpoint, which the
+start takes only when every row authenticates under the cache's key and every chain matches the
+anchors the snapshot carries; a copy that does not is set aside with Warning `marks_cache_rebuilt`,
+and the chart history before the snapshot is then lost until a provider backfill restores what it can.
+The marks task writes the copy after the marks of every instruction through the checkpoint and before
+any later one. With `[snapshots]`, a start with no recovery cache that verifies replays the whole log,
+as it rebuilds the account history index from the whole log, which must index only what the start
+verified; with `[daily_snapshots]` too, a start takes only a recovery cache that carries the replay
+state, so the daily snapshots go on after it.
+
+The segments before the snapshot's checkpoint are what the host says they are, but for those the
+trading server checks: a replay from the snapshot reads none of them, and without `[snapshots]` no
+signed catalog vouches for them. Once it has started, the trading server checks, on a thread of its
+own, the instructions before the checkpoint whose links the snapshot carries, the last 65,536, that
+the log on the host holds, from the first after the activation of the protocol version that keeps
+every withdrawal approval in the engine: each must extend the link before it as the snapshot says,
+which binds its bytes, events and seal; each checkpoint among them must follow its own instruction,
+with the root the snapshot carries for it, and none the snapshot carries may be missing; each
+withdrawal entry must follow its approval and the checkpoint its authorization names, with that
+checkpoint's root, where both are among the instructions checked; and each checkpoint and withdrawal
+entry must be signed by a recorded signer. A whole replay checks no more of where a withdrawal
+authorization sits, and neither checks that every one is present. Nothing the trading server vouches
+for is read from before the first instruction it checked, which is the one after the snapshot's
+checkpoint until the check ends: a stream's backfill from earlier is refused with 400, naming the
+public archive, as one from before the log's first segment on the host is, and a financing charge's
+rows are checked against their file only from there on. A rotation member or a standby whose copy
+trails that instruction is refused too: it then fetches the completed segments past its copy's head
+from the public archive and its mirrors, takes each entry after the head only once its seal and link
+continue the copy, as a streamed entry's must, a member's replica applying it first, and follows the
+stream again from the new head, which a segment of 10,000 instructions brings within the checked
+range. The archive, whose answers are not signed, serves the segments as the host holds them, which
+anyone checks by a replay. A rotation member's or a standby's copy fetched from an archive mirror may
+hold altered segments before its snapshot. It never serves them, and a whole replay of the copy, as
+when no snapshot passes, refuses them.
 
 What each replay trusts: a whole replay trusts, for checkpoints and withdrawal authorizations, the
 signer it pins, the attested signers, or the vault's signer history, and computes everything else
 from the log. A replay in ranges trusts the same, and nothing a snapshot says: a snapshot changes
-only where a range starts. With `--custody-config`, no range starts after the vault's finalized
-checkpoint.
+only where a range starts, and its replay state must be the one the range before it folded. With
+`--custody-config`, no range starts after the vault's finalized checkpoint.
 
 A replay in ranges is projected, not yet measured, to take about 25 minutes for 30 days of launch
 flow, the expected mix of prices and orders, at 100,000 accounts, about 246 million instructions, on
@@ -552,7 +627,9 @@ A rotation member whose copy is empty backfills it from the archives of the oper
 with `[daily_snapshots]`, starts its replica from the newest snapshot, of those it holds and those the
 archives list, whose checkpoint the copy holds and the vault has finalized, and whose state is from
 before the turns of the member in office began, the first of the turns in a row that the finalized
-schedule draws for that member at trusted time. It fetches a listed one
+schedule draws for that member at trusted time. A member that has held the log before takes none
+after the last instruction its account history index took, so its replica passes where its index and
+its chart history stopped. It fetches a listed one
 whole, checking its length and hash against its listing, and takes a snapshot only when its signature,
 which it checks before it decodes the state, covers the state's bytes and is by the key that signed its
 checkpoint, a key the vault recorded, and the copy holds that checkpoint at the snapshot's offset. It
@@ -736,7 +813,10 @@ Known limits:
 - Without snapshots, the account history index is read from the host's disk with only its schema and
   integrity checked, and its rows are not authenticated. It is matched to the log by one
   instruction, the newest it has taken. SQLite reads it in defensive mode, and each event it serves
-  names its place in the log, where anyone can check it.
+  names its place in the log, where anyone can check it. An index behind the daily snapshot a start
+  went on from, as one rebuilt after its directory was removed, catches up through the host's
+  segments before the snapshot, which the start did not check, and derives the financing rows of a
+  rollover there from them; the index trusts the host's disk either way.
 
 ## The log's archive
 
@@ -1458,14 +1538,22 @@ Known limits:
 - A boundary whose turn nobody drew logs no `TurnTaken`, so approvals wait for the next drawn turn.
 - A start from a snapshot past the verified head cannot say who sequenced the range. It asks no one,
   and raises `log_check_unattributable` until a full replay or a handover.
-- A member's replica starts from a daily snapshot only of a checkpoint that its copy holds, at or
-  before the vault's finalised one, and, where the vault accepted a checkpoint at the snapshot's
-  sequence number, of the root that the vault accepted there. A snapshot of a checkpoint that the
-  vault did not accept rests on the vault's later checkpoint, which its replay must reach.
-- A member whose replica started from a daily snapshot did not replay the log before the snapshot's
-  checkpoint, so its own check at a handover or a promotion counts only for a range that starts after
-  that checkpoint, and it answers no other member's question, since the range a question covers may
-  start before it. Both hold until a whole replay of its copy, at its next start. It starts from a
+- A trading server's start, and a member's replica, take a daily snapshot only of a checkpoint that
+  the log on the host holds, at or before the vault's finalised one, and, where the vault accepted a
+  checkpoint at the snapshot's sequence number, of the root that the vault accepted there. A snapshot
+  of a checkpoint that the vault did not accept rests on the vault's later checkpoint, which its replay
+  must reach. The state and the replay state at the snapshot's checkpoint are the signer's word: a
+  signer that signed a false one is caught by any replay that passes the checkpoint, in ranges or
+  whole, not by the start.
+- The host can withhold the newer snapshots, so a start goes on from an older one and replays more of
+  the log, or remove the log's segments before the newest usable snapshot's checkpoint, after which a
+  start with no usable snapshot, or with a posted head older than the links the snapshot carries, cannot
+  read the log it needs and refuses to serve, as does a rebuild of the account history index. A start
+  never takes a snapshot the vault has not finalized.
+- A trading server or a member that started from a daily snapshot did not replay the log before the
+  snapshot's checkpoint, so its own check at a handover or a promotion counts only for a range that
+  starts after that checkpoint, and a member answers another's question only for a range that starts
+  after it, which the question names under the asking enclave's signature. A member starts from a
   snapshot before the turns of the member in office, where the last check's range starts while each
   check counts, so its own check at its first take counts; after a check that did not count, the range
   may start earlier, and with two members in the set payouts then wait until the set changes, as after

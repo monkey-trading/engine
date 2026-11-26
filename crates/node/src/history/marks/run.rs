@@ -14,10 +14,10 @@ use tokio::time::{Instant, interval};
 use tracing::{info, warn};
 
 use crate::config::BackfillSection;
-use crate::history::marks::MarkSample;
 use crate::history::marks::backfill::{self, Candles, Source};
 use crate::history::marks::fold::MarkFold;
 use crate::history::marks::store::{Coverage, Store};
+use crate::history::marks::{Freeze, MarkSample, Report};
 use crate::sequencer::{Query, Request};
 
 /// Samples buffered before one write.
@@ -32,14 +32,17 @@ const BACKFILL_EVERY: Duration = Duration::from_secs(10);
 /// How long after a failed backfill the market is retried.
 const RETRY_AFTER: Duration = Duration::from_secs(300);
 
-/// The live-sample plumbing the task owns: the queue's receiver and the write buffer. A backfill
-/// holds the task for minutes; it takes `&mut Live` and drains between page fetches, so the queue
-/// cannot fill and drop samples while it works.
+/// The live-sample plumbing the task owns: the queue's receiver, the write buffer, and the daily snapshots'
+/// freezes taken from the queue and not yet written. A backfill holds the task for minutes; it takes `&mut Live`
+/// and drains between page fetches, so the queue cannot fill and drop samples while it works.
 pub(crate) struct Live {
-    pub samples: mpsc::Receiver<MarkSample>,
+    pub samples: mpsc::Receiver<Report>,
     pub buffered: Vec<MarkSample>,
     /// When the buffer last flushed; a backfill keeps this deadline between pages.
     pub flushed_at: Instant,
+    /// The freezes the task writes once it next can, in order, each after the samples buffered before it and with
+    /// the samples received after it and before the next, which are written only once it is (`frozen`).
+    pub freezes: Vec<(Freeze, Vec<MarkSample>)>,
 }
 
 /// What a member's start leaves its marks cache to take once the node sequences: the cache its earlier
@@ -73,14 +76,17 @@ pub async fn run(
     let mut backfill_tick = interval(BACKFILL_EVERY);
     let mut retry_at: BTreeMap<MarketId, Instant> = BTreeMap::new();
     loop {
+        if !live.freezes.is_empty() {
+            store = frozen(store, &mut live).await?;
+        }
         tokio::select! {
-            sample = live.samples.recv() => {
+            report = live.samples.recv() => {
                 // The sequencer is gone: flush and end, as a shutdown does.
-                let Some(sample) = sample else {
+                let Some(report) = report else {
                     write(&mut store, &mut live.buffered)?;
                     return Ok(());
                 };
-                live.buffered.push(sample);
+                live.take(report);
                 if live.buffered.len() >= BATCH {
                     write(&mut store, &mut live.buffered)?;
                     live.flushed_at = Instant::now();
@@ -126,8 +132,8 @@ async fn caught_up(mut store: Store, work: CatchUp, live: &mut Live) -> anyhow::
     let mut store = loop {
         tokio::select! {
             done = &mut job => break done.context("the marks catch-up stopped")??,
-            sample = live.samples.recv(), if open => match sample {
-                Some(sample) => live.buffered.push(sample),
+            report = live.samples.recv(), if open => match report {
+                Some(report) => live.take(report),
                 None => open = false,
             },
         }
@@ -136,13 +142,73 @@ async fn caught_up(mut store: Store, work: CatchUp, live: &mut Live) -> anyhow::
         let rest = live.buffered.split_off(BATCH);
         write(&mut store, &mut live.buffered)?;
         live.buffered = rest;
-        while let Ok(sample) = live.samples.try_recv() {
-            live.buffered.push(sample);
+        while let Ok(report) = live.samples.try_recv() {
+            live.take(report);
         }
         tokio::task::yield_now().await;
     }
     live.flushed_at = Instant::now();
     Ok(store)
+}
+
+/// Writes the frozen copy each freeze in `live` asks for (`Store::freeze`), once the samples buffered before it are
+/// written and before any received after it is, and hands the cache's committed anchors then to the freeze's end:
+/// the copy holds the marks of the commands through its checkpoint and none after, however long a backfill or a
+/// catch-up held the samples. The copy is written on a blocking thread, the queue received into the buffer
+/// meanwhile, so the sequencer's queue never fills and drops a sample. A copy that cannot be written is logged, and
+/// its end gets nothing: the snapshot carries no marks anchors.
+/// Error cases:
+/// - the buffered samples cannot be written, or the copy's thread panics
+async fn frozen(mut store: Store, live: &mut Live) -> anyhow::Result<Store> {
+    write(&mut store, &mut live.buffered)?;
+    live.flushed_at = Instant::now();
+    let freezes = std::mem::take(&mut live.freezes);
+    let mut job = tokio::task::spawn_blocking(move || {
+        write_freezes(&mut store, freezes)?;
+        anyhow::Ok(store)
+    });
+    let mut open = true;
+    loop {
+        tokio::select! {
+            done = &mut job => return done.context("the marks freeze stopped")?,
+            report = live.samples.recv(), if open => match report {
+                Some(report) => live.take(report),
+                None => open = false,
+            },
+        }
+    }
+}
+
+/// Writes each of `freezes`' frozen copies in order (`Store::freeze`), handing its end the anchors, then the
+/// samples received after it, before the next. A copy that cannot be written is logged, and its end gets nothing.
+/// Error cases:
+/// - the samples after a freeze cannot be written
+pub(super) fn write_freezes(store: &mut Store, freezes: Vec<(Freeze, Vec<MarkSample>)>) -> anyhow::Result<()> {
+    for (Freeze { offset, reply, snapshots }, mut after) in freezes {
+        match store.freeze_keeping(offset, snapshots.as_deref()) {
+            Ok(frozen) => drop(reply.try_send(frozen)),
+            Err(e) => warn!(seq = offset.seq, "no frozen marks cache for the daily snapshot at {offset}: {e:#}"),
+        }
+        write(store, &mut after)?;
+    }
+    Ok(())
+}
+
+impl Live {
+    /// Nothing buffered yet from `samples`.
+    pub(crate) fn new(samples: mpsc::Receiver<Report>) -> Self {
+        Self { samples, buffered: Vec::new(), flushed_at: Instant::now(), freezes: Vec::new() }
+    }
+
+    /// Buffers `report`'s sample, held behind the last freeze kept, if any, or keeps its freeze for the task to write
+    /// after the samples received before it and before those after it.
+    pub(crate) fn take(&mut self, report: Report) {
+        match (report, self.freezes.last_mut()) {
+            (Report::Sample(sample), Some((_, after))) => after.push(sample),
+            (Report::Sample(sample), None) => self.buffered.push(sample),
+            (Report::Freeze(freeze), _) => self.freezes.push((freeze, Vec::new())),
+        }
+    }
 }
 
 /// Flushes buffered samples into the cache, one transaction.

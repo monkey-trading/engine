@@ -1,9 +1,10 @@
 //! Dashboard statistics: the series, position maps and MONKEY activity the House and MONKEY pages
 //! read, derived from the log and held in memory. The sequencer feeds them every command it applies,
 //! and recovery feeds them every command its replay re-applies through the same `observe`, so a
-//! restarted node serves the buckets it served before. Nothing is written to disk, so a host has no
-//! file to roll back; a recovery from a checkpoint snapshot sees only the commands after it, and
-//! every answer says where its data begins.
+//! restarted node serves the buckets it served before. The record is written to disk only inside a
+//! daily snapshot, under its signature (`carried`), which a start from that snapshot restores before
+//! its replay of the log after it, so a host has no unsigned file to roll back; a recovery from a
+//! checkpoint snapshot sees only the commands after it, and every answer says where its data begins.
 //!
 //! The scan of every account (`snapshot`) is due at most once per `api.stats_interval` of sequenced
 //! time, with a light one (totals only) every `api.stats_light_interval` between, so the same log
@@ -16,6 +17,8 @@
 
 mod activity;
 pub(crate) mod background;
+mod carried;
+pub(crate) use carried::{Capture, Record};
 mod closeout;
 mod distributions;
 mod turns;
@@ -35,24 +38,30 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use anyhow::Context;
 use engine_core::command::Sequenced;
+use engine_core::eip712::B256;
 use engine_core::types::Millis;
 use engine_core::{Engine, Fixed};
+use serde::{Deserialize, Serialize};
 
 use crate::config::{NodeConfig, StatsSection};
+use crate::log::{CommandEntry, LogEntry};
+use crate::sequencer::replay::Fold;
 use crate::stats::activity::Activity;
 use crate::stats::distributions::Distributions;
 use crate::stats::series::SeriesStore;
 use crate::stats::snapshot::{Grid, Layout, Snapshot};
 
 /// The seq and time of the first command recorded.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Begin {
     pub ts: Millis,
     pub seq: u64,
 }
 
 /// The last distribution epoch to close, as its event said.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Distribution {
     pub epoch: u64,
     /// When the epoch ended.
@@ -60,7 +69,9 @@ pub(crate) struct Distribution {
     pub nav: Fixed,
     pub floor: Fixed,
     /// Whole USDC base units above the floor.
+    #[serde(with = "carried::text")]
     pub excess: u128,
+    #[serde(with = "carried::text")]
     pub allocated: u128,
 }
 
@@ -100,6 +111,8 @@ pub(crate) struct Inner {
     staged: Vec<background::Job>,
     /// Set while a replay feeds the record, whose scans are light: only the last one is served.
     recovering: bool,
+    /// The records taken at a daily snapshot's checkpoint that wait for the scans in flight then.
+    captures: Vec<carried::Waiting>,
     /// Encode jobs a test holds back, their replies unanswered, while set (`hold_encodes`).
     #[cfg(test)]
     held_encodes: Option<Vec<background::Job>>,
@@ -161,6 +174,7 @@ impl Inner {
             background: None,
             staged: Vec::new(),
             recovering: false,
+            captures: Vec::new(),
             #[cfg(test)]
             held_encodes: None,
         }
@@ -201,10 +215,35 @@ impl Stats {
     /// Stages a command the sequencer applied for the worker, if there is one, before `observe` sees
     /// it. It goes to the worker with `deliver`, once the command is durable.
     pub(crate) fn follow(&self, sequenced: &Sequenced) {
-        let mut inner = self.lock();
-        if inner.background.is_some() {
-            inner.staged.push(background::Job::Apply(Box::new(sequenced.clone())));
+        self.stage_job(background::Job::Apply(Box::new(sequenced.clone()), None));
+    }
+
+    /// `follow`, for a command the sequencer logged as `entry` with the cumulative command prefix `link`,
+    /// which the worker's fold takes (`seed_fold`).
+    pub(crate) fn follow_logged(&self, entry: &CommandEntry, link: B256) {
+        let logged = (link, entry.seal.as_ref().map(|seal| seal.signer));
+        self.stage_job(background::Job::Apply(Box::new(entry.sequenced.clone()), Some(logged)));
+    }
+
+    /// Stages a withdrawal or checkpoint entry the sequencer logged for the worker's fold.
+    pub(crate) fn follow_entry(&self, entry: &LogEntry) {
+        if !matches!(entry, LogEntry::Command(_)) {
+            self.stage_job(background::Job::Entry(Box::new(entry.clone())));
         }
+    }
+
+    /// Has the worker fold the replay state from `fold`, the state after every command and entry staged so far,
+    /// so a daily snapshot can carry it (`carry_job`).
+    pub(crate) fn seed_fold(&self, fold: Fold) {
+        self.stage_job(background::Job::Seed(Box::new(fold)));
+    }
+
+    /// A job that encodes the replay state the worker folds at the checkpoint after the command at `seq`, the
+    /// last entry staged, and the end its encoding arrives on; `None` when no worker runs.
+    pub(crate) fn carry_job(&self, seq: u64) -> Option<(background::Job, Receiver<background::Encoded>)> {
+        self.lock().background.as_ref()?;
+        let (reply, encoded) = sync_channel(1);
+        Some((background::Job::Carry { seq, reply }, encoded))
     }
 
     /// A job that encodes the worker's copy at the command at `seq`, stamped `ts`, the last one
@@ -256,8 +295,7 @@ impl Stats {
         // needs the lock.
         let Some(worker) = self.reader() else { return };
         if !jobs.into_iter().all(|job| worker.send(job)) {
-            self.lock().background = None;
-            background::stopped("the worker's queue closed");
+            self.lock().worker_stopped("the worker's queue closed");
         }
     }
 

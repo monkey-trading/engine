@@ -74,7 +74,7 @@ fn a_worker_given_a_command_out_of_sequence_stops_without_scanning() {
     let rig = Rig::new();
     let mut worker = Background::start(&rig.engine).unwrap();
     let skipped = Sequenced { seq: rig.engine.last_seq().unwrap() + 5, ts: T0 + 1_000, cmd: Command::Tick };
-    assert!(worker.reader().send(Job::Apply(Box::new(skipped))));
+    assert!(worker.reader().send(Job::Apply(Box::new(skipped), None)));
     let stopped = worker.wait().expect_err("the worker refuses the gap");
     assert!(stopped.contains("applying seq"), "{stopped}");
 }
@@ -104,7 +104,7 @@ fn the_workers_copy_does_not_accumulate_changed_keys() {
         };
         let sequenced = Sequenced { seq, ts, cmd };
         rig.engine.apply(&sequenced).unwrap();
-        assert!(worker.reader().send(Job::Apply(Box::new(sequenced))));
+        assert!(worker.reader().send(Job::Apply(Box::new(sequenced), None)));
     }
     assert!(rig.engine.changed_key_count() > 0, "the sequencer's engine records until it computes a root");
     let (sent, received) = std::sync::mpsc::channel();

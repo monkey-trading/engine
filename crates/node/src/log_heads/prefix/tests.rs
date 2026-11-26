@@ -182,7 +182,80 @@ fn a_caches_history_head_is_refused_over_commands_the_log_altered_or_lost() {
     assert!(format!("{error:#}").contains("seq 20 where seq 10"), "{error:#}");
 }
 
+/// The pass over the log's prefix from a daily snapshot's checkpoint, with the command prefix it carries, gives what
+/// the pass from the log's start gives and reads no segment before the snapshot's.
+#[test]
+fn the_anchor_pass_from_a_daily_snapshot_reads_no_segment_before_it() {
+    // A snapshot at the checkpoint after seq 12 stands for the first two segments: the pass from it gives what the
+    // pass from the log's start gives, the anchor's stamp included, and still does once the first is gone.
+    let (dir, signer, prefixes) = sealed_log("prefix-from-snapshot", 25, &[0, 12]);
+    let checkpoint = checkpoint_at(&dir, 12);
+    let start = SnapshotStart {
+        offset: Offset { seq: 12, index: 1 },
+        checkpoint: &checkpoint,
+        command_prefix: prefixes[12],
+        ts: 12,
+    };
+    let from = |anchor, start| {
+        verify_from(&dir, (DOMAIN, signer), (anchor, 20), prefixes[20], ReplayWorkers::default(), Some(start))
+    };
+    for anchor in [12, 15] {
+        let whole = verify(&dir, DOMAIN, signer, anchor, 20, prefixes[20]).unwrap();
+        assert_eq!(from(anchor, start).unwrap(), whole, "the anchor at seq {anchor}");
+    }
+    std::fs::remove_file(dir.join(segment(0))).unwrap();
+    assert!(verify(&dir, DOMAIN, signer, 15, 20, prefixes[20]).is_err(), "the pass from the log's start");
+    assert_eq!(from(15, start).unwrap().anchor_ts, 15);
+    // A snapshot of another prefix, one the log does not hold at its offset, or one past the anchor is refused.
+    let error = from(15, SnapshotStart { command_prefix: [9; 32], ..start }).unwrap_err();
+    assert!(format!("{error:#}").contains("certified prefix"), "{error:#}");
+    let error = from(15, SnapshotStart { offset: Offset { seq: 13, index: 0 }, ..start }).unwrap_err();
+    assert!(format!("{error:#}").contains("another entry"), "{error:#}");
+    let error = from(11, start).unwrap_err();
+    assert!(format!("{error:#}").contains("past the finalized checkpoint"), "{error:#}");
+}
+
+#[test]
+fn a_posted_head_under_a_daily_snapshot_is_bound_to_the_history_it_carries() {
+    // The snapshot at the base, seq 20, carries the links of seqs 10 to 20: a head among them is checked against
+    // them with no read of the log, and one before them by the commands since it.
+    let (dir, _, prefixes) = sealed_log("prefix-under-snapshot", 25, &[0]);
+    let mut carried = Carried { command_prefix: prefixes[20].into(), ..Carried::default() };
+    let links: Vec<_> = (10..=20u64)
+        .map(|seq| serde_json::json!({ "seq": seq, "link": B256::from(prefixes[seq as usize]), "ts": seq, "sealer": null }))
+        .collect();
+    carried.links = serde_json::from_value(serde_json::Value::Array(links)).unwrap();
+    std::fs::write(dir.join(segment(10)), b"not a log\n").unwrap();
+    let under = |seq: u64, link: [u8; 32]| under_snapshot(&dir, Head { seq, link: link.into() }, &carried, (20, 99));
+    assert_eq!(under(15, prefixes[15]).unwrap(), 16, "the next command's stamp");
+    assert_eq!(under(20, prefixes[20]).unwrap(), 99, "the snapshot's own at its checkpoint");
+    for seq in [15, 20] {
+        assert!(under(seq, [4; 32]).unwrap_err().is::<Rollback>(), "another link at seq {seq}");
+    }
+    // Before the links, the commands since the head are read, from the segment the host garbled.
+    assert!(!under(5, prefixes[5]).unwrap_err().is::<Rollback>(), "an unreadable log is no rollback");
+    let (dir, _, prefixes) = sealed_log("prefix-under-snapshot-read", 25, &[0]);
+    let under = |seq: u64, link: [u8; 32]| under_snapshot(&dir, Head { seq, link: link.into() }, &carried, (20, 99));
+    assert_eq!(under(5, prefixes[5]).unwrap(), 6);
+    assert!(under(5, [4; 32]).unwrap_err().is::<Rollback>(), "another link before the carried ones");
+}
+
 // ── Helpers ──
+
+/// The checkpoint the log in `dir` holds after the command at `seq`.
+fn checkpoint_at(dir: &Path, seq: u64) -> Checkpoint {
+    let mut found = None;
+    SegmentedLog::open(dir, |entry| {
+        if let LogEntry::Checkpoint(checkpoint) = entry
+            && checkpoint.seq == seq
+        {
+            found = Some(checkpoint);
+        }
+        Ok(())
+    })
+    .unwrap();
+    found.expect("a checkpoint at the seq")
+}
 
 /// A log of `commands` sealed ticks, each stamped at its seq, with a signed checkpoint after each seq
 /// in `checkpoints`, in segments of `SEGMENT_COMMANDS`; with each seq's cumulative command-prefix

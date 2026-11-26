@@ -83,8 +83,11 @@ pub(crate) async fn refresh_archive(
     let manifest = std::fs::read_to_string(dir.join(MANIFEST)).unwrap_or_default();
     // The copy's own stream-fed tail wins: with an open (unlisted) segment holding entries, the
     // follower's segmentation may differ from the operator's, so no later listing can be
-    // adopted safely. Only a copy whose tail is entirely listed backfills.
-    let open_entries = crate::log::SegmentedLog::open(dir, |_| Ok(()))?.has_open_tail();
+    // adopted safely. Only a copy whose tail is entirely listed backfills. Its last listed segment
+    // and any after it say so: the segments before it need not be on this host.
+    let last_listed = crate::log::Manifest::load(dir)?.segments.last().map_or(0, |listed| listed.first_seq);
+    let from = crate::log::Offset::start_of(last_listed);
+    let open_entries = crate::log::SegmentedLog::open_from(dir, from, |_| Ok(()))?.has_open_tail();
     if open_entries {
         warn!("the copy has an unlisted tail; the archive refresh is skipped");
         return Ok(());

@@ -17,7 +17,7 @@ pub use replay::{
     Replayed, ReplayedLog, replay, replay_path, replay_path_in_domain, replay_path_with_attested,
     replay_path_with_trust, replay_with_signer,
 };
-pub(crate) use replay::{replay_copy, replay_path_with_authorities};
+pub(crate) use replay::{replay_copy_from, replay_path_with_authorities};
 mod checkpoints;
 pub use crate::root_worker::ClaimAnswer;
 use checkpoints::publish::After;
@@ -404,7 +404,7 @@ impl Sequencer {
         self.legacy_approvals.observe(&self.engine, &sequenced, &events, true);
         let reinstated = reinstated_receipts(&sequenced.cmd, &events);
         self.access_alerts.note(&self.engine, &sequenced.cmd, &events);
-        self.report_marks(&sequenced, &events);
+        self.report_marks(&sequenced);
         self.log_check.applied(sequenced.seq, sequenced.ts, &events);
         self.next_seq += 1;
         self.last_ts = ts;

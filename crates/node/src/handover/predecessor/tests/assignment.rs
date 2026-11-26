@@ -58,6 +58,7 @@ impl Exchange {
             synced: self.synced.clone(),
             rotation: self.rotation.clone(),
             scheduled: self.scheduled.clone(),
+            finalized: self.finalized.clone(),
         };
         let sealer = MockSealer { launch_digest: UPGRADE };
         let assignments: Arc<dyn crate::handover::assigned::Assignments> = self.assignments.clone();
@@ -317,6 +318,7 @@ async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_s
         synced: exchange.synced.clone(),
         rotation: exchange.rotation.clone(),
         scheduled: exchange.scheduled.clone(),
+        finalized: exchange.finalized.clone(),
     };
     let reader: Arc<dyn crate::handover::assigned::Assignments> = exchange.assignments.clone();
     let at = vault.observe(View::Finalized, &[]).await.unwrap();
@@ -365,6 +367,7 @@ pub(super) async fn listener_over(
             synced: exchange.synced.clone(),
             rotation: exchange.rotation.clone(),
             scheduled: exchange.scheduled.clone(),
+            finalized: exchange.finalized.clone(),
         },
         log_dir: exchange.successor_log.clone(),
         trusted: TrustedClock::new(Arc::new(SystemClock), samples, Duration::from_secs(1)),

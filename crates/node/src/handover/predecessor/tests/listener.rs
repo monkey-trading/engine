@@ -1,7 +1,8 @@
 //! The listener's places: connections that send no request hold none of them from the turn's member,
 //! however many are queued ahead of it or however often a peer renews them, one address holds only its
 //! share and only until its request is due, a full listener, or a full share, gives the oldest silent
-//! place there to a new connection, and requests are served one at a time under one stop.
+//! place there to a new connection, requests are served one at a time under one stop, and a request recorded on
+//! one connection gets nothing on another.
 
 use super::*;
 
@@ -109,6 +110,27 @@ async fn one_address_holds_at_most_its_share_and_only_until_its_request_is_due()
     let newer = timeout(REQUEST_TIMEOUT + Duration::from_secs(5), receive::<Reply>(&mut silent[1])).await;
     assert!(newer.is_ok_and(|read| read.is_err()), "a silent connection outlived its request's time");
     run.abort();
+}
+
+#[tokio::test]
+async fn a_recorded_request_gets_nothing_on_another_connection() {
+    let mut exchange = Exchange::start("handover-replay").await;
+    exchange.make_upgrade_current();
+    let head = write_log_tail(&exchange.successor_log, 3, &exchange.old.enclave_key().unwrap());
+    let _answer = exchange.answer_drain(Ok(head));
+    let (mut first, _, recorded) = exchange.connect(exchange.successor.file_sha256).await;
+    send(&mut first, &recorded).await.unwrap();
+    assert!(matches!(receive(&mut first).await.unwrap(), Reply::Keys { .. }));
+    drop(first);
+
+    // The host replays the request on a connection of its own, which carries another challenge.
+    let mut replayed = TcpStream::connect(&exchange.address).await.unwrap();
+    let _: Challenge = receive(&mut replayed).await.unwrap();
+    send(&mut replayed, &recorded).await.unwrap();
+    let reply = timeout(Duration::from_secs(5), receive(&mut replayed)).await.expect("no answer in time").unwrap();
+    assert!(matches!(reply, Reply::Refused { .. }), "a replayed request got the keys");
+    assert!(!exchange.run.is_finished(), "a replayed request ended the predecessor");
+    exchange.take().await.unwrap();
 }
 
 // ── Helpers ──

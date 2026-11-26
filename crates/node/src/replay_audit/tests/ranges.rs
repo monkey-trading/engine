@@ -157,6 +157,8 @@ impl Ranged {
             checkpoint: third.clone(),
             ts: engine.now(),
             engine: Encoding::Encoded(serde_json::to_string(&engine).unwrap()),
+            carried: crate::daily_snapshots::nothing_carried().0,
+            history: crate::daily_snapshots::nothing_carried().1,
             signing: Signing::for_tests(),
         };
         entries.push(LogEntry::Withdrawal(release(legacy, &key, domain)));
@@ -174,6 +176,10 @@ impl Ranged {
         writer.flush().unwrap();
         let snapshots = scratch_dir(&format!("{name}-snapshots"));
         publish_now(&snapshots, snapshot).unwrap();
+        // The range-mode features this log exercises are those of a snapshot with no replay state.
+        for (_, file) in crate::daily_snapshots::list(&snapshots).unwrap() {
+            crate::sequencer::replay::ranges::fixture::without_carried(&file);
+        }
         Self { dir, snapshots, domain, key, checkpoints: vec![first, second, third, fourth] }
     }
 

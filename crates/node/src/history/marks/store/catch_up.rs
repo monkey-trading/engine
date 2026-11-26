@@ -70,7 +70,7 @@ impl Store {
     /// readers verify under.
     /// Error cases:
     /// - the delete fails
-    fn clear(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn clear(&mut self) -> anyhow::Result<()> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).context("starting a marks clear")?;
         store::check_schema(&tx, &self.schema, &self.path)?;

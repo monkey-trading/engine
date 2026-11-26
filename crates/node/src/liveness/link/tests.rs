@@ -381,7 +381,7 @@ async fn the_member_link_answers_a_log_check_on_its_endpoint_without_a_permit() 
     use crate::log_check::answer::tests::{TURN, answering, ask, head as checked, operator, statement};
     use crate::log_check::answer::{Checked, CheckedHeads};
     let verified = CheckedHeads::default();
-    verified.record(Checked { head: checked(40), taken: Some((TURN, 1)), signer: operator() });
+    verified.record(Checked { head: checked(40), taken: Some((TURN, 1)), signer: operator(), from: 0 });
     for answers in [true, false] {
         let mut server = test_server(&format!("member-link-log-check-{answers}"));
         server.answering = answers.then(|| Arc::new(answering(verified.clone())));

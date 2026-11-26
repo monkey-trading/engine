@@ -44,6 +44,7 @@ async fn a_successor_that_reads_an_unfolded_generation_seals_nothing() {
         synced: Arc::new(Mutex::new(Some([0x99; 32]))),
         rotation: Default::default(),
         scheduled: Default::default(),
+        finalized: Default::default(),
     };
     let err = exchange.take_reading(unfolded).await.err().expect("the successor sealed under an unfolded generation");
     assert!(format!("{err:#}").contains("has not folded"), "{err:#}");

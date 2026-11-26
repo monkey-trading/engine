@@ -42,7 +42,7 @@ async fn a_cache_write_failure_during_a_backfill_stops_the_task() {
 
     // No live samples, so the only write is the backfill's.
     let (_samples, rx) = tokio::sync::mpsc::channel(run::QUEUE);
-    let live = run::Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
+    let live = run::Live::new(rx);
     let sources = BTreeMap::from([(1, Source { venue: Venue::Coinbase, symbol: "BTC-USD".to_owned() })]);
     let task = tokio::spawn(run::run(store, node.tx.downgrade(), Some(cfg), sources, live, Default::default()));
 

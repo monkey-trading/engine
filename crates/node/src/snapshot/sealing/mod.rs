@@ -7,10 +7,10 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use engine_core::types::Millis;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::authenticated::CODEC;
 use crate::config::SnapshotSection;
@@ -105,9 +105,12 @@ pub(crate) struct WriteAlert(Arc<Mutex<bool>>);
 
 /// All inputs were captured at the same physical checkpoint before that frontier was published.
 pub(crate) struct Capture {
-    /// The cache's signed fields but the engine, which `engine` gives.
+    /// The cache's signed fields but the engine, which `engine` gives, and the replay state, which `carried`
+    /// gives.
     pub snapshot: Snapshot,
     pub engine: Encoding,
+    /// The replay state at the checkpoint, due from the stats worker's fold, when a worker runs.
+    pub carried: Option<Encoding>,
     pub ts: Millis,
     pub catalog_store: StoreId,
     pub catalog: CatalogBoundary,
@@ -388,6 +391,19 @@ impl Capture {
             stopped.load(Ordering::Acquire)
         };
         self.snapshot.engine = self.engine.wait(ENCODE_WAIT, polled)?;
+        // A worker that folds no replay state leaves the cache without it, and a replay from it gives no fold.
+        let carried = self.carried.map(|carried| {
+            let encoded = carried.wait(ENCODE_WAIT, polled)?;
+            serde_json::from_str(&encoded).context("decoding the carried replay state")
+        });
+        self.snapshot.carried = match carried {
+            Some(Ok(carried)) => Some(carried),
+            Some(Err(e)) => {
+                debug!(seq = prefix.offset.seq, "the cache carries no replay state: {e:#}");
+                None
+            }
+            None => None,
+        };
         let staged = snapshot::stage(cfg, &self.snapshot, key)?;
         let payloads = lifecycle.payloads();
         let mut publication = lifecycle.publication()?;

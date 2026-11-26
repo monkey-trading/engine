@@ -116,7 +116,15 @@ async fn build_trust(
         .unwrap_or_default();
     let mut epochs = BTreeSet::new();
     let candidates = checkpoint_candidates(path, parent, &mut epochs)?;
-    let authorities = accepted_history(chain, &at, domain, parent, &candidates, epochs).await?;
+    let authorities = accepted_history(
+        chain,
+        &at,
+        domain,
+        (parent, CheckpointParent::default(), &BTreeSet::new()),
+        &candidates,
+        (epochs, BTreeSet::new()),
+    )
+    .await?;
     Ok(AuditTrust { parent, authorities })
 }
 

@@ -249,7 +249,9 @@ async fn obtain_with(
                 let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
                 let signers = crate::handover::vault_signers(vault, &at).await?;
                 crate::node::member::before_whole_log_take(cfg, start)?;
-                crate::handover::sync_predecessor_log(cfg, &source, signers, metrics).await?;
+                let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
+                let finalized = crate::handover::Finalized::read(vault, &at, snapshots).await;
+                crate::handover::sync_predecessor_log(cfg, &source, (signers, finalized.as_ref()), metrics).await?;
                 info!("election handover: fetched the incumbent's published log");
                 info!(
                     predecessor = %source.endpoint,

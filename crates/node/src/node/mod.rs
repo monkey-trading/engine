@@ -393,7 +393,8 @@ async fn serve_node(
     tasks.spawn(async move { ("custody", custody.run(withdrawals_rx, custody_tx).await) });
 
     let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
-    let rows = Arc::new(RowsStore::new(&cfg.history.dir, cfg.history.retention_ms()?));
+    let daily = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.clone());
+    let rows = Arc::new(RowsStore::new(&cfg.history.dir, cfg.history.retention_ms()?).with_snapshots(daily.clone()));
     let history_reader = history.reader().with_derived(derived.clone(), Some(rows.clone()));
     let history_feed = Feed::new(
         stream_tx.subscribe(),
@@ -402,8 +403,8 @@ async fn serve_node(
         backfills.clone(),
         Some(history.resume_at()),
     );
-    let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())))
-        .storing(rows, metrics.full_replays.clone());
+    let deriver = Deriver::new(derived.clone(), Some((cfg.node.log_dir.clone(), manifest_rx.clone())));
+    let deriver = deriver.storing(rows, metrics.full_replays.clone()).with_snapshots(daily);
     let (history_task, history_stopper) = shutdown::spawn_history(history, history_feed, deriver);
     let history_finished = false;
     let handing_over = None;

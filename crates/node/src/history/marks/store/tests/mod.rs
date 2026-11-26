@@ -5,6 +5,7 @@
 
 mod bench;
 mod chain;
+mod frozen;
 mod prune;
 mod refusals;
 mod replay;

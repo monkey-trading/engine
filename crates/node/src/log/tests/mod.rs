@@ -17,6 +17,7 @@ use crate::test_support::{every_event, file_entries, log_entries, scratch_dir};
 
 mod durability;
 mod last_checkpoint;
+mod local;
 mod reader;
 mod scan;
 mod segment_boundary;
@@ -195,9 +196,10 @@ fn opening_refuses_a_segment_that_differs_from_its_manifest_entry() {
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
     assert!(format!("{err:#}").contains(&format!("does not match its listing in {MANIFEST}")), "{err:#}");
 
+    // Without its first segment, a whole read finds the log's start only in the archive.
     fs::remove_file(&path).unwrap();
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
-    assert!(format!("{err:#}").contains(&format!("does not match its listing in {MANIFEST}")), "{err:#}");
+    assert!(err.downcast_ref::<crate::log::NotLocal>().is_some(), "{err:#}");
 }
 
 #[test]
@@ -243,7 +245,7 @@ fn opening_refuses_a_log_missing_its_newest_listed_segment() {
     fs::remove_file(dir.join(SEG_4)).unwrap();
     fs::remove_file(dir.join(SEG_2)).unwrap();
     let err = SegmentedLog::open(&dir, |_| Ok(())).err().unwrap();
-    assert!(format!("{err:#}").contains(&format!("{MANIFEST} lists 2 segments but 1 are")), "{err:#}");
+    assert!(format!("{err:#}").contains(&format!("{MANIFEST} lists 1 segments past the last of the 1")), "{err:#}");
 }
 
 #[test]
@@ -449,4 +451,16 @@ fn line(entry: &LogEntry) -> Vec<u8> {
 
 fn append(path: &Path, bytes: &[u8]) {
     fs::OpenOptions::new().append(true).open(path).unwrap().write_all(bytes).unwrap();
+}
+
+/// After a start from a daily snapshot, a read the enclave vouches for starts no earlier than the command after the
+/// snapshot's checkpoint, and is refused before it naming the archive; a start that read every segment refuses none.
+#[test]
+fn a_start_from_a_snapshot_vouches_only_for_what_it_read() {
+    assert!(Manifest::default().ensure_served(0).is_ok());
+    // The snapshot's checkpoint is at seq 14, so the start verified from seq 15.
+    let resumed = Manifest { verified_from: 15, ..Manifest::default() };
+    assert!(resumed.ensure_served(15).is_ok());
+    let refused = resumed.ensure_served(14).expect_err("a read before the verified seq").to_string();
+    assert!(refused.contains("public archive") && refused.contains("seq 15"), "{refused}");
 }

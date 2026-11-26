@@ -74,6 +74,9 @@ pub(crate) struct Due {
     /// The turn's member, whose node asks and is never asked.
     pub candidate: AccountId,
     pub head: VerifiedHead,
+    /// The first seq of the range the check covers, the one `excluded` attributes: the one after the last
+    /// verified head, or, with none, the latest `TurnTaken` at or before `head` (`Takings::first`).
+    pub from: u64,
     pub excluded: Sequencers,
 }
 
@@ -161,7 +164,8 @@ pub(crate) fn own_check_read(
 
 /// A `TurnTaken` the engine accepted: the turn, the candidate whose turn it took, and the release it
 /// took it under.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Taking {
     turn: u64,
     candidate: AccountId,
@@ -169,7 +173,8 @@ struct Taking {
 }
 
 /// What a member's verification states, inside its quote: the boundary, the turn assignment and the
-/// vault's signer epoch it was asked under, and the checkpoint its replica verified.
+/// vault's signer epoch it was asked under, the checkpoint its replica verified, and the first seq of the
+/// range it vouches for, which its replica applied every command from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Statement {
@@ -179,6 +184,7 @@ pub(crate) struct Statement {
     pub position: u16,
     pub set: u32,
     pub head: VerifiedHead,
+    pub from: u64,
 }
 
 /// The operator's question to a member: a fresh challenge, hex, the statement to verify, and the
@@ -210,7 +216,7 @@ pub(crate) fn report_data(
     statement: &Statement,
     config_sha256: &[u8; 32],
 ) -> [u8; 64] {
-    let mut hash = statement_hash(b"engine.log-check.v1", domain, nonce, statement);
+    let mut hash = statement_hash(b"engine.log-check.v2", domain, nonce, statement);
     hash.update(config_sha256);
     crate::handover::padded(hash.finalize().into())
 }
@@ -218,7 +224,7 @@ pub(crate) fn report_data(
 /// The digest the operator's enclave key signs over its question: the challenge and the statement,
 /// for this deployment.
 pub(crate) fn ask_digest(domain: CheckpointDomain, nonce: &[u8; 32], statement: &Statement) -> B256 {
-    B256::from(<[u8; 32]>::from(statement_hash(b"engine.log-check-ask.v1", domain, nonce, statement).finalize()))
+    B256::from(<[u8; 32]>::from(statement_hash(b"engine.log-check-ask.v2", domain, nonce, statement).finalize()))
 }
 
 /// A hash under `tag` of the deployment, the challenge and every field of the statement.
@@ -236,6 +242,7 @@ fn statement_hash(tag: &[u8], domain: CheckpointDomain, nonce: &[u8; 32], statem
     hash.update(statement.head.seq.to_be_bytes());
     hash.update(statement.head.link);
     hash.update(statement.head.root);
+    hash.update(statement.from.to_be_bytes());
     hash
 }
 
@@ -250,7 +257,8 @@ pub(crate) fn applies(engine: &Engine) -> bool {
 /// The log's `TurnTaken` commands: the candidate and release each names, by the seq it was sequenced
 /// at, from the first command the replay that collected them applied; and the turn and candidate of
 /// each promotion (#595) or skip (#596) the log mirrored, accepted or refused, by the seq of the mirror.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Takings {
     by_seq: BTreeMap<u64, Taking>,
     /// A promoted or skipped-to member sequences from its promotion or its take, before the finalised
@@ -312,15 +320,13 @@ impl Takings {
         self.applied_from = Some(seq);
     }
 
-    /// The records as a replay that applied every command it saw holds them: for a test that compares a
-    /// replica from a snapshot with a whole replay.
-    #[cfg(test)]
+    /// The records as a replay that applied every command it saw holds them: as a daily snapshot carries them,
+    /// and as a test compares a replica from a snapshot with a whole replay.
     pub(crate) fn applied_throughout(&self) -> Self {
         Self { applied_from: None, ..self.clone() }
     }
 
     /// The first command the replay collecting the records applied, when it saw earlier ones (`set_applied_from`).
-    #[cfg(test)]
     pub(crate) fn applied_from(&self) -> Option<u64> {
         self.applied_from
     }

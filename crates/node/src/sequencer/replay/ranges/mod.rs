@@ -28,6 +28,8 @@ pub(crate) mod fixture;
 mod stitch;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod whole_tests;
 
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
@@ -35,7 +37,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::ensure;
+use anyhow::{Context, ensure};
 use engine_core::deposits::LegacyDeposit;
 use engine_core::eip712::B256;
 use engine_core::types::AccountId;
@@ -79,6 +81,9 @@ pub(crate) enum Trust {
 struct Range {
     start: Option<(Offset, PathBuf)>,
     end: Option<Offset>,
+    /// Whether every range of the replay starts from a snapshot that carries the replay state: the range is
+    /// then an ordinary replay, which folds the whole log's state, not one range's.
+    whole: bool,
 }
 
 /// What one range's replay gives the pass.
@@ -91,17 +96,21 @@ pub(super) struct RangeReplayed {
     pub(super) anchored: bool,
     /// Where a range from a snapshot starts: its checkpoint and the state the range applies the log to.
     pub(super) start: Option<Boundary>,
+    /// The snapshot a range starts from.
+    pub(super) file: Option<PathBuf>,
     /// Where a range the log goes on past ends: the checkpoint the next range starts at, and the state the
     /// range ends in there.
     pub(super) end: Option<Boundary>,
 }
 
 /// A checkpoint where one range ends and the next starts, and the SHA-256 of the whole state's encoding
-/// there (`daily_snapshots::state_digest`): the pass requires the two ranges to agree on both.
+/// there (`daily_snapshots::state_digest`), and, where the ranges are ordinary replays, the digest of the
+/// replay state there (`Carried::digest`): the pass requires the two ranges to agree on all.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Boundary {
     pub(super) checkpoint: Checkpoint,
     pub(super) state: [u8; 32],
+    pub(super) carried: Option<[u8; 32]>,
 }
 
 /// The context of a failed range from a daily snapshot: the snapshot and where it starts, so the pass can
@@ -244,11 +253,19 @@ pub(crate) fn replay_ranges_from(
         .filter(|(offset, _)| bound.is_some_and(|bound| offset.seq <= bound))
         .collect();
     let usable = run(&candidates, jobs, |(offset, file), _| holds(path, *offset, file));
-    let (mut starts, mut skipped): (Vec<(Offset, PathBuf)>, Vec<PathBuf>) = (Vec::new(), Vec::new());
+    let (mut held, mut skipped): (Vec<(Offset, PathBuf, u32)>, Vec<PathBuf>) = (Vec::new(), Vec::new());
     for (usable, (offset, file)) in usable.into_iter().zip(candidates) {
-        if !usable? {
-            skipped.push(file);
-        } else if starts.last().is_none_or(|(last, _)| offset.seq > last.seq) {
+        match usable? {
+            None => skipped.push(file),
+            Some(schema) => held.push((offset, file, schema)),
+        }
+    }
+    // Snapshots of the format that carries the replay state split the log alone when the directory holds any.
+    let whole = held.iter().any(|(_, _, schema)| *schema == daily_snapshots::SCHEMA);
+    let mut starts: Vec<(Offset, PathBuf)> = Vec::new();
+    for (offset, file, schema) in held {
+        if (schema == daily_snapshots::SCHEMA || !whole) && starts.last().is_none_or(|(last, _)| offset.seq > last.seq)
+        {
             starts.push((offset, file));
         }
     }
@@ -257,22 +274,23 @@ pub(crate) fn replay_ranges_from(
         .into_iter()
         .chain(starts.into_iter().map(Some))
         .zip(ends)
-        .map(|(start, end)| Range { start, end })
+        .map(|(start, end)| Range { start, end, whole })
         .collect();
     let results = run(&ranges, jobs, |range, last| replay_range(path, (range, last), &trust, base));
-    let replayed = Audited { skipped, ..stitch::stitch(results, ranges.len(), &trust)? };
+    let replayed = Audited { skipped, ..stitch::stitch(results, ranges.len(), &trust, whole)? };
     ensure!(replayed.commands > 0, "{} holds no command", path.display());
     ensure!(replayed.checkpoints > 0, "{} holds no checkpoint, so nothing in it is verified", path.display());
     Ok(replayed)
 }
 
-/// Whether the log directory at `path` holds at `offset` the checkpoint the daily snapshot at `file` names;
-/// a file whose checkpoint does not read names none.
+/// The format of the daily snapshot at `file` when the log directory at `path` holds at `offset` the
+/// checkpoint it names; none when it holds another or the file's checkpoint does not read.
 /// Error cases:
 /// - the log cannot be read up to `offset` (`SegmentedLog::read_span_ahead`)
-fn holds(path: &Path, offset: Offset, file: &Path) -> anyhow::Result<bool> {
-    let Ok(named) = daily_snapshots::checkpoint_of(file) else { return Ok(false) };
-    Ok(matches!(daily_snapshots::entry_at(path, offset)?, Some(LogEntry::Checkpoint(held)) if held == named))
+fn holds(path: &Path, offset: Offset, file: &Path) -> anyhow::Result<Option<u32>> {
+    let Ok((schema, named)) = daily_snapshots::named(file) else { return Ok(None) };
+    Ok(matches!(daily_snapshots::entry_at(path, offset)?, Some(LogEntry::Checkpoint(held)) if held == named)
+        .then_some(schema))
 }
 
 /// Runs `replay` over each of `ranges`, told whether it is the last, on `jobs` threads, each taking the next
@@ -349,24 +367,43 @@ fn replay_span(
     started: &mut Option<Boundary>,
 ) -> anyhow::Result<RangeReplayed> {
     let mut replay = trust.replay()?;
-    replay.range = Some(Refs::default());
-    let (from, mut first, start) = match &range.start {
+    let from;
+    let (mut first, mut start) = (None, None);
+    match &range.start {
         None => {
             replay.engine = base();
-            (0, None, None)
+            replay.range = (!range.whole).then(Refs::default);
+            from = 0;
         }
         Some((offset, file)) => {
             let snapshot = daily_snapshots::load(file)?;
             let state = daily_snapshots::state_digest(&snapshot.engine)?;
-            replay.engine = snapshot.engine;
-            // A snapshot's commands all carry their events (`daily_snapshots::load` requires V27).
-            replay.logs_events = true;
-            replay.range = Some(Refs { start: Some(offset.seq), ..Refs::default() });
-            let start = Boundary { checkpoint: snapshot.checkpoint.clone(), state };
-            *started = Some(start.clone());
-            (offset.seq, Some((*offset, snapshot.checkpoint, file.clone())), Some(start))
+            let carried = match (&snapshot.carried, range.whole) {
+                (Some(carried), true) => Some(carried.digest()?),
+                (None, true) => anyhow::bail!("daily snapshot {} carries no replay state", file.display()),
+                (_, false) => None,
+            };
+            let boundary = Boundary { checkpoint: snapshot.checkpoint.clone(), state, carried };
+            *started = Some(boundary.clone());
+            if range.whole {
+                let (engine, checkpoint) = (snapshot.engine, snapshot.checkpoint.clone());
+                let carried = snapshot.carried.context("a snapshot of this range carries replay state")?;
+                replay = replay
+                    .resume(engine, carried, checkpoint, *offset)
+                    .map_err(|failed| blame(failed, (offset, file)))?;
+            } else {
+                replay.engine = snapshot.engine;
+                // A snapshot's commands all carry their events (`daily_snapshots::load` requires V27).
+                replay.logs_events = true;
+                replay.range = Some(Refs { start: Some(offset.seq), ..Refs::default() });
+            }
+            from = offset.seq;
+            first = Some((*offset, snapshot.checkpoint, file.clone()));
+            start = Some(boundary);
         }
-    };
+    }
+    // A range that goes on from a snapshot's replay state stands for the checkpoint, which it does not apply.
+    let mut at_start = range.whole && range.start.is_some();
     let custody_anchor = match trust {
         Trust::Custody { parent, .. } if parent.has_checkpoint => Some(*parent),
         _ => None,
@@ -389,6 +426,9 @@ fn replay_span(
             ensure!(cp.root.parse::<B256>()? == parent.root, "public log differs from the finalized vault anchor");
             anchored = true;
         }
+        if std::mem::take(&mut at_start) {
+            return Ok(());
+        }
         replay.apply(&entry)?;
         if range.end == Some(offset) {
             ended = Some(entry);
@@ -397,13 +437,9 @@ fn replay_span(
         Ok(())
     });
     if let Err(failed) = replay.settled(read) {
-        // The range before it verified the log's root at this checkpoint, so the snapshot's state fails it.
-        return Err(match (&range.start, failed.downcast_ref::<RootMismatch>()) {
-            (Some((start, file)), Some(mismatch)) if mismatch.seq == start.seq => failed.context(format!(
-                "daily snapshot {}'s state does not match the root of its checkpoint at {start}, which the log holds",
-                file.display()
-            )),
-            _ => failed,
+        return Err(match &range.start {
+            Some(snapshot) => blame(failed, (&snapshot.0, &snapshot.1)),
+            None => failed,
         });
     }
     if let Some((start, _, file)) = &first {
@@ -412,7 +448,8 @@ fn replay_span(
     let end = match (range.end, ended) {
         (None, _) => None,
         (Some(_), Some(LogEntry::Checkpoint(checkpoint))) => {
-            Some(Boundary { checkpoint, state: daily_snapshots::state_digest(&replay.engine)? })
+            let carried = if range.whole { Some(replay.carried()?.digest()?) } else { None };
+            Some(Boundary { checkpoint, state: daily_snapshots::state_digest(&replay.engine)?, carried })
         }
         (Some(end), Some(_)) => anyhow::bail!("the log holds no checkpoint at {end}, where the next range starts"),
         (Some(end), None) => anyhow::bail!("the log ends before the checkpoint at {end} where the next range starts"),
@@ -426,5 +463,18 @@ fn replay_span(
     if end.is_some() {
         drop(std::mem::take(&mut replayed.engine));
     }
-    Ok(RangeReplayed { replayed, refs, anchored, start, end })
+    let file = range.start.as_ref().map(|(_, file)| file.clone());
+    Ok(RangeReplayed { replayed, refs, anchored, start, file, end })
+}
+
+/// `failed`, a replay from the daily snapshot at `file` standing at `start`, naming the snapshot when the
+/// fault is its state's root differing from its checkpoint's, which the range before verified.
+fn blame(failed: anyhow::Error, (start, file): (&Offset, &Path)) -> anyhow::Error {
+    match failed.downcast_ref::<RootMismatch>() {
+        Some(mismatch) if mismatch.seq == start.seq => failed.context(format!(
+            "daily snapshot {}'s state does not match the root of its checkpoint at {start}, which the log holds",
+            file.display()
+        )),
+        _ => failed,
+    }
 }

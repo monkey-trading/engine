@@ -15,7 +15,7 @@ use tokio::time::timeout;
 use tracing::debug;
 
 use crate::daily_snapshots::writer::{publish_staged, sync_dir};
-use crate::daily_snapshots::{Listed, MANIFEST, MAX_SNAPSHOT_BYTES, offset_named};
+use crate::daily_snapshots::{FORMAT_BYTES, Listed, MANIFEST, MAX_SNAPSHOT_BYTES, earlier_format, offset_named};
 use crate::log::Offset;
 use crate::paced::Paced;
 
@@ -76,9 +76,25 @@ async fn manifest(client: &reqwest::Client, origin: &str) -> anyhow::Result<Vec<
         .collect()
 }
 
-/// Fetches `listing`'s snapshot from `origin` into `dir` under its name, unlisted: staged, each byte checked
-/// against the listing's length and SHA-256, synced, then renamed into place. Its path.
+/// Marks a fetch stopped at a snapshot's first bytes, which name a format before the one this build writes: it
+/// carries no replay state for a start.
+#[derive(Debug)]
+pub(crate) struct EarlierFormat;
+
+impl std::fmt::Display for EarlierFormat {
+    /// Says the snapshot is of an earlier format.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a daily snapshot of an earlier format carries no replay state")
+    }
+}
+
+impl std::error::Error for EarlierFormat {}
+
+/// Fetches `listing`'s snapshot from `origin` into `dir` under its name, unlisted: staged, its first bytes checked
+/// not to name an earlier format and each byte against the listing's length and SHA-256, synced, then renamed into
+/// place. Its path.
 /// Error cases:
+/// - its first bytes name an earlier format (`EarlierFormat`), read before the rest is fetched
 /// - the listing is over the bound, the fetch fails or takes too long, or the bytes differ from the listing
 /// - `dir` cannot be created, or the file cannot be written, synced or renamed
 pub(crate) async fn download(
@@ -97,7 +113,14 @@ pub(crate) async fn download(
             File::create(&staged).with_context(|| format!("creating {}", staged.display()))?,
         ));
         let (mut hash, mut bytes) = (Sha256::new(), 0u64);
+        let mut head = Vec::new();
         while let Some(chunk) = response.chunk().await? {
+            if head.len() < FORMAT_BYTES {
+                head.extend_from_slice(&chunk[..chunk.len().min(FORMAT_BYTES - head.len())]);
+                if earlier_format(&head) {
+                    return Err(EarlierFormat.into());
+                }
+            }
             bytes += chunk.len() as u64;
             ensure!(bytes <= listing.bytes, "{url} is longer than its listing");
             hash.update(&chunk);

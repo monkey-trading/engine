@@ -285,7 +285,7 @@ fn named(lines: &mut mpsc::UnboundedReceiver<Alert>, name: &str) -> Vec<Alert> {
 fn following(byte: u8, head: Option<VerifiedHead>) -> (Answering, String) {
     let checked = CheckedHeads::default();
     if let Some(head) = head {
-        checked.record(Checked { head, taken: Some((TURN, 0)), signer: AccountId(key().address()) });
+        checked.record(Checked { head, taken: Some((TURN, 0)), signer: AccountId(key().address()), from: 0 });
     }
     let mut cfg = dev_config();
     let listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
@@ -324,7 +324,7 @@ async fn answer(byte: u8, config: [u8; 32], nonce: &[u8; 32], statement: &Statem
 
 /// The check due on `TURN`, asked by `candidate`, with `excluded` sequencing its range.
 fn due(candidate: AccountId, excluded: Sequencers) -> Due {
-    Due { turn: TURN, position: 0, set: 1, candidate, head: head(), excluded }
+    Due { turn: TURN, position: 0, set: 1, candidate, head: head(), from: 0, excluded }
 }
 
 /// Who sequenced a range: each of `bytes`' members on its own release.
@@ -339,7 +339,7 @@ fn sequencers(bytes: &[u8]) -> Sequencers {
 /// The statement of the check due, under signer epoch 1.
 fn statement() -> Statement {
     let boundary = engine_core::turns::boundary(TURN).unwrap();
-    Statement { signer_epoch: 1, boundary, turn: TURN, position: 0, set: 1, head: head() }
+    Statement { signer_epoch: 1, boundary, turn: TURN, position: 0, set: 1, head: head(), from: 0 }
 }
 
 /// The checkpoint the check verifies.

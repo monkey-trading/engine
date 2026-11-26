@@ -11,7 +11,7 @@ use super::{Candle, Candles, Source, StoreFault, parse_candles, seed_market, ser
 use crate::config::{BackfillSection, FeedProvider, FeedsSection, Venue, VenueConnection, VenueSymbol};
 use crate::history::marks::run::{FLUSH_EVERY, Live, QUEUE};
 use crate::history::marks::store::Store;
-use crate::history::marks::{Resolution, Retentions};
+use crate::history::marks::{Report, Resolution, Retentions};
 use crate::test_support::scratch_dir;
 
 /// The venue's row order: time, low, high, open, close, volume.
@@ -231,8 +231,8 @@ async fn service_live_holds_the_flush_deadline() {
     let dir = scratch_dir("backfill-service-live");
     let mut store = Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
-    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
-    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    let mut live = Live { flushed_at: tokio::time::Instant::now() - FLUSH_EVERY, ..Live::new(rx) };
+    tx.send(Report::Sample((1, 1_792_489_800_000, fixed("67000")))).await.unwrap();
     service_live(&mut live, &mut store).unwrap();
     assert!(live.buffered.is_empty(), "a due deadline flushes");
     let reader = store.reader();
@@ -240,8 +240,8 @@ async fn service_live_holds_the_flush_deadline() {
     assert!(page.entries.iter().any(|entry| entry.close == fixed("67000")));
 
     let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
-    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
-    tx.send((1, 1_792_489_800_000, fixed("67100"))).await.unwrap();
+    let mut live = Live::new(rx);
+    tx.send(Report::Sample((1, 1_792_489_800_000, fixed("67100")))).await.unwrap();
     service_live(&mut live, &mut store).unwrap();
     assert_eq!(live.buffered.len(), 1, "before the deadline the buffer holds the sample");
 }
@@ -254,8 +254,8 @@ async fn a_cache_write_failure_in_the_shared_service_is_marked_as_the_caches_own
     let mut store = Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).unwrap();
     rusqlite::Connection::open(dir.join("marks.sqlite")).unwrap().execute("CREATE TABLE host_note (x)", []).unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
-    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
-    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    let mut live = Live { flushed_at: tokio::time::Instant::now() - FLUSH_EVERY, ..Live::new(rx) };
+    tx.send(Report::Sample((1, 1_792_489_800_000, fixed("67000")))).await.unwrap();
     let err = service_live(&mut live, &mut store).expect_err("a changed schema refuses the write");
     assert!(err.downcast_ref::<StoreFault>().is_some(), "{err:#}");
 }
@@ -281,7 +281,7 @@ async fn a_rejected_seed_is_marked_as_the_caches_own() {
     let mut store = Store::open_in(&dir, Retentions::defaults(), [0x42; 32]).unwrap();
     rusqlite::Connection::open(dir.join("marks.sqlite")).unwrap().execute("CREATE TABLE host_note (x)", []).unwrap();
     let (_tx, rx) = tokio::sync::mpsc::channel(QUEUE);
-    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() };
+    let mut live = Live::new(rx);
     let source = Source { venue: Venue::Coinbase, symbol: "BTC-USD".to_owned() };
     let err = seed_market(&candles, &source, 1, &cfg, 1_792_489_800_000, &mut store, &mut live)
         .await
@@ -313,8 +313,8 @@ async fn seed_market_services_live_marks_across_its_pages() {
     let candles = Candles::new(&cfg.base_url).unwrap();
     let mut store = Store::open_in(&scratch_dir("backfill-service-seed"), Retentions::defaults(), [0x42; 32]).unwrap();
     let (tx, rx) = tokio::sync::mpsc::channel(QUEUE);
-    let mut live = Live { samples: rx, buffered: Vec::new(), flushed_at: tokio::time::Instant::now() - FLUSH_EVERY };
-    tx.send((1, 1_792_489_800_000, fixed("67000"))).await.unwrap();
+    let mut live = Live { flushed_at: tokio::time::Instant::now() - FLUSH_EVERY, ..Live::new(rx) };
+    tx.send(Report::Sample((1, 1_792_489_800_000, fixed("67000")))).await.unwrap();
     drop(tx);
     seed_market(
         &candles,

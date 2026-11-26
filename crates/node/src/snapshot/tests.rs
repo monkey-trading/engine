@@ -314,6 +314,7 @@ pub(super) fn fixture(label: &str) -> (SnapshotSection, EnclaveKey, Snapshot) {
     let snapshot = Snapshot {
         schema: 2,
         pair: None,
+        carried: None,
         chain_id: 31337,
         vault,
         checkpoint,

@@ -22,8 +22,8 @@ async fn a_failed_takeover_leaves_the_copy_marked_as_it_was() {
             &archive_client(false).unwrap(),
             (DOMAIN, signers, Default::default()),
             &origins,
-            &dir,
-            &unheld,
+            (&dir, None),
+            (&unheld, Default::default()),
             copied,
         )
         .await
@@ -59,7 +59,7 @@ async fn a_refresh_the_takeover_never_committed_is_dropped() {
         poison_segment(&dir, &last.file);
         match crashed {
             true => start(&followed(&served, &served), &dir, signers()).await.unwrap(),
-            false => replay_refreshed(&dir, (DOMAIN, Default::default()), signers())
+            false => replay_refreshed(&dir, (DOMAIN, Default::default()), signers(), None)
                 .unwrap_or_else(|e| panic!("{case}: the copy the stream gave does not replay: {e:#}")),
         }
         assert_eq!(std::fs::read_to_string(dir.join(MANIFEST)).unwrap(), before, "{case}: the copy's listings");
@@ -88,7 +88,7 @@ async fn a_refresh_whose_drop_fails_keeps_the_refusal_and_its_record() {
     let stuck = dir.join(format!("{:020}.jsonl", last.last_seq + 1_000));
     std::fs::create_dir_all(stuck.join("held")).unwrap();
     let refused =
-        replay_refreshed(&dir, (DOMAIN, Default::default()), signers()).expect_err("the refreshed copy replayed");
+        replay_refreshed(&dir, (DOMAIN, Default::default()), signers(), None).expect_err("the refreshed copy replayed");
     let message = format!("{refused:#}");
     // The refusal, the replay's own: the segment the refresh added does not open beside the stuck one.
     assert!(message.contains("is followed by another segment"), "the refusal was lost: {message}");
@@ -122,8 +122,8 @@ async fn a_takeover_drops_a_refreshed_segment_its_replay_refuses() {
         &archive_client(false).unwrap(),
         (DOMAIN, signers(), Default::default()),
         &origins,
-        &dir,
-        &unheld,
+        (&dir, None),
+        (&unheld, Default::default()),
         copied,
     )
     .await
@@ -168,8 +168,8 @@ async fn a_takeover_refused_a_refreshed_segment_goes_on_from_the_copy_the_stream
             &archive_client(false).unwrap(),
             (DOMAIN, signers(), Default::default()),
             origins,
-            &dir,
-            &takeover,
+            (&dir, None),
+            (&takeover, Default::default()),
             copied,
         )
         .await
@@ -182,7 +182,7 @@ async fn a_takeover_refused_a_refreshed_segment_goes_on_from_the_copy_the_stream
 
 /// Signs every checkpoint of the segment `file` in `dir` with `key` instead, over the same fields: a
 /// copy's chain admits it, as it admits any checkpoint signed by the key it names, and no replay does.
-fn resign_checkpoints(dir: &Path, file: &str, key: &EnclaveKey) {
+pub(super) fn resign_checkpoints(dir: &Path, file: &str, key: &EnclaveKey) {
     alter_segment(dir, file, |_, entry| {
         if let LogEntry::Checkpoint(checkpoint) = entry {
             let domain = checkpoint.domain.unwrap_or(DOMAIN);
@@ -198,7 +198,7 @@ fn resign_checkpoints(dir: &Path, file: &str, key: &EnclaveKey) {
 
 /// The copy of the operator's archive at `name`, without its last listed segment, as before a takeover's
 /// refresh: the manifest it then lists, and the listing of the segment left out, whose bytes it returns.
-fn short_of_last(operator: &Path, name: &str) -> (PathBuf, String, SegmentInfo, Vec<u8>) {
+pub(super) fn short_of_last(operator: &Path, name: &str) -> (PathBuf, String, SegmentInfo, Vec<u8>) {
     let dir = archive_of(operator, name);
     let manifest = std::fs::read_to_string(dir.join(MANIFEST)).unwrap();
     let mut lines: Vec<&str> = manifest.lines().collect();

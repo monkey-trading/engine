@@ -126,11 +126,9 @@ fn ranges_bench() {
 #[ignore = "a member's start from a daily snapshot against a whole replay, on a kept log, for profiling"]
 fn member_start_bench() {
     use crate::daily_snapshots::{Signing, open_signed};
-    use crate::log::{LogEntry, Offset, SegmentedLog, Stop, offset_of};
     use crate::sequencer::recovery_scale::flow::SEGMENT_COMMANDS;
     use crate::sequencer::recovery_scale::handover::copy_log;
     use crate::sequencer::recovery_scale::restart::DOMAIN;
-    use crate::sequencer::replay::Before;
     use crate::sequencer::replay::ranges::fixture::snapshot_log;
     use crate::standby::Follower;
 
@@ -148,7 +146,7 @@ fn member_start_bench() {
         copy_log(&dir.join("log"), &copy).expect("the member's copy");
     }
     let percent = env("MEMBER_BENCH_PERCENT", 90u64);
-    let snapshots = dir.join(format!("member-snapshots-{percent}"));
+    let snapshots = dir.join(format!("member-snapshots-carried-{percent}"));
     if !snapshots.exists() {
         let last = crate::log::last_checkpoint(&copy).expect("the copy reads").expect("a checkpoint").seq;
         let (target, mut taken) = (last * percent / 100, false);
@@ -197,30 +195,6 @@ fn member_start_bench() {
         at.seq,
         loaded.as_secs_f64(),
         took.as_secs_f64()
-    );
-
-    // The pass alone, over the copy before the snapshot's checkpoint.
-    let snapshot = crate::daily_snapshots::load(&snapshots.join(crate::snapshot::name(at))).expect("the snapshot");
-    let mut pass = Before::new(DOMAIN, [signer].into(), &snapshot.engine, &[]);
-    drop(snapshot);
-    pass.check_seals_ahead(&copy, workers);
-    let (started, cpu, mut previous, mut passed) = (Instant::now(), cpu_secs(), None::<Offset>, 0u64);
-    SegmentedLog::read_span_ahead(&copy, 0, |entry: LogEntry| {
-        let offset = offset_of(previous, &entry)?;
-        previous = Some(offset);
-        if offset == at {
-            return Err(Stop.into());
-        }
-        passed += u64::from(matches!(entry, LogEntry::Command(_)));
-        pass.entry(&entry)
-    })
-    .expect("the pass");
-    let (took, cpu) = (started.elapsed(), cpu_secs() - cpu);
-    println!(
-        "BENCH member_pass commands={passed} s={:.1} commands_per_s={:.0} cpu_s={cpu:.1} cpu_us_per_command={:.1}",
-        took.as_secs_f64(),
-        passed as f64 / took.as_secs_f64(),
-        cpu * 1e6 / passed as f64
     );
 }
 

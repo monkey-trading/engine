@@ -24,6 +24,7 @@ use tracing::{debug, warn};
 mod auth;
 mod catch_up;
 mod chain;
+mod frozen;
 mod import;
 mod merge;
 mod reader;
@@ -32,6 +33,7 @@ mod setup;
 
 pub(crate) use auth::{ChainAnchor, ChainAnchors, ChainHead, Coverage};
 use auth::{Epoch, Row, run_mac, tag};
+pub(crate) use frozen::{Frozen, frozen_path};
 pub use reader::Reader;
 
 use crate::history::marks::fold::Folded;

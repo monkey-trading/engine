@@ -137,6 +137,7 @@ fn cache_context_requires_work_and_all_accounting_fields() {
     let snapshot = Snapshot {
         schema: 2,
         pair: None,
+        carried: None,
         chain_id: domain.chain_id,
         vault: domain.vault,
         checkpoint: cp,
@@ -201,6 +202,7 @@ impl ReplayedLog {
         let payload = Snapshot {
             schema: 2,
             pair: None,
+            carried: None,
             chain_id: domain.chain_id,
             vault: domain.vault,
             checkpoint: checkpoint.clone(),

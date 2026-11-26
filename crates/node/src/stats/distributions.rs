@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use engine_core::staking::UsdcUnits;
 use engine_core::types::{AccountId, Millis};
 use engine_core::{Engine, Fixed};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::stats::Stats;
 
@@ -13,7 +13,8 @@ use crate::stats::Stats;
 pub(crate) const MAX_DISTRIBUTIONS_PAGE: usize = 200;
 
 /// A recipient of a close's operator share and what it was allocated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OperatorShare {
     pub account: AccountId,
     pub amount: UsdcUnits,
@@ -22,14 +23,16 @@ pub(crate) struct OperatorShare {
 /// Epochs a close skipped, which it distributed nothing for: ones no command witnessed the end of, and
 /// from `V75` every unclosed epoch before the latest one the sequenced time and the staking mirror have
 /// both passed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Skipped {
     pub first: u64,
     pub last: u64,
 }
 
 /// One closed epoch, as its command's events said.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct EpochClose {
     pub epoch: u64,
     /// The seq of the command that closed it, and its sequenced time: the first to reach the epoch's
@@ -78,8 +81,12 @@ pub struct DistributionsPage {
     retained_from_epoch: Option<u64>,
 }
 
-/// The newest `capacity` closed epochs, oldest first.
+/// The newest `capacity` closed epochs, oldest first. A daily snapshot carries the epochs, and the restoring
+/// node's settings give the capacity (`keep`).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Distributions {
+    #[serde(skip)]
     capacity: usize,
     epochs: VecDeque<EpochClose>,
     /// Whether the ring has dropped an epoch for room.
@@ -89,6 +96,15 @@ pub(crate) struct Distributions {
 impl Distributions {
     pub(crate) fn new(capacity: usize) -> Self {
         Self { capacity, epochs: VecDeque::new(), evicted: false }
+    }
+
+    /// Holds at most `capacity` epochs from here, dropping the oldest past it.
+    pub(super) fn keep(&mut self, capacity: usize) {
+        self.capacity = capacity;
+        while self.epochs.len() > capacity {
+            self.epochs.pop_front();
+            self.evicted = true;
+        }
     }
 
     /// Adds the newest close, dropping the oldest past capacity.
