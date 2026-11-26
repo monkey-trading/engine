@@ -15,7 +15,7 @@ pub struct SnapshotArchiveMetrics {
 }
 
 impl SnapshotArchiveMetrics {
-    /// Registers each metric under the `archive_snapshot` names.
+    /// Registers each metric under the `archive_snapshots_` names.
     pub(super) fn register(&self, r: &mut Registry) {
         r.register(
             "archive_snapshots_confirmed",
@@ -33,12 +33,12 @@ impl SnapshotArchiveMetrics {
             self.removed.clone(),
         );
         r.register(
-            "archive_snapshot_failures",
+            "archive_snapshots_failures",
             "Uploads and read-backs of daily snapshots that failed and wait to be retried",
             self.failures.clone(),
         );
         r.register(
-            "archive_snapshot_mismatches",
+            "archive_snapshots_mismatches",
             "Daily snapshots whose object in the archive's bucket reads back as other bytes than their listing names",
             self.mismatches.clone(),
         );

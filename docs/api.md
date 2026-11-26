@@ -1578,8 +1578,9 @@ answers 404, and so does every request to a server without `[daily_snapshots]`. 
 each snapshot's length and hash against the manifest before serving it.
 
 A server with `[archive]` uploads each snapshot to the bucket as soon as it is published, under
-`snapshots/<chain id>/<vault>/<file>`, its bytes as the file holds them, and keeps it on its host for
-`daily_snapshots.local_window`, 30 days, after the bucket holds it. The manifest keeps listing every
+`snapshots/<chain id>/<vault>/<file>`, its bytes as the file holds them. Once the bucket holds a
+snapshot and it is stamped more than `daily_snapshots.local_window`, 30 days, before the newest, the
+server removes it from its host, but for the newest such one. The manifest keeps listing every
 snapshot. A listed snapshot that the host no longer holds answers 308, and its `Location` is the
 bucket's object of it, whose length and hash are its manifest line's; the server relays none of it. A
 server without a bucket answers 500 for a listed snapshot that its host no longer holds.

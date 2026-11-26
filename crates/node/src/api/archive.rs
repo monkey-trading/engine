@@ -186,7 +186,8 @@ pub async fn snapshot(State(s): State<ApiState>, Path(file): Path<String>) -> Re
             let body = (JSON_LINES, manifest.len() as u64, Body::from(manifest));
             return anyhow::Ok(Some(Snapshot::Held(body)));
         }
-        let listed = daily_snapshots::read_manifest(dir)?.into_iter().find(|listed| listed.file == file);
+        let listed = daily_snapshots::read_manifest(dir)?.into_iter();
+        let listed = listed.filter(daily_snapshots::canonical).find(|listed| listed.file == file);
         let Some(listed) = listed else { return Ok(None) };
         checked(&dir.join(&listed.file), &listed, served.moved.as_ref()).map(Some)
     })

@@ -1,7 +1,8 @@
 //! The daily snapshot a start takes: the newest, among those in the node's own directory of them whose file its host
-//! holds and, for a member whose copy is new, those its origins list, from their disk or the archive's bucket, whose checkpoint the log on this host holds and the vault
-//! has finalized, of the format that carries the replay state, signed over its state and what it carries by
-//! the vault-recorded signer that signed that checkpoint (`open_signed`). Offsets are tried newest first, and at
+//! holds and, for a member whose copy is new, those its origins list, from their disk or the archive's bucket, whose
+//! checkpoint the log on this host holds and the vault has finalized, of the format that carries the replay state,
+//! signed over its state and what it carries by the vault-recorded signer that signed that checkpoint
+//! (`open_signed`). Offsets are tried newest first, and at
 //! each the sources that list it in turn: the node's own directory, then each origin's in order. A fetched one
 //! is used only once its file is whole, and one that is refused is passed over, a fetched one's file removed,
 //! since only its signature and root make it usable. A snapshot of a format before that is passed over without
@@ -22,7 +23,7 @@ use engine_core::eip712::B256;
 use engine_core::types::{AccountId, Millis};
 use tracing::{debug, info, warn};
 
-use crate::daily_snapshots::fetch::{EarlierFormat, Takes, download, offered};
+use crate::daily_snapshots::fetch::{EarlierFormat, Takes, canonical, download, offered};
 use crate::daily_snapshots::writer::write_manifest;
 use crate::daily_snapshots::{
     FORMAT_BYTES, Listed, Signed, SnapshotBucket, earlier_format, open_signed, read_manifest,
@@ -137,8 +138,8 @@ pub(crate) async fn snapshot_start_against(
             && bounds.keep_from.is_none_or(|keep| listing.seq < keep)
     };
     let mut candidates: BTreeMap<(u64, u32), Vec<(Source, Listed)>> = BTreeMap::new();
-    for listing in held.iter().filter(|listing| fits(listing) && carries_state(&dir.join(&listing.file)) == Some(true))
-    {
+    let holds = |listing: &&Listed| canonical(listing) && carries_state(&dir.join(&listing.file)) == Some(true);
+    for listing in held.iter().filter(|listing| fits(listing) && holds(listing)) {
         candidates.entry((listing.seq, listing.index)).or_default().push((Source::Held, listing.clone()));
     }
     for (origin, listing) in offers.into_iter().filter(|(_, listing)| fits(listing)) {
@@ -184,7 +185,9 @@ pub(crate) async fn snapshot_start_against(
 /// tries (`snapshot_start_against`), newest first.
 pub(super) fn candidate_seqs(dir: &Path, finalized: u64) -> Vec<u64> {
     let held = read_manifest(dir).unwrap_or_default();
-    let fits = |listing: &&Listed| listing.seq <= finalized && carries_state(&dir.join(&listing.file)) == Some(true);
+    let fits = |listing: &&Listed| {
+        listing.seq <= finalized && canonical(listing) && carries_state(&dir.join(&listing.file)) == Some(true)
+    };
     let seqs: BTreeSet<u64> = held.iter().filter(fits).map(|listing| listing.seq).collect();
     seqs.into_iter().rev().take(ATTEMPTS).collect()
 }

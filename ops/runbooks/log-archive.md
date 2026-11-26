@@ -48,8 +48,8 @@ owner's approval.
    Check each rule's prefix and its retention before you go on.
 3. On the same tab, under **Custom Domains**, select **Add**, enter the domain, and connect it. Leave
    its caching at the default. If a rule caches every file on the domain, keep it from caching `404`
-   answers under `log/`: the node reads each object back as soon as it creates it, and a cached
-   `404` delays the read until the cache expires.
+   answers under `log/` and `snapshots/`: the node reads each object back as soon as it creates it,
+   and a cached `404` delays the read until the cache expires.
 4. On the **R2 object storage** page, under **Account Details**, select **Manage** next to
    **API Tokens**, then **Create Account API token**. Choose the permission **Object Read & Write**,
    scope it to this bucket only, and create it. Copy its **Access Key ID** and **Secret Access Key**:

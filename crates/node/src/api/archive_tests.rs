@@ -74,6 +74,37 @@ async fn a_listed_snapshot_the_host_no_longer_holds_redirects_to_its_object() {
     assert!(matches!(ask(Some(bucket), unlisted).await, Err(ApiError::NotFound)), "an unlisted name");
 }
 
+/// The node's archive serves the snapshots `[daily_snapshots]` names, and with `[archive]` redirects one the host no
+/// longer holds to its object under the custody chain and vault; without `[archive]` it redirects none.
+#[tokio::test]
+async fn the_node_redirects_its_snapshots_to_the_bucket_its_archive_names() {
+    let mut cfg = crate::test_support::dev_config();
+    assert!(ServedSnapshots::for_config(&cfg).unwrap().is_none(), "no section");
+    let dir = scratch_dir("archive-daily-config");
+    let gone = publish_ticks(&dir, 3, 1_000);
+    fs::remove_file(dir.join(&gone.file)).unwrap();
+    cfg.daily_snapshots = Some(crate::config::DailySnapshotsSection::at(dir));
+    let ask = |served: Arc<ServedSnapshots>| {
+        let (mut state, _requests) = api_state(true);
+        state.daily_snapshots = Some(served);
+        crate::api::archive::snapshot(State(state), FilePath(gone.file.clone()))
+    };
+    let unarchived = ServedSnapshots::for_config(&cfg).unwrap().expect("the section");
+    assert!(matches!(ask(unarchived).await, Err(ApiError::Internal)), "no bucket keeps it");
+    cfg.archive = Some(
+        toml::from_str(
+            "endpoint = 'https://account.r2.cloudflarestorage.com'\nbucket = 'engine-log'\nregion = 'auto'\n\
+             public_url = 'https://archive.example.com'\naccess_key_id_secret = 'archive_access_key_id'\n\
+             secret_access_key_secret = 'archive_secret_access_key'\n",
+        )
+        .unwrap(),
+    );
+    let moved = ask(ServedSnapshots::for_config(&cfg).unwrap().expect("the section")).await.expect("a redirect");
+    let vault = cfg.custody.vault.to_lowercase();
+    let object = format!("https://archive.example.com/snapshots/{}/{vault}/{}", cfg.custody.chain_id, gone.file);
+    assert_eq!((moved.status().as_u16(), moved.headers()[LOCATION].to_str().unwrap()), (308, object.as_str()));
+}
+
 // ── Helpers ──
 
 /// A snapshot of an engine that applied one tick, at its checkpoint.

@@ -89,18 +89,19 @@ async fn an_object_that_reads_back_otherwise_keeps_the_hosts_copy() {
     assert_eq!(metrics.snapshot_archive.mismatches.get(), 1);
 }
 
-/// A file that differs from its listing, as a host that changed a byte or appended one, creates no object, pages
-/// `daily_snapshot_unreadable`, and stays; a file the host no longer holds is passed over.
+/// A file that differs from its listing, as a host that changed a byte, appended one or cut one off, creates no object,
+/// pages `daily_snapshot_unreadable`, and stays; a file the host no longer holds is passed over.
 #[tokio::test]
 async fn a_file_that_differs_from_its_listing_creates_no_object() {
-    for (case, change) in [("changed", 0usize), ("longer", 1)] {
+    for (case, change) in [("changed", 0usize), ("longer", 1), ("shorter", 2)] {
         let (bucket, dir) = (StandIn::start().await, scratch_dir(&format!("snapshot-upload-{case}")));
         let listing = publish_ticks(&dir, 3, 1_000);
         let path = dir.join(&listing.file);
         let mut bytes = fs::read(&path).unwrap();
         match change {
             0 => bytes[20] ^= 1,
-            _ => bytes.push(b' '),
+            1 => bytes.push(b' '),
+            _ => drop(bytes.pop()),
         }
         fs::write(&path, bytes).unwrap();
         let (_guard, mut alerts) = capture_alerts();
@@ -120,6 +121,85 @@ async fn a_file_that_differs_from_its_listing_creates_no_object() {
     assert_eq!(metrics.snapshot_archive.pending.get(), 0);
 }
 
+/// A listing under a name its offset does not give, as a host could write over the manifest, absolute or climbing out
+/// of the directory, names no file the uploader reads or removes and no key it asks for or writes, and pages
+/// `daily_snapshot_unreadable` once.
+#[tokio::test]
+async fn a_listing_under_another_name_than_its_offsets_is_neither_read_nor_sent() {
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-names"));
+    let outside = scratch_dir("snapshot-upload-names-outside");
+    let listing = publish_ticks(&outside, 3, 1_000);
+    let newest = publish_ticks(&dir, 9, 10 * DAY_MS);
+    let mut absolute = listing.clone();
+    absolute.file = outside.join(&listing.file).display().to_string();
+    let mut climbing = listing.clone();
+    climbing.file = format!("../{}/{}", outside.file_name().unwrap().to_string_lossy(), listing.file);
+    crate::daily_snapshots::write_listing(&dir, &[absolute, climbing, newest]);
+    let (_guard, mut alerts) = capture_alerts();
+    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    uploader.pass().await.unwrap();
+    uploader.pass().await.unwrap();
+    assert_eq!(bucket.with(|b| (b.asked, b.created, b.objects.len())), (1, 1, 1), "only the canonical one");
+    let paged: Vec<String> =
+        std::iter::from_fn(|| alerts.try_recv().ok()).map(|alert| alert["alert"].clone()).collect();
+    assert_eq!(paged, ["daily_snapshot_unreadable", "daily_snapshot_unreadable"], "each once");
+    assert!(outside.join(&listing.file).exists(), "a file outside the directory is never removed");
+    assert_eq!(metrics.snapshot_archive.removed.get(), 0);
+}
+
+/// A copy the window no longer keeps that cannot be removed stays confirmed, and goes once removal works, with no
+/// second read of its object.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_copy_that_cannot_be_removed_is_removed_later_without_another_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-unremovable"));
+    let days: Vec<Listed> = (0..3).map(|day| publish_ticks(&dir, 2 + day, day as i64 * DAY_MS * 2 + 1_000)).collect();
+    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_secs(3600));
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = uploader.pass().await;
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(format!("{:#}", failed.unwrap_err()).contains("removing daily snapshot"));
+    assert!(dir.join(&days[0].file).exists());
+    let reads = bucket.with(|b| b.read);
+    uploader.pass().await.unwrap();
+    assert!(!dir.join(&days[0].file).exists(), "removed once it can be");
+    assert_eq!(bucket.with(|b| b.read), reads, "with no second read");
+    assert_eq!(metrics.snapshot_archive.removed.get(), 1);
+}
+
+/// The node's uploader comes from `[daily_snapshots]`, `[archive]` and both of its delivered keys, under the custody
+/// chain and vault, and with any missing there is none.
+#[test]
+fn the_uploader_runs_only_with_both_sections_and_both_keys() {
+    let mut cfg = crate::test_support::dev_config();
+    let metrics = Arc::new(Metrics::new());
+    let section: crate::config::ArchiveSection = toml::from_str(
+        "endpoint = 'https://account.r2.cloudflarestorage.com'\nbucket = 'engine-log'\nregion = 'auto'\n\
+         public_url = 'https://archive.example.com'\naccess_key_id_secret = 'archive_access_key_id'\n\
+         secret_access_key_secret = 'archive_secret_access_key'\n",
+    )
+    .unwrap();
+    let names = (section.access_key_id_secret.clone(), section.secret_access_key_secret.clone());
+    let value = crate::config::SecretValue::test;
+    let one: Values = [(names.0.clone(), value("FAKE-id"))].into();
+    let both: Values = [(names.0, value("FAKE-id")), (names.1, value("FAKE-secret"))].into();
+    let daily = crate::config::DailySnapshotsSection::at(scratch_dir("snapshot-upload-config"));
+    for (archive, daily, keys, runs) in [
+        (Some(section.clone()), None, both.clone(), false),
+        (None, Some(daily.clone()), both.clone(), false),
+        (Some(section.clone()), Some(daily.clone()), one, false),
+        (Some(section), Some(daily), both, true),
+    ] {
+        (cfg.archive, cfg.daily_snapshots) = (archive, daily);
+        let uploader = SnapshotUploader::for_config(&cfg, &keys, &metrics).unwrap();
+        assert_eq!(uploader.is_some(), runs);
+        let vault = cfg.custody.vault.parse().unwrap();
+        let prefix = snapshots_prefix(cfg.custody.chain_id, vault);
+        assert!(uploader.is_none_or(|uploader| uploader.prefix == prefix && uploader.window_ms == 30 * DAY_MS));
+    }
+}
+
 /// A snapshot the bucket already holds, as another member uploaded it or this node did before a restart, is read
 /// back with no upload, and confirmed.
 #[tokio::test]
@@ -136,22 +216,24 @@ async fn a_snapshot_the_bucket_holds_is_read_back_with_no_upload() {
     assert_eq!(bucket.with(|b| (b.created, b.refused, b.read)), (0, 0, 2), "read back at each start, never sent");
 }
 
-/// A snapshot that waits the lag alert's time for its confirmation pages `archive_upload_lagging`, keyed apart from the
-/// log's ranges, while the host keeps it, and the alert resolves once the bucket takes it.
+/// Every snapshot waiting for its confirmation counts from when it was first seen, those the pass has not reached
+/// yet included; one that waits the lag alert's time pages `archive_upload_lagging`, keyed apart from the log's
+/// ranges, while the host keeps it, and the alert resolves once the bucket takes them.
 #[tokio::test]
 async fn a_snapshot_waiting_past_the_lag_alert_is_paged_apart_from_the_logs_ranges() {
     let (bucket, dir) = (StandIn::start().await, scratch_dir("snapshot-upload-lagging"));
     publish_ticks(&dir, 3, 1_000);
+    publish_ticks(&dir, 5, 2_000);
+    let lag = Duration::from_secs(3600);
     let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
-    let (mut uploader, metrics) = uploader(&bucket, &dir, Duration::from_millis(50));
+    let (mut uploader, metrics) = uploader(&bucket, &dir, lag);
     bucket.with(|b| b.down = true);
     uploader.pass().await.unwrap_err();
+    assert_eq!(metrics.snapshot_archive.pending.get(), 2, "both wait, though the pass stopped at the newest");
     assert!(alerts.try_recv().is_err(), "not before the lag alert's time");
-    sleep(Duration::from_millis(60)).await;
-    uploader.pass().await.unwrap_err();
+    uploader.check_at(Instant::now() + lag);
     let alert = alerts.try_recv().expect("the wait is paged");
     assert_eq!((alert["alert"].as_str(), alert["objects"].as_str()), ("archive_upload_lagging", "daily_snapshots"));
-    assert_eq!(metrics.snapshot_archive.pending.get(), 1);
     bucket.with(|b| b.down = false);
     uploader.pass().await.unwrap();
     let resolution = resolved.try_recv().expect("the alert resolves");

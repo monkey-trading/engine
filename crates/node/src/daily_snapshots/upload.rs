@@ -42,7 +42,7 @@ use tracing::{Instrument, info, info_span, warn};
 use crate::archive::{Digested, Store};
 use crate::config::{NodeConfig, Values};
 use crate::daily_snapshots::writer::sync_dir;
-use crate::daily_snapshots::{Listed, read_manifest, snapshots_prefix};
+use crate::daily_snapshots::{Listed, canonical, read_manifest, snapshots_prefix};
 use crate::metrics::Metrics;
 
 /// How often the manifest is read for snapshots to upload and copies to remove.
@@ -171,7 +171,8 @@ impl SnapshotUploader {
     }
 
     /// Confirms in the bucket each snapshot of `listed` the host holds that this process has not, newest first, until
-    /// one fails, then removes the host's copies the window no longer keeps.
+    /// one fails, checking before each how long the oldest has waited, then removes the host's copies the window no
+    /// longer keeps.
     /// Error cases:
     /// - as `pass`, but for the manifest
     async fn go_through(&mut self, listed: &[Listed]) -> anyhow::Result<()> {
@@ -179,18 +180,36 @@ impl SnapshotUploader {
         let files: BTreeSet<&str> = listed.iter().map(|listing| listing.file.as_str()).collect();
         self.confirmed.retain(|file, _| files.contains(file.as_str()));
         self.refused.retain(|file, _| files.contains(file.as_str()));
-        self.waiting.retain(|file, _| files.contains(file.as_str()));
-        let mut failed = None;
+        // A name its offset does not give is no path or key of a snapshot's, as one the host wrote over the manifest.
+        for listing in listed.iter().filter(|listing| !canonical(listing)) {
+            if self.refused.insert(listing.file.clone(), listing.clone()).as_ref() != Some(listing) {
+                warn!(
+                    alert = "daily_snapshot_unreadable",
+                    snapshot = %listing.file,
+                    "the manifest lists a daily snapshot under a name its offset does not give, so it does not go up to \
+                     the archive"
+                );
+            }
+        }
+        // Every snapshot to confirm waits from when it was first seen waiting, before any transfer of the pass.
+        let mut due = Vec::new();
         for listing in listed.iter().rev() {
             let known = |taken: &BTreeMap<String, Listed>| taken.get(&listing.file) == Some(listing);
-            if known(&self.confirmed) || known(&self.refused) {
-                continue;
+            if !known(&self.confirmed)
+                && !known(&self.refused)
+                && tokio::fs::try_exists(self.dir.join(&listing.file)).await?
+            {
+                due.push(listing);
             }
-            if !tokio::fs::try_exists(self.dir.join(&listing.file)).await? {
-                self.waiting.remove(&listing.file);
-                continue;
-            }
+        }
+        let waits: BTreeSet<&str> = due.iter().map(|listing| listing.file.as_str()).collect();
+        self.waiting.retain(|file, _| waits.contains(file.as_str()));
+        for listing in &due {
             self.waiting.entry(listing.file.clone()).or_insert_with(Instant::now);
+        }
+        let mut failed = None;
+        for listing in due {
+            self.check();
             let span = info_span!("archive_snapshot", id = %self.key(listing));
             match self.archive(listing).instrument(span).await {
                 Ok(outcome) => {
@@ -269,17 +288,18 @@ impl SnapshotUploader {
     /// Error cases:
     /// - a file cannot be removed, or the directory synced
     async fn remove_aged(&mut self, listed: &[Listed]) -> anyhow::Result<()> {
+        let listed: Vec<&Listed> = listed.iter().filter(|listing| canonical(listing)).collect();
         let Some(newest) = listed.iter().map(|listing| listing.ts).max() else { return Ok(()) };
-        let aged = |listing: &&Listed| newest.saturating_sub(listing.ts) > self.window_ms;
-        let anchor = listed.iter().filter(aged).max_by_key(|listing| (listing.ts, listing.seq, listing.index));
-        let gone: Vec<Listed> = listed
-            .iter()
-            .filter(|listing| aged(listing) && Some(*listing) != anchor)
-            .filter(|listing| self.confirmed.get(&listing.file) == Some(*listing))
+        let aged: Vec<&Listed> =
+            listed.into_iter().filter(|listing| newest.saturating_sub(listing.ts) > self.window_ms).collect();
+        let anchor = aged.iter().copied().max_by_key(|listing| (listing.ts, listing.seq, listing.index));
+        let gone: Vec<Listed> = aged
+            .into_iter()
+            .filter(|listing| Some(*listing) != anchor && self.confirmed.get(&listing.file) == Some(*listing))
             .cloned()
             .collect();
         for listing in &gone {
-            self.confirmed.remove(&listing.file);
+            // A removal that fails is tried again at the next pass, the snapshot still confirmed.
             match tokio::fs::remove_file(self.dir.join(&listing.file)).await {
                 Ok(()) => {
                     self.metrics.snapshot_archive.removed.inc();
@@ -288,6 +308,7 @@ impl SnapshotUploader {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e).with_context(|| format!("removing daily snapshot {}", listing.file)),
             }
+            self.confirmed.remove(&listing.file);
         }
         if !gone.is_empty() {
             let dir = self.dir.clone();
@@ -299,7 +320,12 @@ impl SnapshotUploader {
     /// Sets the metrics, and raises `archive_upload_lagging` for the snapshots once one has waited `lag_alert` for its
     /// confirmation, or resolves it once none has.
     fn check(&mut self) {
-        let waited = self.waiting.values().min().map(Instant::elapsed);
+        self.check_at(Instant::now());
+    }
+
+    /// `check` with the time `now`.
+    fn check_at(&mut self, now: Instant) {
+        let waited = self.waiting.values().min().map(|since| now.saturating_duration_since(*since));
         let pending = self.waiting.len();
         self.metrics.snapshot_archive.pending.set(i64::try_from(pending).unwrap_or(i64::MAX));
         match waited {
