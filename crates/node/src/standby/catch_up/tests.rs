@@ -132,6 +132,26 @@ async fn a_mirror_that_stopped_gives_way_to_the_next_origin() {
     assert_eq!(log_entries(&standby), log_entries(&operator)[..completed(&operator)], "from the operator");
 }
 
+/// A mirror whose manifest lists past the copy's head but that serves none of the segments gives way, segment by
+/// segment, to the next origin that serves them as listed.
+#[tokio::test]
+async fn a_segment_a_mirror_does_not_serve_is_fetched_from_the_next_origin() {
+    let operator = scratch_dir("catch-up-hollow-operator");
+    ticks(&operator, 2).await;
+    let (standby, hollow) = (scratch_dir("catch-up-hollow-standby"), scratch_dir("catch-up-hollow-mirror"));
+    copy_log(&operator, &standby);
+    ticks(&operator, 12).await;
+    std::fs::create_dir_all(&hollow).unwrap();
+    std::fs::copy(operator.join(crate::log::MANIFEST), hollow.join(crate::log::MANIFEST)).unwrap();
+    let followed = refusing_operator_after(&operator, vec![serve(&hollow, Router::new()).await]).await;
+    let (mut writer, mut copied) = open_copy(&standby, SEGMENT_COMMANDS, Chain::new(DOMAIN, enclave())).unwrap();
+    let (client, signers) = (crate::standby::archive::archive_client(false).unwrap(), [enclave()].into());
+    let take = |after, bytes: &[u8]| take_into((&mut writer, &mut copied), (DOMAIN, &signers), after, bytes);
+    catch_up(&client, &followed.origins(), copied_head(&standby), take).await.expect("the copy catches up");
+    drop(writer);
+    assert_eq!(log_entries(&standby), log_entries(&operator)[..completed(&operator)], "from the operator");
+}
+
 /// A stream refused for a start before what the operator's start verified is told apart from any other failure.
 #[tokio::test]
 async fn the_refusal_naming_the_archive_is_told_apart() {
