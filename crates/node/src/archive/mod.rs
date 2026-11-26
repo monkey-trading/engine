@@ -30,8 +30,10 @@ mod backlog;
 mod finality;
 pub(crate) use finality::{Finality, same_root};
 mod range;
+#[cfg(test)]
+pub(crate) use range::range_bytes;
 pub(crate) use range::{
-    RANGE_SEQS, absent_segments, checkpoint_root, log_prefix, piece_bytes, range_bytes, range_key, tail_prefix,
+    RANGE_SEQS, absent_segments, checkpoint_root, log_prefix, piece_bytes, range_bytes_with, range_key, tail_prefix,
     whole_ranges,
 };
 mod read;

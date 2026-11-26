@@ -134,9 +134,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         );
         let follower = match opened {
             Ok(follower) => follower,
-            // A snapshot the replica refused gave way to a whole replay, which reads the segments the window removed:
-            // once they are back from the archive, the open runs again from its start.
-            Err(e) if snapshot_seq.is_some() && e.is::<crate::log::NotLocal>() => {
+            // A whole replay, as a snapshot the replica refused gives way to, read a segment the window removed, or
+            // one a pass still under way removed after the restore above: once they are back from the archive, the
+            // open runs again from its start, the window following no writer now.
+            Err(e) if e.is::<crate::log::NotLocal>() => {
                 if crate::archive::restore_whole(self.cfg, dir).await? == 0 {
                     return Err(e.context(CopyRefused));
                 }

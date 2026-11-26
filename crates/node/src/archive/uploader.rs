@@ -7,8 +7,8 @@
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
 //! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise. While no
 //! range can go up, it puts the tails of the checkpoints the vault may still hold as its latest in the bucket (`tails`).
-//! A segment of a range that is no longer on the host is put back from the bucket, as its listing names it, before the
-//! range is built (`absent`). The uploader publishes how many ranges, from the first, the bucket holds (`archived`),
+//! A segment of a range that is no longer on the host is read from the bucket, as its listing names it, to build the
+//! range from (`absent`). The uploader publishes how many ranges, from the first, the bucket holds (`archived`),
 //! which the log's local window reads.
 
 use std::collections::BTreeSet;
@@ -24,7 +24,7 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes,
+    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes_with,
     range_key, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
@@ -311,12 +311,10 @@ impl<F: Finality> Work<F> {
         self.range(view, index).await
     }
 
-    /// Reads range `index`'s object back against the node's copy of it, its segments no longer on the host put back
-    /// first (`put_back_absent`).
+    /// Reads range `index`'s object back against the node's copy of it.
     /// Error cases:
-    /// - see `put_back_absent`, `build` and `check`
+    /// - see `build` and `check`
     async fn read_back(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
-        self.put_back_absent(view, index).await?;
         let raw = self.build(view, index).await?;
         self.check(index, raw).await
     }
@@ -377,13 +375,11 @@ impl<F: Finality> Work<F> {
         );
     }
 
-    /// Uploads range `index`, and reads it back, its segments no longer on the host put back first: a range one of
-    /// which the host lost waits until another copy's uploader puts the range in the bucket.
+    /// Uploads range `index`, and reads it back: a range a segment of which the host lost waits until another copy's
+    /// uploader puts the range in the bucket (`build`).
     /// Error cases:
-    /// - a segment of it is not on the host, and the bucket does not give it back (`put_back_absent`)
     /// - the range cannot be built, or the bucket cannot take or serve it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
-        self.put_back_absent(view, index).await?;
         let raw = self.build(view, index).await?;
         let (created, length) = self.create(&self.store, &range_key(self.store.prefix(), index), &raw).await?;
         let bytes = raw.len() as u64;
@@ -396,12 +392,14 @@ impl<F: Finality> Work<F> {
         Ok(found)
     }
 
-    /// Range `index` as the node's copy holds it, read off the runtime.
+    /// Range `index` as the node's copy holds it, read off the runtime, a segment of it the host no longer holds read
+    /// from the bucket as its listing names it (`absent_bytes`).
     /// Error cases:
-    /// - see `range_bytes`
+    /// - see `absent_bytes` and `range_bytes_with`
     async fn build(&self, view: &Manifest, index: u64) -> anyhow::Result<Arc<Vec<u8>>> {
+        let supplied = self.absent_bytes(view, index).await?;
         let (dir, read) = (self.dir.clone(), view.clone());
-        Ok(Arc::new(spawn_blocking(move || range_bytes(&dir, &read, index)).await??))
+        Ok(Arc::new(spawn_blocking(move || range_bytes_with(&dir, &read, index, &supplied)).await??))
     }
 
     /// Whether range `index`'s object holds `raw`, the node's copy of it, reporting a mismatch.

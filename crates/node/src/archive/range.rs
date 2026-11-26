@@ -5,7 +5,8 @@
 //! writer's active prefix too: every piece before the checkpoint's range is a whole range, and the checkpoint's own
 //! piece ends with its entry.
 
-use std::io::{BufRead, BufReader, Read};
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader, Cursor, Read};
 use std::path::Path;
 
 use anyhow::{Context, ensure};
@@ -55,11 +56,25 @@ pub(crate) fn whole_ranges(view: &Manifest) -> anyhow::Result<u64> {
 /// Error cases:
 /// - `view` is not a writer's, or no completed segment holds the range's first or last seq
 /// - a listing or a segment cannot be read, a segment differs from its listing, or a line is not an entry
+#[cfg(test)]
 pub(crate) fn range_bytes(dir: &Path, view: &Manifest, index: u64) -> anyhow::Result<Vec<u8>> {
+    range_bytes_with(dir, view, index, &BTreeMap::new())
+}
+
+/// `range_bytes`, reading each completed segment named in `supplied` from the bytes it maps it to, checked against
+/// its listing by the caller, rather than from its file: a segment the host no longer holds, as read from the bucket.
+/// Error cases:
+/// - as `range_bytes`
+pub(crate) fn range_bytes_with(
+    dir: &Path,
+    view: &Manifest,
+    index: u64,
+    supplied: &BTreeMap<String, Vec<u8>>,
+) -> anyhow::Result<Vec<u8>> {
     let (first, last) = (index * RANGE_SEQS, (index + 1) * RANGE_SEQS - 1);
     ensure!(last < view.unlisted_from()?, "range {index}: seq {last} is not in a completed segment yet");
     let mut range = Vec::new();
-    entries_of(dir, view, first..=last, |_, line| {
+    entries_of((dir, supplied), view, first..=last, |_, line| {
         range.extend_from_slice(line);
         Ok(())
     })
@@ -80,7 +95,7 @@ pub(crate) fn piece_bytes(dir: &Path, view: &Manifest, index: u64, seq: u64) -> 
     let first = index * RANGE_SEQS;
     let end = if index < last { first + RANGE_SEQS - 1 } else { seq };
     let (mut piece, mut through) = (Vec::new(), None);
-    let whole = entries_of(dir, view, first..=end, |head, line| {
+    let whole = entries_of((dir, &BTreeMap::new()), view, first..=end, |head, line| {
         piece.extend_from_slice(line);
         if head.entry == "checkpoint" && head.seq == Some(seq) {
             through = Some(piece.len());
@@ -104,7 +119,7 @@ pub(crate) fn piece_bytes(dir: &Path, view: &Manifest, index: u64, seq: u64) -> 
 pub(crate) fn checkpoint_root(dir: &Path, view: &Manifest, seq: u64) -> anyhow::Result<Option<String>> {
     ensure!(seq < view.unlisted_from()?, "seq {seq} is not in a completed segment yet");
     let mut root = None;
-    entries_of(dir, view, seq..=seq, |head, line| {
+    entries_of((dir, &BTreeMap::new()), view, seq..=seq, |head, line| {
         if head.entry == "checkpoint"
             && let LogEntry::Checkpoint(checkpoint) = serde_json::from_slice(line).context("a checkpoint")?
             && checkpoint.seq == seq
@@ -149,7 +164,7 @@ pub(crate) fn absent_segments(dir: &Path, view: &Manifest, index: u64) -> anyhow
 /// - a listing or a segment cannot be read, a segment differs from its listing or the prefix from its hash, a line
 ///   is not an entry, or `each` fails
 fn entries_of(
-    dir: &Path,
+    (dir, supplied): (&Path, &BTreeMap<String, Vec<u8>>),
     view: &Manifest,
     seqs: std::ops::RangeInclusive<u64>,
     mut each: impl FnMut(&Head, &[u8]) -> anyhow::Result<()>,
@@ -163,7 +178,11 @@ fn entries_of(
         let (segment, file, ends): (Box<dyn Read>, _, _) = match ordinal < completed {
             true => {
                 let listed = view.completed_at(ordinal)?;
-                (Box::new(open_segment_archive(dir, &listed)?), listed.file, Some(listed.last_seq))
+                let read: Box<dyn Read> = match supplied.get(&listed.file) {
+                    Some(bytes) => Box::new(Cursor::new(bytes.clone())),
+                    None => Box::new(open_segment_archive(dir, &listed)?),
+                };
+                (read, listed.file, Some(listed.last_seq))
             }
             false => {
                 let (active, prefix) =

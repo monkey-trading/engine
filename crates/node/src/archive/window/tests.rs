@@ -204,6 +204,24 @@ async fn a_segment_holding_a_seq_of_a_range_the_bucket_lacks_stays_however_old()
     assert_eq!(holding, Some(Held::Archive), "a segment holding the first seq the bucket lacks, however old");
     let ages = (kept.last_seq + 1, Millis::MAX / 2);
     assert_eq!(window.holding(&view, &kept, ages, &mut floors, 0).await.unwrap(), None, "the bucket holds it");
+    // A checkpoint's tail in the bucket, through the unfilled range, counts for nothing: the segment holding the
+    // range's seqs stays, and the bucket gives back no range for it.
+    let whole = whole_ranges(&view).unwrap();
+    let unfilled = view.segments.iter().find(|listed| listed.last_seq >= whole * RANGE_SEQS).cloned();
+    let unfilled = unfilled.expect("a completed segment holds a seq of the unfilled range");
+    // The key's root stands for the checkpoint's: nothing the window reads names a tail.
+    let (seq, root) = (fixture.node.tick_to_checkpoint().await, engine_core::eip712::B256::ZERO);
+    fixture.ticks(1).await;
+    let tail_view = fixture.view();
+    for index in whole..=seq / RANGE_SEQS {
+        let piece = crate::archive::piece_bytes(&fixture.dir, &tail_view, index, seq).unwrap();
+        let key = crate::archive::stand_in::tail_key(seq, &root, index);
+        fixture.bucket.with(|b| b.objects.insert(key, crate::archive::compress(&piece).unwrap()));
+    }
+    let ages = (whole * RANGE_SEQS, Millis::MAX / 2);
+    let holding = window.holding(&view, &unfilled, ages, &mut floors, 0).await.unwrap();
+    assert_eq!(holding, Some(Held::Archive), "a segment whose seqs the bucket holds only in a tail stays");
+    assert!(window.restore.read_back(&unfilled).await.is_err(), "the bucket holds no range for it");
     fixture.node.stop().await;
 }
 

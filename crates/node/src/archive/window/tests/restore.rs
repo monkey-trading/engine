@@ -23,7 +23,8 @@ async fn a_lost_segment_after_the_oldest_on_the_host_is_put_back_from_the_bucket
     assert_eq!(pass.restored, vec![lost.file.clone()]);
     assert_eq!(std::fs::read(fixture.dir.join(&lost.file)).unwrap(), bytes, "the bytes its listing names");
     assert_eq!(window.metrics.archive.window.restored.get(), 1);
-    assert!(!fixture.dir.join(format!("{}.restoring", lost.file)).exists(), "nothing staged is left");
+    let staged = std::fs::read_dir(&fixture.dir).unwrap().flatten();
+    assert!(!staged.into_iter().any(|item| item.file_name().to_string_lossy().contains(".restoring.")), "none staged");
     log_entries(&fixture.dir);
     fixture.node.stop().await;
 }
@@ -213,4 +214,19 @@ async fn a_whole_replay_writes_no_listing_not_named_for_its_first_seq() {
     let refused = restore_whole(&cfg, &fixture.dir).await.expect_err("a listing not named for its first seq");
     assert!(format!("{refused:#}").contains("not the canonical segment name"), "{refused:#}");
     assert!(!fixture.dir.parent().unwrap().join("outside.jsonl").exists());
+}
+
+/// A window that starts following removes what an earlier process's crash left staged, and leaves this process's own,
+/// which a restore beside it may be writing.
+#[test]
+fn a_window_removes_only_an_earlier_processs_staged_restores() {
+    let dir = scratch_dir("window-staged");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = crate::log::segment_name(4);
+    let (earlier, mine) = (format!("{file}.restoring.1.0"), format!("{file}.restoring.{}.0", std::process::id()));
+    for staged in [&earlier, &mine] {
+        std::fs::write(dir.join(staged), b"part").unwrap();
+    }
+    crate::archive::window::restore::remove_staged(&dir).unwrap();
+    assert!(!dir.join(&earlier).exists() && dir.join(&mine).exists());
 }

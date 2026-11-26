@@ -261,8 +261,9 @@ an index: load only the rule whose hint matches the current action.
   carry` take `--archive-config <node config>`, and `engine replay` `--carry-source-archive-config`, to put a trimmed
   directory's segments back first (`PublishedLog::local_filled`); each alert's state is unknown at a start, so a first
   good pass resolves an episode an earlier process left open; a member's open stops the uploader and the window
-  following its old replica; not with `[snapshots]`; the uploader puts a segment of a range it builds that the host
-  lacks back from the bucket, as listed, before it builds the range (`archive/uploader/absent.rs`)), `engine
+  following its old replica; not with `[snapshots]`; the uploader reads a segment of a range it builds that the host
+  lacks from the bucket, as listed, and builds the range from it, writing nothing to the log's directory
+  (`archive/uploader/absent.rs`); each restore stages a file of its own), `engine
   replay`, `engine replay`'s command seals each checked well formed, and in full only the first and last of each run of
   one signer's seals in a checkpoint interval, the last signing a link chaining every command of the run and the first
   catching a run relabelled to its successor's signer, the first checked when the run opens and the last when it ends (at

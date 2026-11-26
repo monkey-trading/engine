@@ -116,7 +116,7 @@ impl Floors {
         let framed = daily_snapshots::framed(snapshots, &history.dir);
         let bound = [Some(bound), framed, index].into_iter().flatten().min().unwrap_or(bound);
         let snapshot = daily_snapshots::newest_candidate(snapshots, bound);
-        let retained_from = now.saturating_sub(millis(history.retention));
+        let retained_from = log_time(snapshots, now).saturating_sub(millis(history.retention));
         Self { snapshot, history: held_before(snapshots, retained_from, Some(checked)) }
     }
 
@@ -182,12 +182,20 @@ pub(crate) fn fresh_start(
     let newest = view.completed_at(newest)?;
     let floor = match snapshots.filter(|_| log.join(&newest.file).exists()) {
         Some(snapshots) => {
-            let retained_from = first_stamp(log, &newest)?.saturating_sub(millis(retention));
+            let retained_from = log_time(snapshots, first_stamp(log, &newest)?).saturating_sub(millis(retention));
             held_before(snapshots, retained_from, None).map(|seq| seq.saturating_add(1))
         }
         None => None,
     };
     Ok(Some(FreshStart { from: floor.unwrap_or(0), first_local }))
+}
+
+/// The log's sequenced time as the history's floors count it: `now`, the newest completed segment's first command, or
+/// the newest daily snapshot listed in `snapshots` when that is later, as in the minutes after one is taken, from
+/// which the daily snapshots' own window counts the one it keeps before its retention.
+fn log_time(snapshots: &Path, now: Millis) -> Millis {
+    let listed = daily_snapshots::read_manifest(snapshots).unwrap_or_default();
+    listed.iter().map(|listing| listing.ts).max().map_or(now, |newest| newest.max(now))
 }
 
 /// The checkpoint seq of the newest daily snapshot listed in `snapshots` under its own name, stamped before `ts`,

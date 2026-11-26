@@ -667,12 +667,14 @@ its configuration hash.
   alpha's trading server stops, and keep it in at least two stores. Anyone who verifies the launch
   log replays it with `--carry-source`.
 - **Keep the alpha's last segments.** The alpha's log stops at the move, so its last range of 10,000
-  sequence numbers never fills and never goes up to the archive's bucket: the segments after its last
-  whole range are only on the alpha's hosts and in the copies you publish. With `archive.local_window`,
-  a host never removes a segment that holds a sequence number of a range the bucket does not hold, so
-  each alpha host keeps them however old they get. Keep at least one alpha host's log directory, or a
-  checked copy of those segments with the alpha's `manifest.jsonl`, for as long as the bucket lacks
-  them: it holds whole ranges only.
+  sequence numbers never fills and never goes up to the archive's bucket as a range. Its commands
+  through the alpha's final checkpoint are in the bucket in that checkpoint's tail, from which
+  `engine replay` and `engine exit-proof` read the log through the vault's latest checkpoint; the
+  segment files after the last whole range, and any command after the final checkpoint, are only on
+  the alpha's hosts and in the copies you publish. With `archive.local_window`, a host never removes a
+  segment that holds a sequence number of a range the bucket does not hold, tails aside, so each alpha
+  host keeps them however old they get. Keep at least one alpha host's log directory, or a checked copy
+  of those segments with the alpha's `manifest.jsonl`.
 - **The alpha vault's exit stays open to anyone.** Fourteen days after the alpha's final
   checkpoint, anyone may start the alpha vault's exit, which pays mock USDC only. It cannot mint
   MONKEY, and nothing it pays reaches the launch vault.

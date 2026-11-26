@@ -339,19 +339,28 @@ when to decide.
 The log is public. Its completed segments and their manifest are served under `/v1/archive/`, and
 anyone can replay them.
 
-1. Download the manifest and every segment it lists:
+1. Download the manifest and every segment the trading server holds. With `archive.local_window`, it answers
+   `308` for a segment its host no longer holds, which the archive's bucket holds in ranges, and the loop keeps no
+   file for it:
 
    ```shell
    mkdir -p archive
    curl -f --retry 5 -o archive/manifest.jsonl $API/v1/archive/manifest.jsonl
-   jq -r '.file' archive/manifest.jsonl | xargs -I{} curl -f --retry 5 -o archive/{} $API/v1/archive/{}
+   jq -r '.file' archive/manifest.jsonl | while read -r f; do
+     code=$(curl -s --retry 5 -o "archive/$f" -w '%{http_code}' "$API/v1/archive/$f")
+     [ "$code" = 200 ] || rm -f "archive/$f"
+   done
    ```
 
-2. Replay the log:
+2. Replay the log, putting back first, from the bucket that the trading server's configuration names, the segments
+   the server redirected:
 
    ```shell
-   $ENGINE replay --log archive
+   $ENGINE replay --log archive --archive-config <node config>
    ```
+
+   Without the configuration, `$ENGINE replay --log $API` downloads the whole log through the server and its bucket
+   into a temporary directory and replays it, keeping no copy.
 
    The command prints a line that begins `verified:` and names the number of instructions and
    checkpoints, the final root, the protocol versions, and the operator. A second line names the

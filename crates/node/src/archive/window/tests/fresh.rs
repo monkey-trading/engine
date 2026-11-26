@@ -63,6 +63,27 @@ async fn a_rebuilt_index_whose_retention_grew_puts_back_the_log_it_takes() {
     fixture.node.stop().await;
 }
 
+/// In the minutes after a daily snapshot, when it is later than the newest completed segment's first command, the
+/// fresh start counts the retention back from the snapshot, as the daily snapshots' own window does from the newest
+/// listed, so it finds the one that window keeps before the retention rather than none and the log's start.
+#[tokio::test]
+async fn the_fresh_start_counts_the_retention_from_a_newer_snapshot() {
+    let fixture = Fixture::start("window-fresh-newer", 150).await;
+    let ranges = fixture.archive_all();
+    let (early, (_, early_ts)) = (fixture.snapshot_at(20), fixture.at_minute(20));
+    fixture.snapshot_at(100);
+    let (mut window, _archived) = fixture.window((30, 30), ranges);
+    assert!(!window.pass(&fixture.view()).await.unwrap().removed.is_empty());
+    let newest_ts = commands(&fixture.dir).last().unwrap().1;
+    assert!(newest_ts > fixture.now(), "the newest command is past the newest completed segment's first");
+    fixture.snapshot_at((newest_ts - START) / MINUTE_MS);
+    // A retention that reaches the early snapshot from the newest one, and not from the segment's first command.
+    let retention = Duration::from_millis((newest_ts - early_ts - 1) as u64);
+    let fresh = fresh_start(&fixture.view(), &fixture.dir, Some(&fixture.snapshots), retention).unwrap().unwrap();
+    assert_eq!(fresh.from, early + 1, "after the snapshot the daily window keeps before the retention");
+    fixture.node.stop().await;
+}
+
 /// A legacy index that holds nothing starts at the fresh start; one whose last command the log holds resumes after
 /// it, unless it ends before the fresh start, past the retention, and is rebuilt from there.
 #[tokio::test]

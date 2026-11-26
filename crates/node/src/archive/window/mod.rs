@@ -31,8 +31,9 @@
 
 mod bounds;
 pub(crate) use bounds::{Checked, Floors, FreshStart, Held, Stamps, fresh_start, millis};
+mod report;
 mod restore;
-pub(crate) use restore::{Sources as RestoreSources, history_start, restore_whole, write as write_segment};
+pub(crate) use restore::{Sources as RestoreSources, history_start, restore_whole};
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -245,8 +246,11 @@ impl Window {
         let dir = self.dir.clone();
         let mut local: BTreeSet<u64> =
             spawn_blocking(move || list_segments(&dir)).await??.into_iter().map(|(seq, _)| seq).collect();
-        let mut pass = Pass { restored: self.restore_lacking(view, &mut local, archived).await?, ..Pass::default() };
-        let (removed, held) = self.remove_aged(view, &mut local, archived).await?;
+        let mut floors = None;
+        let kept = self.kept_from(view, archived, &mut floors).await?;
+        let restored = self.restore_lacking(view, &mut local, (archived, kept)).await?;
+        let mut pass = Pass { restored, ..Pass::default() };
+        let (removed, held) = self.remove_aged(view, &mut local, archived, &mut floors).await?;
         (pass.removed, pass.held) = (removed, held);
         self.measure(view, &local)?;
         Ok(pass)
@@ -262,6 +266,7 @@ impl Window {
         view: &Manifest,
         local: &mut BTreeSet<u64>,
         archived: u64,
+        floors: &mut Option<Floors>,
     ) -> anyhow::Result<(Vec<String>, Option<Held>)> {
         let mut removed = Vec::new();
         let (Some(&first), Some(newest)) = (local.first(), view.completed_len().checked_sub(1)) else {
@@ -270,14 +275,13 @@ impl Window {
         let Some((mut ordinal, _)) = view.containing(first)? else { return Ok((removed, None)) };
         let newest = view.completed_at(newest)?;
         let now = self.stamp(&newest).await?;
-        let mut floors = None;
         while ordinal + 1 < view.completed_len() {
             let (segment, next) = (view.completed_at(ordinal)?, view.completed_at(ordinal + 1)?);
             if !local.contains(&segment.first_seq) || !local.contains(&next.first_seq) {
                 break;
             }
             let past = now.saturating_sub(self.stamp(&next).await?.saturating_add(self.window));
-            let held = match self.holding(view, &segment, (archived, past), &mut floors, now).await? {
+            let held = match self.holding(view, &segment, (archived, past), floors, now).await? {
                 Some(held) => Some(held),
                 None if removed.len() >= MAX_REMOVALS => return Ok((removed, None)),
                 None => self.remove(view, &segment).await?,
@@ -315,22 +319,7 @@ impl Window {
         if past < 0 {
             return Ok(Some(Held::Window));
         }
-        let floors = match *floors {
-            Some(read) => read,
-            None => {
-                let (snapshots, history) = (self.snapshots.clone(), self.history_section());
-                let mut checked = std::mem::take(&mut self.checked);
-                let (checked, read) = spawn_blocking(move || {
-                    let read = Floors::read(&snapshots, &history, archived, now, &mut checked);
-                    (checked, read)
-                })
-                .await?;
-                self.checked = checked;
-                *floors = Some(read);
-                read
-            }
-        };
-        if let Some(held) = floors.holding(segment.last_seq) {
+        if let Some(held) = self.floors(archived, now, floors).await?.holding(segment.last_seq) {
             return Ok(Some(held));
         }
         if view.holds.oldest().is_some_and(|oldest| oldest <= segment.last_seq) {
@@ -343,6 +332,31 @@ impl Window {
                 Ok(Some(Held::ReadBack))
             }
         }
+    }
+
+    /// The floors, as `floors` holds them once read this pass, or read now off the runtime, the bucket holding the
+    /// ranges before seq `archived` and the log's newest completed segment starting at `now`.
+    /// Error cases:
+    /// - the floors cannot be read off the runtime
+    pub(super) async fn floors(
+        &mut self,
+        archived: u64,
+        now: Millis,
+        floors: &mut Option<Floors>,
+    ) -> anyhow::Result<Floors> {
+        if let Some(read) = *floors {
+            return Ok(read);
+        }
+        let (snapshots, history) = (self.snapshots.clone(), self.history_section());
+        let mut checked = std::mem::take(&mut self.checked);
+        let (checked, read) = spawn_blocking(move || {
+            let read = Floors::read(&snapshots, &history, archived, now, &mut checked);
+            (checked, read)
+        })
+        .await?;
+        self.checked = checked;
+        *floors = Some(read);
+        Ok(read)
     }
 
     /// Removes `segment` unless a reader now holds it, under the holds' lock, and syncs the directory; what holds it
@@ -376,49 +390,6 @@ impl Window {
         }
     }
 
-    /// Counts a failed pass, and raises `log_window_failing` once passes have failed for `FAILING_ALERT`.
-    fn failed(&mut self, e: &anyhow::Error) {
-        self.metrics.archive.window.failures.inc();
-        let since = *self.failing.get_or_insert_with(Instant::now);
-        if self.raised.failing != Some(true) && since.elapsed() >= FAILING_ALERT {
-            self.raised.failing = Some(true);
-            warn!(
-                alert = "log_window_failing",
-                "the local window's passes over the log's segments have failed for {:?}, so no segment leaves the \
-                 host: {e:#}",
-                since.elapsed()
-            );
-        } else {
-            warn!("the local window's pass over the log's segments failed, and runs again: {e:#}");
-        }
-    }
-
-    /// Raises `log_window_held` once a reader or the bucket's read-back holds a segment `past` the window by
-    /// `HELD_ALERT`, and resolves it once none does.
-    fn report_held(&mut self, segment: &SegmentInfo, held: Held, past: Millis) {
-        let past = past.max(0);
-        self.metrics.archive.window.held_seconds.set(past as f64 / 1000.0);
-        let over = past >= millis(HELD_ALERT) && matches!(held, Held::Reader | Held::ReadBack);
-        match (over, self.raised.held) {
-            (true, Some(false) | None) => {
-                self.raised.held = Some(true);
-                warn!(
-                    alert = "log_window_held",
-                    "segment {} has been past archive.local_window for {}s of sequenced time, and stays on the host \
-                     because {}",
-                    segment.file,
-                    past / 1000,
-                    held.reason()
-                );
-            }
-            (false, Some(true) | None) => {
-                self.raised.held = Some(false);
-                info!(alert_resolved = "log_window_held", "no reader or read-back holds the log past the window");
-            }
-            _ => {}
-        }
-    }
-
     /// Whether the log's directory holds the newest segment `view` names, the one its writer appends to or else the
     /// newest it lists, at least as long as `view` knows it: a copy set aside, or one rebuilt in its place, is not the
     /// directory `view` lists, and the window touches nothing of it.
@@ -427,25 +398,6 @@ impl Window {
     async fn describes(&self, view: &Manifest) -> anyhow::Result<bool> {
         let (dir, newest) = (self.dir.clone(), newest_named(view)?);
         Ok(spawn_blocking(move || holds_newest(&dir, newest.as_ref())).await?)
-    }
-
-    /// Sets the bytes and the first seq of the segments on the host, `local`, as `view` lists them.
-    /// Error cases:
-    /// - a listing cannot be read
-    fn measure(&self, view: &Manifest, local: &BTreeSet<u64>) -> anyhow::Result<()> {
-        let mut bytes = view.active.as_ref().map_or(0, |active| active.info.bytes);
-        if let Some((first, _)) = local.first().map(|first| view.containing(*first)).transpose()?.flatten() {
-            for ordinal in first..view.completed_len() {
-                let listed = view.completed_at(ordinal)?;
-                if local.contains(&listed.first_seq) {
-                    bytes = bytes.saturating_add(listed.bytes);
-                }
-            }
-        }
-        let window = &self.metrics.archive.window;
-        window.local_bytes.set(i64::try_from(bytes).unwrap_or(i64::MAX));
-        window.local_first_seq.set(local.first().map_or(0, |seq| i64::try_from(*seq).unwrap_or(i64::MAX)));
-        Ok(())
     }
 
     /// The stamp of `listed`'s first command, read off the runtime once.

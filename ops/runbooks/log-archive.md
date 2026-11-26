@@ -349,9 +349,11 @@ rebuilds after `history.retention` grew puts back the segments its new retention
 start of the node or of the member's copy, from the daily snapshot before the new retention, or the
 whole log when the host no longer holds a daily snapshot that old, as once the daily snapshots' own
 window removed it; the start refuses under `history_recovery_failed` while the archive cannot give
-them back. The uploader puts back from the bucket, as its manifest line names it, a segment of a range
-it uploads or reads back that the host lacks, and waits at the range while the bucket cannot give it
-back.
+them back. The uploader reads from the bucket, as its manifest line names it, a segment of a range it
+uploads or reads back that the host lacks, and builds the range from it, writing nothing to the log's
+directory; it waits at the range while the bucket cannot give it back. A segment the daily snapshots or
+the history index keep, from the floors on, that the host lost is put back like any other the host must
+keep.
 
 A copy of a log directory that a window trimmed does not replay from genesis on its own. Give the
 command that reads it the node config whose `[archive]` names the bucket, and it puts the removed
