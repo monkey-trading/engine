@@ -18,6 +18,32 @@ pub struct ActivePrefix {
     pub last: Offset,
 }
 
+/// Why an answer the enclave vouches for was refused: it starts before what this node's start verified, which the
+/// log's public archive holds as the host wrote it.
+#[derive(Debug)]
+pub(crate) struct NotVerified {
+    /// The offset the answer would start at.
+    pub start: Offset,
+    /// The first offset this node's start verified (`Manifest::verified_from`).
+    pub verified_from: Offset,
+}
+
+impl std::fmt::Display for NotVerified {
+    /// Names the offset, the first one this node's start verified, and the archive.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            concat!(
+                "offset {} is before offset {}, the first this node's start verified: ",
+                "read it from the log's public archive"
+            ),
+            self.start, self.verified_from
+        )
+    }
+}
+
+impl std::error::Error for NotVerified {}
+
 impl Manifest {
     /// Refuses unsigned host-manifest data as a source for backfill or public archive responses.
     /// Error cases:
@@ -34,13 +60,13 @@ impl Manifest {
         Ok(())
     }
 
-    /// Refuses an answer the enclave vouches for, from `seq` on, that would read entries this node's start did
+    /// Refuses an answer the enclave vouches for, from `start` on, that would read entries this node's start did
     /// not verify (`verified_from`), as one from before the first segment on this host is refused.
     /// Error cases:
-    /// - `seq` is before `verified_from` (`NotLocal`, naming the archive)
-    pub(crate) fn ensure_served(&self, seq: u64) -> Result<(), crate::log::NotLocal> {
-        match seq < self.verified_from {
-            true => Err(crate::log::NotLocal { seq, first_local: Some(self.verified_from) }),
+    /// - `start` is before `verified_from` (`NotVerified`, naming the archive)
+    pub(crate) fn ensure_served(&self, start: Offset) -> Result<(), NotVerified> {
+        match start < self.verified_from {
+            true => Err(NotVerified { start, verified_from: self.verified_from }),
             false => Ok(()),
         }
     }

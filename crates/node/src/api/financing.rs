@@ -71,9 +71,9 @@ pub async fn financing(
         let found = kept.or_else(|| {
             stored?.derived_at(&dir, manifest, seq).unwrap_or_else(|e| {
                 // A command before the first this node's start verified answers no rows, as one not on this host does.
-                match e.downcast_ref::<crate::log::NotLocal>() {
-                    Some(_) => debug!(seq, "the financing read is before what this node serves: {e:#}"),
-                    None => warn!(
+                match e.is::<crate::log::NotLocal>() || e.is::<crate::log::NotVerified>() {
+                    true => debug!(seq, "the financing read is before what this node serves: {e:#}"),
+                    false => warn!(
                         alert = "financing_rows_rejected",
                         seq, "the financing read cannot prove the stored rows: {e:#}"
                     ),

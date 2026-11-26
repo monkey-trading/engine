@@ -21,20 +21,20 @@ pub(super) fn offset(after: Option<Offset>, from: Option<u64>) -> Result<Option<
     }
 }
 
-/// Refuses a backfill from `start`, a seq the segments on this host do not reach back to, or one before the
-/// first seq this node's start verified, as `manifest` publishes it (`Manifest::ensure_served`): the log's
+/// Refuses a backfill from `start`, a seq the segments on this host do not reach back to, or an offset before the
+/// first this node's start verified, as `manifest` publishes it (`Manifest::ensure_served`): the log's
 /// oldest segments are in its public archive, which the answer names. A log that cannot be checked is left to
 /// the feed's own read.
 /// Error cases:
-/// - `start` is before the first verified seq, or the segment holding it is listed but not on this host
-///   (`NotLocal`)
+/// - `start` is before the first verified offset (`NotVerified`), or the segment holding it is listed but not on
+///   this host (`NotLocal`)
 pub(super) async fn ensure_held(
     dir: &Path,
     manifest: &watch::Receiver<Manifest>,
     start: Option<Offset>,
 ) -> Result<(), ApiError> {
     let Some(start) = start else { return Ok(()) };
-    let served = manifest.borrow().ensure_served(start.seq);
+    let served = manifest.borrow().ensure_served(start);
     served.map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let dir = dir.to_owned();
     match spawn_blocking(move || crate::log::ensure_local(&dir, start.seq)).await {

@@ -244,6 +244,7 @@ impl Replay {
         let mut takings = carried.takings;
         // The replay verifies no range before the commands after the cache's.
         takings.set_applied_from(seq.saturating_add(1));
+        self.resumed_after = self.last_checkpoint_offset;
         self.prefix_ring = prefix_ring;
         self.recent = VecDeque::from(carried.links);
         self.signers_seen = carried.checkpoint_signers;

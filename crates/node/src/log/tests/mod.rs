@@ -457,10 +457,13 @@ fn append(path: &Path, bytes: &[u8]) {
 /// snapshot's checkpoint, and is refused before it naming the archive; a start that read every segment refuses none.
 #[test]
 fn a_start_from_a_snapshot_vouches_only_for_what_it_read() {
-    assert!(Manifest::default().ensure_served(0).is_ok());
-    // The snapshot's checkpoint is at seq 14, so the start verified from seq 15.
-    let resumed = Manifest { verified_from: 15, ..Manifest::default() };
-    assert!(resumed.ensure_served(15).is_ok());
-    let refused = resumed.ensure_served(14).expect_err("a read before the verified seq").to_string();
-    assert!(refused.contains("public archive") && refused.contains("seq 15"), "{refused}");
+    assert!(Manifest::default().ensure_served(Offset::start_of(0)).is_ok());
+    // The snapshot's checkpoint is the entry at 14:1, so the start verified from 14:2.
+    let resumed = Manifest { verified_from: Offset { seq: 14, index: 2 }, ..Manifest::default() };
+    assert!(resumed.ensure_served(Offset { seq: 14, index: 2 }).is_ok());
+    assert!(resumed.ensure_served(Offset::start_of(15)).is_ok());
+    for before in [Offset { seq: 14, index: 1 }, Offset::start_of(14)] {
+        let refused = resumed.ensure_served(before).expect_err("a read before the verified offset").to_string();
+        assert!(refused.contains("public archive") && refused.contains("offset 14:2"), "{before}: {refused}");
+    }
 }

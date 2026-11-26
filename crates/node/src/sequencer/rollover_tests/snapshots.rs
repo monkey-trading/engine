@@ -51,9 +51,9 @@ fn a_commands_rows_before_the_seq_a_start_verified_are_derived_for_the_index() {
     let older = *checkpoints_before(&entries, at).last().expect("a checkpoint before the rollover");
     publish(&snapshots, &entries, older);
     let mut held = rig.manifest.borrow().clone();
-    held.verified_from = at + 1;
+    held.verified_from = Offset::start_of(at + 1);
     let (_published, manifest) = watch::channel(held);
-    assert!(manifest.borrow().ensure_served(at).is_err(), "the stream serves none of it");
+    assert!(manifest.borrow().ensure_served(Offset::start_of(at)).is_err(), "the stream serves none of it");
     let gone = watch::channel(DerivedRows::default()).1;
     let mut deriver = Deriver::new(gone, Some((rig.dir.clone(), manifest))).with_snapshots(Some(snapshots));
     assert_eq!(deriver.rows(&command_at(&entries, at)).unwrap(), Some(kept), "the rows from the older snapshot");

@@ -327,12 +327,12 @@ impl LogWriter {
         self.manifest = manifest;
     }
 
-    /// Publishes `seq` as the first this node's start verified, unless a signed catalog vouches for every
+    /// Publishes `first` as the first offset this node's start verified, unless a signed catalog vouches for every
     /// segment (`Manifest::verified_from`).
-    pub(crate) fn verified_from(&mut self, seq: u64) {
+    pub(crate) fn verified_from(&mut self, first: Offset) {
         self.manifest.send_modify(|manifest| {
             if manifest.catalog.is_none() {
-                manifest.verified_from = seq;
+                manifest.verified_from = first;
             }
         });
     }
@@ -345,7 +345,7 @@ impl LogWriter {
         move |seq| {
             manifest.send_modify(|manifest| {
                 if manifest.catalog.is_none() {
-                    manifest.verified_from = manifest.verified_from.min(seq);
+                    manifest.verified_from = manifest.verified_from.min(Offset::start_of(seq));
                 }
             });
         }

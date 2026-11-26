@@ -168,6 +168,7 @@ impl Replay {
         let mut takings = carried.takings;
         // The replay verifies no range before the commands after the snapshot's.
         takings.set_applied_from(checkpoint.seq.saturating_add(1));
+        self.resumed_after = Some(offset);
         self.access_alerts = crate::sequencer::access::AccessAlerts::resumed(carried.access_failed_since);
         let mut prefix_ring = PrefixRing::default();
         carried.links.iter().for_each(|link| prefix_ring.record(link.seq, link.link));

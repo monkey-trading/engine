@@ -37,6 +37,9 @@ pub struct Replayed {
     /// For a replay that went on from a daily snapshot, the links its carried state names, through its checkpoint's
     /// command (`replay::verified_back`).
     pub(crate) carried_links: Vec<crate::sequencer::replay::live::Link>,
+    /// For a replay that went on from a daily snapshot or a recovery cache, where its checkpoint sits in the log: it
+    /// verified the entries after it and none before, but for those `carried_links` names.
+    pub(crate) resumed_after: Option<log::Offset>,
     pub checkpoints: u64,
     pub(crate) recovery_work: Vec<Work>,
     pub(crate) recovery_anchor_work: Option<Work>,

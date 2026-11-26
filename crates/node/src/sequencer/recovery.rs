@@ -207,7 +207,7 @@ impl Sequencer {
         // it whose links the snapshot carries, which a follower that trails it resumes among, are checked on a thread
         // of their own after the start, against the descriptors the node serves those segments by, so nothing the log
         // sets runs before the first command.
-        let verified_from = log.replayed.takings.applied_from();
+        let verified_from = log.replayed.resumed_after.map(crate::log::Offset::next);
         let back = verified_from.filter(|_| log.log.manifest_view().catalog.is_none()).map(|_| {
             let domain = crate::log::CheckpointDomain { chain_id: cfg.chain_id, vault: cfg.vault };
             let replayed = &mut log.replayed;
@@ -344,8 +344,8 @@ impl Sequencer {
             paced_waits: Default::default(),
             handover_waits: None,
         };
-        if let Some(seq) = verified_from {
-            sequencer.log.verified_from(seq);
+        if let Some(first) = verified_from {
+            sequencer.log.verified_from(first);
         }
         if let Some(back) = back {
             let lower = sequencer.log.lowers_verified_from();
