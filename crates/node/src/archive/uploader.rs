@@ -67,6 +67,9 @@ struct Work<F> {
     mismatched: BTreeSet<u64>,
     /// The first range whose object reads back otherwise: the uploads stop there whatever source follows.
     stalled_at: Option<u64>,
+    /// The range before the first the bucket lacks, when the resume left it unread because the copy does not
+    /// hold it below a finalized checkpoint at the vault's root yet; it is read back before the next goes up.
+    unread: Option<u64>,
 }
 
 /// The vault's finalized checkpoints, as the copy in use holds them.
@@ -126,7 +129,19 @@ impl<F: Finality> Uploader<F> {
         let (sources, handed) = watch::channel(None);
         let backlog = Backlog::new(lag_alert);
         let (anchor, read_at, mismatched, stalled_at) = (Anchor::default(), None, BTreeSet::new(), None);
-        let work = Work { store, prefix, dir, metrics, backlog, finality, anchor, read_at, mismatched, stalled_at };
+        let work = Work {
+            store,
+            prefix,
+            dir,
+            metrics,
+            backlog,
+            finality,
+            anchor,
+            read_at,
+            mismatched,
+            stalled_at,
+            unread: None,
+        };
         (Self { sources: handed, work }, sources)
     }
 
@@ -195,7 +210,7 @@ impl<F: Finality> Work<F> {
             }
             let span = info_span!("archive_range", id = %range_key(&self.prefix, next));
             let step = match self.below_finality(&view, next).instrument(span.clone()).await {
-                Ok(below) if next < below => self.range(&view, next).instrument(span.clone()).await.map(|found| {
+                Ok(below) if next < below => self.upload(&view, next).instrument(span.clone()).await.map(|found| {
                     if found == Found::Confirmed {
                         next += 1;
                     }
@@ -227,7 +242,9 @@ impl<F: Finality> Work<F> {
     /// The first range the bucket lacks, by a binary search of the whole ranges' keys: the uploader puts them in
     /// order, so they are a prefix. A stale `404` from a cache in front of the bucket only moves the search back,
     /// and the ranges after it go up again as objects already there. The range before the first it lacks is read
-    /// back, so a node whose copy of it differs stops there rather than upload past it.
+    /// back once the copy holds it below a finalized checkpoint at the vault's root, so a node whose copy of it
+    /// differs stops there rather than upload past it, and a copy that holds another history past that checkpoint,
+    /// as a returning operator's superseded tail does, is not read against the successor's objects.
     /// Error cases:
     /// - a range cannot be built, or the bucket cannot be asked
     async fn resume(&mut self, view: &Manifest) -> anyhow::Result<u64> {
@@ -239,12 +256,38 @@ impl<F: Finality> Work<F> {
                 false => high = middle,
             }
         }
+        self.unread = None;
         let Some(last) = low.checked_sub(1) else { return Ok(0) };
-        let raw = self.build(view, last).await?;
-        match self.check(last, raw).await? {
+        if last >= self.below_finality(view, last).await? {
+            self.unread = Some(last);
+            return Ok(low);
+        }
+        match self.read_back(view, last).await? {
             Found::Confirmed => Ok(low),
             Found::Mismatched => Ok(last),
         }
+    }
+
+    /// Uploads range `index`, after reading back the range before it if the resume left that unread.
+    /// Error cases:
+    /// - see `range` and `read_back`
+    async fn upload(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
+        if let Some(last) = self.unread {
+            let found = self.read_back(view, last).await?;
+            self.unread = None;
+            if found == Found::Mismatched {
+                return Ok(found);
+            }
+        }
+        self.range(view, index).await
+    }
+
+    /// Reads range `index`'s object back against the node's copy of it.
+    /// Error cases:
+    /// - see `build` and `check`
+    async fn read_back(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
+        let raw = self.build(view, index).await?;
+        self.check(index, raw).await
     }
 
     /// How many ranges, from the first, end below the newest finalized checkpoint that `view`'s copy holds at the
