@@ -15,6 +15,7 @@ use crate::alerts::{self, AlertLayer, Routes};
 use crate::config::HistorySection;
 use crate::history::INDEX_FILE;
 use crate::log::{LogEntry, MANIFEST, Offset, segment_seq};
+use crate::telemetry::Telemetry;
 use crate::test_support::{
     RETENTION, TestHistory, TestSequencer, capture_alerts, deposit, dev_config, log_entries, open_history, scratch_dir,
 };

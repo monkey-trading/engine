@@ -1,7 +1,8 @@
 //! The launch deployment's inputs, `ops/runbooks/production-deployment.toml`, hold the owner's decision
 //! of 2026-11-14 on #436 for the contracts' constructors and the operator's two initialisations, and on
 //! #1175 for the operator schedule's and the parameter vote's, the contracts would accept them, and the
-//! deploy runbook's commands carry them.
+//! deploy runbook's commands carry them, and record the vote and the fault proof in the schedule's
+//! governance record.
 
 use std::fs;
 
@@ -12,6 +13,7 @@ use serde::Deserialize;
 
 const INPUTS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/production-deployment.toml");
 const RUNBOOK: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/deploy-and-rollback.md");
+const MOVE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../ops/runbooks/vault-move.md");
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -266,4 +268,24 @@ fn the_runbooks_schedule_deployment_carries_the_inputs() {
     );
     let prose = runbook.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(prose.contains(&prints), "the runbook's schedule checks lack `{prints}`");
+}
+
+/// The rotation contracts' deployment, and the move to the launch vault, record the parameter vote and the
+/// fault proof in the schedule's governance record, which a trading server binds the contracts it mirrors to.
+#[test]
+fn the_runbooks_record_the_vote_and_the_fault_proof_in_the_schedules_governance_record() {
+    let record = "cast calldata 'setGovernanceContracts(address,address)' $VOTE $FAULT_PROOF";
+    let deploy = fs::read_to_string(RUNBOOK).unwrap();
+    let call = format!("DATA=$({record})");
+    assert!(deploy.lines().any(|line| line.trim() == call), "the deploy runbook lacks `{call}`");
+    assert!(
+        deploy.lines().any(|line| line.trim() == "TARGET=$RECORD"),
+        "the deploy runbook's call is not to the record"
+    );
+    let moving = fs::read_to_string(MOVE).unwrap();
+    assert!(
+        moving.lines().any(|line| line.starts_with("PAYLOADS=") && line.contains(record)),
+        "no batch of the move records the vote and the fault proof"
+    );
+    assert!(moving.contains("TARGETS=\"[$VAULT,$RECORD]\""), "the move's batch C is not to the record");
 }

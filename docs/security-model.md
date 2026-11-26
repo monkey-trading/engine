@@ -1913,7 +1913,22 @@ one. The engine then cuts the assigned member's operator share by a haircut that
 recorded penalty and falls linearly to nothing over its decay period. The withheld part goes to
 stakers.
 
+The trading server mirrors proven faults only from a contract whose `vault()` is the custody vault,
+and, once the schedule's governance record names a fault proof contract, only from that one. The
+schedule creates its record as it deploys, and the registry's timelock fills it once, with a vote
+contract over the schedule and a fault proof contract over its vault. The trading server reads the
+record at the newest finalised block, while the registry names the configured schedule there. A
+configuration that names another contract stalls the custody watcher before it mirrors anything. Nor does
+the trading server record such a contract in its log: it reads the record the same way before it starts,
+and refuses to start, and it records the fault proof contract after a voted activation only while the
+record it last read names no other.
+
 Known limits:
+
+- A schedule that keeps no record, as one deployed before schedules made one does, or whose record
+  the timelock has not filled, leaves the configured fault proof contract bound only by its own
+  `vault()` answer. A configuration that names a contract answering with the vault then has its
+  faults mirrored. Such a configuration must be one the timelock approved or a rotation member's own.
 
 - Every member that holds office within one signer epoch signs with that epoch's key, which
   handovers pass from member to member. Whoever holds a copy of the key while its epoch is in force
@@ -1939,7 +1954,11 @@ spread cap adoptions, corporate actions and protocol activation change only by a
 rotation set passes on the `ParameterVote` contract, with more than two thirds of its snapshotted
 weight. So does the access policy, which a vote can record only in a log that holds none. The engine
 mirrors passed proposals from finalised events, and refuses the operator's own instructions for
-them, including its notices.
+them, including its notices. The trading server mirrors them only from a vote contract whose
+`schedule()` is the configured schedule, and, once the schedule's governance record names a vote
+contract, only from that one, as [Fault proofs](#fault-proofs) describes for the fault proof
+contract. `GET /v1/operators` marks the open proposals unavailable while the configured vote contract
+is not the one the record names.
 
 Votes govern only while a rotation set with members is in effect, since only its members can
 propose. From rotation's start until the first set takes effect, and while an empty set is in
@@ -1988,6 +2007,8 @@ Known limits:
   names the policy before it is proposed, as for an instruction that a release added.
 - In a log that holds rotation sets when votes first govern by set, rotation counts as on until the
   first mirrored staking frontier.
+- A schedule that keeps no record, or whose record the timelock has not filled, leaves the configured
+  vote contract bound only by its own `schedule()` answer, as for the fault proof contract.
 
 ## Development settings
 

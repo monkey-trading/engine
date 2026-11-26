@@ -11,7 +11,7 @@ use std::time::Duration;
 use alloy::primitives::{Address, B256};
 use anyhow::{anyhow, bail};
 use engine_core::protocol::ProtocolVersion;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::spawn_blocking;
 use tracing::{debug, info};
 
@@ -26,8 +26,8 @@ use crate::custody::stall::{PollError, Polled, Stall};
 use crate::custody::watchdog::Watchdog;
 use crate::sequencer::Request;
 pub use types::{
-    Beneficiary, BlockRef, Finality, HeadSupport, PostedHead, RangedDeposits, StakingEvent, StakingEventKind,
-    VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
+    Beneficiary, BlockRef, Finality, GovernanceRecord, HeadSupport, PostedHead, RangedDeposits, StakingEvent,
+    StakingEventKind, VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
 };
 mod legacy;
 mod lifecycle;
@@ -67,6 +67,11 @@ pub struct DepositWatcher<V> {
     vote: Option<(Address, bool)>,
     /// The fault proof contract mirrored with them, and whether it has been read to name the vault.
     fault_proof: Option<(Address, bool)>,
+    /// Whether the schedule's governance record has been read to name the configured vote and fault
+    /// proof contracts, or found absent, so it is never read again.
+    governance_settled: bool,
+    /// Where each governance record read is published, to the sequencer.
+    pub(super) governance_record: Option<watch::Sender<GovernanceRecord>>,
     /// Blocks the final block sits below the tagged block.
     confirmations: u64,
     pub(super) chain: ProvenChain,
@@ -158,6 +163,8 @@ impl<V: VaultReader> DepositWatcher<V> {
                 .as_ref()
                 .and_then(|staking| staking.registry.fault_proof.as_ref())
                 .map(|fault_proof| (fault_proof.contract, false)),
+            governance_settled: false,
+            governance_record: None,
             confirmations: cfg.confirmations,
             chain,
             max_block_range: cfg.max_block_range,

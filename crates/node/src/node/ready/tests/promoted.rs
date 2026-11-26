@@ -56,6 +56,7 @@ async fn a_promoted_member_keeps_its_copy_and_extends_the_vaults_latest_under_it
         anchor: Some(anchor.clone()),
         emission_budget: None,
         staking_terms: None,
+        governance_record: None,
         heads: None,
         generations: BTreeMap::new(),
         sample: sample_around(&crate::clock::SystemClock),

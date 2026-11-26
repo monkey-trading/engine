@@ -2,10 +2,10 @@
 
 use anyhow::anyhow;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::custody::credit::query;
-use crate::custody::evm::{BlockRef, DepositWatcher, VaultReader};
+use crate::custody::evm::{BlockRef, DepositWatcher, GovernanceRecord, VaultReader};
 use crate::custody::staking;
 use crate::custody::stall::PollError;
 use crate::sequencer::Request;
@@ -33,8 +33,8 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// advancing per chunk. Without a staking contract, a finalised boundary, or before `InitStaking` has
     /// applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`).
     /// Error cases:
-    /// - stalled: a staking read fails, an event is not on the canonical block there, or the engine refuses
-    ///   a mirror
+    /// - stalled: a staking read fails, an event is not on the canonical block there, a mirrored contract is
+    ///   not the one its parent or the schedule's governance record names, or the engine refuses a mirror
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
     pub(super) async fn mirror_staking(
         &mut self,
@@ -197,6 +197,21 @@ impl<V: VaultReader> DepositWatcher<V> {
                 }
             }
         }
+        // So must the vote and fault proof contracts be the ones the schedule's governance record names, once
+        // it names any: a contract's own answer naming its parent would bind any contract that answers so. The
+        // record is read at the release tag's block, the newest final one, so a catch-up over blocks from before
+        // the timelock recorded them is held to the record once it is final, and only while the registry names
+        // the configured schedule there. A schedule that keeps no record leaves each bound by its own answer.
+        if !self.governance_settled
+            && (self.vote.is_some() || self.fault_proof.is_some())
+            && let Some((_, true)) = self.registry
+        {
+            let at = release.unwrap_or(BlockRef { number: to, hash: end.hash });
+            let schedule = self.schedule.map(|(schedule, _)| schedule);
+            if Some(self.vault.registry_schedule(at).await.map_err(PollError::rpc)?) == schedule {
+                self.governance_settled = self.check_governance_record(at).await?;
+            }
+        }
         let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
         let bound = self.registry.is_some_and(|(_, bound)| bound);
         let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
@@ -215,5 +230,36 @@ impl<V: VaultReader> DepositWatcher<V> {
             turns,
         )
         .await
+    }
+
+    /// Whether the schedule's governance record, read at `at`, settles the configured vote and fault proof
+    /// contracts for good: it names them, or the schedule keeps none. False while it names none yet. Each record
+    /// read is published to the sequencer, which records the config's contracts in the log only while the
+    /// latest names no other.
+    /// Error cases:
+    /// - stalled: the read fails, or the record names another vote or fault proof contract than the configured
+    async fn check_governance_record(&self, at: BlockRef) -> Result<bool, PollError> {
+        let record = self.vault.governance_record(at).await.map_err(PollError::rpc)?;
+        if let Some(published) = &self.governance_record {
+            published.send_replace(record);
+        }
+        let configured = (self.vote.map(|(vote, _)| vote), self.fault_proof.map(|(fault_proof, _)| fault_proof));
+        if let Some(reason) = record.refusal(configured.0, configured.1) {
+            return Err(PollError::inconsistent(anyhow!(reason)));
+        }
+        match record {
+            GovernanceRecord::Absent => {
+                info!("the schedule keeps no governance record: its contracts are bound by their own answers");
+                Ok(true)
+            }
+            GovernanceRecord::Unset => {
+                debug!(block = at.number, "the schedule's governance record names no contracts yet");
+                Ok(false)
+            }
+            GovernanceRecord::Set { vote, fault_proof } => {
+                info!(%vote, %fault_proof, "the schedule's governance record names the configured contracts");
+                Ok(true)
+            }
+        }
     }
 }

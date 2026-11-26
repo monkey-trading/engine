@@ -29,6 +29,7 @@ not upgradeable. None of the contracts has been deployed to a public network yet
 | `LogHeads` | Arbitrum | Records the newest log head the enclave has signed, so that the host cannot roll back or fork the log unnoticed. While turns run, the same posts are the operator's heartbeats. |
 | `ParameterVote` | Arbitrum | Stake-weighted votes of the rotation set on changes to the trading parameters. A proposal passes with more than two thirds of the votes. |
 | `FaultProof` | Arbitrum | Proves that an operator's enclave signed two different histories at the same position in the log, and names the member responsible |
+| `GovernanceRecord` | Arbitrum, created by `OperatorSchedule` as it deploys | Records, once and only by the timelock, the `ParameterVote` over the schedule and the `FaultProof` over its vault. The server mirrors only those two contracts once the record names them. |
 | `ArbSys` | An interface | The interface to Arbitrum's system contract at address `0x64` |
 
 Each contract's NatSpec comments document its rules, its events and the reasons it reverts.

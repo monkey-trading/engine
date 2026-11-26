@@ -1,6 +1,7 @@
 //! What a member's start reads before it connects for its turn's tail (#593): its sealed
 //! certificate, the registry's rotation switch, the checkpoint setup at the vault's finalized checkpoint with its anchor checked
-//! against the replica, the MONKEY emission budget and the staking config's match with the staking contract, the posted log heads, the generation the turn's
+//! against the replica, the MONKEY emission budget and the staking config's match with the staking contract, the
+//! schedule's governance record, the posted log heads, the generation the turn's
 //! keys are sealed in (a promotion's carried turn too), and a trusted time sample; the schedule's
 //! reassignments its own log check reads are read beside them (`member/turn/open.rs`, `member/promoted.rs`).
 //! The start after the confirmation reads none of
@@ -18,14 +19,14 @@ use tracing::{error, info};
 use crate::checkpoints::ScheduledTurn;
 use crate::checkpoints::setup::Setup;
 use crate::config::NodeConfig;
-use crate::custody::ContractTerms;
+use crate::custody::{ContractTerms, GovernanceRecord, RecordReader};
 use crate::log::Checkpoint;
 use crate::log_heads::StartupHeads;
 use crate::metrics::Metrics;
 use crate::node::KeyStart;
 use crate::node::keys::{Keys, attestor_for};
 use crate::node::member::Replica;
-use crate::node::preflight::emission_preflight;
+use crate::node::preflight::{emission_preflight, governance_preflight};
 use crate::sequencer::replay::LiveReplay;
 use crate::tee::certificates::CertificateStore;
 use crate::tee::clock::GuestClock;
@@ -45,6 +46,9 @@ pub(crate) struct Ready {
     /// The staking contract's immutable epoch and cooldown, with one configured: the final replica's
     /// staking config is checked against them before the member serves, with no read of the chain.
     pub staking_terms: Option<ContractTerms>,
+    /// The schedule's governance record, with a vote or fault proof contract configured: the start records the
+    /// config's contracts in the log only while it names no others.
+    pub governance_record: Option<GovernanceRecord>,
     /// The posted log heads the start checks the copy against, with `[log_heads]`.
     pub heads: Option<StartupHeads>,
     /// The generation the turn's keys are sealed in, by turn, which its `TurnTaken` waits on.
@@ -91,6 +95,8 @@ impl Ready {
     /// - the sealed certificate does not open (see `keys::certificates`)
     /// - with a staking contract configured, the replica's or the genesis's staking config cannot be
     ///   checked against it or differs (see `staking_preflight`)
+    /// - with a vote or fault proof contract configured, the schedule's governance record cannot be read or
+    ///   names another (see `governance_preflight`)
     /// - the registry's rotation switch is off, or names another API hostname (see `check_rotation`)
     /// - the checkpoint setup fails, the replica does not retain the vault's finalized checkpoint, or
     ///   the vault does not authenticate it (see `Poster::startup`)
@@ -113,6 +119,7 @@ impl Ready {
             cfg.genesis.staking.as_ref(),
         )
         .await?;
+        let governance_record = governance_preflight(RecordReader::connect(&cfg.custody)?.as_ref()).await?;
         crate::node::handover::check_rotation_for(cfg, &mut false, Some(turn.candidate)).await?;
         let setup = crate::checkpoints::setup::connect_successor(cfg, signer, metrics).await?;
         let anchor = match setup.as_ref().and_then(|setup| setup.posted_seq) {
@@ -136,6 +143,7 @@ impl Ready {
             anchor,
             emission_budget,
             staking_terms,
+            governance_record,
             heads,
             generations,
             sample,
@@ -172,6 +180,7 @@ impl Ready {
             cfg.genesis.staking.as_ref(),
         )
         .await?;
+        let governance_record = governance_preflight(RecordReader::connect(&cfg.custody)?.as_ref()).await?;
         crate::node::handover::check_rotation_for(cfg, &mut false, Some(candidate)).await?;
         let mut setup = crate::checkpoints::setup::connect_promoted(cfg, signer, metrics).await?;
         // This member's admin key is the operator's from the promotion's block, which the log's scan
@@ -218,6 +227,7 @@ impl Ready {
             anchor,
             emission_budget,
             staking_terms,
+            governance_record,
             heads,
             generations,
             sample,

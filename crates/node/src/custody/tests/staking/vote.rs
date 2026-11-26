@@ -1,6 +1,7 @@
 //! The vote contract's passed proposals mirror only from a vote contract configured over the schedule
-//! the registry names, once it is read to record that schedule; from `V65` the registry's turn state,
-//! read at the frontier once the registry is bound, reaches the engine with it.
+//! the registry names, once it is read to record that schedule, and, once the schedule's governance
+//! record names a vote contract, only from that one; from `V65` the registry's turn state, read at the
+//! frontier once the registry is bound, reaches the engine with it.
 
 use alloy::primitives::Address;
 use alloy::sol_types::SolCall;
@@ -8,10 +9,13 @@ use engine_core::governance::{GovernanceConfig, command_hash};
 use engine_core::protocol::ProtocolVersion;
 
 use super::*;
+use crate::custody::evm::GovernanceRecord;
 use crate::seed_relay::schedule::TURN_SECS;
 
 const SCHEDULE: Address = Address::repeat_byte(0x5c);
 const VOTE: Address = Address::repeat_byte(0x5f);
+/// The vote contract the schedule's record names where the configured one is a lookalike.
+const RECORDED: Address = Address::repeat_byte(0x6e);
 
 #[tokio::test]
 async fn a_vote_contract_recording_another_schedule_stalls_the_poll_before_any_mirror() {
@@ -22,6 +26,90 @@ async fn a_vote_contract_recording_another_schedule_stalls_the_poll_before_any_m
     let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
     assert!(cause.to_string().contains(&format!("the vote contract {VOTE} records schedule {other}")), "{cause}");
     assert!(!node.read(|e| e.is_staking_credited(&passed_ref())).await, "a proposal mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_vote_contract_the_schedules_record_does_not_name_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("vote-not-recorded");
+    let node = governed_node(&dir).await;
+    // The configured contract answers that it votes over the schedule, as a lookalike would, but the
+    // schedule's record names the timelock's vote contract.
+    let chains = vote_chains(Some(SCHEDULE));
+    record(&chains, 0, GovernanceRecord::Set { vote: RECORDED, fault_proof: Address::repeat_byte(0x5e) });
+    let error = vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    let expected =
+        format!("the schedule's governance record names vote contract {RECORDED}, not the configured {VOTE}");
+    assert!(cause.to_string().contains(&expected), "{cause}");
+    assert!(!node.read(|e| e.is_staking_credited(&passed_ref())).await, "a proposal mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_catch_up_before_the_record_is_held_to_it_once_it_is_final() {
+    let dir = scratch("vote-catch-up-recorded");
+    let node = governed_node(&dir).await;
+    // The timelock recorded another vote contract at block 8, after the proposal's block 3, and the
+    // first window ends at block 3: the record at the release tag's block 10 still holds it.
+    let chains = vote_chains(Some(SCHEDULE));
+    record(&chains, 8, GovernanceRecord::Set { vote: RECORDED, fault_proof: Address::repeat_byte(0x5e) });
+    let error = vote_watcher_ranged(&chains, &dir, 4).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains(&format!("names vote contract {RECORDED}")), "{cause}");
+    assert!(!node.read(|e| e.is_staking_credited(&passed_ref())).await, "a proposal mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn the_vote_contract_the_schedules_record_names_mirrors_its_passed_proposals() {
+    let dir = scratch("vote-recorded");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    record(&chains, 0, GovernanceRecord::Set { vote: VOTE, fault_proof: Address::repeat_byte(0x5e) });
+    vote_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert!(node.read(|e| e.is_staking_credited(&passed_ref())).await);
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_record_naming_nothing_yet_binds_by_the_contracts_answer_and_is_read_again_until_it_names_one() {
+    let dir = scratch("vote-record-unset");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    record(&chains, 11, GovernanceRecord::Set { vote: RECORDED, fault_proof: Address::repeat_byte(0x5e) });
+    let mut watcher = vote_watcher(&chains, &dir);
+    // At block 10 the record names nothing: the contract's own answer binds it.
+    watcher.poll(&node.tx).await.unwrap();
+    assert!(node.read(|e| e.is_staking_credited(&passed_ref())).await);
+    // A later window's release tag is past the timelock's record of another contract.
+    advance(&chains, 12);
+    let error = watcher.poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains(&format!("names vote contract {RECORDED}")), "{cause}");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn the_record_of_a_schedule_the_registry_does_not_name_is_not_read_until_it_does() {
+    let dir = scratch("vote-record-unnamed");
+    let node = governed_node(&dir).await;
+    let chains = vote_chains(Some(SCHEDULE));
+    record(&chains, 0, GovernanceRecord::Set { vote: RECORDED, fault_proof: Address::repeat_byte(0x5e) });
+    // The registry names no schedule yet, so nothing vouches for the configured one's record.
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.named = Address::ZERO;
+    }
+    let mut watcher = vote_watcher(&chains, &dir);
+    watcher.poll(&node.tx).await.unwrap();
+    // The timelock names the schedule: its record holds from the next window.
+    for chain in &chains {
+        chain.0.lock().unwrap().schedule.named = SCHEDULE;
+    }
+    advance(&chains, 12);
+    let error = watcher.poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    assert!(cause.to_string().contains(&format!("names vote contract {RECORDED}")), "{cause}");
     node.stop().await;
 }
 
@@ -166,8 +254,9 @@ async fn a_failing_upcoming_turn_read_stalls_the_poll_with_no_frontier_until_it_
     // within a draw lead of it.
     type Fault = fn(&mut ChainState);
     let cases: [(&str, Fault); 4] = [
-        // The poll's binding check reads the schedule first; the turn lookup's read is the second.
-        ("schedule", |state| state.schedule.named_reads_answered = Some(1)),
+        // The poll's binding check reads the schedule first and its governance record check second; the
+        // turn lookup's read is the third.
+        ("schedule", |state| state.schedule.named_reads_answered = Some(2)),
         ("refused", |state| state.schedule.turns_run_until_fault = Some(Refused)),
         ("undecodable", |state| state.schedule.turns_run_until_fault = Some(Undecodable)),
         ("under-a-day", |state| state.schedule.turns_run_until = 60),
@@ -279,14 +368,36 @@ fn vote_chains(schedule: Option<Address>) -> [FakeChain; 3] {
     chains
 }
 
+/// Sets what the schedule's governance record names from block `from` on, on every chain.
+fn record(chains: &[FakeChain; 3], from: u64, record: GovernanceRecord) {
+    for chain in chains {
+        chain.0.lock().unwrap().schedule.record = Some((from, record));
+    }
+}
+
+/// Moves every chain's head and tags to `head`, for a later window.
+fn advance(chains: &[FakeChain; 3], head: u64) {
+    for chain in chains {
+        let mut state = chain.0.lock().unwrap();
+        state.head = head;
+        state.final_block = Some(head);
+        state.withdrawal_block = Some(head);
+    }
+}
+
 /// The confirmed watcher over `chains`, configured with the fake chain's registry, the schedule and
 /// the vote contract.
 fn vote_watcher(chains: &[FakeChain; 3], dir: &Path) -> DepositWatcher<Quorum<FakeChain>> {
+    vote_watcher_ranged(chains, dir, 100)
+}
+
+/// `vote_watcher`, reading at most `range` blocks a window.
+fn vote_watcher_ranged(chains: &[FakeChain; 3], dir: &Path, range: u64) -> DepositWatcher<Quorum<FakeChain>> {
     let toml = format!(
         r#"{}
         staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", registry = {{ contract = "{REGISTRY}", schedule = "{SCHEDULE}", vote = {{ contract = "{VOTE}", restriction_ttl = "1d" }} }} }}
         "#,
-        evm_toml(dir, 100),
+        evm_toml(dir, range),
         dir.join("staking-cursor.json").display()
     );
     let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();

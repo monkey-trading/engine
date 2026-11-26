@@ -1,11 +1,11 @@
 //! The fake chain's operator schedule binding: the schedule its registry names, the registry that
 //! schedule records, the schedule a vote contract records, the vault a fault proof contract records,
-//! and the turn the registry names the operator by.
+//! the contracts the schedule's governance record names, and the turn the registry names the operator by.
 
 use alloy::primitives::{Address, Bytes};
 use alloy::sol_types::SolCall;
 
-use crate::custody::evm::BlockRef;
+use crate::custody::evm::{BlockRef, GovernanceRecord};
 use crate::custody::tests::fakes::{ChainState, REGISTRY};
 
 alloy::sol! {
@@ -26,6 +26,16 @@ pub(in crate::custody::tests) enum TurnsRunUntilFault {
 }
 
 impl Schedule {
+    /// What the schedule's governance record names at block `at`.
+    pub(in crate::custody::tests) fn record_at(&self, at: u64) -> GovernanceRecord {
+        self.record.map_or(
+            GovernanceRecord::Absent,
+            |(from, record)| {
+                if at >= from { record } else { GovernanceRecord::Unset }
+            },
+        )
+    }
+
     /// The schedule the registry names at block `at`, unless that read is set to fail.
     /// Error cases:
     /// - more reads than `named_reads_answered`
@@ -68,6 +78,9 @@ pub(in crate::custody::tests) struct Schedule {
     /// The turn length, in seconds, the schedule's `turnLength()` answers; `None`, the default, answers
     /// the build's.
     pub(in crate::custody::tests) turn_length: Option<u64>,
+    /// What the schedule's governance record names from a block on, naming nothing before it; `None`, the
+    /// default, answers that the schedule keeps no record.
+    pub(in crate::custody::tests) record: Option<(u64, GovernanceRecord)>,
 }
 
 impl ChainState {

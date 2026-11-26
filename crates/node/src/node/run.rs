@@ -16,6 +16,14 @@ use crate::node::member::{Member, is_member, run_turns};
 use crate::node::{FAILED_START_HOLD, KeyStart, SHUTDOWN_GRACE, secrets, serve_node};
 use crate::telemetry::Telemetry;
 
+/// Runs the node until a shutdown signal, or until the first supervised task stops, then delivers
+/// the alerts already logged, for up to `SHUTDOWN_GRACE`.
+/// Error cases:
+/// - see `serve_node`
+pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
+    Box::pin(run_with_cpu(cfg, telemetry, None, KeyStart::default())).await
+}
+
 /// Runs the node with the CPU reserved before its runtime was created, and the operator's choice of
 /// keys for a release that has none sealed.
 /// Error cases:

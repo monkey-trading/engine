@@ -23,7 +23,7 @@ use engine_core::Fixed;
 use engine_core::deposits::LegacyDeposit;
 use engine_core::fixed::DECIMALS;
 use std::collections::BTreeMap;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 use crate::access::AccessClient;
@@ -41,6 +41,9 @@ mod operators;
 #[cfg(test)]
 pub(crate) use operators::tests as tests_support;
 pub use operators::{OperatorList, OperatorsFeed, OperatorsReader, Unavailable};
+mod record;
+pub(crate) use crate::custody::evm::GovernanceRecord;
+pub(crate) use record::RecordReader;
 mod registry;
 mod rpc;
 pub(crate) mod staking;
@@ -205,6 +208,14 @@ impl Custody {
             watcher.access = access.clone();
         }
         self.access = access;
+        self
+    }
+
+    /// Publishes each governance record the deposit watcher reads to `published`, which the sequencer holds.
+    pub(crate) fn with_governance_record(mut self, published: Option<watch::Sender<GovernanceRecord>>) -> Self {
+        if let Some(watcher) = &mut self.evm {
+            watcher.governance_record = published;
+        }
         self
     }
     /// Sets up the configured provider without touching the network: the deposit watcher checks

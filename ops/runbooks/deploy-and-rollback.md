@@ -376,7 +376,16 @@ already names.
    ```
 
    The first command prints `$REGISTRY`, the second `140`, `40`, `3` and `200`, and the third `2`,
-   `2` and `4`.
+   `2` and `4`. The schedule creates its governance record as it deploys. Set `RECORD` to it and
+   check it:
+
+   ```shell
+   RECORD=$(cast call $SCHEDULE 'governanceRecord()(address)' --rpc-url $RPC)
+   cast call $RECORD 'schedule()(address)' --rpc-url $RPC
+   cast call $RECORD 'vault()(address)' --rpc-url $RPC
+   ```
+
+   The commands print `$SCHEDULE` and `$VAULT`.
 
 4. **Name the vault and the schedule in the registry,** through the timelock, as
    [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
@@ -426,8 +435,33 @@ already names.
 
    Set `FAULT_PROOF` to the address that the command prints, which must be the planned one.
 
-**How to tell it is resolved.** The registry names the schedule, every contract is at the address
-that the release's configuration names, every check above prints what it should, and checks 2 to 5
+7. **Record the parameter vote and the fault proof in the schedule's governance record,** through
+   the timelock, as
+   [Calling a contract through the timelock](reference.md#calling-a-contract-through-the-timelock)
+   describes, with these values:
+
+   ```shell
+   TARGET=$RECORD
+   DATA=$(cast calldata 'setGovernanceContracts(address,address)' $VOTE $FAULT_PROOF)
+   ```
+
+   **Changes the live system.** The owner must approve this contract call, and the multisig signs
+   the schedule and the execute. The record is set once and never changes, so check both addresses
+   against the release's configuration first.
+
+   The call reverts with `UnauthorizedGovernance` unless the timelock makes it, with
+   `GovernanceContractsRecorded` once the record is set, with `InvalidGovernanceContracts` for a vote
+   contract over another schedule or a fault proof contract over another vault, and without a reason
+   for an address with no code. Once it executes,
+   `cast call $RECORD 'vote()(address)' --rpc-url $RPC` prints `$VOTE` and
+   `cast call $RECORD 'faultProof()(address)' --rpc-url $RPC` prints `$FAULT_PROOF`. From then on a
+   trading server whose configuration names another vote or fault proof contract refuses to start, with
+   `governance_record_mismatch`, before it records either in its log, and a running one stalls its custody
+   watcher before it mirrors anything from either.
+
+**How to tell it is resolved.** The registry names the schedule, the schedule's governance record
+names the parameter vote and the fault proof, every contract is at the address that the release's
+configuration names, every check above prints what it should, and checks 2 to 5
 in [Variables and checks](seed-relay.md#variables-and-checks) pass. The relayer's checks there need
 a running trading server, so they wait for the first deployment.
 

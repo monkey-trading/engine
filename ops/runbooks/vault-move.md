@@ -74,6 +74,9 @@ export ALPHA_API=https://...   # the alpha's public API
 export MINTER=0x...            # custody.evm.minter, kept across the move
 export STAKING=0x...           # custody.evm.staking.contract, kept across the move
 export SCHEDULE=0x...          # the launch schedule: custody.evm.staking.registry.schedule
+export RECORD=0x...            # its governance record: cast call $SCHEDULE 'governanceRecord()(address)'
+export VOTE=0x...              # the launch ParameterVote: custody.evm.staking.registry.vote.contract
+export FAULT_PROOF=0x...       # the launch FaultProof: custody.evm.staking.registry.fault_proof.contract
 export CANDIDATE=0x...         # the launch operator's candidate account
 export ADMIN_KEY=0x...         # the launch operator's admin key: operator.public_key's address
 export DIGEST=0x...            # the launch release's launch measurement
@@ -164,7 +167,16 @@ cast call $SCHEDULE 'logHeads()(address)' --rpc-url $RPC
 cast call $LOG_HEADS 'vault()(address)' --rpc-url $RPC
 ```
 
-The commands print `$REGISTRY`, `$LOG_HEADS` and `$VAULT`. Check the launch vault's signer too:
+The commands print `$REGISTRY`, `$LOG_HEADS` and `$VAULT`. Check the governance record the schedule
+created, which batch C fills:
+
+```shell
+cast call $SCHEDULE 'governanceRecord()(address)' --rpc-url $RPC
+cast call $RECORD 'schedule()(address)' --rpc-url $RPC
+cast call $RECORD 'vault()(address)' --rpc-url $RPC
+```
+
+The commands print `$RECORD`, `$SCHEDULE` and `$VAULT`. Check the launch vault's signer too:
 
 ```shell
 cast call $VAULT 'checkpointSigner()(address)' --rpc-url $RPC
@@ -228,12 +240,14 @@ VALUES="[0,0,0,0]"
 PAYLOADS="[$(cast calldata 'setCustody(address,address)' $VAULT $SCHEDULE),$(cast calldata 'setRegistry(address)' $REGISTRY),$(cast calldata 'setVault(address)' $VAULT),$(cast calldata 'installOperator(address,address,bytes,bytes32)' $CANDIDATE $ADMIN_KEY $DIGEST $CONFIG_HASH)]"
 ```
 
-Batch C names the launch release on the launch vault:
+Batch C names the launch release on the launch vault, and records the launch `ParameterVote` and
+`FaultProof` in the launch schedule's governance record, once and for good, as step 7 of
+[Deploy the rotation contracts](deploy-and-rollback.md#deploy-the-rotation-contracts) describes:
 
 ```shell
-TARGETS="[$VAULT]"
-VALUES="[0]"
-PAYLOADS="[$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH)]"
+TARGETS="[$VAULT,$RECORD]"
+VALUES="[0,0]"
+PAYLOADS="[$(cast calldata 'setCurrentRelease(bytes,bytes32)' $DIGEST $CONFIG_HASH),$(cast calldata 'setGovernanceContracts(address,address)' $VOTE $FAULT_PROOF)]"
 ```
 
 **Changes the live system.** The owner approves each batch, and the multisig signs it.
@@ -252,10 +266,13 @@ At T0, run batches A and C.
 cast call $ALPHA_VAULT 'depositsPaused()(bool)' --rpc-url $RPC
 cast call $REGISTRY 'rotationSwitch()(bool)' --rpc-url $RPC
 cast call $VAULT 'currentRelease()(bytes32)' --rpc-url $RPC
+cast call $RECORD 'vote()(address)' --rpc-url $RPC
+cast call $RECORD 'faultProof()(address)' --rpc-url $RPC
 ```
 
-The first command prints `true`, the second prints `false`, and the third prints the launch
-release's id, `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`. The alpha mirrors rotation's
+The first command prints `true`, the second prints `false`, the third prints the launch release's
+id, `cast keccak $(cast concat-hex $DIGEST $CONFIG_HASH)`, and the last two print `$VOTE` and
+`$FAULT_PROOF`. The alpha mirrors rotation's
 switch once the block is `finalized`. The turns already drawn keep naming the alpha's operator for
 about two more days. The alpha's checkpoints, withdrawals and claims continue.
 

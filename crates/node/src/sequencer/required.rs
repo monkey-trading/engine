@@ -133,6 +133,8 @@ impl Sequencer {
     /// `recover` has already refused a log that records another client auth, operator, vote contract or
     /// fault proof contract.
     /// Error cases:
+    /// - the schedule's governance record names another vote or fault proof contract than one it would
+    ///   record (see `check_governance_record`)
     /// - the engine rejects any of them
     /// - the log cannot be written
     pub fn activate_protocol(&mut self) -> anyhow::Result<()> {
@@ -179,11 +181,14 @@ impl Sequencer {
         }
         // The vote contract is protocol: the log records the config's once (`recover` has already
         // refused a log that records another).
-        if let (Some(config), None) = (self.governance, self.engine.governance().config) {
-            cmds.push(Command::Admin(AdminCommand::SetGovernance(config)));
-        }
+        let governance = self.governance.filter(|_| self.engine.governance().config.is_none());
         // So is the fault proof contract, which waits at the stamp for `V70` (see `sequence_queued`).
-        cmds.extend(self.fault_proof_record());
+        let fault_proof = self.fault_proof_record();
+        if governance.is_some() || fault_proof.is_some() {
+            self.check_governance_record()?;
+        }
+        cmds.extend(governance.map(|config| Command::Admin(AdminCommand::SetGovernance(config))));
+        cmds.extend(fault_proof);
         if cmds.is_empty() {
             return Ok(());
         }

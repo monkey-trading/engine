@@ -389,6 +389,7 @@ mod event_blocks;
 mod stub;
 use stub::StubReader;
 mod faults;
+mod record;
 mod registry;
 mod rpc_budget;
 mod vote;

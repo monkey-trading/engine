@@ -75,4 +75,8 @@ pub struct SequencerConfig<'a> {
     /// The fault proof contract and penalty the config names, which the node records once `V70` is in
     /// force (see `Sequencer::activate_protocol`); a log that records others is refused.
     pub(crate) fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
+    /// The schedule's governance record as last read through the custody quorum, at the start and by the
+    /// custody watcher: the node records `governance` and `fault_proof` only while it names no others. `None`
+    /// records them unchecked.
+    pub(crate) governance_record: Option<tokio::sync::watch::Receiver<crate::custody::GovernanceRecord>>,
 }

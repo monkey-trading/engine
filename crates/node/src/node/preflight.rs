@@ -1,15 +1,16 @@
 //! Persisted recovery starts only after the authenticated chain anchor passes.
 
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use engine_core::emissions::{Emissions, TokenUnits};
 use engine_core::staking::StakingConfig;
+use tokio::sync::watch;
 use tracing::error;
 
 use crate::checkpoints::emission_budget::check_recorded;
 use crate::checkpoints::setup::Setup;
 use crate::checkpoints::{CheckpointChain, Poster};
 use crate::config::NodeConfig;
-use crate::custody::{ContractTerms, StakingTerms, StakingTermsRefused};
+use crate::custody::{ContractTerms, GovernanceRecord, RecordReader, StakingTerms, StakingTermsRefused};
 use crate::log::Checkpoint;
 use crate::node::ready::Ready;
 use crate::sequencer::ReplayedLog;
@@ -104,19 +105,46 @@ fn refuse(source: &str, refused: StakingTermsRefused) -> anyhow::Error {
     anyhow::anyhow!("{source}: {refused}")
 }
 
-/// The emission period budget and the staking terms the API checks emission schedules and
-/// `InitStaking` against, after refusing a `log` or genesis that records others. A member's start read
-/// the contract's terms before it connected (`ready`), so it compares the final replica's config with
-/// them and reads nothing now: an `InitStaking` in the catch-up or the tail is checked too.
+/// Refuses to start when the schedule's governance record, read through the custody quorum as the custody
+/// watcher reads it, names another vote or fault proof contract than the config: the sequencer would record
+/// the config's in the log, and every start on that log would refuse the recorded one. Nothing is read without
+/// `reader`, which needs a vote or fault proof contract configured. Runs before anything is written, and
+/// returns the record read, against which the sequencer checks each such write again.
 /// Error cases:
-/// - the staking contract's reader cannot be built (see `StakingTerms::connect`)
-/// - see `emission_preflight` and `staking_preflight`
+/// - the record cannot be read (alert `checkpoint_startup_failed`)
+/// - it names another vote or fault proof contract than the config (alert `governance_record_mismatch`)
+pub(super) async fn governance_preflight(reader: Option<&RecordReader>) -> anyhow::Result<Option<GovernanceRecord>> {
+    let Some(reader) = reader else { return Ok(None) };
+    let record = reader.read().await.inspect_err(|e| {
+        error!(
+            alert = "checkpoint_startup_failed",
+            "refusing to serve: reading the schedule's governance record: {e:#}"
+        );
+    })?;
+    let (vote, fault_proof) = reader.configured();
+    if let Some(reason) = record.refusal(vote, fault_proof) {
+        error!(alert = "governance_record_mismatch", "refusing to serve: {reason}");
+        bail!(reason);
+    }
+    Ok(Some(record))
+}
+
+/// The emission period budget and the staking terms the API checks emission schedules and
+/// `InitStaking` against, after refusing a `log` or genesis that records others, and, with a vote or fault
+/// proof contract configured, where the schedule's governance record is published to the sequencer, seeded
+/// with the one read now. A member's start read the contract's terms and the record before it connected
+/// (`ready`), so it compares the final replica's config with them and reads nothing now: an `InitStaking`
+/// in the catch-up or the tail is checked too.
+/// Error cases:
+/// - the staking contract's or the record's reader cannot be built (see `StakingTerms::connect` and
+///   `RecordReader::connect`)
+/// - see `emission_preflight`, `staking_preflight` and `governance_preflight`
 pub(super) async fn chain_terms(
     cfg: &NodeConfig,
     ready: Option<&Ready>,
     setup: Option<&Setup>,
     log: &ReplayedLog,
-) -> anyhow::Result<(Option<TokenUnits>, Option<StakingTerms>)> {
+) -> anyhow::Result<(Option<TokenUnits>, Option<StakingTerms>, Option<watch::Sender<GovernanceRecord>>)> {
     // The API also refuses an emission schedule with another budget than the minter's.
     let emission_budget = match (ready, setup) {
         (Some(ready), _) => ready.emission_budget,
@@ -134,7 +162,12 @@ pub(super) async fn chain_terms(
         }
         None => {}
     }
-    Ok((emission_budget, staking_terms))
+    // Nor may it record a vote or fault proof contract the schedule's governance record does not name.
+    let record = match ready {
+        Some(ready) => ready.governance_record,
+        None => governance_preflight(RecordReader::connect(&cfg.custody)?.as_ref()).await?,
+    };
+    Ok((emission_budget, staking_terms, record.map(|record| watch::channel(record).0)))
 }
 
 /// Authorizes opening or repairing history only after custody rollback and signer checks.
@@ -191,6 +224,8 @@ pub(super) async fn authorize<R: CheckpointChain>(
 
 #[cfg(test)]
 mod emission_tests;
+#[cfg(test)]
+mod governance_tests;
 #[cfg(test)]
 mod staking_tests;
 #[cfg(test)]

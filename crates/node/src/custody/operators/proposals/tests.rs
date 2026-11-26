@@ -7,9 +7,11 @@ use engine_core::command::AdminCommand;
 use serde_json::json;
 
 use super::*;
+use crate::custody::evm::GovernanceRecord;
 use crate::custody::operators::tests::{FINAL_TIME, final_block, honest, json_of, reader};
 
 pub(crate) const VOTE: Address = Address::repeat_byte(0x0d);
+const SCHEDULE: Address = Address::repeat_byte(0x0e);
 
 /// The answer to a call to the vote contract over `proposals`, noting its selector in `calls`: none,
 /// as from an address with no code, while there are no proposals.
@@ -166,4 +168,54 @@ async fn bytes_that_are_no_canonical_command_list_with_no_command() {
     proposals[0].command = bytes;
     let list = json_of(&reading(proposals).read().await.unwrap());
     assert_eq!(list["proposals"]["open"][0]["command"], json!(null));
+}
+
+#[tokio::test]
+async fn a_vote_contract_the_schedules_record_does_not_name_lists_its_proposals_as_unavailable() {
+    let recorded = Address::repeat_byte(0x6e);
+    let reader = recorded_reading(SCHEDULE, GovernanceRecord::Set { vote: recorded, fault_proof: Address::ZERO });
+    let list = json_of(&reader.read().await.unwrap());
+    let unavailable = json!({ "vote": format!("{VOTE:#x}"), "open": [], "truncated": false, "unavailable": true });
+    assert_eq!(list["proposals"], unavailable);
+    let error = reader.read_proposals(VOTE, final_block(), FINAL_TIME as i64 * 1000).await.unwrap_err();
+    let expected =
+        format!("the schedule's governance record names vote contract {recorded}, not the configured {VOTE}");
+    assert!(format!("{error:#}").contains(&expected), "{error:#}");
+}
+
+#[tokio::test]
+async fn the_vote_contract_the_schedules_record_names_lists_its_proposals() {
+    let record = GovernanceRecord::Set { vote: VOTE, fault_proof: Address::ZERO };
+    let list = json_of(&recorded_reading(SCHEDULE, record).read().await.unwrap());
+    assert_eq!(list["proposals"]["open"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_schedule_with_no_record_or_one_the_registry_does_not_name_leaves_the_configured_vote_contract_read() {
+    let other = GovernanceRecord::Set { vote: Address::repeat_byte(0x6e), fault_proof: Address::ZERO };
+    for (named, record) in [
+        (SCHEDULE, GovernanceRecord::Absent),
+        (SCHEDULE, GovernanceRecord::Unset),
+        (Address::ZERO, other),
+        (Address::repeat_byte(0x6c), other),
+    ] {
+        let list = json_of(&recorded_reading(named, record).read().await.unwrap());
+        assert_eq!(list["proposals"]["open"].as_array().unwrap().len(), 1, "{named} {record:?}");
+    }
+}
+
+/// A reader of one open proposal under `SCHEDULE`, whose providers' registry names `named` and whose schedule's
+/// governance record names `record`.
+fn recorded_reading(
+    named: Address,
+    record: GovernanceRecord,
+) -> OperatorsReader<crate::custody::operators::tests::Provider> {
+    let mut providers = honest(1);
+    for provider in &mut providers {
+        provider.model.proposals = vec![proposal(1, 3_600, 86_400, false)];
+        provider.model.record = (named, record);
+    }
+    let (mut reader, _) = reader(providers, Duration::from_secs(60));
+    (reader.vote, reader.schedule) = (Some(VOTE), Some(SCHEDULE));
+    reader
 }

@@ -2,6 +2,7 @@
 pragma solidity 0.8.36;
 
 import {ARB_SYS} from "./ArbSys.sol";
+import {GovernanceRecord} from "./GovernanceRecord.sol";
 import {LogHeads} from "./LogHeads.sol";
 import {OperatorRegistry} from "./OperatorRegistry.sol";
 import {SeedReceiver} from "./SeedReceiver.sol";
@@ -199,6 +200,10 @@ contract OperatorSchedule is SeedSchedule {
     /// than one interval.
     uint64 public immutable blockMillis;
 
+    /// @notice The record of the vote and fault proof contracts this schedule's nodes mirror, which this
+    /// schedule creates at its deployment and the registry's timelock fills once.
+    GovernanceRecord public immutable governanceRecord;
+
     /// @notice The heartbeat rule in force, and the bounds the timelock changes it within, fixed at
     /// deployment.
     Liveness public liveness;
@@ -335,7 +340,8 @@ contract OperatorSchedule is SeedSchedule {
     /// and a maximum spanning at most a turn at the shortest interval.
     /// @param switchBudget_ The handover's asserted switch budget, in seconds.
     /// @param blockMillis_ The pinned Arbitrum block time, in milliseconds.
-    /// @dev Takes its beacon genesis time and turn length from `receiver_`.
+    /// @dev Takes its beacon genesis time and turn length from `receiver_`, and creates its
+    /// `governanceRecord` over `logHeads_`'s vault.
     constructor(
         OperatorRegistry registry_,
         SeedReceiver receiver_,
@@ -364,6 +370,7 @@ contract OperatorSchedule is SeedSchedule {
                 || !_skipsFirst(liveness_, takeWindow_.slots)
         ) revert InvalidTakeWindow();
         takeWindow = takeWindow_;
+        governanceRecord = new GovernanceRecord(registry_, logHeads_.vault());
     }
 
     modifier onlyRegistry() {
