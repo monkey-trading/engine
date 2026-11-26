@@ -171,6 +171,30 @@ impl StandbyKeys {
         Ok(StandbyStart::Standby { keys, generated: true })
     }
 
+    /// This release's sealed standby keys in `dir`, for the config whose SHA-256 is `config_sha256`, while
+    /// the schedule in `domain` lists them as `candidate`'s promotable key: what a take at a start signs
+    /// its request with (`successor::ask`). `None` with no sealed keys or while they are not promotable;
+    /// it writes nothing.
+    /// Error cases:
+    /// - the platform cannot report, or the sealed file does not open under this release as standby keys
+    /// - the chain cannot be read
+    pub(crate) async fn open_promotable(
+        dir: &Path,
+        sealer: Box<dyn Sealer>,
+        config_sha256: [u8; 32],
+        chain: &impl StandbyChain,
+        (domain, candidate): (&StandbyDomain, AccountId),
+    ) -> anyhow::Result<Option<Self>> {
+        let sealer: Arc<dyn Sealer> = Arc::from(sealer);
+        let platform = sealer.platform()?;
+        let file = ReleaseFile::new(dir, STANDBY, Box::new(Shared(sealer.clone())), config_sha256)?;
+        let Some(plaintext) = file.read()? else { return Ok(None) };
+        let held = serde_json::from_slice(&plaintext).context("the sealed standby keys do not parse")?;
+        let keys = Self::new(file, dir.to_owned(), sealer, platform, held)?;
+        let state = standby_state(chain, domain, candidate, keys.address()).await?;
+        Ok((state == StandbyState::Promotable).then_some(keys))
+    }
+
     /// The signing key's address.
     pub(crate) fn address(&self) -> AccountId {
         AccountId(self.signing.address())

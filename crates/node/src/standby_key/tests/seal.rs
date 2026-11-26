@@ -404,3 +404,24 @@ fn assert_resealed_once(dir: &Path, key: AccountId) {
         assert_ne!(AccountId(sealed.enclave_key().unwrap().address()), key, "the standby seal still holds the key");
     }
 }
+
+/// A take at a start signs its request only with a sealed key the schedule lists as the candidate's
+/// promotable key, and opening it for that writes nothing.
+#[tokio::test]
+async fn a_take_opens_only_a_sealed_key_the_schedule_lists_as_promotable_and_writes_nothing() {
+    let dir = scratch_dir("standby-take-open");
+    let chain = FakeChain::new();
+    let open = || StandbyKeys::open_promotable(&dir, sealer(), CONFIG, &chain, (&DOMAIN, CANDIDATE));
+    assert!(open().await.unwrap().is_none(), "keys opened from an empty directory");
+    let sealed = fresh_in(&dir).await.address();
+    let file = file_for(&dir, &release(), &STANDBY);
+    let bytes = std::fs::read(&file).unwrap();
+    assert!(open().await.unwrap().is_none(), "an unregistered key opened for a take");
+    chain.list_promotable(AccountId([0x98; 20]), sealed);
+    assert!(open().await.unwrap().is_none(), "another candidate's promotable key opened for a take");
+    chain.list_promotable(CANDIDATE, sealed);
+    let keys = open().await.unwrap().expect("the promotable key opened for a take");
+    assert_eq!(keys.address(), sealed);
+    assert_eq!(std::fs::read(&file).unwrap(), bytes, "opening the key for a take changed its seal");
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "opening the key for a take wrote a file");
+}

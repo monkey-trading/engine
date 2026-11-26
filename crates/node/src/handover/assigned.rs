@@ -4,7 +4,9 @@
 //! the keys, and the key holder admits it, from this read. A handover binds the assignment its
 //! successor read (`Binding`): the signer epoch, the turn, the assignment's position and its
 //! generation; the holder admits only the member of the assignment it reads now, before the stop and
-//! again before the keys go, and the successor reads it again before it seals them.
+//! again before the keys go, and the successor reads it again before it seals them. The read names the
+//! member's promotable standby key at the same block, whose signature the holder requires on the
+//! request.
 
 use std::sync::Arc;
 
@@ -20,7 +22,7 @@ use crate::checkpoints::{CheckpointRpc, ScheduledTurn};
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
 use crate::handover::discovery::{Registered, members};
-use crate::liveness::chain::rotationStateCall;
+use crate::liveness::chain::{promotable, rotationStateCall};
 use crate::standby_key::chain::{
     AgreedBlock, StandbyChain, StandbyDomain, assignmentHeadOfCall, signerEpochCall, turnAtCall,
 };
@@ -72,6 +74,9 @@ pub(crate) struct Assigned {
     pub head_release: Option<[u8; 32]>,
     /// Whether a release move revised it after it was made: its member's own approved upgrade.
     pub revised: bool,
+    /// The member's promotable standby key at the block, which signs its request for the keys; `None`
+    /// while it holds none.
+    pub standby: Option<AccountId>,
 }
 
 /// Where the latest assignment is read.
@@ -87,6 +92,12 @@ pub(crate) trait Assignments: Send + Sync {
     /// Error cases:
     /// - the providers have no quorum, or a call fails or does not decode
     fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>>;
+
+    /// `candidate`'s promotable standby key at the latest agreed block; `None` while it holds none, or
+    /// the vault names no schedule.
+    /// Error cases:
+    /// - the providers have no quorum, or a call fails or does not decode
+    fn standby(&self, candidate: AccountId) -> BoxFuture<'_, anyhow::Result<Option<AccountId>>>;
 }
 
 /// A shared reader of the latest assignment.
@@ -108,6 +119,16 @@ impl<C: StandbyChain + Send> Assignments for LatestAssignments<C> {
 
     fn members<'a>(&'a self, assigned: &'a Assigned) -> BoxFuture<'a, anyhow::Result<Vec<Registered>>> {
         Box::pin(async move { members(&self.chain.latest().await?, self.chain_id, self.vault, assigned).await })
+    }
+
+    fn standby(&self, candidate: AccountId) -> BoxFuture<'_, anyhow::Result<Option<AccountId>>> {
+        Box::pin(async move {
+            let block = self.chain.latest().await?;
+            match StandbyDomain::at_if_scheduled(&block, self.chain_id, self.vault).await? {
+                Some(domain) => promotable(&block, &domain, candidate).await,
+                None => Ok(None),
+            }
+        })
     }
 }
 
@@ -291,7 +312,7 @@ pub(crate) async fn read(
 ) -> anyhow::Result<Option<Assigned>> {
     let Some(domain) = StandbyDomain::at_if_scheduled(block, chain_id, vault).await? else { return Ok(None) };
     // All at one block: the calls that need none of another's answers go together, so a read waits four
-    // round trips, not seven, and a handover makes one on each side between the two nodes' commands. The
+    // round trips, not eight, and a handover makes one on each side between the two nodes' commands. The
     // epoch counts only once a turn names the operator, so its failure alone fails no read that ends
     // before.
     let (named, epoch) = tokio::join!(
@@ -310,9 +331,10 @@ pub(crate) async fn read(
     let epoch = epoch?;
     let (turn, named) = (found.turn, found._1);
     let position = named.position;
-    let (made, head_release) = tokio::try_join!(
+    let (made, head_release, standby) = tokio::try_join!(
         call(block, "assigned_assignment", domain.schedule, assignmentHeadOfCall { turn, position }),
         call(block, "assigned_head_release", log_heads, headReleaseCall { epoch }),
+        promotable(block, &domain, AccountId(named.candidate.0.0)),
     )?;
     let release = made.latest.release.0;
     Ok(Some(Assigned {
@@ -325,6 +347,7 @@ pub(crate) async fn read(
         release,
         head_release: (head_release != B256::ZERO).then_some(head_release.0),
         revised: made.count > U256::from(1),
+        standby,
     }))
 }
 

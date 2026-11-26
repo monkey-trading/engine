@@ -175,7 +175,7 @@ pub(super) async fn hand_over(
     keys.predecessor_head = Some(head.clone());
     let (served, _) = serve_tail(listener, DOMAIN, keys, vec![Answer::Tail(tail)]);
     let signer = AccountId(key.address());
-    let prepared = Prepared { generation, signer, posted: None, bound: Bound::none() };
+    let prepared = Prepared { generation, signer, posted: None, bound: Bound::none(), standby: None };
     let sealer = MockSealer { launch_digest: DIGEST };
     let started = Instant::now();
     let collateral = crate::handover::evidence::CollateralCache::new(crate::handover::evidence::PREFETCH_REUSE);

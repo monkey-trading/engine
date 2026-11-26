@@ -250,7 +250,7 @@ async fn a_turns_member_takes_the_keys_from_its_source_while_the_sources_archive
         &exchange.successor,
         &vault,
         (&at, &turn),
-        (&sealer, &MockAttestor),
+        (&sealer, &MockAttestor, None),
         &crate::metrics::Metrics::new(),
         None,
     )

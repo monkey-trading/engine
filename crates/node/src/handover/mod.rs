@@ -243,6 +243,19 @@ fn confirmed_digest(domain: CheckpointDomain, request: &[u8; 64]) -> [u8; 32] {
     hash.finalize().into()
 }
 
+/// What a turn's member signs with its registered standby key to bind a request to its own enclave:
+/// the request's report data, which binds the connection's challenge, the one-time public key, the
+/// config and the assignment taken. An enclave that runs the member's release on another host holds
+/// another standby key, which the member's candidate never registered.
+fn member_digest(domain: CheckpointDomain, request: &[u8; 64]) -> [u8; 32] {
+    let mut hash = Keccak256::new();
+    hash.update(b"engine.handover.member.v1");
+    hash.update(domain.chain_id.to_be_bytes());
+    hash.update(domain.vault.0);
+    hash.update(request);
+    hash.finalize().into()
+}
+
 /// A SHA-256 in the first half of report data, the second half zero.
 pub(crate) fn padded(digest: [u8; 32]) -> [u8; 64] {
     let mut report_data = [0u8; 64];

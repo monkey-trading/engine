@@ -339,7 +339,7 @@ async fn a_successor_fetches_its_collateral_before_it_connects() {
     let (address, answering) = challenging(kds.attempts.clone(), Duration::from_millis(50)).await;
     let platform = Platform { launch_digest: LAUNCH_DIGEST, policy: POLICY, tcb: 0 };
     let collateral = evidence::CollateralCache::new(Duration::from_millis(1));
-    let asked = successor::ask(&cfg, &address, &forging, &platform, (None, None), None, &collateral).await;
+    let asked = successor::ask(&cfg, &address, &forging, &platform, (None, None), (None, None), &collateral).await;
     assert!(asked.is_err(), "keys came from a predecessor that sent none");
     fetched_before_the_challenge(&cfg, &forging, answering.await.unwrap());
 }
@@ -357,7 +357,8 @@ async fn attempts_reuse_the_collateral_the_first_fetched() {
     let collateral = evidence::CollateralCache::new(evidence::PREFETCH_REUSE);
     let mut fetched = Vec::new();
     for _ in 0..3 {
-        let asked = successor::ask(&cfg, &unreachable, &forging, &platform, (None, None), None, &collateral).await;
+        let asked =
+            successor::ask(&cfg, &unreachable, &forging, &platform, (None, None), (None, None), &collateral).await;
         assert!(asked.is_err(), "keys came from a holder that cannot be reached");
         fetched.push(kds.attempts.load(std::sync::atomic::Ordering::SeqCst));
     }

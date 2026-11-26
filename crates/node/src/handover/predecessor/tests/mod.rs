@@ -9,6 +9,7 @@ mod entries;
 use entries::{checkpoint, command, publish};
 mod fold;
 mod listener;
+mod member;
 mod secrets;
 mod snapshot;
 mod stop;
@@ -384,6 +385,7 @@ impl Exchange {
             reads,
             secrets_only: false,
             binding: None,
+            standby_signature: None,
             evidence,
         };
         (stream, report_data, message)

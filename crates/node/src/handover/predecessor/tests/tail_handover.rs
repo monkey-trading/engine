@@ -10,10 +10,13 @@ use super::*;
 
 use std::path::Path;
 
+use crate::handover::assigned::tests::skip;
+use crate::handover::assigned::{Assigned, Assignments, Bound};
 use crate::handover::tail::{Prepared, TailMiss, TailRefused, Taken, Tip, take_tail, version_name};
 use crate::log::{MANIFEST, Manifest, offset_of};
 use crate::sequencer::Request as SequencerRequest;
 use crate::standby::Follower;
+use crate::standby_key::StandbyKeys;
 use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, keep_time_fresh, log_entries};
 
 /// The deployment the test sequencer seals and signs for.
@@ -39,6 +42,28 @@ async fn a_following_successor_takes_only_the_entries_after_its_tip() {
     assert_eq!(store.keys().predecessor_head.map(|head| head.seq), Some(head));
     assert_eq!((store.release(), store.generation()), (tailed.exchange.upgrade(), GENERATION));
     timeout(Duration::from_secs(5), tailed.exchange.run).await.expect("the predecessor ended").unwrap().unwrap();
+}
+
+/// A tail request from a turn's member carries the signature of its promotable standby key: without it
+/// the holder refuses it before the stop, naming the key; with it the request passes that check, and this
+/// log, which holds no turns, refuses the skip after it.
+#[tokio::test]
+async fn a_tail_request_carries_the_members_standby_signature() {
+    let mut tailed = Tailed::start("tail-standby", 6, 5).await;
+    let member = Arc::new(StandbyKeys::for_test(&scratch_dir("tail-standby-key")));
+    let release = tailed.exchange.upgrade().id();
+    let assigned = Assigned { standby: Some(member.address()), ..skip(12, 1, 0xc1, release, GENERATION) };
+    tailed.exchange.assignments.set(Some(assigned));
+    let reader: Arc<dyn Assignments> = tailed.exchange.assignments.clone();
+    for (what, standby) in [("unsigned", None), ("signed", Some(member.clone()))] {
+        let bound = Bound::of(&assigned, reader.clone());
+        let prepared = Prepared { bound, standby, ..tailed.prepared(None) };
+        let err = tailed.take(&prepared).await.err().unwrap_or_else(|| panic!("{what}: the keys moved"));
+        let refused_for_the_key = format!("{err:#}").contains("standby key");
+        assert_eq!(refused_for_the_key, what == "unsigned", "{what}: {err:#}");
+        assert!(format!("{err:#}").contains("skip") || refused_for_the_key, "{what}: {err:#}");
+        tailed.assert_sequencing_on().await;
+    }
 }
 
 /// A successor whose attempt fails after the stop retries the same tip and still gets the tail: with
@@ -316,7 +341,8 @@ impl Tailed {
     /// What the successor reads before connecting: the vault naming the old key, and `posted`.
     fn prepared(&self, posted: Option<crate::log_heads::Head>) -> Prepared {
         let signer = AccountId(self.exchange.old.enclave_key().unwrap().address());
-        Prepared { generation: GENERATION, signer, posted, bound: crate::handover::assigned::Bound::none() }
+        let bound = crate::handover::assigned::Bound::none();
+        Prepared { generation: GENERATION, signer, posted, bound, standby: None }
     }
 
     /// The head the predecessor's log holds at `seq`, as it would post it.
@@ -381,6 +407,7 @@ impl Exchange {
             reads: reads.into(),
             secrets_only: false,
             binding: None,
+            standby_signature: None,
             evidence,
         };
         (stream, request)

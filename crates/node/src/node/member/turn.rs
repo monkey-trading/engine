@@ -219,7 +219,7 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
                     info!(turn = turn.turn, "this member's turn has come: reading what its start needs, then the tail");
                     let operator = followed.as_ref().map(|(operator, _)| operator);
                     let span = info_span!("take", turn = turn.turn);
-                    match self.take(&turn, replica, operator).instrument(span.clone()).await {
+                    match self.take(&turn, replica, operator, standby.as_ref()).instrument(span.clone()).await {
                         Ok((Taken { store, after, entries, bytes }, ready)) if self.cfg.snapshots.is_none() => {
                             info!(after, entries, bytes, generation = store.generation(), "the copy took the tail");
                             let (follower, stats, history, marks) =

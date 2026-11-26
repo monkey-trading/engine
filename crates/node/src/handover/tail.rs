@@ -40,6 +40,7 @@ use crate::handover::successor::{Answered, ask, confirm};
 use crate::handover::{padded, receive_bytes, send_bytes};
 use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, offset_of};
 use crate::standby::{Followed, Follower, ReplicaRefused};
+use crate::standby_key::StandbyKeys;
 use crate::tee::Attestor;
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Release, Sealer};
@@ -91,6 +92,8 @@ pub(crate) struct Prepared {
     pub posted: Option<crate::log_heads::Head>,
     /// The turn's assignment the request binds, read again before the keys are sealed (#596).
     pub bound: Bound,
+    /// The member's standby keys, which sign the request (`successor::ask`).
+    pub standby: Option<std::sync::Arc<StandbyKeys>>,
 }
 
 impl Prepared {
@@ -108,7 +111,7 @@ impl Prepared {
         let observation = vault.observe(View::Finalized, &[]).await?;
         let (generation, _) =
             crate::handover::turns::named_generation(vault, &observation, release, reached_ms).await?;
-        Ok(Self { generation, signer: observation.state.signer, posted, bound: Bound::none() })
+        Ok(Self { generation, signer: observation.state.signer, posted, bound: Bound::none(), standby: None })
     }
 
     /// What a skip's member reads before it connects (#596): the generation `assigned`, the latest
@@ -123,8 +126,8 @@ impl Prepared {
         assignments: std::sync::Arc<dyn Assignments>,
     ) -> anyhow::Result<Self> {
         let observation = vault.observe(View::Finalized, &[]).await?;
-        let bound = Bound::of(assigned, assignments);
-        Ok(Self { generation: assigned.binding.generation, signer: observation.state.signer, posted: None, bound })
+        let (bound, signer) = (Bound::of(assigned, assignments), observation.state.signer);
+        Ok(Self { generation: assigned.binding.generation, signer, posted: None, bound, standby: None })
     }
 }
 
@@ -316,7 +319,8 @@ async fn receive_tail(stream: &mut TcpStream, listing: &TailListing) -> anyhow::
 /// Takes the keys from the predecessor whose handover listener is at `address`, asking for the
 /// entries past `follower`'s tip alone, with what `prepared` read before connecting, following
 /// `operator`, if any, until the predecessor answers, quoting with `attestor` and the collateral
-/// `collateral` holds or fetches before connecting, which later attempts reuse. The tail must
+/// `collateral` holds or fetches before connecting, which later attempts reuse, and signing with the
+/// member's standby keys `prepared` holds, if any. The tail must
 /// extend the copy's seal chain entry by entry and replay onto its replica, end at the handed-over
 /// checkpoint, and leave the replica holding the latest posted log head. The keys are then sealed in
 /// the prepared generation and the handover confirmed.
@@ -344,8 +348,8 @@ pub(crate) async fn take_tail(
     let tip = Tip { seq, link };
     follower.sync()?;
     // The tip alone names what the copy holds: its segment files are its own writer's.
-    let binding = prepared.bound.binding.as_ref();
-    let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), binding, collateral);
+    let signing = (prepared.bound.binding.as_ref(), prepared.standby.as_deref());
+    let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), signing, collateral);
     let answered = match operator {
         Some(operator) => {
             let (answered, followed) = follower.follow_during(cfg, operator, FOLLOW_WHILE_ASKED, asked).await;
