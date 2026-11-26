@@ -140,15 +140,18 @@ impl Writer {
         if integrity {
             check_integrity(&tx, path)?;
         }
-        let row: Option<(String, Millis)> = tx
-            .query_row("SELECT command, retention_ms FROM progress WHERE id = 0", [], |row| {
-                Ok((row.get(0)?, row.get(1)?))
+        let row: Option<(String, Millis, Millis)> = tx
+            .query_row("SELECT command, ts, retention_ms FROM progress WHERE id = 0", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })
             .optional()
             .context("reading history progress")?;
         let progress = row
-            .map(|(command, retention_ms)| {
-                let command = serde_json::from_str(&command).context("history progress: the last command taken")?;
+            .map(|(command, ts, retention_ms)| {
+                let command: CommandEntry =
+                    serde_json::from_str(&command).context("history progress: the last command taken")?;
+                // A page reads where its history begins from `ts`, so it must be the command's own.
+                ensure!(ts == command.sequenced.ts, "history progress: its time is not the last command's");
                 anyhow::Ok(Progress { command, retention_ms })
             })
             .transpose()?;

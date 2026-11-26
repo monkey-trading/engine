@@ -125,6 +125,7 @@ pub(super) fn open_copy(copy: &Path, schema: &[SchemaRow], frozen: &Frozen) -> a
 /// (`Walk`), with no pair more or fewer. Gives the pairs walked and the root over every row read (`Root`).
 /// Error cases:
 /// - a row does not read or is out of order, a tag fails `tags`, or a pair's chain is not the one `frozen` anchors
+/// - `frozen` names a resolution this build does not keep or names a pair twice, or a pair it anchors holds no row
 /// - `take` fails
 pub(super) fn walk(
     from: &Connection,

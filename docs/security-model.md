@@ -833,8 +833,9 @@ Known limits:
   detect their deletion or rollback, and its age budget across restarts uses the host clock.
 - Without snapshots, the account history index is read from the host's disk with only its schema and
   integrity checked, and its rows are not authenticated. It is matched to the log by one
-  instruction, the newest it has taken. SQLite reads it in defensive mode, and each event it serves
-  names its place in the log, where anyone can check it. An index behind the daily snapshot a start
+  instruction, the newest it has taken, and the time its pages give for where their history begins
+  must be that instruction's, which a start checks. SQLite reads it in defensive mode, and each event it
+  serves names its place in the log, where anyone can check it. An index behind the daily snapshot a start
   went on from, as one rebuilt after its directory was removed, catches up through the host's
   segments before the snapshot, which the start did not check, and derives the financing rows of a
   rollover there from them; the index trusts the host's disk either way.

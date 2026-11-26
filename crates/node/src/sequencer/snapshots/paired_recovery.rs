@@ -127,7 +127,7 @@ impl Sequencer {
             replay.record_stats_with(stats);
         }
         replay.check_ahead(&cfg.node.log_dir, crate::log::SealChecks::Every(cfg.node.replay_workers));
-        let mut fingerprint = Fingerprinter::after(None);
+        let mut fingerprint = Fingerprinter::new();
         let log = SegmentedLog::open_ahead(&cfg.node.log_dir, |entry| {
             replay.apply(&entry)?;
             fingerprint.observe(&entry)?;

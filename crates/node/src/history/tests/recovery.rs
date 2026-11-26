@@ -11,6 +11,18 @@ fn the_writer_refuses_another_schema_version() {
     assert!(format!("{err:#}").contains("history schema 1, not 3"), "{err:#}");
 }
 
+#[test]
+fn the_writer_refuses_a_progress_time_that_is_not_its_commands() {
+    let path = file(&index_dir("progress-time"));
+    let mut writer = Writer::open(&path, 1_000).unwrap().0;
+    writer.write(&[command(1, 500, vec![Event::Deposited { account: A, amount: Fixed::from_int(1) }])]).unwrap();
+    drop(writer);
+    assert!(Writer::open(&path, 1_000).unwrap().1.is_some(), "the untouched index resumes");
+    Connection::open(&path).unwrap().execute("UPDATE progress SET ts = ts + 1", []).unwrap();
+    let err = Writer::open(&path, 1_000).err().expect("refused");
+    assert!(format!("{err:#}").contains("its time is not the last command's"), "{err:#}");
+}
+
 /// Missing secondary-index entries cannot make retained events disappear from successful pages.
 #[tokio::test]
 async fn history_rebuilds_when_a_secondary_index_omits_events() {
