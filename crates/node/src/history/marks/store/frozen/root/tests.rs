@@ -5,12 +5,15 @@ use super::*;
 
 const BASE: Millis = 1_792_489_860_000;
 
+/// A change to one column of a row.
+type Change = fn(&mut SnapRow);
+
 /// A root over a minute row and the minute after it, which names it below and binds its tag, and
 /// changing any column of the second row, or its key, changes the root.
 #[test]
 fn the_root_binds_each_rows_key_and_every_column_it_stores() {
     let next = || row(BASE + 60_000, Some(BASE), Some([1; 16]));
-    let root_of = |market: MarketId, resolution: Resolution, change: &dyn Fn(&mut SnapRow)| {
+    let root_of = |market: MarketId, resolution: Resolution, change: Change| {
         let mut changed = next();
         change(&mut changed);
         let mut root = Root::default();
@@ -18,25 +21,25 @@ fn the_root_binds_each_rows_key_and_every_column_it_stores() {
         root.add(market, resolution, &changed).unwrap();
         root.finish()
     };
-    let base = root_of(1, Resolution::M1, &|_| {});
-    let changes: [(&str, &dyn Fn(&mut SnapRow)); 9] = [
-        ("open", &|row| row.open = "67001".into()),
-        ("high", &|row| row.high = "67101".into()),
-        ("low", &|row| row.low = "66901".into()),
-        ("close", &|row| row.close = "67051".into()),
-        ("provenance", &|row| row.provenance = "seeded_from_provider".into()),
-        ("prev", &|row| row.prev = None),
-        ("tag", &|row| row.tag = [9; 16]),
-        ("prev_tag", &|row| row.prev_tag = None),
-        ("bucket", &|row| row.bucket = BASE + 120_000),
+    let base = root_of(1, Resolution::M1, |_| {});
+    let changes: [(&str, Change); 9] = [
+        ("open", |row| row.open = "67001".into()),
+        ("high", |row| row.high = "67101".into()),
+        ("low", |row| row.low = "66901".into()),
+        ("close", |row| row.close = "67051".into()),
+        ("provenance", |row| row.provenance = "seeded_from_provider".into()),
+        ("prev", |row| row.prev = None),
+        ("tag", |row| row.tag = [9; 16]),
+        ("prev_tag", |row| row.prev_tag = None),
+        ("bucket", |row| row.bucket = BASE + 120_000),
     ];
     for (column, change) in changes {
         assert_ne!(root_of(1, Resolution::M1, change), base, "the root does not bind {column}");
     }
-    assert_ne!(root_of(2, Resolution::S1, &|_| {}), base, "the root does not bind the market");
-    assert_ne!(root_of(1, Resolution::H1, &|_| {}), base, "the root does not bind the resolution");
+    assert_ne!(root_of(2, Resolution::S1, |_| {}), base, "the root does not bind the market");
+    assert_ne!(root_of(1, Resolution::H1, |_| {}), base, "the root does not bind the resolution");
     // A text moved from one column into the next is another row: each column is length-prefixed.
-    let moved = root_of(1, Resolution::M1, &|row| (row.open, row.high) = ("6700067100".into(), String::new()));
+    let moved = root_of(1, Resolution::M1, |row| (row.open, row.high) = ("6700067100".into(), String::new()));
     assert_ne!(moved, base);
 }
 
