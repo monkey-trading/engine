@@ -41,7 +41,8 @@ impl FromStr for PublishedSnapshots {
     fn from_str(arg: &str) -> anyhow::Result<Self> {
         Ok(match arg.parse::<PublishedLog>()? {
             PublishedLog::Path(path) => Self::Path(path),
-            PublishedLog::Url(url) => Self::Url(url),
+            // A log's place in a bucket lists no snapshots: it is read as any other URL is, a node's origin.
+            PublishedLog::Url(url) | PublishedLog::Bucket(url) => Self::Url(url),
         })
     }
 }

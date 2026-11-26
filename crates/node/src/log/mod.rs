@@ -22,7 +22,7 @@ pub(crate) use encoded::{EncodedCommand, encode_events};
 mod truncate;
 pub(crate) use truncate::{last_checkpoint, truncate_to_checkpoint};
 mod archive;
-pub(crate) use archive::{ArchiveReader, open_segment_archive};
+pub(crate) use archive::{ArchiveReader, open_active_archive, open_segment_archive};
 pub mod catalog;
 pub mod catalog_access;
 mod catalog_commit;

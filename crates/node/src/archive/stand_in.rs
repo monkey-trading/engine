@@ -2,8 +2,8 @@
 //! uploads whose AWS Signature Version 4 it checks against its own copy of the keys, over the headers the
 //! request carries, and its public origin serves each object at its key. Switches make it answer every
 //! request with `503`, refuse every upload, answer an upload to a key already taken with `409` in place of `412`,
-//! and serve other bytes for an object than the bucket holds. Beside it stands a vault whose finalized checkpoint a
-//! test sets, and whose reads it can fail.
+//! and serve other bytes for an object than the bucket holds. Beside it stands a vault whose finalized and latest
+//! checkpoints a test sets, and whose reads it can fail.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,6 +19,7 @@ use tokio::net::TcpListener;
 use tokio::task::AbortHandle;
 
 use engine_core::command::Command;
+use engine_core::eip712::B256;
 
 use crate::archive::{Finality, RANGE_SEQS, Store};
 use crate::config::{ArchiveSection, SecretValue};
@@ -26,13 +27,15 @@ use crate::feeds::tests::rwa_support::TlsFront;
 use crate::log::LogEntry;
 use crate::test_support::{TestSequencer, log_entries};
 
-/// A vault whose finalized checkpoint a test sets, and whose next reads it can fail.
+/// A vault whose finalized and latest checkpoints a test sets, and whose next reads it can fail.
 #[derive(Clone, Default)]
 pub(crate) struct Vault(Arc<Mutex<VaultState>>);
 
 #[derive(Default)]
 struct VaultState {
     finalized: Option<(u64, String)>,
+    /// Its `latestSeq` and `latestRoot`, which a reader of the bucket takes; the uploader reads only finality.
+    latest: Option<(u64, String)>,
     failing: u32,
     reads: u32,
 }
@@ -53,6 +56,16 @@ impl Vault {
     /// Finalizes the checkpoint at `seq`, rooted at `root`.
     pub(crate) fn finalize(&self, seq: u64, root: &str) {
         self.0.lock().expect("the stand-in vault").finalized = Some((seq, root.to_owned()));
+    }
+
+    /// Takes the checkpoint at `seq`, rooted at `root`, as its latest.
+    pub(crate) fn post(&self, seq: u64, root: &str) {
+        self.0.lock().expect("the stand-in vault").latest = Some((seq, root.to_owned()));
+    }
+
+    /// Its latest checkpoint, as `latestSeq` and `latestRoot` give it.
+    pub(crate) fn latest(&self) -> Option<(u64, String)> {
+        self.0.lock().expect("the stand-in vault").latest.clone()
     }
 
     /// Fails the next `reads` reads of the vault.
@@ -102,6 +115,17 @@ pub(crate) fn test_log() -> String {
     crate::archive::log_prefix(31_337, engine_core::types::AccountId([0; 20]))
 }
 
+/// The key of piece `index` of the tail of the test log's checkpoint at `seq` rooted at `root`.
+pub(crate) fn tail_key(seq: u64, root: &B256, index: u64) -> String {
+    format!("{}{}", crate::archive::tail_prefix(&test_log(), seq, root), crate::archive::range_key("", index))
+}
+
+/// The newest checkpoint of the log in `dir`, its seq and root.
+pub(crate) fn newest_checkpoint(dir: &Path) -> (u64, B256) {
+    let (seq, root) = checkpoints(dir).pop().expect("a checkpoint");
+    (seq, root.parse().expect("a checkpoint's root"))
+}
+
 /// The stand-in's bucket name and keys.
 pub(crate) const BUCKET: &str = "engine-log";
 const REGION: &str = "auto";
@@ -132,14 +156,17 @@ pub(crate) struct Bucket {
     pub refuse_uploads: bool,
     /// An upload to a key already taken answered `409 Conflict`, as a concurrent upload may be, while set.
     pub conflict: bool,
-    /// Uploads it took, and those it refused because an object stood at the key.
+    /// Uploads it took, and those it refused because an object stood at the key, other than a checkpoint's tail's.
     pub created: u64,
     pub refused: u64,
     /// Uploads refused for their signature, or for not being create-only.
     pub unsigned: u64,
-    /// Requests for an object's existence (`HEAD`), and for an object (`GET`).
+    /// Requests for an object's existence (`HEAD`), and for an object (`GET`), other than a checkpoint's tail's.
     pub asked: u64,
     pub read: u64,
+    /// Uploads of a checkpoint's tail it took, and requests for one's objects.
+    pub tail_created: u64,
+    pub tail_read: u64,
 }
 
 impl Drop for StandIn {
@@ -227,21 +254,26 @@ async fn answer(
                 bucket.unsigned += 1;
                 return error(StatusCode::FORBIDDEN, "SignatureDoesNotMatch");
             }
+            let tail = is_tail(key);
             if bucket.objects.contains_key(key) {
-                bucket.refused += 1;
+                bucket.refused += u64::from(!tail);
                 return match bucket.conflict {
                     true => error(StatusCode::CONFLICT, "ConditionalRequestConflict"),
                     false => error(StatusCode::PRECONDITION_FAILED, "PreconditionFailed"),
                 };
             }
-            bucket.created += 1;
+            match tail {
+                true => bucket.tail_created += 1,
+                false => bucket.created += 1,
+            }
             bucket.objects.insert(key.to_owned(), body.to_vec());
             StatusCode::OK.into_response()
         }
         Method::GET | Method::HEAD => {
-            match method == Method::HEAD {
-                true => bucket.asked += 1,
-                false => bucket.read += 1,
+            match (is_tail(path), method == Method::HEAD) {
+                (true, _) => bucket.tail_read += 1,
+                (false, true) => bucket.asked += 1,
+                (false, false) => bucket.read += 1,
             }
             let held = bucket.objects.get(path);
             match (held, method == Method::HEAD) {
@@ -254,6 +286,11 @@ async fn answer(
         }
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     }
+}
+
+/// Whether `key` names an object of a checkpoint's tail.
+fn is_tail(key: &str) -> bool {
+    key.contains("/tail/")
 }
 
 /// An S3 error answer naming `code`.

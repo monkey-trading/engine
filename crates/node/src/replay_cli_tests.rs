@@ -120,3 +120,21 @@ fn a_published_log_is_a_path_or_an_archives_url() {
     assert!(Cli::try_parse_from(["engine", "carry", "--log", url, "--check"]).is_ok());
     assert!(Cli::try_parse_from(["engine", "replay", "--log", "https://node.example/?page=2"]).is_err());
 }
+
+/// A log's URL in an archive's bucket is read through the vault's checkpoint: `engine replay` takes `--seq` and
+/// `--state-root` together, and `engine exit-proof` takes `--state-root` beside its `--seq`.
+#[test]
+fn a_buckets_log_is_read_through_the_seq_and_state_root_the_vault_holds() {
+    let (url, root) = (
+        "https://archive.example/log/42161/0x0000000000000000000000000000000000000001/",
+        "0x".to_owned() + &"ab".repeat(32),
+    );
+    let cli = Cli::try_parse_from(["engine", "replay", "--log", url, "--seq", "7", "--state-root", &root]).unwrap();
+    let Cmd::Replay { log, seq, state_root, .. } = cli.cmd else { panic!("a replay") };
+    assert!(matches!(log, PublishedLog::Bucket(_)));
+    assert_eq!((seq, state_root), (Some(7), Some(root.parse().unwrap())));
+    assert!(Cli::try_parse_from(["engine", "replay", "--log", url, "--seq", "7"]).is_err(), "a seq needs its root");
+    assert!(Cli::try_parse_from(["engine", "replay", "--log", url, "--state-root", &root]).is_err(), "a root its seq");
+    let exit = ["engine", "exit-proof", "--log", url, "--seq", "7", "--state-root", &root, "--house"];
+    assert!(matches!(Cli::try_parse_from(exit).unwrap().cmd, Cmd::ExitProof { state_root: Some(_), .. }));
+}

@@ -11,6 +11,7 @@ use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_a
 const WAIT: Duration = Duration::from_secs(30);
 
 mod finality;
+mod tails;
 
 #[tokio::test]
 async fn every_whole_range_is_confirmed_in_its_object() {

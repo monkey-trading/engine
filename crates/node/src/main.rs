@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::{Args, Parser, Subcommand};
 use engine_core::auth::{ClientAuth, Operator};
+use engine_core::eip712::B256;
 use engine_core::types::AccountId;
 use engine_node::admin::{self, AdminArgs, HexKey, KeyEnv};
 use engine_node::carry::CarryArgs;
@@ -52,15 +53,23 @@ enum Cmd {
         frozen: bool,
     },
     /// Replay a published log and verify every checkpoint root and signature. `--log` is a single log file, a
-    /// directory of segments with their manifest (a node's log directory or a downloaded archive), or an
-    /// archive's URL, a node's public origin, downloaded first, with each segment the node no longer holds read
-    /// from the bucket it redirects to. A missing log, or one with no command or no checkpoint, fails. Every
+    /// directory of segments with their manifest (a node's log directory or a downloaded archive), an archive's
+    /// URL, a node's public origin, downloaded first, with each segment the node no longer holds read from the
+    /// bucket it redirects to, or a log's URL in an archive's bucket, `<public origin>/log/<chain id>/<vault>/`,
+    /// read from the bucket alone through the vault's checkpoint that `--seq` and `--state-root` name. A missing
+    /// log, or one with no command or no checkpoint, fails. Every
     /// instruction's chained digest is checked, every seal's form, and in full the first and last seal of each run
     /// of one signer's seals, the last authenticating every instruction in the run; `--every-seal` checks every
     /// seal in full.
     Replay {
         #[arg(short, long)]
         log: PublishedLog,
+        /// With a log in an archive's bucket for `--log`: the vault's checkpoint to read it through, its `latestSeq`.
+        #[arg(long, requires = "state_root")]
+        seq: Option<u64>,
+        /// With `--seq`: that checkpoint's root, the vault's `latestRoot`, which names its tail in the bucket.
+        #[arg(long, requires = "seq")]
+        state_root: Option<B256>,
         /// Explicit domain for signed logs written before domain recording.
         #[arg(long, requires = "vault")]
         chain_id: Option<u64>,
@@ -123,12 +132,15 @@ enum Cmd {
     /// that checkpoint's root; signatures are not checked, since the vault checks every proof against
     /// the root it accepted.
     ExitProof {
-        /// The published log: a path or an archive's URL, as `engine replay --log` takes it.
+        /// The published log, as `engine replay --log` takes it.
         #[arg(short, long)]
         log: PublishedLog,
         /// The checkpoint the vault last posted.
         #[arg(long)]
         seq: u64,
+        /// With a log in an archive's bucket for `--log`: the vault's `latestRoot`, which names its tail there.
+        #[arg(long)]
+        state_root: Option<B256>,
         /// The account whose proofs to build.
         #[arg(long, conflicts_with_all = ["house", "deposit"], required_unless_present_any = ["house", "deposit"])]
         account: Option<AccountId>,
@@ -267,6 +279,8 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Replay {
             log: path,
+            seq,
+            state_root,
             chain_id,
             vault,
             signer,
@@ -304,7 +318,7 @@ fn main() -> anyhow::Result<()> {
                 .zip(&release)
                 .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let log = path.local()?;
+            let log = path.local(seq.zip(state_root))?;
             let snapshots = snapshots.map(|snapshots| snapshots.local(log.path())).transpose()?;
             let jobs = jobs.unwrap_or_else(engine_node::default_jobs);
             let ranges = snapshots.as_ref().map(|snapshots| (snapshots.path().to_owned(), jobs));
@@ -350,7 +364,7 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            let source = carry_source.as_ref().map(PublishedLog::local).transpose()?;
+            let source = carry_source.as_ref().map(|source| source.local(None)).transpose()?;
             engine_node::carry::check_replayed(
                 &replayed.engine,
                 log.path(),
@@ -361,7 +375,7 @@ fn main() -> anyhow::Result<()> {
             init_logging("error")?;
             engine_node::carry::run(args)
         }
-        Cmd::ExitProof { log, seq, account, house: _, deposit } => {
+        Cmd::ExitProof { log, seq, state_root, account, house: _, deposit } => {
             // The bundle is the output; only errors are logged.
             init_logging("error")?;
             let subject = match (account, deposit) {
@@ -369,7 +383,7 @@ fn main() -> anyhow::Result<()> {
                 (None, Some(deposit_id)) => ExitSubject::Deposit(deposit_id),
                 (None, None) => ExitSubject::House,
             };
-            let bundle = exit_bundle(log.local()?.path(), seq, subject)?;
+            let bundle = exit_bundle(log.local(state_root.map(|root| (seq, root)))?.path(), seq, subject)?;
             println!("{}", serde_json::to_string_pretty(&bundle)?);
             Ok(())
         }

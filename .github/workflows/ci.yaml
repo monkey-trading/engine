@@ -334,7 +334,7 @@ jobs:
                   | scripts/dev-spreads.sh | scripts/dev-portfolio-margin.sh | scripts/dev-position-levels.sh \
                   | scripts/dev-daily-snapshots.sh | scripts/dev-member-snapshot-start.sh | scripts/dev-storage-alerts.sh \
                   | scripts/dev-history-retention.sh | scripts/dev-log-archive.sh | scripts/dev-snapshot-start.sh \
-                  | scripts/dev-archive-read.sh | scripts/dev-snapshot-archive.sh)
+                  | scripts/dev-archive-read.sh | scripts/dev-snapshot-archive.sh | scripts/dev-log-tail.sh)
                   areas+=" scenario_tests" ;;
                 scripts/dev-toxicity.sh) areas+=" toxicity" ;;
                 scripts/dev-venue-load.sh) areas+=" venue_load" ;;
@@ -912,6 +912,8 @@ jobs:
         run: ./scripts/dev-archive-read.sh
       - name: Run the daily snapshot archive dev scenario
         run: ./scripts/dev-snapshot-archive.sh
+      - name: Run the log tail dev scenario
+        run: ./scripts/dev-log-tail.sh
       - name: Check the wait from a price entering the sequencer's channel to its stamp at 100k accounts
         run: cargo test -p engine-node --lib --locked sequencer::wait_bench::price_wait_budget -- --ignored --nocapture
       - name: Check the same wait over 100k accounts each holding a hedged pair under portfolio margin

@@ -9,6 +9,7 @@ the bucket keeps every one. Commands, configuration keys and their output call a
 - [What a deployment needs](#what-a-deployment-needs)
 - [Set up the bucket](#set-up-the-bucket)
 - [Check the uploads](#check-the-uploads)
+- [Read the log from the bucket alone](#read-the-log-from-the-bucket-alone)
 - [When `archive_upload_lagging` fires](#when-archive_upload_lagging-fires)
 - [When `archive_object_mismatch` fires](#when-archive_object_mismatch-fires)
 - [When `archive_copy_superseded` fires](#when-archive_copy_superseded-fires)
@@ -84,7 +85,15 @@ first release that names a production bucket.
    `engine_archive_confirmed_ranges` rises as the vault finalizes checkpoints past the log's ranges,
    and `engine_archive_pending_ranges` stays at a few: a range waits for the vault to finalize a
    checkpoint past its last sequence number, which takes about as long as checkpoints take to post
-   and finalize.
+   and finalize. `engine_archive_tail_seq` is the newest checkpoint whose tail the trading server
+   confirmed since it started. The server uploads a tail once its log holds the checkpoint and no
+   range is waiting to go up, so the gauge reaches the vault's `latestSeq` soon after each checkpoint
+   is posted. A tail that cannot go up raises `archive_upload_lagging` once it has waited
+   `archive.lag_alert`:
+
+   ```shell
+   cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC
+   ```
 2. Set the public URL, and check that the first range's object is a whole zstd frame holding the
    first 10,000 sequence numbers:
 
@@ -117,13 +126,51 @@ first release that names a production bucket.
 `engine_archive_pending_ranges` falls as the backlog uploads, and `archive_upload_lagging` fires if it
 takes longer than `archive.lag_alert`. Nothing needs to be done unless it stops falling.
 
+## Read the log from the bucket alone
+
+Use this when no trading server or mirror serves the log, as when every operator's host is gone and
+accounts exit the vault. The bucket cannot say where the log ends, so the vault's latest checkpoint
+names it.
+
+1. Read the vault's latest checkpoint, as [Read the vault and the registry](reference.md#read-the-vault-and-the-registry)
+   does:
+
+   ```shell
+   export SEQ=$(cast call $VAULT 'latestSeq()(uint64)' --rpc-url $RPC | cut -d' ' -f1)
+   export ROOT=$(cast call $VAULT 'latestRoot()(bytes32)' --rpc-url $RPC)
+   ```
+
+2. Replay the log from the bucket through that checkpoint, with `ARCHIVE` set as step 2 of
+   [Check the uploads](#check-the-uploads) sets it:
+
+   ```shell
+   $ENGINE replay --log $ARCHIVE/ --seq $SEQ --state-root $ROOT
+   ```
+
+   It prints `verified:` with `final root` equal to `$ROOT`.
+3. Build an account's exit proofs from it:
+
+   ```shell
+   $ENGINE exit-proof --log $ARCHIVE/ --seq $SEQ --state-root $ROOT --account <address>
+   ```
+
+**How to tell it worked.** Both commands exit with status 0. The download goes to the system's
+temporary directory, which `TMPDIR` sets, and needs room for the whole log.
+
+A reader that fails with `holds neither range <n> ... nor the tail's piece of it` met a bucket that
+does not hold the log through that checkpoint: its tail never went up. Check the object's URL the
+message names with `curl -sI`; a `200` there means a cache answered a stale `404`, and the read
+succeeds once the cache's entry expires.
+
 ## When `archive_upload_lagging` fires
 
-**What is happening.** A whole range of the log has waited longer than `archive.lag_alert`, an hour
-by default, for its upload to be confirmed, or the node has not reached the bucket for that long to
-find where to resume. The wait includes the time the vault takes to finalize a checkpoint past the
-range. With the field `objects` set to `daily_snapshots`, a daily snapshot has waited that long
-instead, with no vault to wait for. The host keeps the whole log and every snapshot not yet in the
+**What is happening.** A whole range of the log, or the tail of a checkpoint past the vault's finalized one, has
+waited longer than `archive.lag_alert`, an hour by default, for its upload to be confirmed, or the
+node has not reached the bucket for that long to find where to resume, or to read its own log for the
+checkpoints whose tails it uploads. While a tail waits, the bucket alone does not hold the log
+through the vault's latest checkpoint. A range's wait includes the time the vault takes to finalize a
+checkpoint past it. With the field `objects` set to `daily_snapshots`, a daily snapshot has waited that
+long instead, with no vault to wait for. The host keeps the whole log and every snapshot not yet in the
 bucket, so nothing is lost, and the trading server keeps sequencing. Clients see no change.
 
 1. If `checkpoint_backlog` is open too, the vault has finalized no checkpoint for a while, and ranges
@@ -146,23 +193,31 @@ bucket, so nothing is lost, and the trading server keeps sequencing. Clients see
    | `reading the vault's finalized checkpoint` | The checkpoint endpoint, `checkpoints.rpc_url`, does not answer. Follow [Checkpoint endpoint](feed-and-custody-failures.md#checkpoint-endpoint). |
    | A timeout, or a connection error | The bucket or the host's network is down. Check [Cloudflare's status page](https://www.cloudflarestatus.com) and the host's outbound connections. |
    | `does not match` its listing, or a segment cannot be read | The host changed or removed a segment file. The node uploads nothing past it. Treat it as an incident, as [Incident response](incident-response.md) describes. |
+   | `reading the copy for checkpoints` | The node cannot read its own log for the checkpoints whose tails it uploads: the host changed or removed a segment file, the open one included. Treat it as an incident, as [Incident response](incident-response.md) describes. |
 
 3. Watch `engine_archive_pending_ranges`, or for the snapshots `engine_archive_snapshots_pending`.
-   Once the cause is fixed, it falls at the next retry, at most five minutes later.
+   Once the cause is fixed, it falls at the next retry, at most five minutes later. When the log's is
+   already 0, a tail waits: compare `engine_archive_tail_seq` with the vault's `latestSeq`, as step 1
+   of [Check the uploads](#check-the-uploads) does, and it reaches it at the next retry.
 
-**How to tell it is resolved.** The alert resolves, and `engine_archive_pending_ranges` is back to a
-few.
+**How to tell it is resolved.** The alert resolves, `engine_archive_pending_ranges` is back to a
+few, and `engine_archive_tail_seq` is at the vault's `latestSeq`.
 
 **Escalate** to the owner if the bucket refuses the uploads for an hour after you fixed the cause,
 since every member keeps the whole log on its host until it is resolved.
 
 ## When `archive_object_mismatch` fires
 
-**What is happening.** The object for a range of the log reads back as other entries than the node's
-own copy of that range. The bucket lock keeps the node from replacing it, so the node never counts
-that range as archived, uploads nothing past it, and its host keeps the log from there on. A restart
+**What is happening.** The object for a range of the log, or for a piece of a checkpoint's tail, reads
+back as other entries than the node's own copy of it. The alert's `object` names which: a tail's
+pieces are under `tail/`. For a tail's piece, the node uploads no more of that tail, and the bucket
+alone does not hold the log through that checkpoint; the ranges and later tails go on, and no
+`archive_upload_lagging` follows, so this Warning is the only page. For a range, the bucket lock
+keeps the node from replacing it, so the node never counts that range as archived, uploads nothing
+past it, and its host keeps the log from there on. A restart
 stops there again, unless other nodes have since uploaded later ranges that match this node's copy.
-The trading server keeps sequencing, and `archive_upload_lagging` follows within `archive.lag_alert`.
+The trading server keeps sequencing, and for a range `archive_upload_lagging` follows within
+`archive.lag_alert`.
 Every node builds a range's bytes the same way from its own copy, and uploads it only once the vault
 has finalized a checkpoint past it, so a range never changes once it is uploaded. Two nodes that
 hold different bytes for one finalized range hold different logs, or one object was written by a
@@ -272,6 +327,19 @@ for the same object pages again after `alerts.episode_quiet`.
   root keeps that history out of the archive. The node reads the vault's finality through
   `checkpoints.rpc_url` at most once a minute while a range waits for it, and checks a checkpoint
   against its copy once a completed segment holds it.
+- **Tails.** The ranges past the vault's finalized checkpoint are not in the bucket yet, and the vault's
+  latest checkpoint is one of the node's checkpoints from the finalized one on: a paced checkpoint is
+  signed only once its parent is final, and a handover's, a shutdown's or a protocol activation's may
+  come between them. For each of those, the node uploads the checkpoint's tail: pieces shaped and named as
+  ranges, at `log/<custody chain id>/<vault>/tail/<sequence number>-<root>/<first sequence
+  number>.jsonl.zst`, the numbers in 20 digits and the root as the vault's `latestRoot` prints it,
+  from the first range the bucket lacks to the checkpoint's own, whose piece ends with the
+  checkpoint's entry. The node finds a checkpoint as soon as its log holds it, and uploads its tail
+  then, before the vault finalizes it; a tail still waiting once the vault finalizes a later
+  checkpoint is dropped. The root in the key keeps a checkpoint that the vault never
+  takes, as a copy's that a promoted successor's history superseded, from every key a reader derives
+  from the vault. A node whose copy stopped at a range that reads back otherwise, or that
+  `archive_copy_superseded` names, uploads no tail.
 - **What the node counts as archived.** The node uploads each range create-only, so an object
   already at the key is left as it is. It counts the range as archived only once a read from the
   public URL, over TLS that ends in the enclave, decompresses to its own copy of the range.
@@ -289,6 +357,9 @@ for the same object pages again after `alerts.episode_quiet`.
   is taken only if it matches its manifest line, and every copy built from the archive replays before
   a node relies on it. `engine replay`, `engine exit-proof` and `engine carry` take a server's URL
   for `--log`, download the log through the server and the bucket, and read it as a log on disk.
+  `engine replay` and `engine exit-proof` also read the log from the bucket alone, through the vault's
+  latest checkpoint, as [Read the log from the bucket alone](#read-the-log-from-the-bucket-alone)
+  shows: the ranges until the first the bucket lacks, then that checkpoint's tail.
 - **The daily snapshots.** Each goes up as soon as it is published, as the file the node wrote, at
   `snapshots/<custody chain id>/<vault>/<file>`, uncompressed, so its object is the bytes its manifest
   line names. The upload is create-only and sends only those bytes: a file that differs from its line
@@ -301,4 +372,7 @@ for the same object pages again after `alerts.episode_quiet`.
 - **Size.** At 10,000 sequence numbers a range of launch flow is about 5.5 MB. On 30 minutes of launch
   flow at 10,000 accounts, zstd's level 1 compressed the log about 6.1 times, to under a megabyte a
   range, at over a gigabyte a second. Higher levels up to 15 compressed less, level 19 about 6.8 times
-  at under 10 MB a second, and gzip about 5.1 times.
+  at under 10 MB a second, and gzip about 5.1 times. The tails hold about the log again, since each
+  covers the ranges between the vault's finalized checkpoint and its own, and the bucket lock keeps
+  them; [The archive's bucket](sev-snp-host.md#the-archives-bucket) counts the bucket's growth and
+  cost.

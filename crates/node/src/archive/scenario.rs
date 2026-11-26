@@ -75,7 +75,7 @@ async fn dev_scenario_log_archive() {
     let target = finalize_all_after(&node, &dir, &vault, whole + 2).await;
     let copy = scratch_dir("archive-scenario-copy");
     copy_of(&node, &dir, &copy, target).await;
-    let held = bucket.with(|b| b.objects.clone());
+    let (held, created) = bucket.with(|b| (b.objects.clone(), b.created));
     let (member, member_sources, member_metrics) = uploading(&bucket, &copy, lag, &vault);
     member_sources.send_replace(Some(published_manifest(&copy)));
     let member_running = tokio::spawn(member.run());
@@ -84,11 +84,7 @@ async fn dev_scenario_log_archive() {
     member_running.abort();
     let objects = bucket.with(|b| b.objects.clone());
     assert!(held.iter().all(|(key, object)| objects.get(key) == Some(object)), "every earlier object is as it was");
-    assert_eq!(
-        member_metrics.archive.objects_created.get(),
-        target - whole,
-        "the member uploads what the bucket lacks"
-    );
+    assert_eq!(bucket.with(|b| b.created) - created, target - whole, "the member uploads the ranges the bucket lacks");
     check_objects(&bucket, &dir, &node.manifest.borrow().clone(), target);
     println!("    the member uploaded ranges {whole} to {} from its own cut, the bytes the node builds", target - 1);
 
@@ -104,7 +100,8 @@ async fn dev_scenario_log_archive() {
     sleep(Duration::from_millis(200)).await;
     stale_running.abort();
     assert_eq!(stale_metrics.archive.objects_created.get(), 0, "nothing past the vault's other history goes up");
-    assert_eq!(bucket.with(|b| b.objects.len() as u64), target);
+    let ranges = bucket.with(|b| b.objects.keys().filter(|key| !key.contains("/tail/")).count() as u64);
+    assert_eq!(ranges, target);
     println!("    the vault's checkpoint at seq {seq} names another root, and the copy uploaded nothing");
 
     println!("==> 5. the node restarts, and its uploader resumes at the first missing range");

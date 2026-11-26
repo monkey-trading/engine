@@ -128,11 +128,11 @@ SEV-SNP guest is private to it and cannot be swapped, so the guests' memory must
 
 ## Plan each store's capacity
 
-The trading server keeps six stores on disk. This section sizes each from the soak's measurements, says what
-the server alerts on, and says what can and cannot be relied on in the figures it reports. **The log grows
-without a bound. The history index keeps 30 days of account events, and with `[archive]` the host keeps 30
-days of daily snapshots; each is bounded by its window.** Until the log has a bound, plan a node that must run
-for months on these figures.
+The trading server keeps six stores on disk, and its log's archive in a bucket. This section sizes each from
+the soak's measurements, says what the server alerts on, and says what can and cannot be relied on in the
+figures it reports. **The log grows without a bound. The history index keeps 30 days of account events, and
+with `[archive]` the host keeps 30 days of daily snapshots; each is bounded by its window.** Until the log has a
+bound, plan a node that must run for months on these figures.
 
 ### What each store grows by
 
@@ -167,6 +167,29 @@ The data drive's rows take the larger index, the one with `[snapshots]`, and the
 both hold 30 days, up to about 110 GB at launch flow and 765 GB at ten times it, nothing grows the drive. A drive's
 usable size is below its label, since the filesystem keeps some of it, so each figure is a little optimistic.
 The three guests of the test host share its two drives, so a table for one node does not hold for three.
+
+### The archive's bucket
+
+The bucket that `[archive]` names is not on the host, and grows without a bound, since its lock keeps
+every object ([Log archive](log-archive.md)). It holds the log once in its ranges, compressed about 6.1
+times, and about once more in the tails of the checkpoints: each tail holds the ranges between the vault's
+finalized checkpoint and its own, and consecutive tails share a range or two. With `[daily_snapshots]` it also
+keeps every day's snapshot ([The daily snapshots' bound](#the-daily-snapshots-bound)). The figures take the
+log's daily growth above, that compression, a checkpoint every 15 to 20 minutes, one for each time the vault
+finalizes one, about two ranges more a tail, and the daily snapshots' estimate. They are estimates and **have
+not been measured**.
+
+| Bucket | Launch flow | Ten times launch flow |
+| --- | --- | --- |
+| Ranges, a day | about 0.9 GB | about 3.0 GB |
+| Tails, a day | about 1.1 GB | about 3.2 GB |
+| Daily snapshots, a day | about 0.4 GB | about 0.4 GB |
+| After a year | about 880 GB | about 2.4 TB |
+| Storage a month, after a year, at $0.015 a GB-month | about $13 | about $36 |
+
+Each range and each tail's piece is one upload and one read back, under 4,000 operations a day at launch
+flow, within R2's free million uploads and ten million reads a month. R2 charges nothing for reads leaving
+the bucket, so readers of the archive add nothing to the bill but their reads.
 
 ### The history index's bound
 
@@ -878,8 +901,10 @@ Escalate to the owner, with the step and its output, when any of these holds:
 
 ## Sources
 
-Each source was read on 2026-11-22.
+Each source was read on 2026-11-22, except R2's prices, read on 2026-11-26.
 
+- Cloudflare, R2's pricing: Standard storage at $0.015 a GB-month, a million Class A and ten million Class B
+  operations free a month, and no charge for egress: https://developers.cloudflare.com/r2/pricing/
 - OVHcloud, the confidential computing use case, listing the Advance-5 with the AMD EPYC 8224P,
   its memory and storage ranges:
   https://www.ovhcloud.com/en/bare-metal/uc-confidential-computing/

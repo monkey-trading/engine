@@ -5,7 +5,8 @@
 //! Warning `archive_copy_superseded`. A failure is retried with backoff at the same range, so the bucket's ranges stay a
 //! prefix of the log. A range whose object reads back as other bytes than the node's copy builds is never
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
-//! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise.
+//! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise. While no
+//! range can go up, it puts the tails of the checkpoints the vault may still hold as its latest in the bucket (`tails`).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -27,6 +28,9 @@ use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, Values};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
+
+mod tails;
+use crate::archive::uploader::tails::Tails;
 
 /// The wait after a failure; each failure in a row doubles it, up to `MAX_RETRY`.
 const FIRST_RETRY: Duration = if cfg!(test) { Duration::from_millis(20) } else { Duration::from_secs(1) };
@@ -70,6 +74,8 @@ struct Work<F> {
     /// The range before the first the bucket lacks, when the resume left it unread because the copy does not
     /// hold it below a finalized checkpoint at the vault's root yet; it is read back before the next goes up.
     unread: Option<u64>,
+    /// The tails of the checkpoints the vault may still hold as its latest.
+    tails: Tails,
 }
 
 /// The vault's finalized checkpoints, as the copy in use holds them.
@@ -141,6 +147,7 @@ impl<F: Finality> Uploader<F> {
             mismatched,
             stalled_at,
             unread: None,
+            tails: Tails::default(),
         };
         (Self { sources: handed, work }, sources)
     }
@@ -177,6 +184,7 @@ impl<F: Finality> Work<F> {
         // Another copy is checked afresh, first against the checkpoint the last one held.
         self.anchor = Anchor { pending: self.anchor.held.take(), raised: self.anchor.raised, ..Anchor::default() };
         self.read_at = None;
+        self.restart_tails();
         self.backlog.resuming();
         let mut next = loop {
             let view = manifest.borrow().clone();
@@ -203,6 +211,9 @@ impl<F: Finality> Work<F> {
             };
             self.backlog.check(&self.metrics);
             if self.stalled_at.is_some() || next >= whole {
+                if self.tail_work(&manifest, &mut retry).await {
+                    continue;
+                }
                 if !wait(&mut manifest, RECHECK_EVERY).await {
                     return;
                 }
@@ -216,6 +227,9 @@ impl<F: Finality> Work<F> {
                     }
                 }),
                 Ok(_) => {
+                    if self.tail_work(&manifest, &mut retry).await {
+                        continue;
+                    }
                     // The range waits for the vault, read again when due, or for the copy to complete the segment
                     // holding the vault's checkpoint, or for another copy; the writer's change comes first.
                     let due = match self.anchor.pending.is_some() || self.anchor.differs.is_some() {
@@ -351,14 +365,7 @@ impl<F: Finality> Work<F> {
     /// - the range cannot be built, or the bucket cannot take or serve it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
         let raw = self.build(view, index).await?;
-        let kept = raw.clone();
-        let stored = spawn_blocking(move || compress(&kept)).await??;
-        let (key, length) = (range_key(&self.prefix, index), stored.len() as u64);
-        let created = self.store.create(&key, stored, ZSTD).await?;
-        if created == Created::New {
-            self.metrics.archive.objects_created.inc();
-            self.metrics.archive.stored_bytes.inc_by(length);
-        }
+        let (created, length) = self.create(&range_key(&self.prefix, index), &raw).await?;
         let bytes = raw.len() as u64;
         let found = self.check(index, raw).await?;
         if found == Found::Confirmed {
@@ -381,19 +388,41 @@ impl<F: Finality> Work<F> {
     /// Error cases:
     /// - the bucket cannot serve the object, or serves none
     async fn check(&mut self, index: u64, raw: Arc<Vec<u8>>) -> anyhow::Result<Found> {
-        let key = range_key(&self.prefix, index);
-        let found = match self.store.read(&key, stored_bound(&raw).saturating_mul(2)).await? {
+        let found = self.found_at(&range_key(&self.prefix, index), raw).await?;
+        if found == Found::Mismatched {
+            self.mismatch(index);
+        }
+        Ok(found)
+    }
+
+    /// Creates the object `key` holding `raw` compressed, unless an object already stands there, and returns which,
+    /// with the compressed length.
+    /// Error cases:
+    /// - libzstd refuses the bytes, or the bucket cannot take them
+    async fn create(&self, key: &str, raw: &Arc<Vec<u8>>) -> anyhow::Result<(Created, u64)> {
+        let kept = raw.clone();
+        let stored = spawn_blocking(move || compress(&kept)).await??;
+        let length = stored.len() as u64;
+        let created = self.store.create(key, stored, ZSTD).await?;
+        if created == Created::New {
+            self.metrics.archive.objects_created.inc();
+            self.metrics.archive.stored_bytes.inc_by(length);
+        }
+        Ok((created, length))
+    }
+
+    /// Whether the object `key` holds `raw`, the node's copy of it, as the bucket's public origin serves it.
+    /// Error cases:
+    /// - the bucket cannot serve the object, or serves none
+    async fn found_at(&self, key: &str, raw: Arc<Vec<u8>>) -> anyhow::Result<Found> {
+        Ok(match self.store.read(key, stored_bound(&raw).saturating_mul(2)).await? {
             Object::Absent => return Err(anyhow!("{key} is not in the bucket")),
             Object::Oversized => Found::Mismatched,
             Object::Read(object) => match spawn_blocking(move || holds(&object, &raw)).await? {
                 true => Found::Confirmed,
                 false => Found::Mismatched,
             },
-        };
-        if found == Found::Mismatched {
-            self.mismatch(index);
-        }
-        Ok(found)
+        })
     }
 
     /// Reports range `index`'s object as other than the node's copy, once, and stops the uploads there.
@@ -408,6 +437,23 @@ impl<F: Finality> Work<F> {
                 "the archive's object for this range differs from this node's copy of it and cannot be replaced, so \
                  this node uploads nothing past it and its host keeps the log: compare the two"
             );
+        }
+    }
+
+    /// Takes a step of the tails' work (`tail_step`), retrying a failure as a range's is, in the failed step's span;
+    /// whether it took one.
+    async fn tail_work(&mut self, manifest: &Source, retry: &mut Duration) -> bool {
+        match self.tail_step(manifest).await {
+            None => false,
+            Some((Ok(()), _)) => {
+                *retry = FIRST_RETRY;
+                true
+            }
+            Some((Err(e), span)) => {
+                self.backlog.check(&self.metrics);
+                self.failed(&e, retry).instrument(span).await;
+                true
+            }
         }
     }
 
