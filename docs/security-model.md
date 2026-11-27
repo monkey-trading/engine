@@ -1771,7 +1771,10 @@ member holding the keys records it as having held them and as the epoch's key ho
 promotion names it in that turn, the next turn's skips pass it, and the next turn's promotions take
 it last. A holder that withholds the keys therefore cannot take the turn itself, and cannot choose
 whom a promotion names. It can still hand the keys to the member that a skip names next in the
-order, which the seed fixed. At the launch values, one skip falls due before an untaken turn's
+order, which the seed fixed. The one case the chain cannot see is a member that the draw or a skip
+named, took the keys off chain and has landed no head: the chain still names the earlier holder, so a
+promotion can name that member ahead of the members it kept out, and the earlier holder is recorded
+as having held the turn's keys. At the launch values, one skip falls due before an untaken turn's
 promotion, because a second would need another two-slot window past the first.
 
 **Skips.** A turn's member takes the turn with its first head under its assignment, which `LogHeads`
@@ -1894,6 +1897,12 @@ Known limits:
 - A standby key's registration is sent by the candidate's own account, so a candidate that does not
   send it is not promotable. The operator nonetheless counts that member's confirmations on the key
   once its enclave has verified the key's attestation.
+- The chain learns of a handover only from the taker's first head. A member that the draw or a skip
+  named for a turn, took the keys and lands no head leaves the earlier holder named as the key
+  holder. The promotion that follows can name the silent member ahead of the members it kept out, and
+  records the earlier holder as having held the turn's keys. One head of the silent member that lands
+  makes it the key holder, and a promotion then passes it. The member took a turn it was entitled to,
+  and the chain cannot observe an off-chain handover, so a take with no head is not counted against it.
 - A newest head whose release belongs to no candidate leaves the key holder unknown. Skips and
   promotions are then refused with `KeyHolderUnknown`, which a member's liveness caller pages as
   `liveness_key_holder_unknown`, until a member takes the keys, or until the
