@@ -4,9 +4,10 @@
 //! The node is the load scenario's, run with the launch configuration's storage (`archived`, `durable`): its
 //! log's ranges and its daily snapshots go to a loopback stand-in for the bucket, the log's local window and the
 //! older snapshots leave the host, and a restart goes on from the newest daily snapshot and the log after it. That
-//! shape runs no history index, which `[snapshots]`' paired index replaces and the log's window cannot run beside;
-//! `SOAK_STORAGE=0` runs the node as one with `[snapshots]` instead (`durable`): its history owner publishes a
-//! recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time. The generator drives it through its API and
+//! shape runs the unpaired history index of the release configuration beside the window (`indexed`), reporting its
+//! bytes and lag each interval and the `history_start` it opens at after each start;
+//! `SOAK_STORAGE=0` runs the node as one with `[snapshots]` instead (`durable`), whose paired index the log's window
+//! cannot run beside: its history owner publishes a recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time. The generator drives it through its API and
 //! stream as the load scenario's does, in intervals of `SOAK_REPORT_MINUTES`, each a leg of the generator's, judged
 //! in windows of `SOAK_WINDOW_SECS`. While it runs:
 //! - every `SOAK_FAULT_MINUTES` one of #867's faults is injected, in turn (`faults`): a stalled

@@ -22,6 +22,9 @@ use crate::log::{Manifest, list_segments};
 const PENDING_RANGES: i64 = 6;
 /// How many days of the run pass before it must have uploaded, and before it must have pruned: the log's window is a
 /// day, and the newest snapshot a segment ends before comes at the first day's end.
+/// How many commands of the log the history index may lack at an interval's end: about three minutes of ten times
+/// launch flow, which a flush and the sequencer's bursts do not reach and an index that cannot keep up does.
+const INDEX_BEHIND: u64 = 50_000;
 const UPLOADED_AFTER_DAYS: u32 = 1;
 const PRUNED_AFTER_DAYS: u32 = 3;
 
@@ -189,9 +192,34 @@ impl Stored {
     }
 }
 
+/// What fails an interval of the history index: its task has ended, its progress cannot be read, or it is more than
+/// `INDEX_BEHIND` commands behind the log.
+pub(super) fn index_failures(runs: bool, behind: Option<u64>) -> Vec<String> {
+    let mut failed = Vec::new();
+    if !runs {
+        failed.push("the history index stopped".to_owned());
+    }
+    match behind {
+        None => failed.push("the history index's progress cannot be read".to_owned()),
+        Some(behind) if behind > INDEX_BEHIND => {
+            failed.push(format!("the history index is {behind} commands behind the log, over {INDEX_BEHIND}"));
+        }
+        Some(_) => {}
+    }
+    failed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_index_that_stopped_or_fell_behind_fails_its_interval() {
+        assert!(index_failures(true, Some(INDEX_BEHIND)).is_empty());
+        assert_eq!(index_failures(false, Some(0)).len(), 1);
+        assert_eq!(index_failures(true, Some(INDEX_BEHIND + 1)).len(), 1);
+        assert_eq!(index_failures(true, None).len(), 1);
+    }
 
     async fn stored() -> Stored {
         let archived = Archived::start(Duration::from_secs(120)).await;

@@ -20,7 +20,7 @@ use crate::api::{Feed, MAX_BACKFILLS};
 use crate::checkpoints::{Health, Work};
 use crate::clock::SystemClock;
 use crate::common::{CHAIN_ID, VAULT};
-use crate::config::NodeConfig;
+use crate::config::{HistorySection, NodeConfig};
 use crate::daily_snapshots::{Bounds, NoRoots, snapshot_start_against};
 use crate::history::derived::Deriver;
 use crate::history::runtime::Stopper;
@@ -87,30 +87,43 @@ impl Durable {
     }
 }
 
-/// The history owner, planned and not yet running.
+/// The history owner, planned and not yet running. The paired index takes captures and stops on request; the
+/// launch configuration's unpaired index (`indexed`) does neither and carries the section its progress is read from.
 pub(super) struct Pending {
     history: History,
-    sealing: Endpoint,
-    stopper: Stopper,
+    sealing: Option<Endpoint>,
+    stopper: Option<Stopper>,
     feed: broadcast::Receiver<Arc<StreamMsg>>,
+    unpaired: Option<HistorySection>,
 }
 
 /// The running history owner.
 pub(super) struct Owner {
     task: JoinHandle<anyhow::Result<()>>,
-    sealing: Endpoint,
-    stopper: Stopper,
+    sealing: Option<Endpoint>,
+    stopper: Option<Stopper>,
     manifest: watch::Receiver<Manifest>,
+    unpaired: Option<HistorySection>,
 }
 
 /// The work of the checkpoints the sequencer has written.
 pub(super) struct Reports(mpsc::Receiver<Work>);
 
 impl Pending {
+    /// The unpaired history index `history` of the launch configuration, taking `feed`, whose progress is read from
+    /// `section`'s directory.
+    pub(super) fn unpaired(
+        history: History,
+        feed: broadcast::Receiver<Arc<StreamMsg>>,
+        section: HistorySection,
+    ) -> Self {
+        Pending { history, sealing: None, stopper: None, feed, unpaired: Some(section) }
+    }
+
     /// Runs the history owner on the stream and the log in `dir`, from where its index resumes, once
     /// `seq` has taken its first command.
     pub(super) fn run(self, seq: &Sequencer, dir: &Path, manifest: &watch::Receiver<Manifest>) -> Owner {
-        let Pending { mut history, sealing, stopper, feed } = self;
+        let Pending { mut history, sealing, stopper, feed, unpaired } = self;
         history.catch_up_to(seq.last_seq());
         let backfills = Arc::new(Semaphore::new(MAX_BACKFILLS));
         let feed = Feed::new(feed, dir.to_owned(), manifest.clone(), backfills, Some(history.resume_at()));
@@ -122,44 +135,77 @@ impl Pending {
             }
             ended
         };
-        Owner { task: tokio::spawn(running), sealing, stopper, manifest: manifest.clone() }
+        Owner { task: tokio::spawn(running), sealing, stopper, manifest: manifest.clone(), unpaired }
     }
 }
 
 impl Owner {
     /// Stops the owner once the cache the sequencer's drain handed it is published, which it has
-    /// `PUBLISH_WITHIN` to do.
+    /// `PUBLISH_WITHIN` to do. An unpaired index ends with its feed, which closes with the sequencer, and has the
+    /// same time to take the log's last commands.
     /// Error cases:
-    /// - the owner failed, or had not published the cache in time, and was stopped where it stood
-    pub(super) async fn stop(self) -> anyhow::Result<()> {
-        if timeout(PUBLISH_WITHIN, self.sealing.idle()).await.is_err() {
+    /// - the owner failed, or had not published the cache or taken the log in time, and was stopped where it stood
+    pub(super) async fn stop(mut self) -> anyhow::Result<()> {
+        let Some(sealing) = &self.sealing else { return self.finish("taken the log's last commands").await };
+        if timeout(PUBLISH_WITHIN, sealing.idle()).await.is_err() {
             self.task.abort();
             let _ = self.task.await;
             anyhow::bail!("the history owner had not published the final cache after {PUBLISH_WITHIN:?}");
         }
-        self.stopper.stop();
+        if let Some(stopper) = &self.stopper {
+            stopper.stop();
+        }
         shut_down(self.task.await.context("the history owner's task")?)
     }
 
-    /// Whether the owner is running and takes captures: its task has not ended and its queue is open.
+    /// Whether the owner is running and takes captures: its task has not ended and, for the paired index, its
+    /// queue is open.
     pub(super) fn takes_captures(&self) -> bool {
-        !self.task.is_finished() && !self.sealing.is_closed()
+        !self.task.is_finished() && !self.sealing.as_ref().is_some_and(Endpoint::is_closed)
     }
 
     /// How many commands the log holds on disk that the owner's index has yet to take, or `None` when the
-    /// owner does not answer within `INSPECT`.
+    /// owner does not answer within `INSPECT`, or an unpaired index's progress cannot be read.
     pub(super) async fn behind(&self) -> Option<u64> {
         let flushed = self.manifest.borrow().flushed.map_or(0, |at| at.seq);
-        let state = timeout(INSPECT, self.sealing.inspect()).await.ok()?.ok()?;
-        Some(flushed.saturating_sub(state.last_entry.map_or(0, |at| at.seq)))
+        let indexed = match (&self.sealing, &self.unpaired) {
+            (Some(sealing), _) => {
+                let state = timeout(INSPECT, sealing.inspect()).await.ok()?.ok()?;
+                state.last_entry.map_or(0, |at| at.seq)
+            }
+            (None, Some(section)) => {
+                let section = HistorySection { dir: section.dir.clone(), retention: section.retention, marks: None };
+                let plan = tokio::task::spawn_blocking(move || HistoryPlan::open(&section)).await.ok()?.ok()?;
+                plan.last_seq().unwrap_or(0)
+            }
+            (None, None) => return None,
+        };
+        Some(flushed.saturating_sub(indexed))
     }
 
-    /// Stops the owner as a crash does, with no wait for the shutdown cache: it ends its current turn.
+    /// Stops the owner as a crash does, with no wait for the shutdown cache: it ends its current turn. An
+    /// unpaired index has no turn to end and takes what its feed still holds, as a stop does.
     /// Error cases:
     /// - the owner had failed
-    pub(super) async fn abort(self) -> anyhow::Result<()> {
-        self.stopper.stop();
+    pub(super) async fn abort(mut self) -> anyhow::Result<()> {
+        let Some(stopper) = &self.stopper else { return self.finish("taken what its feed held").await };
+        stopper.stop();
         shut_down(self.task.await.context("the history owner's task")?)
+    }
+
+    /// Waits `PUBLISH_WITHIN` for the unpaired index's task to end with its feed, which it does once it has taken the
+    /// log's last commands.
+    /// Error cases:
+    /// - the index failed, or had not ended in time and was stopped where it stood
+    async fn finish(&mut self, what: &str) -> anyhow::Result<()> {
+        match timeout(PUBLISH_WITHIN, &mut self.task).await {
+            Ok(ended) => shut_down(ended.context("the history owner's task")?),
+            Err(_) => {
+                self.task.abort();
+                let _ = (&mut self.task).await;
+                anyhow::bail!("the history index had not {what} after {PUBLISH_WITHIN:?}")
+            }
+        }
     }
 }
 
@@ -203,7 +249,7 @@ pub(super) fn open(
     let stopper = history.stopper().context("authenticated history stops on request")?;
     cfg.history_sealing = Some(sealing.clone());
     let seq = Sequencer::recover_from(log, cfg, durable.key.clone(), stream.clone(), withdrawals)?;
-    Ok((seq, Pending { history, sealing, stopper, feed }))
+    Ok((seq, Pending { history, sealing: Some(sealing), stopper: Some(stopper), feed, unpaired: None }))
 }
 
 /// Recovers the sequencer on the log in `dir` as the launch configuration starts one: the log read from the newest

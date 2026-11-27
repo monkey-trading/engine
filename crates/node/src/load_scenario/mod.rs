@@ -45,6 +45,7 @@ mod archived;
 mod durable;
 pub(crate) mod generator;
 mod host;
+mod indexed;
 mod node;
 pub(crate) mod plan;
 mod report;

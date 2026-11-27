@@ -39,6 +39,7 @@ use crate::history::Reader;
 use crate::limits::ApiLimits;
 use crate::load_scenario::archived::StorageTask;
 use crate::load_scenario::durable::{self, Durable, Owner};
+use crate::load_scenario::indexed;
 use crate::load_scenario::venues::{Venues, template};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
@@ -158,7 +159,9 @@ impl Node {
                 let seq = durable::open_launch(durable, cfg, (&stats, recovering), &stream, withdrawals)
                     .await
                     .expect("the log opens from its newest daily snapshot");
-                (seq, None)
+                let index =
+                    indexed::open(durable, dir, seq.last_seq(), &stream).await.expect("the history index opens");
+                (seq, Some(index))
             }
             Some(durable) => {
                 let (seq, history) = durable::open(durable, cfg, (&stats, recovering), &stream, withdrawals)
@@ -310,7 +313,7 @@ impl Node {
         self.storage.iter().filter(|(_, task)| task.is_finished()).map(|(name, _)| *name).collect()
     }
 
-    /// Whether the history owner runs, which publishes the recovery caches.
+    /// Whether the history owner runs: it publishes the recovery caches, or with the launch configuration takes the log.
     pub(super) fn history_runs(&self) -> bool {
         self.history.as_ref().is_some_and(Owner::takes_captures)
     }
