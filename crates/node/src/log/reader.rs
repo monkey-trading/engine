@@ -21,6 +21,21 @@ pub struct LogReader {
     hold: Option<Hold>,
     /// Whether it holds the segments it reads at all (`unheld`).
     holding: bool,
+    /// Runs before each of the reader's opens of a segment's file, to interleave a removal.
+    #[cfg(test)]
+    before_open: Option<BeforeOpen>,
+}
+
+/// A test's hook run before each of the reader's opens of a segment's file.
+#[cfg(test)]
+type BeforeOpen = Box<dyn FnMut(Open, &Path) + Send>;
+
+/// The opens of a segment's file after its existence check: the hashing check, then the read.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Open {
+    Check,
+    Read,
 }
 
 struct OpenSegment {
@@ -43,7 +58,18 @@ impl LogReader {
     /// - a required catalog proof or starting descriptor is unavailable or invalid
     pub fn open(dir: &Path, from: Offset, manifest: watch::Receiver<Manifest>) -> anyhow::Result<Self> {
         let (segment, last, held, hold) = (None, None, None, None);
-        let mut reader = Self { dir: dir.to_owned(), from, manifest, segment, last, held, hold, holding: true };
+        let mut reader = Self {
+            dir: dir.to_owned(),
+            from,
+            manifest,
+            segment,
+            last,
+            held,
+            hold,
+            holding: true,
+            #[cfg(test)]
+            before_open: None,
+        };
         reader.open_start()?;
         Ok(reader)
     }
@@ -52,6 +78,12 @@ impl LogReader {
     /// lets a segment go under it, and the backfill then fails with `NotLocal`, naming the archive.
     pub fn unheld(self) -> Self {
         Self { holding: false, ..self }
+    }
+
+    /// This reader, running `hook` before each open of a segment's file that follows its existence check.
+    #[cfg(test)]
+    pub(super) fn before_open(self, hook: impl FnMut(Open, &Path) + Send + 'static) -> Self {
+        Self { before_open: Some(Box::new(hook)), ..self }
     }
 
     /// Releases the open file and chunk buffer; the next call checks each chunk it rereads against
@@ -111,8 +143,11 @@ impl LogReader {
                 }
                 // A listed segment the host no longer holds is the archive's to serve.
                 if !path.try_exists().with_context(|| format!("probing {}", path.display()))? {
-                    let not_local = crate::log::NotLocal { seq: info.first_seq.max(self.from.seq), first_local: None };
-                    return Err(anyhow::Error::new(not_local).context(format!("segment {}", info.file)));
+                    return Err(not_local_error(&info, self.from));
+                }
+                #[cfg(test)]
+                if let Some(hook) = &mut self.before_open {
+                    hook(Open::Check, &path);
                 }
                 let hashes = match segment.verified.take() {
                     Some((known, was_complete, hashes, progress)) if known == info && was_complete == complete => {
@@ -122,12 +157,19 @@ impl LogReader {
                     known => {
                         let progress =
                             known.and_then(|(known, _, _, progress)| (known.file == info.file).then_some(progress));
-                        let (hashes, progress) = checked::extend(&path, &info, complete, progress)?;
+                        let (hashes, progress) = checked::extend(&path, &info, complete, progress)
+                            .map_err(|e| left_the_host(e, &info, self.from))?;
                         segment.verified = Some((info.clone(), complete, hashes.clone(), progress));
                         hashes
                     }
                 };
-                segment.lines = Some(Box::new(BufReader::new(CheckedChunks::open(&path, hashes, segment.consumed)?)));
+                #[cfg(test)]
+                if let Some(hook) = &mut self.before_open {
+                    hook(Open::Read, &path);
+                }
+                let chunks = CheckedChunks::open(&path, hashes, segment.consumed)
+                    .map_err(|e| left_the_host(e, &info, self.from))?;
+                segment.lines = Some(Box::new(BufReader::new(chunks)));
                 segment.limit = info.bytes;
                 segment.complete = complete;
                 segment.expected_last = expected_last;
@@ -245,6 +287,21 @@ impl OpenSegment {
             verified: None,
         }
     }
+}
+
+/// `NotLocal` for a listed segment the host does not hold.
+fn not_local_error(info: &SegmentInfo, from: Offset) -> anyhow::Error {
+    let not_local = crate::log::NotLocal { seq: info.first_seq.max(from.seq), first_local: None };
+    anyhow::Error::new(not_local).context(format!("segment {}", info.file))
+}
+
+/// `error` from opening a segment's file, as `NotLocal` when the file is gone (the local window removed it after the
+/// existence check), and as it is otherwise.
+fn left_the_host(error: anyhow::Error, info: &SegmentInfo, from: Offset) -> anyhow::Error {
+    let gone = error
+        .chain()
+        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound));
+    if gone { not_local_error(info, from) } else { error }
 }
 
 /// Resolves a descriptor from the pinned view, with no filesystem discovery or unsigned fallback.

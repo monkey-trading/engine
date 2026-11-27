@@ -236,3 +236,46 @@ fn large(seq: u64) -> LogEntry {
         events: Some(vec![deposit; 200]),
     })
 }
+
+/// A segment the local window removes after the reader's existence check, before its hashing open or before its
+/// reading open, is the archive's: `NotLocal`, not a failed read.
+#[test]
+fn a_segment_removed_between_the_reader_s_check_and_either_open_is_not_local() {
+    use super::super::reader::Open;
+    for stage in [Open::Check, Open::Read] {
+        let dir = scratch_dir(&format!("reader-removed-{stage:?}"));
+        let (manifest_tx, manifest) = watch::channel(Manifest::default());
+        let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest_tx).unwrap();
+        for seq in 0..4 {
+            writer.append(&cmd(seq)).unwrap();
+        }
+        writer.flush().unwrap();
+        let mut reader =
+            LogReader::open(&dir, Offset::start_of(0), manifest).unwrap().unheld().before_open(move |at, path| {
+                if at == stage {
+                    fs::remove_file(path).unwrap();
+                }
+            });
+        let error = reader.next_entry().expect_err("the segment is gone");
+        let not_local = error.downcast_ref::<NotLocal>().unwrap_or_else(|| panic!("{stage:?}: {error:#}"));
+        assert_eq!(not_local.seq, 0, "{stage:?}");
+    }
+}
+
+/// An open that fails for another reason is reported as it is.
+#[test]
+fn an_open_that_fails_otherwise_is_not_taken_for_a_removed_segment() {
+    let dir = scratch_dir("reader-open-denied");
+    let (manifest_tx, manifest) = watch::channel(Manifest::default());
+    let mut writer = SegmentedLog::open(&dir, |_| Ok(())).unwrap().into_writer(2, manifest_tx).unwrap();
+    for seq in 0..4 {
+        writer.append(&cmd(seq)).unwrap();
+    }
+    writer.flush().unwrap();
+    let mut reader = LogReader::open(&dir, Offset::start_of(0), manifest).unwrap().unheld().before_open(|_, path| {
+        fs::remove_file(path).unwrap();
+        fs::create_dir(path).unwrap();
+    });
+    let error = reader.next_entry().expect_err("a directory is no segment");
+    assert!(error.downcast_ref::<NotLocal>().is_none(), "{error:#}");
+}
