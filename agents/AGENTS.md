@@ -1204,14 +1204,17 @@ an index: load only the rule whose hint matches the current action.
   a loaded runner's tolerance, in the windows a stall of the runner's own storage does not excuse (`storage.rs`), then
   the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-soak.sh`, the soak dev scenario (`load_scenario/soak/`, #909): that load for hours at ten times launch flow on a node
-  that runs the launch configuration's storage (`load_scenario/archived.rs`, `durable.rs`: `[daily_snapshots]` and `[archive]`
-  with a `local_window`, no `[snapshots]`, which the log's window cannot run beside): its log's ranges, its checkpoints' tails
+  that runs the launch configuration's storage (`load_scenario/archived.rs`, `durable.rs`, `indexed.rs`: `[daily_snapshots]`
+  and `[archive]` with a `local_window`, no `[snapshots]`, and the unpaired history index the release configuration runs
+  beside the log's window, at a retention of half a soak day, reported each interval by its bytes and its lag behind the
+  log, failing the interval when it stops or falls 50,000 commands behind, and by the `history_start` it opens at after
+  each start): its log's ranges, its checkpoints' tails
   and its daily snapshots go to a loopback stand-in for the bucket below a stand-in vault, the log's window and the snapshots'
   window remove from the host what the bucket holds and the newest snapshots do not need, and a restart goes on from the newest
   daily snapshot and the log after it, with the log's older segments off the host and read back from the bucket before the final
   replay; a day of sequenced time is `SOAK_DAY_MINUTES`, counted by a test-build setting (`daily_snapshots::shorten_day`), and
-  `soak/stored.rs` reports and judges what the bucket and the host hold; `SOAK_STORAGE=0` runs the node with paired recovery
-  caches instead; in report intervals judged by window against #904's
+  `soak/stored.rs` reports and judges what the bucket and the host hold; `SOAK_STORAGE=0` runs the node with `[snapshots]`'
+  paired recovery caches and their authenticated index instead, which the log's window cannot run beside; in report intervals judged by window against #904's
   bar outside what a fault, a restart or the start excuses (`timeline.rs`), #867's faults injected in turn through links in
   front of the crypto stand-ins (`faults.rs`: a stalled venue, a dropped one, a slow link, a quiet product, both venues
   down, trusted time down, each followed by every market priced again within its deadline), the node stopped and started

@@ -5,8 +5,9 @@
 //! removes the segments the bucket holds and the node's newest snapshot does not need, the snapshot uploader removes
 //! the host's older snapshots, and a restart goes on from the newest snapshot and the log after it.
 //!
-//! The node's `[snapshots]` and this are exclusive (`archive::Window::for_config` leaves the window off beside a
-//! paired history index, which rebuilds from the whole log), so the soak runs one shape or the other
+//! The history index is the release configuration's, unpaired and in `history.dir` (`indexed`), which the window's
+//! floors read. The node's `[snapshots]` and this are exclusive (`archive::Window::for_config` leaves the window off
+//! beside a paired history index, which rebuilds from the whole log), so the soak runs one shape or the other
 //! (`SOAK_STORAGE`).
 
 use std::path::PathBuf;
@@ -92,7 +93,7 @@ impl Archived {
     }
 
     /// Sets `cfg` as the launch configuration is: no `[snapshots]`, daily snapshots in `daily`, the archive naming the
-    /// stand-in with the log's window, and the history index, which this run does not run, and the alert outbox in
+    /// stand-in with the log's window, and the unpaired history index (`indexed`) and the alert outbox in
     /// directories of their own for the disk watcher to read.
     pub(super) fn configure(&self, cfg: &mut NodeConfig, run: &std::path::Path) {
         cfg.snapshots = None;

@@ -51,6 +51,8 @@ pub(super) struct Disk {
     pub log: u64,
     /// The recovery caches and the history index they pair with.
     pub snapshots: u64,
+    /// The launch configuration's unpaired history index, which runs beside no caches.
+    pub index: u64,
 }
 
 /// One interval of the run.

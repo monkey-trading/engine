@@ -20,7 +20,8 @@
 # through its TLS API and stream by a load generator in a second process (LOAD_TRADERS, LOAD_SUBSCRIBERS,
 # LOAD_CRYPTO_RATE, LOAD_RWA_MOVES and LOAD_SOURCE_DELAY_MS size it as they do there). The node runs the
 # launch configuration's storage (SOAK_STORAGE, 1 unless 0): `[daily_snapshots]` and `[archive]` with a
-# `local_window`, and no `[snapshots]`, which the log's window cannot run beside:
+# `local_window`, no `[snapshots]`, which the log's window cannot run beside, and the unpaired history index the release
+# configuration runs beside the window (retention SOAK_DAY_MINUTES / 2 in place of 30 days):
 # - its log's ranges and the tails of its checkpoints, and each daily snapshot, go to a loopback stand-in for the
 #   bucket (held in this process's memory, which the memory bound allows for) below a stand-in vault that
 #   finalizes each checkpoint 20 s after the node reports it final;
@@ -39,10 +40,14 @@
 # more than six ranges behind or a storage task ends, and the run when it was a day long and the bucket holds no
 # range or snapshot, three days long and nothing left the host, or none of its restarts from the third day on found
 # the log's older segments off the host. The archive's and the snapshots' alerts fail an interval as any alert
-# does. That shape runs no history index (the launch node's retention, #1301, and `[snapshots]`' paired index are
-# covered by SOAK_STORAGE=0 only), and the storage runs at a test build's timings: the window passes and the
-# uploaders poll every 20 ms. SOAK_STORAGE=0 runs the node as one with `[snapshots]` instead: a recovery cache every SOAK_SNAPSHOT_SECS
-# (300) of sequenced time, its history index, and a restart from the newest cache.
+# does. The index (#1301) takes every command beside the log's syncs, on the volume of SOAK_DIR unless SOAK_LOG_DIR
+# names another (leave it unset to measure the syncs against the index's writes, #1232), and each interval reports its
+# bytes (`history_index`, `disk_bytes ... history_index=`) and how many commands it is behind the log; an interval fails
+# when it stops or is more than 50,000 commands behind. Each start prints the `history_start` it opens at (`SOAK history
+# index opened`), the seq the log's window holds segments from for it, and `window_probe` the floors the window reads.
+# The storage runs at a test build's timings: the window passes and the uploaders poll every 20 ms. SOAK_STORAGE=0 runs
+# the node as one with `[snapshots]` instead, which runs no window: a recovery cache every SOAK_SNAPSHOT_SECS (300) of
+# sequenced time, its paired index, and a restart from the newest cache.
 # It runs SOAK_HOURS (8) at SOAK_MULTIPLE (10) times launch flow in intervals of
 # SOAK_REPORT_MINUTES (60), each judged in windows of SOAK_WINDOW_SECS (120):
 # - every SOAK_FAULT_MINUTES (20) one of #867's faults, in turn: a stalled venue, a dropped one, a slow

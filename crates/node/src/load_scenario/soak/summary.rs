@@ -7,6 +7,7 @@ use engine_core::types::AccountId;
 
 use super::Soak;
 use super::hours::{Disk, Standing, baseline, dir_bytes, failures, median, memory_failure};
+use super::stored::index_failures;
 use super::support::{memory_mib, newest_cache};
 use super::timeline::stop_alerts;
 
@@ -24,6 +25,7 @@ impl Soak {
         let disk = Disk {
             log: dir_bytes(&self.durable.cfg.node.log_dir),
             snapshots: self.durable.snapshots().map_or(0, dir_bytes),
+            index: self.stored.as_ref().map_or(0, |_| dir_bytes(&self.durable.cfg.history.dir)),
         };
         let rss: Vec<u64> = self.samples.iter().map(|(rss, _)| *rss).collect();
         let standing = Standing {
@@ -41,11 +43,13 @@ impl Soak {
             let bucket_mib = held.saturating_sub(self.held_at_first) / MIB;
             failed.extend(memory_failure(first, standing, bucket_mib));
         }
-        if self.stored.is_none() && !self.node().history_runs() {
+        let (runs, behind_index) = (self.node().history_runs(), self.node().history_behind().await);
+        if self.stored.is_none() && !runs {
             failed.push("the history owner stopped, so the node takes no more recovery caches".to_owned());
         }
         if let Some(stored) = &self.stored {
             failed.extend(stored.failures(self.node()));
+            failed.extend(index_failures(runs, behind_index));
         }
         let (excused, judged) =
             interval.windows.iter().fold((0, 0), |(excused, judged), window| match window.excused {
@@ -64,16 +68,22 @@ impl Soak {
             standing.state_bytes
         );
         println!(
-            "SOAK {leg} disk_bytes log={} caches_and_history_index={} marks_cache=not run alert_outbox=not run; \
-             log_growth_bytes={grown} commands={commands:.0} log_bytes_per_command={:.0}",
+            "SOAK {leg} disk_bytes log={} caches_and_history_index={} history_index={} marks_cache=not run \
+             alert_outbox=not run; log_growth_bytes={grown} commands={commands:.0} log_bytes_per_command={:.0}",
             disk.log,
             disk.snapshots,
+            disk.index,
             grown as f64 / commands.max(1.0)
         );
         println!("SOAK {leg} stats_worker_behind_max_commands={behind}");
         match (&self.stored, stored) {
             (Some(stored), Some(figures)) => {
                 stored.print(leg, &figures, self.node());
+                println!(
+                    "SOAK {leg} history_index runs={runs} behind_commands={behind_index:?} bytes={} retention_s={}",
+                    disk.index,
+                    self.durable.cfg.history.retention.as_secs()
+                );
                 println!("SOAK {leg} window_probe {}", stored.holding().await);
             }
             _ => println!(
