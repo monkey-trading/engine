@@ -18,7 +18,7 @@ use crate::standby::MAX_ARCHIVE_BYTES;
 use crate::standby::archive::{Fetched, check_listing, fetch_from, fetch_manifest, validate_listing};
 
 /// The most bytes of a segment rebuilt from the bucket, a node's bound on a segment it serves; a mebibyte in tests.
-const MAX_REBUILT_BYTES: u64 = if cfg!(test) { 1 << 20 } else { MAX_ARCHIVE_BYTES };
+pub(crate) const MAX_REBUILT_BYTES: u64 = if cfg!(test) { 1 << 20 } else { MAX_ARCHIVE_BYTES };
 
 /// Where a backfill reads the archive: node origins in order, mirrors first, and the bucket before them when the
 /// reader's own `[archive]` names one. A list of node origins names no bucket.

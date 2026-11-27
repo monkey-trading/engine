@@ -21,9 +21,11 @@
 //!
 //! A listed segment the host must keep and lacks, as one the host lost, is put back from the bucket or a node origin,
 //! as its listing names it, newest first, so the host's segments stay one run; one no source gives back raises
-//! Critical `log_segment_missing`. Each alert's state is unknown at a start, since the alert router keeps an episode
-//! open across a restart, so the first pass that finds it over resolves it. A segment a reader or the bucket's read-back holds more than `HELD_ALERT` past the
-//! window raises Warning `log_window_held`; the archive's wait is `archive_upload_lagging`'s, and the daily snapshots'
+//! Critical `log_segment_missing`; it puts back a segment after the oldest on the host, or one the floors keep, before
+//! the uploader has found what the bucket holds, which it needs no count for. Each alert's state is unknown at a
+//! start, since the alert router keeps an episode open across a restart, so the first pass that finds it over resolves
+//! it. A segment a reader or the bucket's read-back holds more than `HELD_ALERT` past the window raises Warning
+//! `log_window_held`; the archive's wait is `archive_upload_lagging`'s, and the daily snapshots'
 //! and the history's holds are the node's own, as long as the gap between the snapshots it holds, which on a rotation
 //! member are its own turns' and those it fetched. Passes that keep failing for an hour, as over a directory that no
 //! longer holds the newest segment its writer names, raise Warning `log_window_failing`. With `[snapshots]`, whose
@@ -237,18 +239,20 @@ impl Window {
                  set aside or rebuilt in its place, or a directory that lost it"
             );
         }
-        // Until the uploader's resume has found what the bucket holds, every segment would look unarchived.
-        let Some(archived) = *self.archived.borrow() else {
-            debug!("the window waits for the uploader to find how many ranges the bucket holds");
-            return Ok(Pass::default());
-        };
-        let archived = archived.saturating_mul(RANGE_SEQS);
+        // Until the uploader's resume has found what the bucket holds, every segment would look unarchived: none
+        // leaves, and only one the host must keep whatever the bucket holds is put back, which the resume may need.
+        let known = *self.archived.borrow();
+        let archived = known.map_or(u64::MAX, |archived| archived.saturating_mul(RANGE_SEQS));
         let dir = self.dir.clone();
         let mut local: BTreeSet<u64> =
             spawn_blocking(move || list_segments(&dir)).await??.into_iter().map(|(seq, _)| seq).collect();
         let mut floors = None;
         let kept = self.kept_from(view, archived, &mut floors).await?;
         let restored = self.restore_lacking(view, &mut local, (archived, kept)).await?;
+        if known.is_none() {
+            debug!("the window waits for the uploader to find how many ranges the bucket holds");
+            return Ok(Pass { restored, ..Pass::default() });
+        }
         let mut pass = Pass { restored, ..Pass::default() };
         let (removed, held) = self.remove_aged(view, &mut local, archived, &mut floors).await?;
         (pass.removed, pass.held) = (removed, held);
@@ -277,8 +281,9 @@ impl Window {
         let now = self.stamp(&newest).await?;
         while ordinal + 1 < view.completed_len() {
             let (segment, next) = (view.completed_at(ordinal)?, view.completed_at(ordinal + 1)?);
+            // At a gap no restore filled, the removals stop and what holds the log stays as reported.
             if !local.contains(&segment.first_seq) || !local.contains(&next.first_seq) {
-                break;
+                return Ok((removed, None));
             }
             let past = now.saturating_sub(self.stamp(&next).await?.saturating_add(self.window));
             let held = match self.holding(view, &segment, (archived, past), floors, now).await? {
@@ -383,7 +388,7 @@ impl Window {
         match removed.await?.with_context(|| format!("removing {}", segment.file))? {
             true => {
                 self.metrics.archive.window.removed.inc();
-                info!(segment = %segment.file, last_seq = segment.last_seq, "the segment left the host for the archive");
+                info!(segment = %segment.file, last_seq = segment.last_seq, "the segment left the host for its archive");
                 Ok(None)
             }
             false => Ok(Some(Held::Reader)),

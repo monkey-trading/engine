@@ -248,7 +248,8 @@ an index: load only the rule whose hint matches the current action.
   daily snapshot a start may go on from and the newest before the history index's retention whose file hashes as listed
   (`window/bounds.rs`), a read of it from the bucket just before gives back its listing's bytes, and no reader inside the
   node holds it (`log/holds.rs`, which `LogReader` takes before it opens a segment, checked under the lock the removal
-  holds; a stream client's feed is `unheld`); a listed segment the host must keep and lacks is put back from the bucket or
+  holds; a stream client's feed is `unheld`, its backfill closing, naming the archive and paging nothing, at a segment
+  removed under it); a listed segment the host must keep and lacks is put back from the bucket or
   a mirror, newest first and none after one that fails (one before the oldest on the host only while the floors keep it or
   the bucket lacks a range of it), else Critical `log_segment_missing` for that one, a reader or the bucket's read-back holding a segment two
   days past the window Warning `log_window_held`, passes failing for an hour, as over a directory without the newest

@@ -102,7 +102,7 @@ These alerts mean that part of the trading server has stopped or stalled.
 | `archive_unreadable` | Critical | The archive route could not read a checked segment, so an internal error reached a client. Read the console lines around the alert. If it repeats, keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and restart the trading server. |
 | `history_unreadable` | Critical | The history route could not read the index. Follow [Rebuild the derived stores](restart-and-recovery.md#rebuild-the-derived-stores). |
 | `marks_unreadable` | Critical | The marks route could not read the cache. Follow [Rebuild the derived stores](restart-and-recovery.md#rebuild-the-derived-stores). |
-| `stream_backfill_failed` | Critical | A stream subscriber's catch-up from disk failed, and that subscriber's stream ended. If it repeats, keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and restart the trading server. |
+| `stream_backfill_failed` | Critical | A stream subscriber's catch-up from disk failed, and that subscriber's stream ended. A catch-up that reaches a segment the local window removed under it closes the subscriber, naming the archive, and pages nothing. If it repeats, keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and restart the trading server. |
 | `stream_encode_failed` | Critical | A stream message could not be encoded, and that subscriber's stream ended. If it repeats, keep the evidence, as [Keep the evidence](incident-response.md#keep-the-evidence) describes, and restart the trading server. |
 
 ## Derived stores and optional caches

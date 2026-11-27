@@ -280,7 +280,7 @@ fn view_from_first_local(dir: &Path) -> watch::Receiver<Manifest> {
 /// An uploader of the log in `dir` to `bucket`, reading no vault, as under mock custody, and its sources.
 fn uploader(bucket: &StandIn, dir: &Path, metrics: &Arc<Metrics>) -> (Uploader<Vault>, crate::archive::Sources) {
     let lag = Duration::from_millis(500);
-    Uploader::new((bucket.store(), test_log()), dir.to_owned(), lag, metrics.clone(), None)
+    Uploader::new(bucket.store(&test_log()), dir.to_owned(), lag, metrics.clone(), None)
 }
 
 /// The stamp of `listed`'s first command, from its file in `dir`.

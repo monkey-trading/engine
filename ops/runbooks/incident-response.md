@@ -329,8 +329,9 @@ for good.
    [Running as a standby](standby.md) describe. The owner decides whether a recovery can finish
    first.
 
-2. Meanwhile, keep the public log available. The mirrors must serve every completed segment, because
-   clients need the log to build their proofs.
+2. Meanwhile, keep the public log available. The mirrors and the archive's bucket must between them
+   serve every completed segment, because clients need the log to build their proofs: with
+   `archive.local_window`, the hosts and mirrors redirect older segments to the bucket.
 
 3. Once the exit is open, anyone can start it, and anyone can register claims during the claim
    window, `claimWindow()`. A running trading server raises `vault_exit_started`, and on chain the

@@ -173,8 +173,9 @@ fn log_entries_from(dir: &Path, first_seq: u64) -> Vec<LogEntry> {
     entries
 }
 
-/// Until the uploader has found what the bucket holds, as after a restart, the window touches nothing; and a count a
-/// stale `404` at the uploader's resume lowered puts back no segment whose ranges the bucket holds.
+/// Until the uploader has found what the bucket holds, as after a restart, the window removes nothing and puts back only
+/// a segment after the oldest on the host; and a count a stale `404` at the uploader's resume lowered puts back no
+/// segment whose ranges the bucket holds.
 #[tokio::test]
 async fn a_restart_puts_back_nothing_the_bucket_holds() {
     let fixture = Fixture::start("window-restart", 150).await;
@@ -186,6 +187,11 @@ async fn a_restart_puts_back_nothing_the_bucket_holds() {
     assert!(!removed.is_empty());
     archived.send_replace(None);
     assert_eq!(window.pass(&view).await.unwrap(), Pass::default(), "nothing while the count is unknown");
+    // A segment after the oldest on the host, which a restart's read needs whatever the bucket holds, comes back.
+    let hole = view.segments.iter().filter(|listed| held(&fixture.dir, listed)).nth(1).unwrap().clone();
+    std::fs::remove_file(fixture.dir.join(&hole.file)).unwrap();
+    let pass = window.pass(&view).await.unwrap();
+    assert_eq!((pass.restored, pass.removed), (vec![hole.file.clone()], vec![]), "and only that");
     archived.send_replace(Some(0));
     let pass = window.pass(&view).await.unwrap();
     assert_eq!((pass.restored, pass.held), (Vec::<String>::new(), Some(Held::Archive)));
@@ -229,4 +235,32 @@ fn a_window_removes_only_an_earlier_processs_staged_restores() {
     std::fs::write(&mine, b"part").unwrap();
     crate::archive::window::restore::remove_staged(&dir).unwrap();
     assert!(!dir.join(&earlier).exists() && mine.exists(), "an earlier run's goes, as under the same process id");
+}
+
+/// A segment the floors keep that the host lacks comes back, newest first, while the one after it is on the host:
+/// here the daily snapshot at the history's floor leaves the host, the floor moves back to the one before it, and the
+/// segments from there to the oldest on the host come back from the bucket, and stay.
+#[tokio::test]
+async fn segments_the_floors_keep_come_back_once_a_floor_moves_back() {
+    let fixture = Fixture::start("window-floor-back", 160).await;
+    let ranges = fixture.archive_all();
+    let early = fixture.snapshot_at(60);
+    let floor = fixture.snapshot_at(100);
+    fixture.snapshot_at(140);
+    let (mut window, _archived) = fixture.window((30, 30), ranges);
+    assert!(!window.pass(&fixture.view()).await.unwrap().removed.is_empty());
+    let first_local = list_segments(&fixture.dir).unwrap()[0].0;
+    assert!(early < first_local && first_local <= floor, "the window kept the log from the floor's snapshot");
+    let listed = crate::daily_snapshots::read_manifest(&fixture.snapshots).unwrap();
+    std::fs::remove_file(fixture.snapshots.join(&listed.iter().find(|l| l.seq == floor).unwrap().file)).unwrap();
+    let pass = window.pass(&fixture.view()).await.unwrap();
+    assert!(!pass.restored.is_empty() && pass.removed.is_empty(), "{pass:?}");
+    let seqs: Vec<u64> = pass.restored.iter().map(|file| crate::log::segment_seq(file).unwrap()).collect();
+    assert!(seqs.windows(2).all(|pair| pair[0] > pair[1]), "newest first: {seqs:?}");
+    let first_local = list_segments(&fixture.dir).unwrap()[0].0;
+    let holding = fixture.view().segments.iter().find(|l| l.first_seq == first_local).unwrap().clone();
+    assert!(holding.first_seq <= early && early <= holding.last_seq, "back to the segment of the snapshot before");
+    assert_eq!(window.pass(&fixture.view()).await.unwrap().restored, Vec::<String>::new(), "and they stay");
+    commands(&fixture.dir);
+    fixture.node.stop().await;
 }

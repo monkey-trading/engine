@@ -224,6 +224,37 @@ impl Sink<Message> for Subscriber {
     }
 }
 
+/// A backfill that reaches a segment the log's local window let go under it, as a stream client's holds none, closes
+/// the subscriber naming the archive, from which it reads on, and pages nothing.
+#[tokio::test]
+async fn a_backfill_that_reaches_a_removed_segment_closes_naming_the_archive_and_pages_nothing() {
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let dir = crate::test_support::scratch_dir("stream-removed");
+    let node = crate::test_support::TestSequencer::start_legacy(&dir, 1024);
+    for n in 0..2 * super::backfill::BACKFILL_BATCH {
+        node.submit(crate::test_support::deposit(1, &format!("dep-{n}"))).await;
+    }
+    let start = Some(Offset::start_of(0));
+    let mut feed = Feed::new(node.stream.subscribe(), dir.clone(), node.manifest.clone(), permits(), start).unheld();
+    feed.next().await.unwrap().expect("the backfill's first message");
+    // As the window does, the segments up to the one the backfill stands in leave the host.
+    let at = feed.backlog.back().expect("a batch read ahead").offset.seq;
+    let segments = crate::log::list_segments(&dir).unwrap();
+    for (_, path) in segments.windows(2).filter(|pair| pair[0].0 <= at).map(|pair| &pair[0]) {
+        std::fs::remove_file(path).unwrap();
+    }
+    let mut subscriber = Subscriber::default();
+    timeout(Duration::from_secs(60), forward(&mut subscriber, feed, SEND_TIMEOUT, None, (None, None, None)))
+        .await
+        .expect("the stream ends");
+    let Some(Message::Close(Some(frame))) = subscriber.sent.last() else { panic!("no close: {:?}", subscriber.sent) };
+    assert!(frame.reason.as_str().contains("public archive"), "{frame:?}");
+    let paged = std::iter::from_fn(|| alerts.try_recv().ok())
+        .any(|alert| alert.get("alert").is_some_and(|name| name == "stream_backfill_failed"));
+    assert!(!paged, "nothing pages");
+    node.stop().await;
+}
+
 /// A live-only feed on a channel of `capacity`, and the channel's sender.
 fn live_feed(capacity: usize) -> (broadcast::Sender<Arc<StreamMsg>>, Feed) {
     let (live, subscriber) = broadcast::channel(capacity);

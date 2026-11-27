@@ -359,8 +359,10 @@ anyone can replay them.
    $ENGINE replay --log archive --archive-config <node config>
    ```
 
-   Without the configuration, `$ENGINE replay --log $API` downloads the whole log through the server and its bucket
-   into a temporary directory and replays it, keeping no copy.
+   `archive` then holds the whole log, which the procedures that use this download read. Without the configuration,
+   `$ENGINE replay --log $API` downloads the whole log through the server and its bucket into a temporary
+   directory and replays it, keeping no copy, so it verifies the log but leaves `archive` without the redirected
+   segments, which those procedures need.
 
    The command prints a line that begins `verified:` and names the number of instructions and
    checkpoints, the final root, the protocol versions, and the operator. A second line names the

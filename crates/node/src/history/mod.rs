@@ -350,8 +350,8 @@ impl HistoryCheck {
     /// unchanged. An index `open` found damaged, of another schema, or pruned under another
     /// retention, or whose last command the log does not hold unchanged, is discarded with a
     /// Warning alert and rebuilt from `fresh_from`, the start of the log unless its oldest segments left the host,
-    /// as an index that holds nothing starts; so is one that ends before `fresh_from`. A power loss can leave the index ahead
-    /// of the log, and a log rolled back, truncated, or replaced does the same; a log forged to end
+    /// as an index that holds nothing starts; so is one that ends before `fresh_from`. A power loss can leave the index
+    /// ahead of the log, and a log rolled back, truncated, or replaced does the same; a log forged to end
     /// with that same command passes (see the module's TODO).
     /// Error cases:
     /// - a discarded index cannot be removed or replaced (see `Writer::open`)

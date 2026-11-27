@@ -64,7 +64,9 @@ impl Sources {
     /// - the bucket lacks a range of it, cannot be read, or gives back other bytes than the listing names
     pub(crate) async fn read_back(&self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         let mut ranges = Ranges::new(self.bucket.clone());
-        let bytes = match ranges.seqs(&self.http, (listed.first_seq, listed.last_seq), listed.bytes).await {
+        // Bounded apart from the listing, which a whole replay's manifest, the host's, names.
+        let limit = listed.bytes.min(crate::archive::read::MAX_REBUILT_BYTES);
+        let bytes = match ranges.seqs(&self.http, (listed.first_seq, listed.last_seq), limit).await {
             Ok(bytes) => bytes,
             Err(Unread::Missing { object, .. }) => return Err(anyhow!("the bucket has no object at {object}")),
             Err(Unread::Unreachable(e) | Unread::Refused(e)) => return Err(e),

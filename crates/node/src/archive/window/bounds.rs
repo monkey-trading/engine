@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, bail};
 use engine_core::types::Millis;
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::config::HistorySection;
 use crate::daily_snapshots::{self, Listed};
@@ -151,7 +152,7 @@ impl Checked {
         });
         let whole = read.is_ok_and(|sha256| sha256 == listing.sha256);
         if !whole {
-            tracing::warn!(snapshot = %listing.file, "a daily snapshot's file does not hash as its listing names it");
+            warn!(snapshot = %listing.file, "a daily snapshot's file does not hash as its listing names it");
         }
         self.0.insert(listing.file.clone(), (seen, whole));
         whole

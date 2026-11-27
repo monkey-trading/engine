@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use axum::Error;
-use axum::extract::ws::{Message, WebSocketUpgrade};
+use axum::extract::ws::{CloseFrame, Message, WebSocketUpgrade, close_code};
 use axum::extract::{Query, State};
 use axum::http::Uri;
 use axum::response::Response;
@@ -360,6 +360,9 @@ async fn send_feed<S: Sink<Message> + Unpin>(
         let msg = match msg {
             Ok(Some(msg)) => msg,
             Ok(None) => return,
+            // The local window let a segment go under this backfill, which holds none: the subscriber reads on from
+            // the archive.
+            Err(e) if e.is::<crate::log::NotLocal>() => return left_the_host(sink, &e, send_timeout).await,
             Err(e) => {
                 error!(alert = "stream_backfill_failed", "{e:#}");
                 return;
@@ -440,6 +443,14 @@ async fn next_status(status: &mut Option<StatusFeed>) -> Vec<String> {
         Some(status) => status.next().await,
         None => pending().await,
     }
+}
+
+/// Closes a subscriber whose backfill reached a segment this host no longer holds, `e`, naming the archive.
+async fn left_the_host<S: Sink<Message> + Unpin>(sink: &mut S, e: &anyhow::Error, send_timeout: Duration) {
+    info!("closing a subscriber whose backfill reached a segment this host no longer holds: {e:#}");
+    let reason = "the log's next segment left this host: read on from the public archive".to_owned();
+    let close = Message::Close(Some(CloseFrame { code: close_code::NORMAL, reason: reason.into() }));
+    let _ = timeout(send_timeout, sink.send(close)).await;
 }
 
 /// Sends `text`, the message at `offset` or a heartbeat; `false` once the subscriber has

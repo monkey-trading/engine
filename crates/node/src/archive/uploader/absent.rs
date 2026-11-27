@@ -28,7 +28,7 @@ impl<F: Finality> Work<F> {
         if absent.is_empty() {
             return Ok(supplied);
         }
-        let (http, bucket) = self.store.reader(&self.prefix)?;
+        let (http, bucket) = self.store.reader()?;
         let sources = RestoreSources { http, bucket, nodes: Vec::new() };
         for listed in absent {
             let bytes =
