@@ -220,6 +220,37 @@ async fn a_member_whose_snapshot_is_refused_on_a_trimmed_copy_puts_the_copy_back
     }
 }
 
+/// A removal the local window had under way when the member's open began lands after the open's restore and leaves a
+/// hole inside the restored run, which the replay reports as a plain error: the open puts the hole back from the
+/// archive and replays the copy, rather than refuse it.
+#[tokio::test]
+async fn a_removal_landing_after_the_restore_leaves_a_hole_the_member_puts_back() {
+    let mut fixture = Fixture::start("member-hole-after-restore", true).await;
+    let copy = fixture.cfg.node.log_dir.clone();
+    let listed = crate::log::Manifest::load(&copy).unwrap().segments;
+    assert!(listed.len() >= 3, "three completed segments, not {}", listed.len());
+    let (removed, kept) = listed.split_at(1);
+    removed.iter().for_each(|segment| std::fs::remove_file(copy.join(&segment.file)).unwrap());
+    let bucket = crate::archive::stand_in::StandIn::start().await;
+    let mut section = bucket.section(std::time::Duration::from_secs(3600));
+    section.public_url = bucket.plain.clone();
+    fixture.cfg.archive = Some(section);
+    // The removal, landing as the restore writes its first segment: the oldest the host holds goes, inside the run.
+    let late = copy.join(&kept[0].file);
+    let first = copy.join(&removed[0].file);
+    let unlink = tokio::spawn(async move {
+        while !first.exists() {
+            tokio::task::yield_now().await;
+        }
+        std::fs::remove_file(late).expect("the late removal");
+    });
+    let member = fixture.member();
+    let (follower, ..) = member.open(None).await.expect("the member opens its copy");
+    unlink.await.expect("the removal ran");
+    assert_eq!(follower.replays(), 1, "the whole copy replayed once the hole was back");
+    assert!(removed.iter().chain(kept).all(|segment| copy.join(&segment.file).exists()), "the copy is whole");
+}
+
 /// A replica's snapshot precedes the first seq it keeps, and stands close enough after the posted head that the links
 /// it carries reach back to it; with neither, any snapshot will do.
 #[test]
