@@ -63,7 +63,7 @@ const DAY_SECS: u64 = 86_400;
 
 #[tokio::test]
 #[ignore = "requires Anvil, Python 3, and compiled contracts; scripts/dev-vault-move.sh runs it"]
-async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_alpha() {
+async fn dev_scenario_the_launch_log_carries_monkey_and_awards_and_mirrors_the_stakes_again() {
     let _tracing = tracing::subscriber::set_default(
         tracing_subscriber::fmt().with_ansi(false).with_writer(std::io::stderr).finish(),
     );

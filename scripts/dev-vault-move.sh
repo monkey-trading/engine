@@ -22,4 +22,4 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 (cd "$root/contracts" && forge build)
 CARGO_INCREMENTAL=0 cargo test --locked --manifest-path "$root/Cargo.toml" -p engine-node --lib -- \
   --ignored --exact --nocapture \
-  custody::tests::election_scenario::vault_move::dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_alpha
+  custody::tests::election_scenario::vault_move::dev_scenario_the_launch_log_carries_monkey_and_awards_and_mirrors_the_stakes_again

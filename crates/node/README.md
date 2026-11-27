@@ -90,7 +90,7 @@ default. Every section refuses keys it does not know.
 | `[feeds]`, `[time]`, `[benchmarks]`, `[access]` | Price feeds, Roughtime servers, benchmark publishers and the screening source |
 | `[history]`, `[stats]`, `[snapshots]`, `[daily_snapshots]`, `[archive]` | The history index and price history cache, dashboard retention, recovery snapshots, the daily snapshots and how long the host keeps them, and the bucket that keeps the log's archive and every daily snapshot, with the window of the log the host keeps |
 | `[metrics]`, `[alerts]` | The metrics listener, alert routing to webhooks and the disk alerts' thresholds (`[alerts.storage]`) |
-| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters, and in `[genesis.carry]` the log whose MONKEY, stakes and awards it carries |
+| `[genesis]` | The parameters and markets that are sequenced into a new log on its first start, the offset groups of portfolio margin among the parameters, and in `[genesis.carry]` the log whose MONKEY and awards it carries and whose stakes it mirrors again |
 
 [`config/dev.toml`](../../config/dev.toml) runs everything against local simulations.
 [`config/anvil.toml`](../../config/anvil.toml) runs custody against the vault on a local Anvil

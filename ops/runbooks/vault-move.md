@@ -3,7 +3,8 @@
 Use this runbook once, at public launch, to move the protocol from the alpha's vault to the launch
 vault. The alpha is the deployment that runs before public launch, on a vault that holds mock USDC.
 The launch vault holds real USDC. The move keeps MONKEY, its stakes and every bug bounty award, and
-starts a new log on the launch vault whose genesis carries them.
+starts a new log on the launch vault. Its genesis carries MONKEY's entitlements and the awards, and
+the new log mirrors the stakes again from the staking contract.
 
 The steps use the shell variables that [Variables](reference.md#variables) sets up, and the ones
 that [Variables for the move](#variables-for-the-move) adds. Commands, configuration keys and output
@@ -128,7 +129,7 @@ not keep MONKEY.
 
 ### 2. Move the alpha to a release that runs V90
 
-The launch log can check that it carries every stake only if the alpha's root holds its total
+The launch log can check the stakes it mirrors again only if the alpha's root holds its total
 staked, which protocol V90 adds. Every alpha member moves to a release whose build's
 `ProtocolVersion::LATEST` is V90 or later, as [Before a new protocol version](operator-candidate.md#before-a-new-protocol-version)
 and [Upgrade while you are the operator](operator-candidate.md#upgrade-while-you-are-the-operator)
@@ -497,9 +498,7 @@ curl -sf $API/v1/awards | jq .
 curl -sf $API/v1/monkey | jq .staking
 ```
 
-The first command prints `v93`, or a later version: from V93 the launch log mirrors the stakes again
-rather than carrying them, and from V92 it refuses a staking or registry event at or below the carried
-frontier, which from V93 is the alpha's point once the stakes are mirrored again. The second shows the
+The first command prints `v93`, or a later version. The second shows the
 alpha's emission schedule. The third lists the carried awards, with nothing paid. The fourth shows
 `remirror` with the alpha's point and total staked while the stakes are mirrored again, and `null`
 once they are, when `total_staked` is the total that `jq -r .totals.staked carry.json` prints.
@@ -630,9 +629,9 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   and no distribution epoch closes. `custody_chain_inconsistent` naming
   `custody.evm.staking.deployment_block` means that the configuration's block is after the staking
   contract's deployment, and the mirror would miss the events before it: prepare a new release with
-  the block that step 4 finds, and abandon the log before any deposit. A staking frontier the engine
-  refuses, whose reason says that the stakes mirrored again sum to less than the alpha's total, means
-  that a window missed an event: abandon the log before any deposit, and start again.
+  the block that step 4 finds, and abandon the log before any deposit. `custody_chain_inconsistent` saying that the engine refused the staking frontier while the carried
+  stakes are mirrored again, with a reason that the stakes mirrored again sum to less than the alpha's
+  total, means that a window missed an event: abandon the log before any deposit, and start again.
 
 A trading server whose log has carried a genesis refuses to start under a configuration that names
 another source vault, or another chain. A configuration that names `[genesis.carry]` likewise

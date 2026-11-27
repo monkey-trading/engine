@@ -311,8 +311,8 @@ pub struct Genesis {
     /// Anvil values are labelled test fixtures; production's come from #147's calibration.
     #[serde(default)]
     pub close_spread_ceilings: Vec<CloseSpreadCeiling>,
-    /// The log whose final checkpoint this genesis carries MONKEY, stakes and awards from, right after staking
-    /// is initialised; absent carries nothing.
+    /// The log whose final checkpoint this genesis carries MONKEY entitlements and awards from, right after
+    /// staking is initialised, and whose stakes it mirrors again; absent carries nothing.
     #[serde(default)]
     pub carry: Option<CarrySection>,
 }
