@@ -88,7 +88,7 @@ async fn a_key_that_is_not_the_operators_is_refused_before_any_call() {
 fn a_rotated_key_signs_as_its_own_address_on_the_configured_domain() {
     let configured = dev_config().operator().unwrap();
     let other = operator_key(None, Some(HexKey(OTHER_KEY.into()))).unwrap();
-    let config = Path::new(DEV_CONFIG);
+    let config = std::path::Path::new(DEV_CONFIG);
     let rotated = signing_operator(configured, &other, true, config).unwrap();
     assert_eq!(rotated.address, eip712::address(other.verifying_key()));
     assert_ne!(rotated.address, configured.address);
@@ -114,7 +114,7 @@ fn a_missing_or_malformed_key_is_refused_without_echoing_it() {
         let err = format!("{:#}", operator_key(None, Some(HexKey(bad.into()))).unwrap_err());
         assert!(err.contains("not a secp256k1 private key") && !err.contains(bad), "{err}");
     }
-    let err = operator_key(Some(Path::new("/nonexistent/operator.key")), Some(HexKey(DEV_KEY.into()))).unwrap_err();
+    let err = operator_key(Some("/nonexistent/operator.key".as_ref()), Some(HexKey(DEV_KEY.into()))).unwrap_err();
     assert!(err.to_string().contains("/nonexistent/operator.key"), "{err:#}");
 }
 

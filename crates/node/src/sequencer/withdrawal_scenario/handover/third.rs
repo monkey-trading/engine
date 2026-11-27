@@ -73,6 +73,9 @@ pub(super) async fn follows(node: &Node, staking: &Address, staking_start: i64) 
     let bond = U256::from(10_000);
     node.chain.register_candidate(candidate, &admin, bond, C_DIGEST, config_hash, candidate, &api, &endpoint).await?;
     node.chain.delegate_from(candidate, candidate, bond).await?;
+    // C's admin key admits the standby key its enclave seals, for the take an election names it for.
+    let sealed = crate::tee::sealing::Release { launch_digest: C_DIGEST, config_sha256: config_hash };
+    crate::sequencer::withdrawal_scenario::admission::admit(&dir.join("keys"), sealed, &admin, node.chain.vault)?;
     let mut child = spawn_release(&dir, &config, node, C_DIGEST, None)?;
     wait_text(&dir.join("node-c.log"), "following the operator in effect", 0, &mut child_checker(&mut child)).await?;
     let client = Client::new(port, node.chain.vault)?;

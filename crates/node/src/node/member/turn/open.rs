@@ -7,6 +7,7 @@ use engine_core::eip712::B256;
 
 use crate::checkpoints::Observation;
 use crate::daily_snapshots::{AcceptedRoots, Fetching, SnapshotBucket, VaultRoots};
+use crate::handover::Requester;
 use crate::sequencer::replay::RETAINED_LINKS;
 use crate::standby::archive::archive_client;
 
@@ -200,7 +201,8 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the
     /// follower's tip, caught up once more from `operator`, the incumbent it followed, if any, after
     /// the start's reads, and following it while each source stops, its request signed with the
-    /// standby key of `standby`, this member's standby side, when open. Everything the start reads from
+    /// standby key of `standby`, this member's standby side, when open, or else with this release's own
+    /// (`member::requester`), with the admission naming that key, if any. Everything the start reads from
     /// the chain is read before connecting, and the trusted time sample that admits its first stamps is
     /// taken last (`Ready`): from the confirmation on, nothing reads the chain or samples time.
     /// Error cases:
@@ -213,7 +215,13 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         standby: Option<&Standby>,
     ) -> anyhow::Result<(Taken, Ready)> {
         let (sources, mut prepared) = self.prepare_take(turn).await?;
-        prepared.standby = standby.map(|open| open.keys.clone());
+        // The standby side's key while it is open, as the registration it may have names; this release's own
+        // sealed one otherwise, as a member with no standby side holds.
+        let sealing = self.cfg.tee.sealing.as_ref().map(|sealing| sealing.dir.as_path());
+        prepared.requester = match (standby, sealing) {
+            (Some(open), Some(dir)) => Some(Arc::new(Requester::with_admission(open.keys.clone(), dir))),
+            _ => crate::node::member::requester(self.cfg, &self.start)?.map(Arc::new),
+        };
         // The reassignments the start's own log check counts, read with the rest: none after the confirmation.
         // The keys bring the last verified head only then, so the read cannot start at the range's in-office turn.
         let own = [turn.candidate].into();

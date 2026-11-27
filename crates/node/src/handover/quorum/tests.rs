@@ -1,7 +1,7 @@
 //! The custody quorum's reads at one block of what a holder's admission rests on: the vault's release,
 //! its generation and fold, the turn the finalised schedule names as the checkpoint endpoint reads it,
-//! and the rotation switch. The comparison with the endpoint is held end to end by
-//! `predecessor::tests::quorum`.
+//! the rotation switch and the operator the registry names. The comparison with the endpoint is held
+//! end to end by `predecessor::tests::quorum`.
 
 use alloy::primitives::B256;
 
@@ -32,6 +32,8 @@ async fn the_quorum_reads_the_vaults_release_its_fold_and_the_turn_the_schedule_
         set: 4,
     };
     assert_eq!(held.turn, Some(turn), "the turn, with its member's registered key and release");
+    let named = Named { admin_key: AccountId([0xd2; 20]), release: [0x34; 32] };
+    assert_eq!((held.rotation, held.named), (true, Some(named)), "the switch and the operator the registry names");
 }
 
 #[tokio::test]
@@ -55,6 +57,7 @@ async fn no_time_no_registry_no_schedule_or_no_drawn_turn_reads_as_no_turn() {
     script_release(&mut unregistered);
     let held = held_at(&&unregistered, VAULT, Some(now)).await.unwrap();
     assert_eq!((held.current.id, held.turn), ([0x22; 32], None), "no registry");
+    assert_eq!((held.rotation, held.named), (false, None), "no registry names an operator");
 }
 
 #[tokio::test]
@@ -81,12 +84,20 @@ async fn the_rotation_switch_reads_off_with_no_registry_and_as_the_registry_hold
 
 // ── Helpers ──
 
-/// The vault names release `0x22…` in generation 7, its generation having folded `0x21…`.
+/// The vault names release `0x22…` in generation 7, its generation having folded `0x21…`, and the
+/// registry has rotation on and names an operator with admin key `0xd2…` on release `0x34…`.
 fn script_release(block: &mut Scripted) {
     block
         .answer(VAULT, currentReleaseCall {}, &B256::repeat_byte(0x22))
         .answer(VAULT, releaseGenerationCall {}, &7)
         .answer(VAULT, syncedReleaseCall {}, &B256::repeat_byte(0x21));
+    let named = namedOperatorReturn {
+        candidate: Address::repeat_byte(0xc2),
+        adminKey: Address::repeat_byte(0xd2),
+        release: B256::repeat_byte(0x34),
+        since: 1,
+    };
+    block.answer(REGISTRY, rotationEnabledCall {}, &true).answer(REGISTRY, namedOperatorCall {}, &named);
 }
 
 /// The schedule names `TURN`, drawn for `MEMBER` from set 4 in generation 12, at `now`, and the

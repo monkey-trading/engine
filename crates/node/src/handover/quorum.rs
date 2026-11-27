@@ -27,6 +27,7 @@ sol! {
     function releaseGeneration() external view returns (uint64);
     function syncedRelease() external view returns (bytes32);
     function rotationEnabled() external view returns (bool);
+    function namedOperator() external view returns (address candidate, address adminKey, bytes32 release, uint64 since);
 }
 
 /// A turn the finalised schedule names, as an admission decides by it: its member, the admin key and
@@ -51,13 +52,26 @@ pub(crate) struct Held {
     pub synced: [u8; 32],
     /// The turn the finalised schedule names at the time asked, whatever its boundary.
     pub turn: Option<TurnFacts>,
+    /// The registry's rotation switch; off while the vault names no registry.
+    pub rotation: bool,
+    /// The operator the registry names for the vault: its admin key and release; `None` while the vault
+    /// names no registry.
+    pub named: Option<Named>,
+}
+
+/// The operator the registry names for the vault: the admin key that answers for its release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Named {
+    pub admin_key: AccountId,
+    pub release: [u8; 32],
 }
 
 /// Where the holder reads what its checkpoint endpoint reads, through the custody quorum.
 pub(crate) trait ReleaseQuorum: Send + Sync {
     /// What the custody quorum reads at `at`'s block, the checkpoint endpoint's finalized observation,
     /// once a strict majority names that block and holds it final: the vault's current release, its
-    /// generation and fold, and, at `now_ms` when given, the turn the finalised schedule names.
+    /// generation and fold, the registry's rotation switch and named operator, and, at `now_ms` when
+    /// given, the turn the finalised schedule names.
     /// Error cases:
     /// - `at` pins no block, or the providers have no quorum, name another block at its height, or do
     ///   not hold it final in time
@@ -87,7 +101,8 @@ impl From<&ScheduledTurn> for TurnFacts {
 /// `named_generation` through `vault`, the checkpoint endpoint, at `at`, once `quorum` reads the same
 /// at that block: the same turn the finalised schedule names at trusted time `reached_ms`, or, with
 /// none, `release` as the vault's current release in the same generation, and its fold where `vault`
-/// reads one. A difference pages `checkpoint_endpoint_disagrees`, which an agreement resolves.
+/// reads one. A difference pages `checkpoint_endpoint_disagrees`, which an agreement resolves. Returns
+/// the quorum's reads with the endpoint's answer, for what answers for the successor.
 /// Error cases:
 /// - as `named_generation`
 /// - the quorum cannot read the block (`ReleaseQuorum::held`), or reads another turn, release,
@@ -98,7 +113,7 @@ pub(crate) async fn confirmed_generation(
     at: &Observation,
     release: &Release,
     reached_ms: Option<Millis>,
-) -> anyhow::Result<(u64, Option<ScheduledTurn>)> {
+) -> anyhow::Result<(u64, Option<ScheduledTurn>, Held)> {
     let named = named_generation(vault, at, release, reached_ms).await?;
     let held = quorum.held(at, reached_ms).await.context("reading the vault's release through the custody quorum")?;
     let agreed = agreement((vault.reads_release_fold(), release, reached_ms), &named, &held);
@@ -109,7 +124,7 @@ pub(crate) async fn confirmed_generation(
         ),
         Err(e) => page_disagreement(format_args!("{e:#}")),
     }
-    agreed.map(|()| named)
+    agreed.map(|()| (named.0, named.1, held))
 }
 
 /// Pages the checkpoint endpoint reading `what` otherwise than the custody quorum at the same block: a
@@ -160,7 +175,8 @@ fn agreement(
     Ok(())
 }
 
-/// What `ReleaseQuorum::held` reads at `block` for the vault `vault`.
+/// What `ReleaseQuorum::held` reads at `block` for the vault `vault`: with a registry, its rotation switch,
+/// the operator it names and, at `now_ms`, the schedule's turn, beside the vault's release reads.
 /// Error cases:
 /// - a call fails or does not decode, or the turn's boundary is out of range
 pub(crate) async fn held_at(block: &impl AgreedBlock, vault: Address, now_ms: Option<Millis>) -> anyhow::Result<Held> {
@@ -170,11 +186,23 @@ pub(crate) async fn held_at(block: &impl AgreedBlock, vault: Address, now_ms: Op
         call(block, "handover_synced_release", vault, syncedReleaseCall {}),
         call(block, "handover_registry", vault, registryCall {}),
     )?;
-    let turn = match now_ms {
-        Some(now_ms) if !registry.is_zero() => turn_at(block, registry, now_ms).await?,
-        _ => None,
-    };
-    Ok(Held { current: CurrentRelease { id: current.0, generation }, synced: synced.0, turn })
+    if registry.is_zero() {
+        let current = CurrentRelease { id: current.0, generation };
+        return Ok(Held { current, synced: synced.0, turn: None, rotation: false, named: None });
+    }
+    let (turn, rotation, named) = tokio::try_join!(
+        async {
+            match now_ms {
+                Some(now_ms) => turn_at(block, registry, now_ms).await,
+                None => Ok(None),
+            }
+        },
+        call(block, "handover_rotation", registry, rotationEnabledCall {}),
+        call(block, "handover_named_operator", registry, namedOperatorCall {}),
+    )?;
+    let named = Named { admin_key: AccountId(named.adminKey.0.0), release: named.release.0 };
+    let current = CurrentRelease { id: current.0, generation };
+    Ok(Held { current, synced: synced.0, turn, rotation, named: Some(named) })
 }
 
 /// The registry's rotation switch at `block` for the vault `vault`, as the checkpoint endpoint reads

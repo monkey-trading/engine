@@ -69,6 +69,10 @@ pub(super) async fn upgrade_with_rotation_on(
     node.chain.wait_finalized_release(keccak256([A_UPGRADE_DIGEST.as_slice(), &config_hash].concat())).await?;
 
     // The upgrade starts with an empty log and takes the keys and every segment from A.
+    // A's admin key admits the standby key the upgrade's enclave seals.
+    let upgrade = crate::tee::sealing::Release { launch_digest: A_UPGRADE_DIGEST, config_sha256: config_hash };
+    let admin = k256::ecdsa::SigningKey::from_slice(&super::OPERATOR)?;
+    crate::sequencer::withdrawal_scenario::admission::admit(&dir.join("keys"), upgrade, &admin, node.chain.vault)?;
     let keys = format!("predecessor=127.0.0.1:{predecessor}");
     let mut child = spawn_release(&dir, &config, node, A_UPGRADE_DIGEST, Some(keys.as_str()))?;
     let client = Client::new(port, node.chain.vault)?;

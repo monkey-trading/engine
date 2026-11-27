@@ -438,7 +438,12 @@ order of events.
 
    The trading server holds first, with `secret_missing` raised and only its delivery listener up.
    Deliver your secrets bundle under your admin key, as [Secrets](key-recovery.md#secrets)
-   describes, and the trading server goes on. Its console then shows, in order:
+   describes, and the trading server goes on. The incumbent hands the keys only to the enclave whose
+   standby key your admin key admitted, so the first start's take is refused. Its console names the
+   standby key and the release, and the trading server stops. Admit that key, as
+   [Admit your enclave for a take](#admit-your-enclave-for-a-take) describes, and start the trading
+   server again. Your secrets are sealed by then, so it does not hold again. Its console then shows,
+   in order:
 
    - that it has no sealed keys and that rotation is on;
    - the incumbent, resolved from the registry, in a line that starts `election handover: `;
@@ -592,6 +597,13 @@ In these steps the running release is `A` and the new release is `B`.
    server takes the keys from the operator that the last election replaced, which `handoverSource()`
    names, not from `A`.**
 
+8. At step 4 of that procedure, admit `B`'s enclave with your admin key, not the operator key in the
+   deployment's configuration, as [Admit your enclave for a take](#admit-your-enclave-for-a-take)
+   describes. `A` hands `B` the keys only once the admission is in `B`'s sealing directory. With
+   rotation on, `A` moves no secrets, so deliver `B`'s yourself first.
+
+   **Changes the live system.** The owner must approve placing the admission.
+
 **How to tell it is resolved.** `B` holds the keys and sequences. The enclave address, the signer
 epoch and `$PIN` carry over from `A`.
 
@@ -614,6 +626,55 @@ way once it is a registered candidate. It registers first, as
   Withdraw any that the operator should not move to.
 - The installation changes no candidacy. The operator that it replaced keeps its release, its
   approvals and its listing, and that operator's moves no longer reach the vault.
+
+## Admit your enclave for a take
+
+Use this procedure when your trading server takes the keys and the schedule does not list a standby
+key that it holds as your promotable key. That is the case:
+
+- after an election, and in an upgrade while you are the operator;
+- for a member's take before your first standby key registration lands;
+- after a `setRelease` voids your key, and after a promotion consumes it.
+
+The holder of the keys hands them only to an enclave that signs its request with its standby key.
+It takes that key as yours only when the schedule lists it as your promotable key, or when an
+admission that your admin key signed names it for your release. An enclave of your release on
+another host holds another key, so it takes nothing.
+
+1. Read your enclave's standby key and release from its console. At each take, the trading server
+   logs `this enclave signs its handover requests with its standby key`, with the fields `key`,
+   `release` and `admitted`. A take that the holder refuses for want of an admission names the key,
+   the release and the file to write as well.
+
+2. Sign the admission on your workstation, with your admin key, for the chain and vault that your
+   trading server's configuration names. The command signs offline and calls nothing.
+
+   ```shell
+   engine admin --config config.toml --key-file <admin key file> sign-admission \
+     --release <release> --key <standby key> --out handover-admission.json
+   ```
+
+   The command prints the address that signed. Confirm that it is your admin key's.
+
+3. Copy `handover-admission.json` into the trading server's `[tee.sealing]` directory.
+
+   **Changes the live system.** The owner must approve placing the admission, because it lets that
+   enclave take the keys.
+
+4. Let the take read it. A member reads the file at its next attempt. A trading server that is
+   holding with `secret_missing` asks for the secrets again within 30 seconds, and then takes the
+   keys. A trading server that stopped after a refused take reads the file when you start it again.
+
+**How to tell it is resolved.** The console's line shows `admitted=true`, and the take goes on.
+
+An admission names one enclave's key for one release. A new release, or a host that deleted the
+sealed standby key, makes the enclave sign with a new key, which needs a new admission. Once the
+schedule lists a promotable standby key for your candidacy, only that key takes your turns, and no
+admission counts.
+
+**An admission stays good for its key and release, and nothing revokes it.** Before you return to
+a release whose admitted enclave ran on a host that you have left, change the release's
+configuration, which makes a new release that no earlier admission names.
 
 ## Daily turns
 
@@ -1151,6 +1212,10 @@ do not count towards the quorum.** A member of the latest set keeps its place wi
 about an epoch, as [Daily turns](#daily-turns) describes. A `setRelease` voids the key, and the
 trading server registers a new key for the new release. Move releases early enough in an epoch for
 the new key to register before the epoch's close.
+
+**A member whose key is not promotable takes no turn's keys without an admission.** Until the
+registration lands, admit the key, as [Admit your enclave for a take](#admit-your-enclave-for-a-take)
+describes.
 
 ### A promotion
 

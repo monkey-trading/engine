@@ -5,7 +5,9 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
+use engine_core::auth::Operator;
+use engine_core::eip712;
 use hyper::http::uri::Authority;
 use k256::ecdsa::SigningKey;
 use serde::Deserialize;
@@ -81,4 +83,25 @@ pub(super) fn socket_target(authority: &Authority) -> (&str, u16) {
     let host = authority.host();
     let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
     (host, authority.port_u16().unwrap_or(443))
+}
+
+/// The operator `key` signs as: the configured one, or with `rotated`, the key's own address on the
+/// configured chain and vault. The node, which checks a signature against the key the log records,
+/// refuses a rotated key the log does not name.
+/// Error cases:
+/// - without `rotated`, `key` is not the configured operator's
+pub(super) fn signing_operator(
+    configured: Operator,
+    key: &SigningKey,
+    rotated: bool,
+    config: &Path,
+) -> anyhow::Result<Operator> {
+    let address = eip712::address(key.verifying_key());
+    if rotated {
+        return Ok(Operator { address, ..configured });
+    }
+    if address != configured.address {
+        bail!("the key is not the operator key {} in {}", configured.address, config.display());
+    }
+    Ok(configured)
 }

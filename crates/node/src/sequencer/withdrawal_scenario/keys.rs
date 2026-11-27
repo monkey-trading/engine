@@ -13,14 +13,13 @@ use alloy::primitives::{Address, U256};
 use alloy::sol_types::SolCall;
 use anyhow::{Context, bail, ensure};
 use engine_core::types::AccountId;
-use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use tokio::time::{sleep, timeout};
 
 use crate::log::LogEntry;
 use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::flows::{entries, last_seq};
-use crate::sequencer::withdrawal_scenario::node::{ChildProcess, gate_admits, write_config};
+use crate::sequencer::withdrawal_scenario::node::{ChildProcess, gate_admits};
 use crate::sequencer::withdrawal_scenario::rpc::{
     Chain, setSignerCall, signerEpochCall, totalWithdrawnCall, usedNoncesCall,
 };
@@ -40,6 +39,8 @@ const ATTESTATION_UP: &str = "serving the attestation while the vault names anot
 const METRICS_UP: &str = "metrics up";
 const HANDOVER_UP: &str = "handover listener up";
 
+mod files;
+use files::{copy_dir, release_config};
 mod secrets;
 
 /// One release's node process, running `config` in `data` under a stand-in measurement.
@@ -169,9 +170,13 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     ensure!(new.logged("the predecessor keeps its secrets")?, "the secrets went to a release the vault does not name");
     old.ready().await?;
 
-    // Once the timelock makes it the current release, the upgrade takes the keys and the old
-    // release exits.
+    // Once the timelock makes it the current release, the upgrade takes the keys once the operator
+    // admits the standby key its enclave sealed, and the old release exits.
     chain.set_current_release(&UPGRADE, new.release.config_sha256).await?;
+    new.spawn(Keys::From(old.handover_port()?))?;
+    ensure!(!new.exited().await?.success(), "an enclave no admission names took the keys");
+    ensure!(new.logged("no admission names it")?, "the refusal did not say why");
+    new.admit()?;
     new.spawn(Keys::From(old.handover_port()?))?;
     ensure!(old.exited().await?.success(), "the old release did not exit cleanly once it handed over");
     new.ready().await?;
@@ -197,6 +202,7 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
     old.spawn(Keys::Sealed)?;
     ensure!(!old.exited().await?.success(), "a release named again reopened its old sealed copy");
     ensure!(old.logged(&format!("in the vault's generation {again} of it"))?, "the refusal did not say why");
+    old.admit()?;
     old.spawn(Keys::From(new.handover_port()?))?;
     ensure!(new.exited().await?.success(), "the upgrade did not exit cleanly once it handed the keys back");
     old.ready().await?;
@@ -278,25 +284,6 @@ pub(super) async fn key_lifecycle() -> anyhow::Result<()> {
          the delivered secrets survive the restart and move first with the upgrade"
     );
     Ok(())
-}
-
-/// Writes a release's config to `path`, relative to the node's working directory, with ephemeral
-/// ports and its alert outbox in `outbox`, and returns `path`.
-/// Error cases:
-/// - the config cannot be written
-fn release_config(path: &Path, outbox: &str, chain: &Chain, services: &Services) -> anyhow::Result<PathBuf> {
-    write_config(path, Path::new(""), 0, 0, chain, services, |cfg| {
-        cfg["alerts"]["outbox"]["dir"] = outbox.into();
-        cfg["tee"]["use_published_mock_key"] = false.into();
-        cfg["tee"]["sealing"] = json!({
-            "dir": "keys",
-            "handover": { "listen": "127.0.0.1:0" },
-            "secrets": { "listen": "127.0.0.1:0" },
-        });
-        cfg["alerts"]["warning"] = json!({ "url_secret": "alerts_warning_url" });
-        Ok(())
-    })?;
-    Ok(path.to_owned())
 }
 
 impl ReleaseNode {
@@ -480,21 +467,4 @@ impl ReleaseNode {
     async fn exited(&mut self) -> anyhow::Result<std::process::ExitStatus> {
         self.child.take().context("no running process")?.exited(LOADED_WAIT).await
     }
-}
-
-/// Copies the directory tree `from` to `to`.
-/// Error cases:
-/// - a read or write fails
-fn copy_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(to)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
 }

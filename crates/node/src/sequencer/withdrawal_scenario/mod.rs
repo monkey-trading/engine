@@ -1,5 +1,6 @@
 //! Opt-in local Anvil scenario over `node::run`; no production configuration enables these hooks.
 
+mod admission;
 pub(crate) mod client;
 mod exit;
 pub(crate) mod exit_log;

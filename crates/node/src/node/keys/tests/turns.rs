@@ -118,7 +118,8 @@ async fn without_sealed_keys_or_a_flag_a_turns_member_asks_the_turns_source_for_
     // The start asked the turn's source, rather than refusing or resolving an election's incumbent;
     // `handover::predecessor`'s tests take the keys from a source that answers.
     assert!(err.contains(&format!("no operator handed turn {TURN}'s keys over: {endpoint}: ")), "{err}");
-    assert!(std::fs::read_dir(&dir).is_err(), "a failed handover sealed keys");
+    // Only the standby key the take signed its requests with is sealed.
+    assert!(!file_for(&dir, &this, TURN_GENERATION).exists(), "a failed handover sealed keys");
 }
 
 /// A skip's member restarting before the skip is final opens the keys it sealed in the skip's

@@ -55,11 +55,12 @@ async fn a_tail_request_carries_the_members_standby_signature() {
     let assigned = Assigned { standby: Some(member.address()), ..skip(12, 1, 0xc1, release, GENERATION) };
     tailed.exchange.assignments.set(Some(assigned));
     let reader: Arc<dyn Assignments> = tailed.exchange.assignments.clone();
-    for (what, standby) in [("unsigned", None), ("signed", Some(member.clone()))] {
+    let signed = Arc::new(crate::handover::Requester { key: member, admission: None });
+    for (what, requester) in [("unsigned", None), ("signed", Some(signed.clone()))] {
         let bound = Bound::of(&assigned, reader.clone());
-        let prepared = Prepared { bound, standby, ..tailed.prepared(None) };
+        let prepared = Prepared { bound, requester, ..tailed.prepared(None) };
         let err = tailed.take(&prepared).await.err().unwrap_or_else(|| panic!("{what}: the keys moved"));
-        let refused_for_the_key = format!("{err:#}").contains("standby key");
+        let refused_for_the_key = format!("{err:#}").contains("carries no signature by a standby key");
         assert_eq!(refused_for_the_key, what == "unsigned", "{what}: {err:#}");
         assert!(format!("{err:#}").contains("skip") || refused_for_the_key, "{what}: {err:#}");
         tailed.assert_sequencing_on().await;
@@ -342,7 +343,8 @@ impl Tailed {
     fn prepared(&self, posted: Option<crate::log_heads::Head>) -> Prepared {
         let signer = AccountId(self.exchange.old.enclave_key().unwrap().address());
         let bound = crate::handover::assigned::Bound::none();
-        Prepared { generation: GENERATION, signer, posted, bound, standby: None }
+        let requester = Some(Arc::new(self.exchange.requester()));
+        Prepared { generation: GENERATION, signer, posted, bound, requester }
     }
 
     /// The head the predecessor's log holds at `seq`, as it would post it.
@@ -407,7 +409,8 @@ impl Exchange {
             reads: reads.into(),
             secrets_only: false,
             binding: None,
-            standby_signature: None,
+            standby_signature: self.standby_signature(&report_data),
+            admission: self.requester().admission,
             evidence,
         };
         (stream, request)

@@ -146,6 +146,7 @@ impl<C: CheckpointChain> Predecessor<C> {
 /// Error cases:
 /// - the challenge cannot be sent, or the request is unreadable
 async fn greet(stream: &mut TcpStream, challenge: [u8; 32]) -> anyhow::Result<Request> {
-    send(stream, &Challenge { nonce: hex::encode(challenge) }).await.context("sending the challenge failed")?;
+    let challenge = Challenge { nonce: hex::encode(challenge), standby: true };
+    send(stream, &challenge).await.context("sending the challenge failed")?;
     receive(stream).await.context("an unreadable request")
 }

@@ -86,7 +86,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
     let predecessor = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let challenge = [0x5c; 32];
-        send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await.unwrap();
+        send(&mut stream, &Challenge { nonce: hex::encode(challenge), standby: true }).await.unwrap();
         let request: Request = receive(&mut stream).await.unwrap();
         let public_key = hex::decode(&request.public_key).unwrap();
         let report_data = request_report_data(domain, &challenge, &public_key, &config, &request.reads);
@@ -122,7 +122,7 @@ async fn segment_bytes_that_differ_from_the_listing_inside_the_keys_are_refused_
         finalized: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())
+    let err = take(&successor, &address, (&sealer, &MockAttestor, None), &vault, None, &crate::metrics::Metrics::new())
         .await
         .err()
         .expect("started on a tampered log");
@@ -144,7 +144,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
     let predecessor = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let challenge = [0x5c; 32];
-        send(&mut stream, &Challenge { nonce: hex::encode(challenge) }).await.unwrap();
+        send(&mut stream, &Challenge { nonce: hex::encode(challenge), standby: true }).await.unwrap();
         let request: Request = receive(&mut stream).await.unwrap();
         let public_key = hex::decode(&request.public_key).unwrap();
         let report_data = request_report_data(domain, &challenge, &public_key, &config, &request.reads);
@@ -170,7 +170,7 @@ async fn a_successor_without_the_signed_acknowledgement_keeps_the_keys_sealed_bu
         finalized: Default::default(),
     };
     let sealer = MockSealer { launch_digest: UPGRADE };
-    let err = take(&successor, &address, &sealer, &MockAttestor, &vault, None, &crate::metrics::Metrics::new())
+    let err = take(&successor, &address, (&sealer, &MockAttestor, None), &vault, None, &crate::metrics::Metrics::new())
         .await
         .err()
         .expect("started unacknowledged");

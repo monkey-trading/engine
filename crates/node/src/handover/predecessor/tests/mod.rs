@@ -19,6 +19,8 @@ mod tail_handover;
 mod turns;
 use tail::write_log_tail;
 mod quorum;
+mod requester;
+use requester::Requesting;
 mod vault;
 use vault::{Majority, Rotation, Vault};
 
@@ -99,6 +101,8 @@ struct Exchange {
     finalized: Arc<Mutex<Option<(u64, String)>>>,
     /// The custody quorum's reads, as the predecessor confirms its vault's with them.
     majority: Arc<Majority>,
+    /// The successor's standby key, and who admits it.
+    requesting: Requesting,
 }
 
 #[tokio::test]
@@ -291,6 +295,9 @@ impl Exchange {
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
         let assignments = Arc::new(crate::handover::assigned::tests::FakeAssignments::default());
+        // The schedule lists the successor's standby key as its member's promotable one.
+        let requesting = Requesting::new(name);
+        *assignments.standby.lock().unwrap() = Some(requesting.keys.address());
         let vault = Vault {
             signer: AccountId([0; 20]),
             current: current.clone(),
@@ -300,6 +307,7 @@ impl Exchange {
             finalized: finalized.clone(),
         };
         let majority = Arc::new(Majority::of(&vault));
+        let no_log = engine.is_none();
         let predecessor = Predecessor {
             listener,
             // Every connection here comes from loopback: one address holds any number, as peers on as many
@@ -333,6 +341,8 @@ impl Exchange {
                 None => super::tail::Evidence::running(engine_core::protocol::ProtocolVersion::LATEST),
             }),
             assignments: Some(assignments.clone()),
+            // With no sequencer to ask, the log's operator key is what a stop retained: the dev config's.
+            retained_operator: std::sync::Mutex::new(no_log.then(|| dev_config().operator().unwrap().address)),
         };
         let run = tokio::spawn(predecessor.run());
         let successor_log = successor.node.log_dir.clone();
@@ -359,6 +369,7 @@ impl Exchange {
             assignments,
             finalized,
             majority,
+            requesting,
         }
     }
 
@@ -385,7 +396,8 @@ impl Exchange {
             reads,
             secrets_only: false,
             binding: None,
-            standby_signature: None,
+            standby_signature: self.standby_signature(&report_data),
+            admission: self.requester().admission,
             evidence,
         };
         (stream, report_data, message)
@@ -421,27 +433,6 @@ impl Exchange {
         })
     }
 
-    /// Answers the first stop request with the checkpoint gate's refusal of the final checkpoint —
-    /// as the node's sequencer gives it — and every later one with `head`, counting them until the
-    /// predecessor ends.
-    fn refuse_once_then_answer(&mut self, reason: &str, head: Head) -> JoinHandle<usize> {
-        let mut drains = std::mem::replace(&mut self.drains, mpsc::channel(1).1);
-        let reason = reason.to_owned();
-        tokio::spawn(async move {
-            let mut answered = 0;
-            while let Some(reply) = drains.recv().await {
-                answered += 1;
-                let result = if answered == 1 {
-                    Err(anyhow!(crate::sequencer::HandoverRefused::new(reason.clone())))
-                } else {
-                    Ok(head.clone())
-                };
-                let _ = reply.send(result);
-            }
-            answered
-        })
-    }
-
     /// The successor's side, with the stand-in for sealing, against a vault naming the old key.
     async fn take(&self) -> anyhow::Result<KeyStore> {
         let signer = AccountId(self.old.enclave_key().unwrap().address());
@@ -464,7 +455,9 @@ impl Exchange {
     /// The successor's side, reading `vault`.
     async fn take_reading(&self, vault: Vault) -> anyhow::Result<KeyStore> {
         let sealer = MockSealer { launch_digest: UPGRADE };
-        take(&self.successor, &self.address, &sealer, &MockAttestor, &vault, self.reached, &self.metrics).await
+        let requester = self.requester();
+        let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as _, Some(&requester));
+        take(&self.successor, &self.address, parts, &vault, self.reached, &self.metrics).await
     }
 }
 

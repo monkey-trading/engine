@@ -7,17 +7,19 @@
 //! A market spec file holds the keys of a `[[genesis.markets]]` entry, and a parameters file those of
 //! `[genesis.params]`, at its top level with no table header.
 
+mod admission;
 mod benchmark_feed;
 mod benchmark_watch;
 mod command;
 mod input;
+use input::signing_operator;
 mod secrets;
 mod staking;
 mod tls;
 
 pub use input::{HexKey, KeyEnv};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -63,7 +65,7 @@ pub struct AdminArgs {
     /// The node's attested TLS key hash, in hex: the last 32 bytes of the `bundle` its
     /// `/v1/attestation` serves, once the bundle is checked against the quote's report data. The
     /// connection is refused for any other key. Required by every command but `deliver-secrets` and
-    /// `secrets-status`, which check a quote instead and do not use the API.
+    /// `secrets-status`, which check a quote instead and do not use the API, and `sign-admission`.
     #[arg(short, long, value_parser = tls::parse_pin)]
     pin: Option<[u8; 32]>,
     /// A file holding the operator's private key in hex. Without it, `OPERATOR_KEY_FILE` names the
@@ -280,6 +282,9 @@ pub enum AdminAction {
     /// Print what a node's enclave attests it holds: the sealed and running bundle versions, and the
     /// secrets it lacks. No value leaves the enclave.
     SecretsStatus(secrets::PeerArgs),
+    /// Admit a successor enclave's standby key for its release, signed offline by the key that answers
+    /// for it, into the file its node reads: the operator key, or a candidate's admin key for its turns.
+    SignAdmission(admission::SignArgs),
 }
 
 /// A node's API: its `https://host:port` URL, and the hash its TLS key must have.
@@ -290,7 +295,7 @@ pub(crate) struct NodeApi {
 
 /// Runs what the command line asks for: a secrets delivery or status read, or an admin command.
 /// Error cases:
-/// - see `secrets::deliver`, `secrets::status`, and `run`
+/// - see `secrets::deliver`, `secrets::status`, `admission::sign`, and `run`
 pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
     match &args.action {
         AdminAction::DeliverSecrets(deliver) => {
@@ -304,6 +309,10 @@ pub async fn dispatch(args: AdminArgs, env: KeyEnv) -> anyhow::Result<()> {
             let cfg = NodeConfig::load(&args.config)?;
             crate::init_logging(&cfg.logging.level)?;
             secrets::status(&cfg, peer).await
+        }
+        AdminAction::SignAdmission(admission) => {
+            let cfg = NodeConfig::load(&args.config)?;
+            admission::sign(&cfg, &input::resolve_key(args.key_file.as_deref(), env)?, admission)
         }
         _ => run(args, env).await.map(drop),
     }
@@ -408,22 +417,6 @@ async fn run_configured(
         bail!("the engine rejected the command: {reason}");
     }
     Ok(req)
-}
-
-/// The operator `key` signs as: the configured one, or with `rotated`, the key's own address on the
-/// configured chain and vault. The node, which checks a signature against the key the log records,
-/// refuses a rotated key the log does not name.
-/// Error cases:
-/// - without `rotated`, `key` is not the configured operator's
-fn signing_operator(configured: Operator, key: &SigningKey, rotated: bool, config: &Path) -> anyhow::Result<Operator> {
-    let address = eip712::address(key.verifying_key());
-    if rotated {
-        return Ok(Operator { address, ..configured });
-    }
-    if address != configured.address {
-        bail!("the key is not the operator key {} in {}", configured.address, config.display());
-    }
-    Ok(configured)
 }
 
 /// `command` signed by `key` for `operator`'s domain, with `nonce`, to expire at `expires_at`.

@@ -320,7 +320,9 @@ impl<'a> Moving<'a> {
         Box::pin(async move {
             let attestor = attestor_for(cfg.tee.provider, &GuestClock::default())?;
             let sealer = sealer(cfg.tee.provider, start)?;
-            let signed = fetch_secrets(cfg, address, sealer.as_ref(), attestor.as_ref(), operator, named).await?;
+            let requester = crate::node::member::requester(cfg, start)?;
+            let parts = (sealer.as_ref(), attestor.as_ref(), requester.as_ref());
+            let signed = fetch_secrets(cfg, address, parts, operator, named).await?;
             store.replace(signed)
         })
     }

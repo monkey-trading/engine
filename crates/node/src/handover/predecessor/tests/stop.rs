@@ -122,3 +122,28 @@ async fn a_segment_the_window_removed_is_refused_before_the_stop() {
     assert!(exchange.drains.try_recv().is_err(), "the predecessor asked to stop");
     assert!(!exchange.run.is_finished(), "the refusal ended the predecessor");
 }
+
+// ── Helpers ──
+
+impl Exchange {
+    /// Answers the first stop request with the checkpoint gate's refusal of the final checkpoint —
+    /// as the node's sequencer gives it — and every later one with `head`, counting them until the
+    /// predecessor ends.
+    fn refuse_once_then_answer(&mut self, reason: &str, head: Head) -> JoinHandle<usize> {
+        let mut drains = std::mem::replace(&mut self.drains, mpsc::channel(1).1);
+        let reason = reason.to_owned();
+        tokio::spawn(async move {
+            let mut answered = 0;
+            while let Some(reply) = drains.recv().await {
+                answered += 1;
+                let result = if answered == 1 {
+                    Err(anyhow!(crate::sequencer::HandoverRefused::new(reason.clone())))
+                } else {
+                    Ok(head.clone())
+                };
+                let _ = reply.send(result);
+            }
+            answered
+        })
+    }
+}

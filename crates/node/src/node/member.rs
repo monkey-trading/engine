@@ -9,19 +9,16 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use alloy::primitives::Address;
 use anyhow::Context;
 use engine_core::types::{AccountId, Millis};
-use futures_util::future::BoxFuture;
 use tracing::info;
 
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, TimeSection};
-use crate::custody::StandbyReader;
+use crate::handover::Requester;
 use crate::handover::assigned::Assigned;
 use crate::handover::evidence::{CollateralCache, PREFETCH_REUSE};
 use crate::history::HistoryPlan;
-use crate::liveness::chain::candidate_of;
 use crate::log_check::answer::{Answering, CheckedHeads};
 use crate::log_heads::{Head, PostedHeads};
 use crate::metrics::Metrics;
@@ -31,7 +28,6 @@ use crate::node::ready::Start;
 use crate::node::secrets::Delivered;
 use crate::standby::Follower;
 use crate::standby_key::StandbyKeys;
-use crate::standby_key::chain::{StandbyChain, StandbyDomain};
 use crate::stats::Stats;
 use crate::tee::Attestor;
 use crate::tee::clock::GuestClock;
@@ -133,31 +129,15 @@ pub(super) fn before_whole_log_take(cfg: &NodeConfig, start: &KeyStart) -> anyho
     Ok(())
 }
 
-/// This release's sealed standby keys, which a take at a start signs its request with
-/// (`handover::successor::ask`), while the standby rule applies and the schedule lists them as the
-/// promotable key of the candidate `cfg`'s admin key belongs to; `None` otherwise, as with no schedule or
-/// no candidacy.
+/// What a take signs its request with: this release's standby keys, opened or sealed now, with the
+/// admission in the sealing directory that names them, if any (`handover::admission`); `None` without
+/// `[tee.sealing]`, whose node takes no keys.
 /// Error cases:
-/// - the custody quorum cannot be built or read, or the sealed keys do not open
-pub(super) async fn take_standby(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Option<StandbyKeys>> {
-    if !standby::applies(cfg) {
-        return Ok(None);
-    }
-    let log_heads = cfg.log_heads.as_ref().context("[log_heads]")?.contract;
-    let sealing = cfg.tee.sealing.as_ref().context("a member seals its keys")?;
-    let chain = StandbyReader::connect_named(&cfg.custody, log_heads, "take_standby")?;
-    let vault = Address::from(cfg.custody.vault.parse::<AccountId>()?.0);
-    // The pinned block holds the reader's session, so it is let go before the keys' own read.
-    let read: BoxFuture<'_, anyhow::Result<Option<(StandbyDomain, AccountId)>>> = Box::pin(async {
-        let block = chain.latest().await?;
-        let Some(domain) = StandbyDomain::at_if_scheduled(&block, cfg.custody.chain_id, vault).await? else {
-            return Ok(None);
-        };
-        Ok(candidate_of(&block, &domain, cfg.operator()?.address).await?.map(|candidate| (domain, candidate)))
-    });
-    let Some((domain, candidate)) = read.await? else { return Ok(None) };
-    let sealer = sealer(cfg.tee.provider, start)?;
-    StandbyKeys::open_promotable(&sealing.dir, sealer, cfg.file_sha256, &chain, (&domain, candidate)).await
+/// - the platform's sealing is not available, or the standby seal cannot be opened or written
+pub(crate) fn requester(cfg: &NodeConfig, start: &KeyStart) -> anyhow::Result<Option<Requester>> {
+    let Some(sealing) = cfg.tee.sealing.as_ref() else { return Ok(None) };
+    let keys = StandbyKeys::open_or_seal(&sealing.dir, sealer(cfg.tee.provider, start)?, cfg.file_sha256)?;
+    Ok(Some(Requester::with_admission(Arc::new(keys), &sealing.dir)))
 }
 
 /// Runs the node, and, for a member, follows between its holdings: each `wait` gives the turn the
