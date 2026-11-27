@@ -364,7 +364,7 @@ async fn replay(
 mod snapshot;
 
 #[cfg(test)]
-mod history_tests;
+pub(crate) mod history_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

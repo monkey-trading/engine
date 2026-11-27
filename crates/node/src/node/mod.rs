@@ -43,7 +43,7 @@ mod turn_keys;
 pub use keys::{KeyStart, parse_launch_digest};
 use ticker::run_ticker;
 mod preflight;
-mod recovery;
+pub(crate) mod recovery;
 use recovery::Recovered;
 #[cfg(test)]
 use recovery::read_log_and_history_authorities;
