@@ -31,7 +31,7 @@ fn a_segment_ends_before_a_command_that_would_pass_the_size_a_member_fetches() {
     for listed in manifest.segments.iter().filter(|segment| segment.first_seq != 16) {
         assert!(listed.bytes <= MAX_SEGMENT_BYTES, "{listed:?}");
     }
-    assert!(MAX_SEGMENT_BYTES < crate::standby::MAX_ARCHIVE_BYTES);
+    const _: () = assert!(MAX_SEGMENT_BYTES < crate::standby::MAX_ARCHIVE_BYTES);
     let oversize = manifest.segments.iter().find(|segment| segment.first_seq == 16).expect("the large line's");
     assert_eq!((oversize.first_seq, oversize.last_seq), (16, 16), "a line past the bound takes a segment alone");
     assert_eq!(log_entries(&dir), entries);

@@ -149,5 +149,5 @@ fn entitlements_past_what_a_first_segment_held_carry_over_segments_a_member_fetc
     let lines: u64 = listed.segments.iter().map(|segment| segment.bytes).sum();
     let framing = lines.saturating_sub(bytes.len() as u64) / large.parts.len() as u64 + SEAL_AND_EVENTS;
     assert!(framing < 1024, "{framing} bytes of framing a part");
-    assert!(crate::archive::RANGE_BYTES >= MAX_FILE_BYTES + LAUNCH_RANGE_SEQS * 1024 + LAUNCH_RANGE_FLOW);
+    const _: () = assert!(crate::archive::RANGE_BYTES >= MAX_FILE_BYTES + LAUNCH_RANGE_SEQS * 1024 + LAUNCH_RANGE_FLOW);
 }
