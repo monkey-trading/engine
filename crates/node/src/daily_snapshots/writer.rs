@@ -58,6 +58,26 @@ impl Job {
 /// holds the sequencer's stop, a handover's included; a snapshot left to finish after it is an unlisted file
 /// the next start removes if the process ends first.
 const DROP_WAIT: Duration = Duration::from_secs(2);
+/// How many seconds a test build's drop waits instead, when a run that restarts a node inside its own process, the
+/// soak, sets it (`wait_on_drop`); 0 for `DROP_WAIT`. A process that ends takes its writer thread with it, so
+/// such a run waits for the thread as the end of a process would settle it.
+#[cfg(test)]
+static TEST_DROP_WAIT_SECS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Makes a writer's drop wait up to `wait` for its thread, in a test build.
+#[cfg(test)]
+pub(crate) fn wait_on_drop(wait: Duration) {
+    TEST_DROP_WAIT_SECS.store(wait.as_secs(), Ordering::Relaxed);
+}
+
+/// How long a writer's drop waits for its thread.
+fn drop_wait() -> Duration {
+    #[cfg(test)]
+    if let secs @ 1.. = TEST_DROP_WAIT_SECS.load(Ordering::Relaxed) {
+        return Duration::from_secs(secs);
+    }
+    DROP_WAIT
+}
 
 /// The sequencer's end of the writer.
 pub(crate) struct Writer {
@@ -89,7 +109,7 @@ impl Drop for Writer {
     /// `DROP_WAIT`, leaves it to finish.
     fn drop(&mut self) {
         self.jobs = None;
-        if let Err(RecvTimeoutError::Timeout) = self.ended.recv_timeout(DROP_WAIT) {
+        if let Err(RecvTimeoutError::Timeout) = self.ended.recv_timeout(drop_wait()) {
             warn!("the daily snapshot writer is still writing; it is left to finish");
             return;
         }

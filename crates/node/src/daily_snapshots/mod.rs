@@ -36,6 +36,8 @@ pub(crate) use vault::{VaultRoots, accepted_signers, anchor_signer};
 mod writer;
 #[cfg(test)]
 pub(crate) use writer::publish_now;
+#[cfg(test)]
+pub(crate) use writer::wait_on_drop;
 pub(crate) use writer::{Job, Writer};
 
 use std::fs::File;
