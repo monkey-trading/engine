@@ -1529,7 +1529,7 @@
       "type": "timeseries",
       "id": 29,
       "title": "Store size",
-      "description": "Bytes the host's disk allocates to each store's files: the log, the history index, the marks cache, the recovery caches, the daily snapshots and the alert outbox. The host reports these; they are operator figures only.",
+      "description": "Bytes the host's disk allocates to each store's files: the log, the history index, the marks cache, the recovery caches, the daily snapshots and the alert outbox. The host reports these; they are operator figures only. With archive.local_window, the log's segments on the host, by their listings, level off at the window.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1549,6 +1549,15 @@
           "expr": "max by (instance, store) (engine_store_bytes{instance=~\"$instance\"})",
           "legendFormat": "{{instance}} {{store}}",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max by (instance) (engine_log_local_bytes{instance=~\"$instance\"})",
+          "legendFormat": "{{instance}} log segments kept by the local window",
+          "refId": "B"
         }
       ],
       "fieldConfig": {

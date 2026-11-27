@@ -33,7 +33,7 @@ pub(crate) mod startup;
 
 use std::path::PathBuf;
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::event::Event;
 use engine_core::types::{AccountId, Millis};
 use serde::Serialize;
@@ -167,6 +167,9 @@ pub struct HistoryCheck {
     opened: anyhow::Result<(Writer, Option<CommandEntry>)>,
     /// Whether the log held the last command the index took, unchanged, once its seq was read.
     found: Option<bool>,
+    /// Where an index that holds nothing, or is discarded, starts taking the log: the log's start, unless its
+    /// oldest segments left the host (`HistoryPlan::fresh_from`).
+    fresh_from: Offset,
 }
 
 impl History {
@@ -325,7 +328,12 @@ impl HistoryCheck {
             Err(e) if !found_file => return Err(e),
             opened => opened,
         };
-        Ok(Self { dir: cfg.dir.clone(), retention_ms, opened, found: None })
+        Ok(Self { dir: cfg.dir.clone(), retention_ms, opened, found: None, fresh_from: Offset::start_of(0) })
+    }
+
+    /// This check, an index that holds nothing, or is discarded, taking the log from `from`.
+    pub(crate) fn fresh_from(self, from: Offset) -> Self {
+        Self { fresh_from: from, ..self }
     }
 
     /// Notes the next entry of the log recovery reads.
@@ -341,19 +349,26 @@ impl HistoryCheck {
     /// The index, resumed after the last command it took when the log observed holds that command
     /// unchanged. An index `open` found damaged, of another schema, or pruned under another
     /// retention, or whose last command the log does not hold unchanged, is discarded with a
-    /// Warning alert and rebuilt from the start of the log. A power loss can leave the index ahead
-    /// of the log, and a log rolled back, truncated, or replaced does the same; a log forged to end
+    /// Warning alert and rebuilt from `fresh_from`, the start of the log unless its oldest segments left the host,
+    /// as an index that holds nothing starts; so is one that ends before `fresh_from`. A power loss can leave the index
+    /// ahead of the log, and a log rolled back, truncated, or replaced does the same; a log forged to end
     /// with that same command passes (see the module's TODO).
     /// Error cases:
     /// - a discarded index cannot be removed or replaced (see `Writer::open`)
     pub fn finish(self) -> anyhow::Result<History> {
         let path = self.dir.join(INDEX_FILE);
-        let found = self.found;
+        let (found, fresh_from) = (self.found, self.fresh_from);
         let resumed = self.opened.and_then(|(writer, last)| {
             let Some(last) = last else {
-                return Ok((writer, Offset::start_of(0)));
+                return Ok((writer, fresh_from));
             };
             let seq = last.sequenced.seq;
+            // The commands between are past the retention, and their rows' snapshot may have left the host.
+            ensure!(
+                seq.saturating_add(1) >= fresh_from.seq,
+                "the index ends at seq {seq}, before seq {}, where an index re-derives from the log on the host",
+                fresh_from.seq
+            );
             match found {
                 None => bail!("the log ends before seq {seq}, the last command the index took"),
                 Some(false) => bail!("the log holds another command at seq {seq}, the last command the index took"),
@@ -369,7 +384,7 @@ impl HistoryCheck {
                     "rebuilding the history index from the log: {reason:#}"
                 );
                 discard(&path)?;
-                (Writer::open(&path, self.retention_ms)?.0, Offset::start_of(0))
+                (Writer::open(&path, self.retention_ms)?.0, fresh_from)
             }
         };
         info!(dir = %self.dir.display(), from = %resume_at, "history index opened");

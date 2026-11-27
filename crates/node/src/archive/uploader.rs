@@ -7,6 +7,9 @@
 //! confirmed and raises Warning `archive_object_mismatch`; since nothing may replace the object, the node uploads
 //! nothing past it rather than leave its own copy's later ranges beside a log the bucket holds otherwise. While no
 //! range can go up, it puts the tails of the checkpoints the vault may still hold as its latest in the bucket (`tails`).
+//! A segment of a range that is no longer on the host is read from the bucket, as its listing names it, to build the
+//! range from (`absent`). The uploader publishes how many ranges, from the first, the bucket holds (`archived`),
+//! which the log's local window reads.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -21,7 +24,7 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes,
+    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes_with,
     range_key, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
@@ -29,6 +32,7 @@ use crate::config::{NodeConfig, Values};
 use crate::log::Manifest;
 use crate::metrics::Metrics;
 
+mod absent;
 mod tails;
 use crate::archive::uploader::tails::Tails;
 
@@ -75,6 +79,9 @@ struct Work<F> {
     unread: Option<u64>,
     /// The tails of the checkpoints the vault may still hold as its latest.
     tails: Tails,
+    /// How many ranges, from the first, the bucket holds as this process found or confirmed them; unknown until
+    /// the first resume ends.
+    archived: watch::Sender<Option<u64>>,
 }
 
 /// The vault's finalized checkpoints, as the copy in use holds them.
@@ -146,8 +153,16 @@ impl<F: Finality> Uploader<F> {
             stalled_at,
             unread: None,
             tails: Tails::default(),
+            archived: watch::channel(None).0,
         };
         (Self { sources: handed, work }, sources)
+    }
+
+    /// How many ranges, from the first, the bucket holds as this process found them at a resume or confirmed them
+    /// since, unknown until its first resume ends: the log's local window removes no segment holding a seq of a range
+    /// at or past it, and does nothing while it is unknown.
+    pub(crate) fn archived(&self) -> watch::Receiver<Option<u64>> {
+        self.work.archived.subscribe()
     }
 
     /// Uploads from each manifest handed to it in turn, until its sources close.
@@ -198,6 +213,7 @@ impl<F: Finality> Work<F> {
         next = self.stalled_at.map_or(next, |at| next.min(at));
         info!(ranges = next, stalled = ?self.stalled_at, "the archive holds the log's ranges up to here");
         self.backlog.restart(next);
+        self.archived.send_replace(Some(next));
         loop {
             let view = manifest.borrow_and_update().clone();
             let whole = match self.backlog.observe(&view) {
@@ -222,6 +238,7 @@ impl<F: Finality> Work<F> {
                 Ok(below) if next < below => self.upload(&view, next).instrument(span.clone()).await.map(|found| {
                     if found == Found::Confirmed {
                         next += 1;
+                        self.archived.send_replace(Some(next));
                     }
                 }),
                 Ok(_) => {
@@ -358,7 +375,8 @@ impl<F: Finality> Work<F> {
         );
     }
 
-    /// Uploads range `index`, and reads it back.
+    /// Uploads range `index`, and reads it back: a range a segment of which the host lost waits until another copy's
+    /// uploader puts the range in the bucket (`build`).
     /// Error cases:
     /// - the range cannot be built, or the bucket cannot take or serve it
     async fn range(&mut self, view: &Manifest, index: u64) -> anyhow::Result<Found> {
@@ -374,12 +392,14 @@ impl<F: Finality> Work<F> {
         Ok(found)
     }
 
-    /// Range `index` as the node's copy holds it, read off the runtime.
+    /// Range `index` as the node's copy holds it, read off the runtime, a segment of it the host no longer holds read
+    /// from the bucket as its listing names it (`absent_bytes`).
     /// Error cases:
-    /// - see `range_bytes`
+    /// - see `absent_bytes` and `range_bytes_with`
     async fn build(&self, view: &Manifest, index: u64) -> anyhow::Result<Arc<Vec<u8>>> {
+        let supplied = self.absent_bytes(view, index).await?;
         let (dir, read) = (self.dir.clone(), view.clone());
-        Ok(Arc::new(spawn_blocking(move || range_bytes(&dir, &read, index)).await??))
+        Ok(Arc::new(spawn_blocking(move || range_bytes_with(&dir, &read, index, &supplied)).await??))
     }
 
     /// Whether range `index`'s object holds `raw`, the node's copy of it, reporting a mismatch.

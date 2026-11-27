@@ -40,13 +40,16 @@ their output call a running trading server a node.
   projected from the whole replay's rate, not measured at launch scale. The start's time does not grow
   with the log's age. The chart history and the dashboard figures continue from what the snapshot
   carries, so they answer as before the restart. The start still reads the log from the posted log
-  head when the head is older than the snapshot's last 65,536 instructions, and a rebuild of the
-  account history index (below) reads the whole log, so the host keeps every segment while either can
-  happen.
+  head when the head is older than the snapshot's last 65,536 instructions, a few posting intervals at
+  most. A new account history index (below) on a log whose oldest segments left the host takes the log
+  from the daily snapshot before the start of its retention, which `archive.local_window` keeps on the
+  host; after `history.retention` grew, the start first puts back from the archive's bucket the segments
+  the longer retention holds, the whole log when the host holds no daily snapshot from before it.
 - **Some starts replay much more.** A start that finds no usable daily snapshot (`snapshot_start_refused`,
   or none written yet, as in a log's first day) replays every instruction in the log: 30 days of launch
-  flow, about 246 million instructions, take about 11 hours, and the log's segments before the newest
-  snapshot must all be on the host. With `[snapshots]`, a start that finds no usable cache
+  flow, about 246 million instructions, take about 11 hours. It first puts back every segment that
+  `archive.local_window` removed, read from the archive's bucket, so the log's volume needs room for the
+  whole log while it runs. With `[snapshots]`, a start that finds no usable cache
   (`snapshot_rejected`) replays the whole log, and also rebuilds the history index from it, which takes
   longer still. With `[daily_snapshots]`
   too, it rejects a cache that carries no replay state, as one from an earlier release or taken while
@@ -210,7 +213,10 @@ the vault.
    ```
 
    The replay prints a line that begins `verified:`. Its last checkpoint's sequence number is at
-   least the vault's `latestSeq`, with the same root as `latestRoot`.
+   least the vault's `latestSeq`, with the same root as `latestRoot`. A rotation member's copy lacks
+   the segments its `archive.local_window` removed: add `--archive-config <the member's config>`,
+   which puts them back into the copy from the archive's bucket first, as
+   [Keep a window of the log on the host](log-archive.md#keep-a-window-of-the-log-on-the-host) describes.
 
 4. Put the copy on a fresh data disk with the configuration, and start the trading server as
    [Restart a healthy trading server](#restart-a-healthy-trading-server) describes.
@@ -274,7 +280,7 @@ heads are kept for each signer epoch, and the new epoch starts with none.
 
    The replay prints a line that begins `verified:`, and its last sequence number is at least the
    posted one. The start compares the posted link itself, so it refuses a wrong copy before it
-   writes anything.
+   writes anything. A rotation member's copy needs `--archive-config`, as in step 3 above.
 
 6. Put the copy on a fresh data disk with the configuration, and start the trading server as
    [Restart a healthy trading server](#restart-a-healthy-trading-server) describes.

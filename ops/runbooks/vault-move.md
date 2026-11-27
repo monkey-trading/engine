@@ -299,11 +299,16 @@ is not frozen: find it with `/v1/operator`, put the `frozen` file on its data di
 Then check, after each checkpoint the alpha vault accepts, whether a carry from it would pass. Run
 the check on a copy of the alpha's log that holds the alpha vault's newest checkpoint, such as a
 following member's copy, taken as [Running as a standby](standby.md) shows. The archive does not
-serve the segment still being written.
+serve the segment still being written. With `archive.local_window`, as the alpha's release sets, the
+copy lacks its oldest segments: each `engine carry` of it below takes `--archive-config <alpha config>`,
+the alpha node's configuration, and the `engine replay` with `--carry-source` takes
+`--carry-source-archive-config <alpha config>`, either of which puts them back into the copy from the
+alpha's bucket first, so the copy needs room for the whole log
+([Keep a window of the log on the host](log-archive.md#keep-a-window-of-the-log-on-the-host)).
 
 ```shell
 S=$(cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC)
-$ENGINE carry --log <alpha log copy> --seq $S --check
+$ENGINE carry --log <alpha log copy> --seq $S --check --archive-config <alpha config>
 ```
 
 `<alpha log copy>` is that copy's log directory. The command exits with status 0 when a carry from
@@ -341,7 +346,7 @@ cast nonce <relayer> --block pending --rpc-url $RPC
 cast nonce <relayer> --block latest --rpc-url $RPC
 S=$(cast call $ALPHA_VAULT 'latestSeq()(uint64)' --block finalized --rpc-url $RPC)
 cast call $ALPHA_VAULT 'latestSeq()(uint64)' --rpc-url $RPC
-$ENGINE carry --log <alpha log copy> --seq $S --check
+$ENGINE carry --log <alpha log copy> --seq $S --check --archive-config <alpha config>
 ```
 
 The first two commands print the same number, and the next two the same sequence number, `$S`. The
@@ -376,7 +381,7 @@ later start, or its genesis is refused.
 Build the carry file from the alpha's log at `$S`:
 
 ```shell
-$ENGINE carry --log <alpha log copy> --seq $S --out carry.json
+$ENGINE carry --log <alpha log copy> --seq $S --out carry.json --archive-config <alpha config>
 ```
 
 The command replays the log to its checkpoint at `$S`, checks the checkpoint's root, writes
@@ -472,7 +477,7 @@ These checks only read.
    shows, into `launch-archive`, and use the alpha log copy from step 9:
 
    ```shell
-   $ENGINE replay --log launch-archive --carry-source <alpha log copy>
+   $ENGINE replay --log launch-archive --carry-source <alpha log copy> --carry-source-archive-config <alpha config>
    ```
 
    After the usual replay, the command replays the alpha's log to the carried sequence number. It
@@ -661,6 +666,15 @@ its configuration hash.
 - **Keep the alpha's log published.** Publish its whole log, the active segment included, once the
   alpha's trading server stops, and keep it in at least two stores. Anyone who verifies the launch
   log replays it with `--carry-source`.
+- **Keep the alpha's last segments.** The alpha's log stops at the move, so its last range of 10,000
+  sequence numbers never fills and never goes up to the archive's bucket as a range. Its commands
+  through the alpha's final checkpoint are in the bucket in that checkpoint's tail, from which
+  `engine replay` and `engine exit-proof` read the log through the vault's latest checkpoint; the
+  segment files after the last whole range, and any command after the final checkpoint, are only on
+  the alpha's hosts and in the copies you publish. With `archive.local_window`, a host never removes a
+  segment that holds a sequence number of a range the bucket does not hold, tails aside, so each alpha
+  host keeps them however old they get. Keep at least one alpha host's log directory, or a checked copy
+  of those segments with the alpha's `manifest.jsonl`.
 - **The alpha vault's exit stays open to anyone.** Fourteen days after the alpha's final
   checkpoint, anyone may start the alpha vault's exit, which pays mock USDC only. It cannot mint
   MONKEY, and nothing it pays reaches the launch vault.

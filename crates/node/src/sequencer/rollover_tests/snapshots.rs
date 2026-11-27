@@ -106,8 +106,9 @@ fn a_repair_derives_a_rollovers_rows_from_the_newest_snapshot_before_it() {
 }
 
 /// A replica's derivation of the rows before its snapshot starts from the newest daily snapshot stamped more than the
-/// store's retention before the snapshot's command, reading the log only from there on; one stamped within the
-/// retention is passed over for genesis, as is every snapshot without a directory of them.
+/// store's retention before the snapshot's command, or before the copy's newest command when given, reading the log
+/// only from there on; one stamped within the retention is passed over for genesis, as is every snapshot without a
+/// directory of them.
 #[test]
 fn the_rows_before_a_replicas_snapshot_are_derived_from_a_snapshot_older_than_the_retention() {
     let (mut rig, at, _) = rolled("snapshot-through");
@@ -127,6 +128,10 @@ fn the_rows_before_a_replicas_snapshot_are_derived_from_a_snapshot_older_than_th
     let older = store("snapshot-through-older", through_ts - stamped - 1, Some(snapshots.clone()));
     assert_eq!(older.derive_through(&rig.dir, through, &running).unwrap(), Some(1), "the rollover's rows");
     assert!(older.derived(&command_at(&entries, at)).unwrap().is_some(), "kept");
+    // Counted from a later command, the newest a replica's copy holds, the retention reaches past the snapshot.
+    let later = store("snapshot-through-later", through_ts - stamped, Some(snapshots.clone()));
+    let retained = later.derive_retained(&rig.dir, (through, Some(through_ts + 1)), &running).unwrap();
+    assert_eq!(retained, Some(1), "the rollover's rows, from the snapshot");
     let within = store("snapshot-through-within", through_ts - stamped, Some(snapshots));
     let error = within.derive_through(&rig.dir, through, &running).unwrap_err();
     assert!(error.downcast_ref::<NotLocal>().is_some(), "a snapshot within the retention: {error:#}");

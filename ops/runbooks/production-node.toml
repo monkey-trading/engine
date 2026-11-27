@@ -517,6 +517,10 @@ region = "auto"
 public_url = "https://archive.example.com" # REPLACE: the bucket's custom domain
 access_key_id_secret = "archive_access_key_id"
 secret_access_key_secret = "archive_secret_access_key"
+# The host keeps 30 days of the log in sequenced time, the history index's retention, and every segment the
+# bucket does not hold yet; an older segment leaves the host once the bucket gives back its bytes, and readers
+# take it from the bucket. Not with [snapshots], whose history index rebuilds from the whole log.
+local_window = "30d"
 
 # Account history keeps 30 days, counted back from the newest command; older events stay in the public
 # log and its archive. A change of retention makes the node discard the index and rebuild it from the log.

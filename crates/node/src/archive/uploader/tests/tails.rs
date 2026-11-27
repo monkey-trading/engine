@@ -24,7 +24,8 @@ use crate::archive::{Bucket, piece_bytes, whole_ranges};
 const OTHER_ROOT: &str = "0xabababababababababababababababababababababababababababababababab";
 
 /// The newest checkpoint's tail goes up while the vault has finalized only an earlier one: its pieces run from the
-/// first range the bucket lacks, below which no piece goes up, to the checkpoint's own, each holding the copy's.
+/// first range the bucket lacks, below which no piece goes up, to the checkpoint's own, each holding the copy's. The
+/// count of ranges the bucket holds, below which the log's local window may remove a segment, takes no tail.
 #[tokio::test]
 async fn a_checkpoints_tail_goes_up_before_the_vault_finalizes_it() {
     let (bucket, dir, vault) = (StandIn::start().await, scratch_dir("archive-tail-early"), Vault::default());
@@ -33,11 +34,13 @@ async fn a_checkpoints_tail_goes_up_before_the_vault_finalizes_it() {
     more(&node, 6).await;
     let (seq, root) = newest_checkpoint(&dir);
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault));
+    let archived = uploader.archived();
     sources.send_replace(Some(node.manifest.clone()));
     let running = tokio::spawn(uploader.run());
     until("the newest checkpoint's tail", || metrics.archive.tail_seq.get() as u64 == seq).await;
     let ranges = metrics.archive.confirmed_ranges.get() as u64;
     assert_eq!(ranges, finalized / RANGE_SEQS, "no range past the vault's finalized checkpoint");
+    assert_eq!(*archived.borrow(), Some(ranges), "the window's count stops at the ranges, the tail's aside");
     assert!(seq / RANGE_SEQS > ranges, "the tail covers ranges the bucket lacks");
     let view = node.manifest.borrow().clone();
     for index in ranges..=seq / RANGE_SEQS {

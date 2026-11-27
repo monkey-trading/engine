@@ -7,7 +7,7 @@ use anyhow::{Context, ensure};
 use tokio::sync::watch;
 
 use crate::log::checked::{self, CheckedChunks, ChunkHashes, Progress};
-use crate::log::{LogEntry, Manifest, Offset, SegmentInfo, offset_of, parse_line};
+use crate::log::{Hold, LogEntry, Manifest, Offset, SegmentInfo, offset_of, parse_line};
 
 /// Entries at or after an inclusive offset, bounded by the writer's flush frontier.
 pub struct LogReader {
@@ -17,6 +17,10 @@ pub struct LogReader {
     segment: Option<OpenSegment>,
     last: Option<Offset>,
     held: Option<(Offset, LogEntry)>,
+    /// Its hold on the segment it reads and those after (`Holds`), taken before it opens the first.
+    hold: Option<Hold>,
+    /// Whether it holds the segments it reads at all (`unheld`).
+    holding: bool,
 }
 
 struct OpenSegment {
@@ -38,9 +42,16 @@ impl LogReader {
     /// Error cases:
     /// - a required catalog proof or starting descriptor is unavailable or invalid
     pub fn open(dir: &Path, from: Offset, manifest: watch::Receiver<Manifest>) -> anyhow::Result<Self> {
-        let mut reader = Self { dir: dir.to_owned(), from, manifest, segment: None, last: None, held: None };
+        let (segment, last, held, hold) = (None, None, None, None);
+        let mut reader = Self { dir: dir.to_owned(), from, manifest, segment, last, held, hold, holding: true };
         reader.open_start()?;
         Ok(reader)
+    }
+
+    /// This reader, holding no segment it reads: a stream client's backfill, which a client paces, so the local window
+    /// lets a segment go under it, and the backfill then fails with `NotLocal`, naming the archive.
+    pub fn unheld(self) -> Self {
+        Self { holding: false, ..self }
     }
 
     /// Releases the open file and chunk buffer; the next call checks each chunk it rereads against
@@ -92,6 +103,12 @@ impl LogReader {
                 };
                 ensure!(segment.consumed <= info.bytes, "flushed prefix shrank");
                 let path = self.dir.join(&info.file);
+                // Held before the file is looked for, so the local window removes it only before this reader looks.
+                match &self.hold {
+                    Some(hold) => hold.at(info.first_seq),
+                    None if self.holding => self.hold = Some(view.holds.hold(info.first_seq)),
+                    None => {}
+                }
                 // A listed segment the host no longer holds is the archive's to serve.
                 if !path.try_exists().with_context(|| format!("probing {}", path.display()))? {
                     let not_local = crate::log::NotLocal { seq: info.first_seq.max(self.from.seq), first_local: None };

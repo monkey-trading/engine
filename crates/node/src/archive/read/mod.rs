@@ -20,6 +20,7 @@ use crate::archive::{Object, RANGE_SEQS, log_prefix, range_key, read_public, tai
 use crate::config::NodeConfig;
 
 mod segments;
+pub(crate) use segments::MAX_REBUILT_BYTES;
 pub(crate) use segments::{ArchiveOrigins, Origins, Segments};
 mod source;
 #[cfg(test)]

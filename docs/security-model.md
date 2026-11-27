@@ -514,9 +514,15 @@ checkpoint, and reads none of the log before it; nor does a rotation member's
 replica, a standby's copy, a handover successor's copy, or the re-derivation of the financing rows of a
 rollover after the checkpoint. Two reads still need older segments: a posted log head older than the last 65,536 instructions
 before the snapshot's checkpoint, whose links the snapshot carries, is checked by hashing the log's
-instructions from the head onto the checkpoint, and a rebuild or repair of the account history index
-reads the log from its start. So the host keeps the segments from the earlier of the posted head and
-the snapshot's checkpoint, and every segment while the history index may need rebuilding. A usable
+instructions from the head onto the checkpoint, and a rebuild of the account history index re-derives its
+rows from the newest daily snapshot before each command it takes. The log's local window keeps the segments
+from the newest snapshot's checkpoint and from that of the newest before the history's retention whose file
+hashes as its listing says, and a new history index on a log whose oldest segments left the host starts after
+the latter, first putting back from the archive's bucket the segments from there that the host lacks, as after
+the retention grew. A start that reads the log from a posted head the window removed segments after, as after
+head posting stalled for longer than the window, puts back every segment the window removed first, and so does
+every whole replay of a copy, newest first, so the host's segments stay one run. With `[snapshots]`, whose
+history index rebuilds and repairs from the log's start, the window does not run. A usable
 snapshot is one
 that carries the replay state, whose checkpoint the log holds signed, its signature verified, by the
 key the vault names at its sequence number (the signer of the checkpoint the vault accepted there, or
@@ -905,11 +911,33 @@ that still waits once the vault has finalized a later checkpoint is dropped. A c
 that has stopped at a range that reads back otherwise, or that the vault's history has superseded,
 uploads no tail.
 
+With `archive.local_window`, the host keeps that much of the log, in sequenced time, and leaves the rest to
+the bucket. A completed segment leaves the host, oldest first, only once the bucket holds every range it holds
+sequence numbers of, as the trading server's own uploader counts them; every command of it is older than the
+window, counted back from the newest segment's first command, the log's own stamps and never the host's clock;
+it ends before the checkpoint of the newest daily snapshot a start may go on from, and of the newest one stamped
+before the history index's retention whose file hashes as its manifest line says; a read of its sequence numbers from the bucket's public origin, made just
+before it leaves, gives back the bytes its manifest line names; and no reader of the log inside the trading server
+holds it, which its removal checks under the lock a reader takes its hold under. A stream client's backfill takes
+no hold, so a client cannot keep a segment on the host: one that reaches a removed segment fails, naming the
+archive. So the archive holds every
+segment the window removes, as its manifest line names it, and a segment holding a sequence number of a range not
+yet whole, or not yet finalized, stays, as does one whose commands the bucket holds only in a checkpoint's tail:
+a log that stops for good keeps its last segments. A listed segment that
+the host must keep and lacks is put back from the bucket or a mirror, taken only as its manifest line names it,
+and one that no source gives back pages `log_segment_missing`. A start that replays the whole log, or a member's
+replica built from its whole copy, first puts back every segment the window removed, from the bucket, and replays
+it as it replays any copy.
+
 Known limits:
 
 - The host can withhold an upload or its read-back, which the trading server then never counts as
   archived, and pages `archive_upload_lagging`; it never makes the trading server wait. The host
-  keeps the whole log meanwhile.
+  keeps every segment the bucket does not hold meanwhile.
+- The host can remove any segment itself, as it can alter any file. The window adds no way to lose
+  one: a segment it removes is in the bucket as its manifest line names it. A segment the host
+  removes before the bucket holds it pages `log_segment_missing` until a member's copy uploads its
+  ranges or a mirror serves it.
 - The endpoint, the bucket and the public origin are in the attested configuration, so the host
   cannot point uploads or their read-backs elsewhere. The trading server signs uploads at the host's
   clock, so a skewed clock only makes the bucket refuse them.
@@ -1657,9 +1685,11 @@ Known limits:
   signer that signed a false one is caught by any replay that passes the checkpoint, in ranges or
   whole, not by the start.
 - The host can withhold the newer snapshots, so a start goes on from an older one and replays more of
-  the log, or remove the log's segments before the newest usable snapshot's checkpoint, after which a
-  start with no usable snapshot, or with a posted head older than the links the snapshot carries, cannot
-  read the log it needs and refuses to serve, as does a rebuild of the account history index. A start
+  the log, or remove the log's segments before the newest usable snapshot's checkpoint. A start with no
+  usable snapshot then puts the segments it lacks back from the archive's bucket before it replays the
+  whole log, as does a start with a posted head older than the links the snapshot carries, and a
+  rebuild of the account history index puts back those it takes, and each refuses to serve where neither
+  the bucket nor an archive mirror gives them back, the rebuild under `history_recovery_failed`. A start
   never takes a snapshot the vault has not finalized.
 - A trading server or a member that started from a daily snapshot did not replay the log before the
   snapshot's checkpoint, so its own check at a handover or a promotion counts only for a range that

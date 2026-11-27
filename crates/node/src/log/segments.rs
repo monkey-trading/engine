@@ -21,7 +21,7 @@ use crate::log::catalog_head::CatalogDomain;
 use crate::log::catalog_owner::CatalogOwner;
 use crate::log::checked::{self, CheckedChunks};
 use crate::log::writer::seal::SealWork;
-use crate::log::{ActivePrefix, LogEntry, Offset, ReadAuthority, by_entry, offset_of, parse_line, read_lines};
+use crate::log::{ActivePrefix, Holds, LogEntry, Offset, ReadAuthority, by_entry, offset_of, parse_line, read_lines};
 
 pub const MANIFEST: &str = "manifest.jsonl";
 
@@ -46,6 +46,9 @@ pub struct Manifest {
     /// not signed, serves them as the host holds them, and the history index, which trusts the host's disk, reads
     /// them. The log's start for a start that read every segment, or one whose catalog vouches for them.
     pub verified_from: Offset,
+    /// The segments readers of this log hold, which no segment they hold leaves the host while they do: one
+    /// registry for each log opened, which its writer's every published view shares.
+    pub holds: Holds,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +402,7 @@ impl Segment {
 /// The segment files in `dir`, by first seq; a missing directory has none.
 /// Error cases:
 /// - the directory exists but cannot be listed
-pub(super) fn list_segments(dir: &Path) -> anyhow::Result<Vec<(u64, PathBuf)>> {
+pub(crate) fn list_segments(dir: &Path) -> anyhow::Result<Vec<(u64, PathBuf)>> {
     let listing = match fs::read_dir(dir) {
         Ok(listing) => listing,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

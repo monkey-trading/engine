@@ -192,6 +192,25 @@ pub(super) fn candidate_seqs(dir: &Path, finalized: u64) -> Vec<u64> {
     seqs.into_iter().rev().take(ATTEMPTS).collect()
 }
 
+/// The checkpoint seq of the newest daily snapshot in `dir` a start without origins may go on from now, at or before
+/// `bound` (`candidate_seqs`); none when it holds none there. The log's local window removes no segment holding a seq
+/// from it on (`archive::window`).
+pub(crate) fn newest_candidate(dir: &Path, bound: u64) -> Option<u64> {
+    candidate_seqs(dir, bound).into_iter().max()
+}
+
+/// The seq of the newest daily snapshot in `snapshots` whose frozen marks copy this node holds in `history`, which a
+/// start then goes on from no later than: one fetched from another node, as a member keeps them, has no copy here,
+/// and a start from it would set the chart history before it aside. None when this node holds no copy.
+pub(crate) fn framed(snapshots: &Path, history: &Path) -> Option<u64> {
+    let listed = crate::daily_snapshots::read_manifest(snapshots).ok()?;
+    let copied = |listing: &&Listed| {
+        let offset = Offset { seq: listing.seq, index: listing.index };
+        crate::history::marks::store::frozen_path(history, offset).exists()
+    };
+    listed.iter().rev().find(copied).map(|listing| listing.seq)
+}
+
 /// Whether the held snapshot at `path` may carry the replay state: its first bytes, where every writer puts its
 /// format, name no earlier format (`earlier_format`); one that cannot be read, or names none, is left for its
 /// check to refuse. None when the host no longer holds the file, as once the bucket keeps it.

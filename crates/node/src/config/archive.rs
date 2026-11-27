@@ -13,6 +13,10 @@ use crate::config::SecretName;
 
 /// The longest S3 bucket name.
 const MAX_BUCKET_BYTES: usize = 63;
+/// The shortest `local_window` a production build takes: four days. A start tries the three newest daily snapshots in
+/// turn, and the window holds the log from the newest, so four days of daily snapshots keep each one's suffix on the
+/// host; a window of hours is for a development build's scenario alone.
+const MIN_PRODUCTION_WINDOW: Duration = Duration::from_secs(4 * 86_400);
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +39,11 @@ pub struct ArchiveSection {
     /// included, before Warning `archive_upload_lagging`.
     #[serde(with = "humantime_serde", default = "default_lag_alert")]
     pub lag_alert: Duration,
+    /// How long, in sequenced time, the host keeps the log's segments once the bucket holds them: a segment whose
+    /// every command is older than this, counted back from the newest, leaves the host (`archive::window`), and
+    /// readers take it from the bucket. Absent keeps every segment on the host.
+    #[serde(default, with = "humantime_serde::option")]
+    pub local_window: Option<Duration>,
 }
 
 impl ArchiveSection {
@@ -67,6 +76,33 @@ impl ArchiveSection {
             "archive.access_key_id_secret and archive.secret_access_key_secret must name different secrets"
         );
         ensure!(!self.lag_alert.is_zero(), "archive.lag_alert must be non-zero");
+        Ok(())
+    }
+
+    /// Checks `local_window` against the sections it rests on: the daily snapshots, whose newest usable one bounds
+    /// what leaves the host (`daily`), and the history index, whose `retention` the window must cover, since the
+    /// index re-derives a retained command's rows from the log on the host. A production build takes no window under
+    /// four days.
+    /// Error cases:
+    /// - a window without `[daily_snapshots]`, shorter than `retention`, or zero
+    /// - a window under `MIN_PRODUCTION_WINDOW` in a `production` build
+    pub fn validate_window(&self, daily: bool, retention: Duration, production: bool) -> anyhow::Result<()> {
+        let Some(window) = self.local_window else { return Ok(()) };
+        ensure!(
+            daily,
+            "archive.local_window needs [daily_snapshots]: a start goes on from the newest daily snapshot and the log \
+             after it, so no segment after it leaves the host"
+        );
+        ensure!(!window.is_zero(), "archive.local_window must be non-zero");
+        ensure!(
+            window >= retention,
+            "archive.local_window must be at least history.retention, {retention:?}, so the host keeps every command \
+             the history index holds"
+        );
+        ensure!(
+            !production || window >= MIN_PRODUCTION_WINDOW,
+            "archive.local_window must be at least {MIN_PRODUCTION_WINDOW:?} in a production build"
+        );
         Ok(())
     }
 
@@ -123,6 +159,53 @@ mod tests {
         let section = section("https://account.r2.cloudflarestorage.com", "https://archive.example.com");
         section.validate(false).expect("valid");
         assert_eq!(section.lag_alert, Duration::from_secs(3600));
+        assert_eq!(section.local_window, None, "every segment stays on the host by default");
+    }
+
+    #[test]
+    fn a_window_needs_the_daily_snapshots_and_covers_the_historys_retention() {
+        let mut section = section("https://account.r2.cloudflarestorage.com", "https://archive.example.com");
+        let (day, month) = (Duration::from_secs(86_400), Duration::from_secs(30 * 86_400));
+        section.local_window = Some(3 * day);
+        let refused = section.validate_window(true, day, true).expect_err("three days in production");
+        assert!(refused.to_string().contains("production build"), "{refused:#}");
+        section.local_window = Some(4 * day);
+        section.validate_window(true, day, true).expect("four days in production");
+        section.local_window = None;
+        section.validate_window(false, month, true).expect("no window needs nothing");
+        section.local_window = Some(month);
+        section.validate_window(true, month, true).expect("thirty days over a thirty-day history");
+        let refused = section.validate_window(false, month, true).expect_err("no daily snapshots");
+        assert!(refused.to_string().contains("[daily_snapshots]"), "{refused:#}");
+        let refused = section.validate_window(true, month + day, true).expect_err("shorter than the history");
+        assert!(refused.to_string().contains("history.retention"), "{refused:#}");
+        section.local_window = Some(Duration::from_secs(4 * 3600));
+        section.validate_window(true, Duration::from_secs(3600), false).expect("hours in a development build");
+        let refused = section.validate_window(true, Duration::from_secs(3600), true).expect_err("hours in production");
+        assert!(refused.to_string().contains("production build"), "{refused:#}");
+        section.local_window = Some(Duration::ZERO);
+        assert!(section.validate_window(true, Duration::ZERO, false).is_err(), "a zero window");
+    }
+
+    #[test]
+    fn a_node_config_with_a_window_and_no_daily_snapshots_is_refused_at_load() {
+        let mut cfg = crate::test_support::dev_config();
+        let mut archive = section("http://127.0.0.1:9000", "http://127.0.0.1:9000");
+        archive.local_window = Some(cfg.history.retention);
+        (cfg.archive, cfg.daily_snapshots) = (Some(archive), None);
+        let refused = cfg.validate().expect_err("a window with no daily snapshots");
+        assert!(format!("{refused:#}").contains("archive.local_window needs [daily_snapshots]"), "{refused:#}");
+    }
+
+    #[test]
+    fn a_window_parses_as_a_duration() {
+        let parsed: ArchiveSection = toml::from_str(
+            "endpoint = \"https://a.example.com\"\nbucket = \"engine-log\"\nregion = \"auto\"\n\
+             public_url = \"https://b.example.com\"\naccess_key_id_secret = \"a\"\nsecret_access_key_secret = \"b\"\n\
+             local_window = \"30d\"\n",
+        )
+        .expect("a section");
+        assert_eq!(parsed.local_window, Some(Duration::from_secs(30 * 86_400)));
     }
 
     #[test]

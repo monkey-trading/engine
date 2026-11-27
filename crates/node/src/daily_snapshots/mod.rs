@@ -26,7 +26,9 @@ pub(crate) use signature::{Covered, Signed, Signing, open_signed, sha256};
 mod start;
 #[cfg(test)]
 pub(crate) use start::snapshot_start;
-pub(crate) use start::{AcceptedRoots, Bounds, Fetching, NoRoots, entry_at, snapshot_start_against};
+pub(crate) use start::{
+    AcceptedRoots, Bounds, Fetching, NoRoots, entry_at, framed, newest_candidate, snapshot_start_against,
+};
 mod upload;
 pub(crate) use upload::SnapshotUploader;
 mod vault;

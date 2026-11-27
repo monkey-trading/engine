@@ -6,6 +6,7 @@ use engine_core::command::Command;
 use engine_core::types::AccountId;
 use sha2::{Digest, Sha256};
 
+use crate::archive::range_bytes;
 use crate::archive::stand_in::{StandIn, Vault, test_log};
 use crate::daily_snapshots::{Listed, SnapshotUploader, snapshots_prefix, write_listing};
 use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_and_resolutions, scratch_dir};
@@ -13,6 +14,7 @@ use crate::test_support::{Alert, TestSequencer, capture_alerts, capture_alerts_a
 /// How long a test waits for the uploader before it fails.
 const WAIT: Duration = Duration::from_secs(30);
 
+mod absent;
 mod finality;
 mod tails;
 

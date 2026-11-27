@@ -42,6 +42,11 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         keep: &[u64],
     ) -> anyhow::Result<Opened> {
         let dir = self.cfg.node.log_dir.as_path();
+        // The archive's uploader and the log's local window follow no writer while the copy opens, as again while
+        // a replica it replaces still runs: the window would remove segments the open puts back or reads.
+        if let Some(archive) = self.delivered.and_then(|delivered| delivered.archive.as_ref()) {
+            archive.send_replace(None);
+        }
         // The chain and trusted time are read before the copy is bootstrapped: a read that fails then leaves the
         // copy empty, so the open tried again bootstraps it again, and may still start its replica from a snapshot.
         let at = self.vault.observe(View::Finalized, &[]).await?;
@@ -111,7 +116,11 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             history.observe(entry);
             Ok(())
         };
-        let follower = Follower::open_pinned(
+        // A replica built from the whole copy reads the segments the local window removed, which the archive holds.
+        if snapshot.is_none() {
+            crate::archive::restore_whole(self.cfg, dir).await?;
+        }
+        let opened = Follower::open_pinned(
             dir,
             segment_commands,
             workers,
@@ -122,11 +131,30 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
             pins,
             snapshot,
             observe,
-        )
-        .map_err(|e| e.context(CopyRefused))?;
+        );
+        let follower = match opened {
+            Ok(follower) => follower,
+            // A whole replay, as a snapshot the replica refused gives way to, read a segment the window removed, or
+            // one a pass still under way removed after the restore above: once they are back from the archive, the
+            // open runs again from its start, the window following no writer now.
+            Err(e) if e.is::<crate::log::NotLocal>() => {
+                if crate::archive::restore_whole(self.cfg, dir).await? == 0 {
+                    return Err(e.context(CopyRefused));
+                }
+                return Box::pin(self.open_admitting(operator, admitted, keep)).await;
+            }
+            Err(e) => return Err(e.context(CopyRefused)),
+        };
         // A replica from a snapshot observed none of the copy before it, where the history index may have stopped.
         if let Some(seq) = snapshot_seq {
             history.observe_before(dir, seq);
+        }
+        // An index that rebuilds at this member's turn takes the log from where it re-derives, which the copy lacks
+        // after `history.retention` grew past what the window kept: it is put back now, not at the turn, whose start
+        // tries again and refuses while the archive cannot give it back.
+        let view = follower.manifest().borrow().clone();
+        if let Err(e) = crate::archive::history_start(self.cfg, &view, |from| history.resumes_from(from)).await {
+            warn!("the log a rebuilt history index takes is not back on the host before the turn: {e:#}");
         }
         self.metrics.full_replays.inc_by(follower.replays());
         if let Some(archive) = self.delivered.and_then(|delivered| delivered.archive.as_ref()) {

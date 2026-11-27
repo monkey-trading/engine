@@ -206,6 +206,7 @@ impl StandIn {
             access_key_id_secret: "archive_key_id".to_owned().try_into().expect("a name"),
             secret_access_key_secret: "archive_secret_key".to_owned().try_into().expect("a name"),
             lag_alert,
+            local_window: None,
         }
     }
 

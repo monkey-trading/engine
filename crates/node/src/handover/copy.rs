@@ -173,8 +173,9 @@ pub(crate) async fn sync_predecessor_log(
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let snapshots = cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path());
     let start = copy_start(snapshots, dir, (domain, &signers), finalized).await;
-    let (_, from) = crate::sequencer::replay_copy_from(start, dir, domain, signers, cfg.node.replay_workers)
-        .context("the restored log copy does not replay")?;
+    // The refresh above fetches only what the copy does not list, not what the local window removed.
+    let (_, from) =
+        replay_restored(cfg, start, domain, signers).await.context("the restored log copy does not replay")?;
     match from {
         Some(seq) => info!(snapshot_seq = seq, "the restored log copy replays to its tip from a daily snapshot"),
         None => {
@@ -183,4 +184,28 @@ pub(crate) async fn sync_predecessor_log(
         }
     }
     Ok(())
+}
+
+/// `replay_copy_from` over the copy in `cfg`'s log directory, from `start` or whole: a whole replay reads the segments
+/// the local window removed, which are put back from the archive first (`archive::restore_whole`), and so does one a
+/// snapshot the replay refused gave way to, once it finds them absent.
+/// Error cases:
+/// - as `replay_copy_from`, or the segments cannot be put back
+pub(crate) async fn replay_restored(
+    cfg: &NodeConfig,
+    start: Option<Signed>,
+    domain: CheckpointDomain,
+    signers: BTreeSet<AccountId>,
+) -> anyhow::Result<(crate::sequencer::Replayed, Option<u64>)> {
+    let (dir, workers) = (cfg.node.log_dir.as_path(), cfg.node.replay_workers);
+    if start.is_none() {
+        crate::archive::restore_whole(cfg, dir).await?;
+    }
+    let chosen = start.is_some();
+    match crate::sequencer::replay_copy_from(start, dir, domain, signers.clone(), workers) {
+        Err(e) if chosen && e.is::<crate::log::NotLocal>() && crate::archive::restore_whole(cfg, dir).await? > 0 => {
+            crate::sequencer::replay_copy_from(None, dir, domain, signers, workers)
+        }
+        replayed => replayed,
+    }
 }

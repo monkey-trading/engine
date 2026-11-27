@@ -17,10 +17,10 @@ use engine_node::ct_watch::{self, CtWatchArgs};
 use engine_node::exit::{ExitSubject, exit_bundle};
 use engine_node::log::{CheckpointDomain, ReplayWorkers, SealChecks};
 use engine_node::{
-    Audited, ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, PublishedLog, PublishedSnapshots, SentRequest,
-    VerifiedAttestation, VerifyOptions, ensure_signers_verified, init_logging, init_telemetry, load_relayed_collateral,
-    parse_challenge_arg, parse_launch_digest, replay_path_with_custody, replay_path_with_trust,
-    replay_ranges_with_custody, run_dedicated, verify_attestation_files, verify_frames_file, verify_response_files,
+    ExpectedSigner, KDS_BASE_URL, KeyStart, NodeConfig, PublishedLog, PublishedSnapshots, SentRequest,
+    VerifiedAttestation, VerifyOptions, audit, ensure_signers_verified, init_logging, init_telemetry,
+    load_relayed_collateral, parse_challenge_arg, parse_launch_digest, run_dedicated, verify_attestation_files,
+    verify_frames_file, verify_response_files,
 };
 
 #[derive(Subcommand)]
@@ -120,6 +120,13 @@ enum Cmd {
         /// state there.
         #[arg(long)]
         carry_source: Option<PublishedLog>,
+        /// A node config whose `[archive]` names the log's bucket: the segments a `--log` directory lacks, as a
+        /// node's local window removes them, are put back into it from there first.
+        #[arg(long)]
+        archive_config: Option<PathBuf>,
+        /// As `--archive-config`, for the `--carry-source` directory, whose log has a bucket prefix of its own.
+        #[arg(long, requires = "carry_source")]
+        carry_source_archive_config: Option<PathBuf>,
     },
     /// Build the carry file a new log's genesis takes MONKEY entitlements, stakes and awards from, from a source
     /// log's published checkpoint, and print what it carries and its SHA-256.
@@ -295,6 +302,8 @@ fn main() -> anyhow::Result<()> {
             snapshots,
             jobs,
             carry_source,
+            archive_config,
+            carry_source_archive_config,
         } => {
             init_logging("info")?;
             let workers = replay_workers.map_or_else(ReplayWorkers::available, ReplayWorkers::from);
@@ -318,7 +327,7 @@ fn main() -> anyhow::Result<()> {
                 .zip(&release)
                 .map(|(attestation, release)| verify(attestation, release, &processor, &kds, root.as_deref(), None))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let log = path.local(seq.zip(state_root))?;
+            let log = path.local_filled(seq.zip(state_root), archive_config.as_deref())?;
             let snapshots = snapshots.map(|snapshots| snapshots.local(log.path())).transpose()?;
             let jobs = jobs.unwrap_or_else(engine_node::default_jobs);
             let ranges = snapshots.as_ref().map(|snapshots| (snapshots.path().to_owned(), jobs));
@@ -364,7 +373,9 @@ fn main() -> anyhow::Result<()> {
             if replayed.pending > 0 {
                 println!("note: {} approved withdrawal(s) await signature release", replayed.pending);
             }
-            let source = carry_source.as_ref().map(|source| source.local(None)).transpose()?;
+            let source = carry_source
+                .map(|source| source.local_filled(None, carry_source_archive_config.as_deref()))
+                .transpose()?;
             engine_node::carry::check_replayed(
                 &replayed.engine,
                 log.path(),
@@ -458,42 +469,6 @@ fn verify(
             let options = VerifyOptions { collateral: relayed.as_ref(), ..options };
             verify_attestation_files(attestation, release, &options).await
         })
-}
-
-/// `engine replay`'s replay of the log at `path` under the trust its flags give, `custody_config` with the
-/// pinned signer, else the attestations `verified`, else the pinned signer, or none, in `domain`: in ranges
-/// from a directory of daily snapshots, so many at once, or whole, its seals checked as `seals` says.
-/// Error cases:
-/// - the custody config cannot be loaded, or names no signer, or the replay fails
-fn audit(
-    path: &std::path::Path,
-    ranges: Option<(PathBuf, NonZeroUsize)>,
-    seals: SealChecks,
-    custody_config: Option<PathBuf>,
-    (signer, domain): (Option<AccountId>, Option<CheckpointDomain>),
-    verified: &[VerifiedAttestation],
-) -> anyhow::Result<Audited> {
-    if let Some(config) = custody_config {
-        let cfg = NodeConfig::load(&config)?;
-        let signer = signer.ok_or_else(|| anyhow::anyhow!("--custody-config requires --signer"))?;
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        return match ranges {
-            Some((dir, jobs)) => runtime.block_on(replay_ranges_with_custody(path, &dir, &cfg, signer, jobs)),
-            None => runtime.block_on(replay_path_with_custody(path, &cfg, signer, seals)).map(Audited::from),
-        };
-    }
-    if verified.len() > 1 {
-        let attested = verified.iter().map(|v| v.enclave_address).collect();
-        return match ranges {
-            Some((dir, jobs)) => engine_node::replay_ranges_with_attested(path, &dir, domain, attested, jobs),
-            None => engine_node::replay_path_with_attested(path, domain, attested, seals).map(Audited::from),
-        };
-    }
-    let trusted = engine_node::reconcile_signer(signer, verified.first())?;
-    match ranges {
-        Some((dir, jobs)) => engine_node::replay_ranges_with_trust(path, &dir, domain, trusted, jobs),
-        None => replay_path_with_trust(path, domain, trusted, seals).map(Audited::from),
-    }
 }
 
 #[cfg(test)]

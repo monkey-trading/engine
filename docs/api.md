@@ -1634,8 +1634,10 @@ as is any other value that breaks the rules above. A server may hold only the ne
 log, the older ones being in the archive. A `from` or `after` that falls before the first seq it holds
 is refused with 400, naming that seq and the archive, and the client reads the earlier part from
 `/v1/archive/{file}` and resumes with `after`. A connection that falls behind reads from storage
-again rather than being dropped. A connection that stops reading for `api.send_timeout` is closed,
-and the client resumes with `after`.
+again rather than being dropped. A connection whose read from storage reaches a segment the server's
+host no longer holds, as when the server keeps only a window of the log, is closed with a reason
+naming the archive, and the client reads on from `/v1/archive/{file}` and resumes with `after`. A
+connection that stops reading for `api.send_timeout` is closed, and the client resumes with `after`.
 
 ### Messages
 

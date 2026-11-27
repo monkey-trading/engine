@@ -16,7 +16,8 @@
 //! what each segment holds. It builds a range only from segments checked against that listing, and counts the range
 //! as archived only once a read of its object from the bucket's public origin, over TLS that ends in the enclave,
 //! decompresses to those entries. A store or network outage leaves ranges unconfirmed and raises
-//! `archive_upload_lagging`; the writer and the sequencer never wait on it.
+//! `archive_upload_lagging`; the writer and the sequencer never wait on it. With `local_window`, the host keeps only
+//! the segments within that window of sequenced time and those the bucket does not hold in ranges yet (`window`).
 //!
 //! The ranges past the vault's finalized checkpoint go up in tails (`uploader::tails`): for each checkpoint the copy
 //! holds from the vault's finalized one on, pieces shaped and named as ranges at
@@ -29,8 +30,11 @@ mod backlog;
 mod finality;
 pub(crate) use finality::{Finality, same_root};
 mod range;
+#[cfg(test)]
+pub(crate) use range::range_bytes;
 pub(crate) use range::{
-    RANGE_SEQS, checkpoint_root, log_prefix, piece_bytes, range_bytes, range_key, tail_prefix, whole_ranges,
+    RANGE_SEQS, absent_segments, checkpoint_root, log_prefix, piece_bytes, range_bytes_with, range_key, tail_prefix,
+    whole_ranges,
 };
 mod read;
 pub(crate) use read::{ArchiveOrigins, Bucket, Origins, Segments};
@@ -41,6 +45,8 @@ mod store;
 pub(crate) use store::{Created, Digested, Object, Store, read_public};
 mod uploader;
 pub(crate) use uploader::{Sources, Uploader};
+mod window;
+pub(crate) use window::{Window, history_start, restore_whole};
 
 #[cfg(test)]
 pub(crate) mod stand_in;

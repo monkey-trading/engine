@@ -10,7 +10,7 @@ use tracing::warn;
 
 use crate::checkpoints::setup::Setup;
 use crate::config::NodeConfig;
-use crate::daily_snapshots::{Bounds, NoRoots, Signed, VaultRoots, snapshot_start_against};
+use crate::daily_snapshots::{Bounds, NoRoots, Signed, VaultRoots, framed, snapshot_start_against};
 use crate::log::CheckpointDomain;
 use crate::tee::EnclaveKey;
 
@@ -50,16 +50,4 @@ pub(super) async fn chosen(cfg: &NodeConfig, key: &EnclaveKey, setup: Option<&Se
             snapshot_start_against(None, (snapshots, log), (domain, &signers), bounds, &NoRoots).await
         }
     }
-}
-
-/// The seq of the newest daily snapshot in `snapshots` whose frozen marks copy this node holds in `history`, which a
-/// start then goes on from no later than: one fetched from another node, as a member keeps them, has no copy here,
-/// and a start from it would set the chart history before it aside. None when this node holds no copy.
-fn framed(snapshots: &std::path::Path, history: &std::path::Path) -> Option<u64> {
-    let listed = crate::daily_snapshots::read_manifest(snapshots).ok()?;
-    let copied = |listing: &&crate::daily_snapshots::Listed| {
-        let offset = crate::log::Offset { seq: listing.seq, index: listing.index };
-        crate::history::marks::store::frozen_path(history, offset).exists()
-    };
-    listed.iter().rev().find(copied).map(|listing| listing.seq)
 }

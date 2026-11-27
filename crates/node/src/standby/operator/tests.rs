@@ -66,6 +66,7 @@ async fn a_follower_reads_the_bucket_its_own_archive_section_names_first() {
         access_key_id_secret: "archive_key_id".to_owned().try_into().unwrap(),
         secret_access_key_secret: "archive_secret_key".to_owned().try_into().unwrap(),
         lag_alert: Duration::from_secs(3600),
+        local_window: None,
     });
     let prefix = crate::archive::log_prefix(cfg.custody.chain_id, cfg.custody.vault.parse().unwrap());
     let bucket = crate::archive::Bucket::new(&public, &prefix).unwrap();

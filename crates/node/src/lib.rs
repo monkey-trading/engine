@@ -39,7 +39,7 @@ mod paced;
 mod replay_audit;
 mod root_worker;
 mod roughtime;
-pub use replay_audit::{replay_path_with_custody, replay_ranges_with_custody};
+pub use replay_audit::{audit, replay_path_with_custody, replay_ranges_with_custody};
 mod secrets;
 pub mod seed_relay;
 pub mod sequencer;

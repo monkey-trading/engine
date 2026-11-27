@@ -213,6 +213,13 @@ impl Store {
         }
     }
 
+    /// The objects under the store's prefix, read over the public origin with its client.
+    /// Error cases:
+    /// - the prefix does not join the origin
+    pub(crate) fn reader(&self) -> anyhow::Result<(Client, crate::archive::Bucket)> {
+        Ok((self.http.clone(), crate::archive::Bucket::new(&self.public, &self.prefix)?))
+    }
+
     /// The public URL of the object at `key`.
     /// Error cases:
     /// - the key is not the store's (`owned`), or does not form a URL with the origin

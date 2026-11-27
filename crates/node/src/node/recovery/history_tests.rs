@@ -278,9 +278,9 @@ fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serd
 }
 
 /// A node's log with a daily snapshot after marks in both markets, and what the node answered once it stopped.
-struct Written {
-    cfg: NodeConfig,
-    key: Arc<EnclaveKey>,
+pub(super) struct Written {
+    pub(super) cfg: NodeConfig,
+    pub(super) key: Arc<EnclaveKey>,
     /// The record the node kept, every scan it asked for installed.
     stats: Stats,
     /// Every page of both markets the node's marks cache served.
@@ -293,7 +293,7 @@ impl Written {
     /// Runs a node with `[daily_snapshots]` and a scan due at every command, as `name`, from ten minutes before a
     /// UTC midnight: genesis, which the first snapshot follows, marks before midnight and after it, the day's
     /// snapshot at the first checkpoint past it, and marks after that, then stops it.
-    async fn run(name: &str) -> Self {
+    pub(super) async fn run(name: &str) -> Self {
         let root = scratch_dir(name);
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
