@@ -99,6 +99,9 @@ impl Archived {
         cfg.daily_snapshots =
             Some(DailySnapshotsSection { dir: run.join("daily-snapshots"), local_window: self.snapshot_window() });
         cfg.archive = Some(ArchiveSection { local_window: Some(self.log_window()), ..self.bucket.section(LAG_ALERT) });
+        // The disk watcher judges a volume by how full it is, not by the run's own growth over a short window.
+        cfg.alerts.storage.warn_fill_within = Duration::from_secs(120);
+        cfg.alerts.storage.critical_fill_within = Duration::from_secs(60);
         cfg.history.dir = run.join("history");
         cfg.history.retention = self.retention();
         cfg.alerts.outbox.dir = run.join("alert-outbox");

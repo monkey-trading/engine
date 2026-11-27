@@ -128,6 +128,9 @@ async fn run() {
     if config.storage {
         // Ranges of production's size, not a test build's six.
         crate::archive::set_range_seqs(10_000);
+        // A stopped node's snapshot writer finishes before its stop returns, as a process that ends leaves none to
+        // race the next node's, within the stop's drain (`node::DRAIN`).
+        crate::daily_snapshots::wait_on_drop(Duration::from_secs(100));
         if config.day != Duration::from_secs(86_400) {
             crate::daily_snapshots::shorten_day(config.day.as_millis() as i64);
         }
@@ -393,9 +396,6 @@ impl Soak {
         let stopped = if abrupt { old.kill().await } else { old.stop(true).await };
         if let Err(error) = stopped {
             panic!("the node did not stop for its restart, so the soak ends rather than start beside it: {error:#}");
-        }
-        if let Some(stored) = &self.stored {
-            stored.writer_settled().await;
         }
         let down = stopping.elapsed();
         let listener = rebind(self.api).await;

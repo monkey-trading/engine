@@ -102,24 +102,6 @@ impl Stored {
         }
     }
 
-    /// Waits until the daily snapshot writer of the node that stopped has ended its work, which the node's drop waits
-    /// two seconds for: a process that is gone leaves no thread to write a snapshot or to lose the files a new
-    /// writer cleans from the directory, so no restart starts before the staged files are published or removed.
-    pub(super) async fn writer_settled(&self) {
-        let staged = || {
-            std::fs::read_dir(&self.daily)
-                .map(|listing| {
-                    listing.filter_map(Result::ok).any(|item| item.file_name().to_string_lossy().contains(".tmp"))
-                })
-                .unwrap_or(false)
-        };
-        let (mut quiet, waited) = (0, std::time::Instant::now());
-        while quiet < 3 && waited.elapsed() < Duration::from_secs(120) {
-            quiet = if staged() { 0 } else { quiet + 1 };
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
-    }
-
     /// Notes that a restart `at` into the run found the host lacking `off_host` segments of the log.
     pub(super) fn restarted(&mut self, at: Duration, off_host: u64) {
         self.restarts.push((at, off_host));
