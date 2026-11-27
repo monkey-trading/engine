@@ -23,11 +23,12 @@ use crate::handover::evidence::{self, CollateralCache, Peer, Quoting};
 use crate::handover::tail::{TailRefused, Tip, Unacknowledged, tail_report_data, version_name};
 use crate::handover::{
     CHALLENGE_TIMEOUT, Challenge, Confirm, Finalized, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request,
-    bound_report_data, confirm_digest, confirmed_digest, keys_report_data, open_keys, receive, receive_bytes,
-    request_report_data, send,
+    bound_report_data, confirm_digest, confirmed_digest, keys_report_data, member_digest, open_keys, receive,
+    receive_bytes, request_report_data, send,
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
+use crate::standby_key::StandbyKeys;
 use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Platform, Release, Sealer};
 use crate::tee::{Attestor, EnclaveKey};
@@ -46,7 +47,7 @@ pub(crate) async fn take(
     metrics: &Metrics,
 ) -> anyhow::Result<KeyStore> {
     let assignments = crate::handover::assigned::for_config(cfg, "successor_assignments")?;
-    take_with(cfg, address, (sealer, attestor), vault, reached_ms, metrics, assignments).await
+    take_with(cfg, address, (sealer, attestor, None), vault, reached_ms, metrics, assignments).await
 }
 
 /// This release's keys, taken from the release whose handover listener is at `address`, reading the
@@ -59,7 +60,8 @@ pub(crate) async fn take(
 /// out, and the last must reach the handed-over checkpoint. Without the predecessor's signed
 /// acknowledgement the keys are not sealed, and the start fails under `handover_unconfirmed`: the
 /// predecessor may still run. The request binds the latest assignment `assignments` reads, when it
-/// names this release, read again before the keys are sealed (#596).
+/// names this release, read again before the keys are sealed (#596), and, with `standby`, this member's
+/// standby key signs it, which a holder requires while the schedule lists that key as promotable.
 /// Error cases:
 /// - `[tee.sealing]` is missing, or this enclave cannot quote
 /// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
@@ -73,7 +75,7 @@ pub(crate) async fn take(
 pub(crate) async fn take_with(
     cfg: &NodeConfig,
     address: &str,
-    (sealer, attestor): (&dyn Sealer, &dyn Attestor),
+    (sealer, attestor, standby): (&dyn Sealer, &dyn Attestor, Option<&StandbyKeys>),
     vault: &impl CheckpointChain,
     reached_ms: Option<engine_core::types::Millis>,
     metrics: &Metrics,
@@ -90,8 +92,9 @@ pub(crate) async fn take_with(
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
     let bound = Bound::read(assignments, &release).await?;
     let collateral = CollateralCache::new(evidence::PREFETCH_REUSE);
+    let signing = (bound.binding.as_ref(), standby);
     let Answered { mut stream, request, mut keys, peer } =
-        ask(cfg, address, attestor, &platform, (log_tip, None), bound.binding.as_ref(), &collateral).await?;
+        ask(cfg, address, attestor, &platform, (log_tip, None), signing, &collateral).await?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
     let tails = std::mem::take(&mut keys.handover_tails);
     // The vault names the key before anything is written: a handover never lands the log of a
@@ -140,7 +143,8 @@ pub(super) struct Answered {
 
 /// Connects to the predecessor at `address`, binds a request to its challenge — naming `tip` for a
 /// tail handover, and `log_tip` for whole segments, and `binding`, the turn's assignment it takes, when
-/// it read one (#596) — under this enclave's quote, and opens the keys its quote-bound answer carries.
+/// it read one (#596) — under this enclave's quote, signed with this member's `standby` key, if given
+/// (`member_digest`), and opens the keys its quote-bound answer carries.
 /// The quote's collateral is fetched into `collateral` before connecting, unless it holds a fresh fetch.
 /// The predecessor's certificates are checked at the host's time, before trusted time runs: the vault
 /// naming the key bounds what this accepts.
@@ -153,13 +157,19 @@ pub(super) async fn ask(
     attestor: &dyn Attestor,
     platform: &Platform,
     (log_tip, tip): (Option<u64>, Option<&Tip>),
-    binding: Option<&Binding>,
+    (binding, standby): (Option<&Binding>, Option<&StandbyKeys>),
     collateral: &CollateralCache,
 ) -> anyhow::Result<Answered> {
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
     let (secret, public) = Kx::gen_keypair();
     let public = public.to_bytes().to_vec();
-    info!(predecessor = address, ?log_tip, tip = ?tip.map(|tip| tip.seq), "asking the running release for its keys");
+    info!(
+        predecessor = address,
+        ?log_tip,
+        tip = ?tip.map(|tip| tip.seq),
+        standby = ?standby.map(StandbyKeys::address),
+        "asking the running release for its keys"
+    );
     // The collateral comes first: the predecessor gives the request a few seconds from its challenge.
     let quoting = Quoting::from(&cfg.tee);
     let collateral = evidence::prefetch(&quoting, attestor, platform, collateral).await?;
@@ -183,6 +193,7 @@ pub(super) async fn ask(
         Some(binding) => bound_report_data(domain, &request, binding),
         None => request,
     };
+    let standby_signature = standby.map(|keys| keys.sign(member_digest(domain, &request)).to_string());
     let evidence = evidence::produce_with(&quoting, attestor, platform, request, Some(&collateral)).await?;
     let config_sha256 = hex::encode(cfg.file_sha256);
     let request_message = Request {
@@ -193,6 +204,7 @@ pub(super) async fn ask(
         reads,
         secrets_only: false,
         binding: binding.copied(),
+        standby_signature,
         evidence,
     };
     send(&mut stream, &request_message).await?;

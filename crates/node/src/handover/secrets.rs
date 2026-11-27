@@ -112,6 +112,7 @@ pub(crate) async fn fetch_secrets(
         reads: String::new(),
         secrets_only: true,
         binding: None,
+        standby_signature: None,
         evidence,
     };
     send(&mut stream, &message).await?;

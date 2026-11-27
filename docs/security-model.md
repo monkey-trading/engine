@@ -1565,6 +1565,14 @@ accepted. Once it has stopped for a member whose transfer never confirmed, it ha
 the turns its log held at the stop show it will accept, up to seven turns ahead. A host that holds
 back an enclave's Roughtime replies can therefore delay a handover, but cannot bring it forward.
 
+The turn's release and assignment are public, so an enclave that runs the member's release on any
+SEV-SNP host proves both. The holder therefore also requires the member's own enclave: the request
+must carry a signature over its report data, which binds the connection's challenge, the one-time
+key the keys are encrypted to and the assignment, by the standby key that the schedule lists as the
+candidate's promotable key at the custody quorum's latest agreed block. That key is sealed in the
+member's own enclave for its release and registered from the candidate's account, so another enclave
+of the same release holds another key, which no candidate registered.
+
 A holder that the schedule names again in a new generation, after a turn that nobody took, seals its
 live keys in that generation on its sequencing thread before it logs `TurnTaken`. No copy is
 therefore sealed after it has stopped for a handover. A member earns the operator's share from its
@@ -1589,6 +1597,16 @@ Known limits:
 - Turns are a day long. The `short-turns` feature, which makes a turn five minutes long and a set's
   notice one turn, is for development only. A `production` build does not compile with it, and a
   production trading server refuses to mirror a schedule whose `turnLength()` is not a day.
+- A member whose candidate holds no promotable standby key is admitted by its release and assignment
+  alone. That is the case until its first registration lands, after its own release move voids the
+  key, including the move of an upgrade in office, and after a promotion consumes it. Until its
+  candidate registers a key, an enclave that runs its release on another host can take that member's
+  keys and stall its turn until a skip or a promotion moves it on. That enclave runs the same code,
+  so it signs only honest states, and it holds none of the member's delivered secrets.
+- An election's handover, before a schedule is named, and an upgrade while rotation is off admit the
+  release the vault names, which anyone can reproduce, since no schedule records a standby key to
+  bind the successor to. Whoever first runs that release on an SEV-SNP host and asks for the keys
+  takes them, and in an upgrade the delivered secrets, into the same code on its own host.
 - A trading server activates its build's newest protocol version at boot, and an older build cannot
   read the log after that. Every member of the rotation sets must therefore run a release that
   implements a version before any member's trading server activates it.

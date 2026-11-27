@@ -16,7 +16,8 @@ pub(super) struct Challenge {
 }
 
 /// The successor's request: a one-time public key, the config it runs with and, for the keys, the
-/// newest protocol version its build reads, and its quote over them and the connection's challenge.
+/// newest protocol version its build reads, and its quote over them and the connection's challenge,
+/// which a turn's member also signs with its standby key.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
@@ -42,6 +43,10 @@ pub(super) struct Request {
     /// (`bound_report_data`) and the holder admits only while it reads the same (#596).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) binding: Option<super::assigned::Binding>,
+    /// The turn's member's signature over the report data with its registered standby key
+    /// (`member_digest`), which the holder requires while the schedule lists one as promotable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) standby_signature: Option<String>,
     pub(super) evidence: Evidence,
 }
 

@@ -199,9 +199,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
 
     /// Takes `turn` from the first of its sources that hands the keys over with the tail past the
     /// follower's tip, caught up once more from `operator`, the incumbent it followed, if any, after
-    /// the start's reads, and following it while each source stops. Everything the start reads from the chain is read before connecting, and the
-    /// trusted time sample that admits its first stamps is taken last (`Ready`): from the confirmation
-    /// on, nothing reads the chain or samples time.
+    /// the start's reads, and following it while each source stops, its request signed with the
+    /// standby key of `standby`, this member's standby side, when open. Everything the start reads from
+    /// the chain is read before connecting, and the trusted time sample that admits its first stamps is
+    /// taken last (`Ready`): from the confirmation on, nothing reads the chain or samples time.
     /// Error cases:
     /// - the reads or the sample fail, no source has a handover endpoint, or every source fails
     pub(super) async fn take(
@@ -209,8 +210,10 @@ impl<C: CheckpointChain, H: PostedHead, T: Sampling> Member<'_, C, H, T> {
         turn: &ScheduledTurn,
         follower: &mut Follower,
         operator: Option<&Followed>,
+        standby: Option<&Standby>,
     ) -> anyhow::Result<(Taken, Ready)> {
         let (sources, mut prepared) = self.prepare_take(turn).await?;
+        prepared.standby = standby.map(|open| open.keys.clone());
         // The reassignments the start's own log check counts, read with the rest: none after the confirmation.
         // The keys bring the last verified head only then, so the read cannot start at the range's in-office turn.
         let own = [turn.candidate].into();

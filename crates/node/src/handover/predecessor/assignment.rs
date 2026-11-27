@@ -15,31 +15,43 @@
 //! block, or no reader, the finalised schedule's turn or the vault's own release, which the checkpoint
 //! endpoint reads, decide only once the custody quorum reads the same at the same block
 //! (`quorum::confirmed_generation`).
+//!
+//! Every check above reads public values, which an enclave that runs the member's release on another
+//! host satisfies as well, so a turn's member is also held to its own enclave: the request must carry
+//! the member's signature, with the standby key the schedule lists as its candidate's promotable key at
+//! the latest agreed block, over the request's report data (`ensure_member`). A member with no
+//! promotable key, as until its registration lands, or after its release move or a promotion voids the
+//! key, is admitted by its release and assignment alone.
 
 use anyhow::{Context, bail, ensure};
+use engine_core::eip712::{self, B256, Signature};
 use engine_core::turns::{DailyTurns, TURN_MS};
-use engine_core::types::Millis;
+use engine_core::types::{AccountId, Millis};
+use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, Observation};
-use crate::handover::Predecessor;
 use crate::handover::assigned::{Assigned, Binding, Reason};
 use crate::handover::quorum::confirmed_generation;
 use crate::handover::turns::{SOURCE_LOOKBACK, named_generation};
+use crate::handover::{Predecessor, Request, member_digest};
+use crate::log::CheckpointDomain;
 use crate::tee::sealing::Release;
 
 impl<C: CheckpointChain> Predecessor<C> {
-    /// Whether this release may hand its keys to a successor running `release` whose request binds
-    /// `binding`, by the latest agreed block's assignment when this listener reads one, and by the
-    /// finalised schedule at `at` and trusted time as before otherwise, which the custody quorum must
-    /// read as the checkpoint endpoint does (`confirmed_generation`; see the module).
+    /// Whether this release may hand its keys to a successor running `release` whose `request`, with
+    /// `report_data`, binds its assignment, by the latest agreed block's assignment when this listener
+    /// reads one, and by the finalised schedule at `at` and trusted time as before otherwise, which the
+    /// custody quorum must read as the checkpoint endpoint does (`confirmed_generation`), with the turn's
+    /// member's standby signature when this listener reads the latest block (see the module).
     /// Error cases:
-    /// - the latest assignment cannot be read, is not the one `binding` names, or names another release
+    /// - the latest assignment cannot be read, is not the one the request binds, or names another release
+    /// - the member's promotable standby key cannot be read, or did not sign the request (`ensure_member`)
     /// - a draw, a promotion or a revised skip fails the finalised checks (`named_generation`,
     ///   `ensure_logged`), or another skip the log's notice rule (`ensure_noticed`)
     /// - with no latest assignment, the finalised checks fail, or the custody quorum reads otherwise
     pub(super) async fn admit_turn(
         &self,
-        binding: Option<&Binding>,
+        (request, report_data): (&Request, &[u8; 64]),
         release: &Release,
         at: &Observation,
     ) -> anyhow::Result<()> {
@@ -51,11 +63,18 @@ impl<C: CheckpointChain> Predecessor<C> {
         let Some(assigned) = latest else {
             let (_, turn) = confirmed_generation(&self.vault, self.quorum.as_ref(), at, release, reached).await?;
             if let Some(turn) = turn {
+                if let Some(assignments) = &self.assignments {
+                    let read = assignments.standby(turn.candidate).await;
+                    let standby = read.context("reading the turn's member's standby key")?;
+                    ensure_member(self.domain, (turn.turn, turn.candidate, standby), request, report_data)?;
+                }
                 self.ensure_logged(&turn).await?;
             }
             return Ok(());
         };
-        ensure_bound(&assigned, binding, release)?;
+        ensure_bound(&assigned, request.binding.as_ref(), release)?;
+        let member = (assigned.binding.turn, assigned.candidate, assigned.standby);
+        ensure_member(self.domain, member, request, report_data)?;
         match assigned.reason {
             Reason::Skip if !assigned.revised => self.ensure_noticed(&assigned, reached).await,
             // A promotion's member holds its standby key, the vault's signer, so the only keys it takes by a
@@ -140,6 +159,40 @@ impl<C: CheckpointChain> Predecessor<C> {
         }
         Ok(())
     }
+}
+
+/// Refuses a request for turn `turn`'s keys unless `candidate`'s promotable standby key `standby` signed
+/// its `report_data` (`member_digest`): the key is sealed in the member's own enclave and registered by
+/// its candidate, so an enclave that runs the member's release on another host cannot sign. A member
+/// with no promotable key is admitted by its release and assignment alone, which is logged.
+/// Error cases:
+/// - the member has a promotable standby key, and the request carries no signature, one that does not
+///   parse, or another key's
+fn ensure_member(
+    domain: CheckpointDomain,
+    (turn, candidate, standby): (u64, AccountId, Option<AccountId>),
+    request: &Request,
+    report_data: &[u8; 64],
+) -> anyhow::Result<()> {
+    let Some(standby) = standby else {
+        warn!(
+            turn,
+            %candidate,
+            "the turn's member has no promotable standby key: admitting it by its release and assignment alone"
+        );
+        return Ok(());
+    };
+    let signature = request.standby_signature.as_deref().with_context(|| {
+        format!("turn {turn}'s member {candidate} holds the standby key {standby}, which did not sign the request")
+    })?;
+    let signature: Signature = signature.parse().context("the request's standby signature is not a signature")?;
+    let signer = eip712::recover(&B256::from(member_digest(domain, report_data)), &signature);
+    ensure!(
+        signer == Some(standby),
+        "the request is signed by {signer:?}, not by turn {turn}'s member {candidate}'s standby key {standby}"
+    );
+    info!(turn, %candidate, %standby, "the turn's member signed the request with its standby key");
+    Ok(())
 }
 
 /// Refuses `assigned` unless it is the assignment `binding` names and names `release`.

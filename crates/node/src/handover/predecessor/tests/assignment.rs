@@ -26,7 +26,7 @@ const LATER: u64 = 14;
 
 /// A sequencer over a log that accepted a turn for its member's key under set 1, which names candidate
 /// 0xc1 with that key: the sequencer's channel, its run, the turn, the key and the boundary.
-fn logged(name: &str) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>, u64, AccountId, i64) {
+pub(super) fn logged(name: &str) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>, u64, AccountId, i64) {
     let (dir, clock, turn, key) = turn_log(name);
     let operator = Operator { address: key, ..dev_config().operator().unwrap() };
     let sequencer = recover_turns(&dir, clock, operator, B256::repeat_byte(1));
@@ -37,7 +37,7 @@ fn logged(name: &str) -> (mpsc::Sender<Request>, JoinHandle<anyhow::Result<()>>,
 
 impl Exchange {
     /// The finalised schedule draws `turn` for another member, running another release, with `key`.
-    fn draw_other(&self, turn: u64, key: AccountId, boundary: i64) {
+    pub(super) fn draw_other(&self, turn: u64, key: AccountId, boundary: i64) {
         self.schedule_successor(turn, key, boundary);
         let mut scheduled = self.scheduled.lock().unwrap();
         let drawn = scheduled.as_mut().unwrap();
@@ -46,12 +46,20 @@ impl Exchange {
 
     /// A skip of `turn` at `position` in `generation` to the set's candidate 0xc1 with `key`, running
     /// the successor's release.
-    fn skip_to_successor(&self, turn: u64, key: AccountId, position: u16, generation: u64) -> Assigned {
+    pub(super) fn skip_to_successor(&self, turn: u64, key: AccountId, position: u16, generation: u64) -> Assigned {
         Assigned { admin_key: key, ..skip(turn, position, 0xc1, self.upgrade().id(), generation) }
     }
 
     /// The successor's side, binding the latest assignment the shared reader shows.
     async fn take_bound(&self) -> anyhow::Result<KeyStore> {
+        self.take_signed(None).await
+    }
+
+    /// `take_bound`, the request signed with `standby`, when given.
+    pub(super) async fn take_signed(
+        &self,
+        standby: Option<&crate::standby_key::StandbyKeys>,
+    ) -> anyhow::Result<KeyStore> {
         let vault = Vault {
             signer: AccountId(self.old.enclave_key().unwrap().address()),
             current: self.current.clone(),
@@ -62,7 +70,7 @@ impl Exchange {
         };
         let sealer = MockSealer { launch_digest: UPGRADE };
         let assignments: Arc<dyn crate::handover::assigned::Assignments> = self.assignments.clone();
-        let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor);
+        let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, standby);
         crate::handover::take_with(
             &self.successor,
             &self.address,
@@ -324,7 +332,7 @@ async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_s
     let at = vault.observe(View::Finalized, &[]).await.unwrap();
     let scheduled = exchange.scheduled.lock().unwrap().clone().expect("the turn is drawn");
     assert!(scheduled.source.is_none());
-    let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor);
+    let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, None);
     let taken =
         crate::handover::turns::take_keys(&a_cfg, &vault, (&at, &scheduled), parts, &exchange.metrics, Some(reader))
             .await

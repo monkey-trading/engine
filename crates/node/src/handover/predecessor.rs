@@ -321,7 +321,8 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// minimum TCB, its policy is this release's, and the vault names that release at finality, or
     /// the finalised schedule names it for the turn trusted time has reached (`turns`) and this
     /// release's log accepted it, as the checkpoint endpoint and the custody quorum both read them
-    /// (`quorum`), or the latest agreed block's assignment does as `admit_turn` states.
+    /// (`quorum`), or the latest agreed block's assignment does as `admit_turn` states, which also holds
+    /// a turn's member to its own enclave by its standby key.
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -336,7 +337,7 @@ impl<C: CheckpointChain> Predecessor<C> {
         same_policy(&self.store.platform(), &peer)?;
         let release = Release { launch_digest: peer.launch_digest, config_sha256 };
         let at = self.vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
-        self.admit_turn(request.binding.as_ref(), &release, &at).await?;
+        self.admit_turn((request, report_data), &release, &at).await?;
         Ok(release)
     }
 

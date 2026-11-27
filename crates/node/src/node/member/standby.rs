@@ -47,7 +47,7 @@ const VOUCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A member's standby keys and what runs beside its following on them.
 pub(crate) struct Standby {
-    keys: Arc<StandbyKeys>,
+    pub(in crate::node::member) keys: Arc<StandbyKeys>,
     candidate: AccountId,
     domain: StandbyDomain,
     chain: StandbyReader,

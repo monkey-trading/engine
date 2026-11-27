@@ -11,7 +11,7 @@ use crate::handover::discovery::Registered;
 use crate::liveness::chain::{rotationStateReturn, setOfCall, setOfReturn};
 use crate::standby_key::chain::{
     AssignmentReturn, CandidateReturn, RevisionReturn, TurnReturn, assignmentHeadOfReturn, candidateOfCall,
-    heldTurnCall, registryCall, revisionOfCall, revisionOfReturn, scheduleCall, turnAtReturn,
+    heldTurnCall, promotableCall, registryCall, revisionOfCall, revisionOfReturn, scheduleCall, turnAtReturn,
 };
 
 pub(crate) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -90,6 +90,8 @@ pub(crate) struct FakeAssignments {
     pub reads: std::sync::atomic::AtomicUsize,
     /// While set, every read fails, as with no quorum.
     pub failing: std::sync::atomic::AtomicBool,
+    /// The promotable standby key `standby` reads for any candidate; none until a test sets one.
+    pub standby: Mutex<Option<AccountId>>,
 }
 
 impl FakeAssignments {
@@ -117,6 +119,11 @@ impl Assignments for FakeAssignments {
         let members = self.members.lock().unwrap().clone();
         Box::pin(async move { Ok(members) })
     }
+
+    fn standby(&self, _candidate: AccountId) -> BoxFuture<'_, anyhow::Result<Option<AccountId>>> {
+        let standby = *self.standby.lock().unwrap();
+        Box::pin(async move { Ok(standby) })
+    }
 }
 
 /// A skip of turn `turn` to `candidate` at `position` in `generation`, running `release`, under signer
@@ -132,6 +139,7 @@ pub(crate) fn skip(turn: u64, position: u16, candidate: u8, release: [u8; 32], g
         release,
         head_release: None,
         revised: false,
+        standby: None,
     }
 }
 
@@ -150,6 +158,7 @@ pub(crate) fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), r
         source: Address::repeat_byte(0xa1),
     };
     block.answer(SCHEDULE, turnAtCall { timestamp: TIME }, &turnAtReturn { turn: TURN, _1: named });
+    block.answer(SCHEDULE, promotableCall { candidate }, &Address::repeat_byte(0x5b));
     block.answer(VAULT, signerEpochCall {}, &3);
     let made = AssignmentReturn {
         candidate,
@@ -187,6 +196,17 @@ async fn a_skip_reads_as_its_assignment_with_its_latest_release_and_generation()
     assert_eq!(assigned.head_release, Some([0xee; 32]));
     assert_eq!(assigned.boundary, engine_core::turns::boundary(TURN).unwrap());
     assert!(assigned.names([2; 32], 8) && !assigned.names([1; 32], 8) && !assigned.names([2; 32], 7));
+    assert_eq!(assigned.standby, Some(AccountId([0x5b; 20])), "the member's promotable standby key");
+}
+
+/// A member whose candidate holds no promotable standby key reads as holding none.
+#[tokio::test]
+async fn a_member_with_no_promotable_standby_key_reads_as_holding_none() {
+    let mut block = Scripted::scheduled();
+    script_turn(&mut block, (0, 0), &[(B256::repeat_byte(2), 8)]);
+    block.answer(SCHEDULE, promotableCall { candidate: Address::repeat_byte(0xc1) }, &Address::ZERO);
+    let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().expect("a turn names the operator");
+    assert_eq!(assigned.standby, None);
 }
 
 /// An assignment whose member moved its release over and over has more revisions than an RPC answers
@@ -217,7 +237,7 @@ async fn an_assignment_with_thousands_of_revisions_reads_through_its_head() {
 }
 
 /// The read's calls that need none of another's answers go together: each call taking 100 ms, a read
-/// waits four round trips, not the seven its calls one after another took.
+/// waits four round trips, not the eight its calls one after another took.
 #[tokio::test(start_paused = true)]
 async fn an_assignment_reads_in_four_round_trips() {
     let latency = std::time::Duration::from_millis(100);
