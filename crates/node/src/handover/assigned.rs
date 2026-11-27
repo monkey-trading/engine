@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{Address, B256, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::Context;
@@ -22,7 +22,7 @@ use crate::custody::StandbyReader;
 use crate::handover::discovery::{Registered, members};
 use crate::liveness::chain::rotationStateCall;
 use crate::standby_key::chain::{
-    AgreedBlock, StandbyChain, StandbyDomain, assignmentOfCall, signerEpochCall, turnAtCall,
+    AgreedBlock, StandbyChain, StandbyDomain, assignmentHeadOfCall, signerEpochCall, turnAtCall,
 };
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::{KeyStore, Release, Sealer};
@@ -311,10 +311,10 @@ pub(crate) async fn read(
     let (turn, named) = (found.turn, found._1);
     let position = named.position;
     let (made, head_release) = tokio::try_join!(
-        call(block, "assigned_assignment", domain.schedule, assignmentOfCall { turn, position }),
+        call(block, "assigned_assignment", domain.schedule, assignmentHeadOfCall { turn, position }),
         call(block, "assigned_head_release", log_heads, headReleaseCall { epoch }),
     )?;
-    let release = made._1.last().map(|revision| revision.release.0).unwrap_or_default();
+    let release = made.latest.release.0;
     Ok(Some(Assigned {
         binding: Binding { epoch, turn, position, generation: named.generation },
         boundary: engine_core::turns::boundary(turn).context("the turn's boundary is out of range")?,
@@ -324,7 +324,7 @@ pub(crate) async fn read(
         admin_key: AccountId(made._0.adminKey.0.0),
         release,
         head_release: (head_release != B256::ZERO).then_some(head_release.0),
-        revised: made._1.len() > 1,
+        revised: made.count > U256::from(1),
     }))
 }
 

@@ -10,8 +10,8 @@ use alloy::primitives::{Bytes, U256};
 use crate::handover::discovery::Registered;
 use crate::liveness::chain::{rotationStateReturn, setOfCall, setOfReturn};
 use crate::standby_key::chain::{
-    AssignmentReturn, CandidateReturn, RevisionReturn, TurnReturn, assignmentOfReturn, candidateOfCall, heldTurnCall,
-    registryCall, revisionOfCall, revisionOfReturn, scheduleCall, turnAtReturn,
+    AssignmentReturn, CandidateReturn, RevisionReturn, TurnReturn, assignmentHeadOfReturn, candidateOfCall,
+    heldTurnCall, registryCall, revisionOfCall, revisionOfReturn, scheduleCall, turnAtReturn,
 };
 
 pub(crate) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -164,9 +164,13 @@ pub(crate) fn script_turn(block: &mut Scripted, (position, reason): (u16, u8), r
         checkpointRoot: B256::ZERO,
         at: TIME - 60,
     };
-    let revisions =
-        revisions.iter().map(|&(release, generation)| RevisionReturn { release, generation }).collect::<Vec<_>>();
-    block.answer(SCHEDULE, assignmentOfCall { turn: TURN, position }, &assignmentOfReturn { _0: made, _1: revisions });
+    let (release, generation) = *revisions.last().unwrap();
+    let head = assignmentHeadOfReturn {
+        _0: made,
+        count: U256::from(revisions.len()),
+        latest: RevisionReturn { release, generation },
+    };
+    block.answer(SCHEDULE, assignmentHeadOfCall { turn: TURN, position }, &head);
     block.answer(LOG_HEADS, headReleaseCall { epoch: 3 }, &B256::repeat_byte(0xee));
 }
 
@@ -183,6 +187,33 @@ async fn a_skip_reads_as_its_assignment_with_its_latest_release_and_generation()
     assert_eq!(assigned.head_release, Some([0xee; 32]));
     assert_eq!(assigned.boundary, engine_core::turns::boundary(TURN).unwrap());
     assert!(assigned.names([2; 32], 8) && !assigned.names([1; 32], 8) && !assigned.names([2; 32], 7));
+}
+
+/// An assignment whose member moved its release over and over has more revisions than an RPC answers
+/// `assignmentOf` for; the read takes the count and the latest revision, and the block answers no
+/// `assignmentOf`.
+#[tokio::test]
+async fn an_assignment_with_thousands_of_revisions_reads_through_its_head() {
+    let mut block = Scripted::scheduled();
+    script_turn(&mut block, (4, 1), &[(B256::repeat_byte(1), 7), (B256::repeat_byte(2), 8)]);
+    let made = AssignmentReturn {
+        candidate: Address::repeat_byte(0xc1),
+        adminKey: Address::repeat_byte(0xd1),
+        setId: 2,
+        reason: 1,
+        standbyKey: Address::ZERO,
+        signerEpoch: 0,
+        headSeq: 0,
+        headLink: B256::ZERO,
+        checkpointSeq: 0,
+        checkpointRoot: B256::ZERO,
+        at: TIME - 60,
+    };
+    let latest = RevisionReturn { release: B256::repeat_byte(9), generation: 8 };
+    let head = assignmentHeadOfReturn { _0: made, count: U256::from(9_900), latest };
+    block.answer(SCHEDULE, assignmentHeadOfCall { turn: TURN, position: 4 }, &head);
+    let assigned = read(&&block, CHAIN_ID, VAULT, LOG_HEADS).await.unwrap().expect("a turn names the operator");
+    assert_eq!((assigned.release, assigned.revised), ([9; 32], true));
 }
 
 /// The read's calls that need none of another's answers go together: each call taking 100 ms, a read

@@ -11,9 +11,9 @@ use engine_core::types::Millis;
 
 use super::chain::{
     AgreedBlock, AssignmentReturn, CandidateReturn, RevisionReturn, StandbyChain, StandbyDomain, TurnReturn,
-    assignmentOfCall, assignmentOfReturn, candidateOfCall, checkpointSignerCall, in_effect, promotableCall,
-    promotion_of, registryCall, releaseApprovedCall, scheduleCall, signerAtEpochCall, signerEpochCall, signers_from,
-    standbyHolderCall, turnAtCall, turnAtReturn, turnOfCall,
+    assignmentHeadOfCall, assignmentHeadOfReturn, candidateOfCall, checkpointSignerCall, in_effect, promotableCall,
+    promotion_of, registryCall, releaseApprovedCall, revisionOfCall, revisionOfReturn, scheduleCall, signerAtEpochCall,
+    signerEpochCall, signers_from, standbyHolderCall, turnAtCall, turnAtReturn, turnOfCall,
 };
 use super::*;
 use crate::liveness::chain::{rotationStateCall, rotationStateReturn};
@@ -115,10 +115,11 @@ impl AgreedBlock for FakeBlock<'_> {
 
     async fn call(&self, _operation: &'static str, to: Address, data: Bytes) -> anyhow::Result<Bytes> {
         let chain = self.0.0.lock().unwrap();
-        if self.1 && chain.unfinal && to == SCHEDULE && data.starts_with(&assignmentOfCall::SELECTOR) {
-            return Ok(Bytes::from(assignmentOfCall::abi_encode_returns(&assignmentOfReturn {
+        if self.1 && chain.unfinal && to == SCHEDULE && data.starts_with(&assignmentHeadOfCall::SELECTOR) {
+            return Ok(Bytes::from(assignmentHeadOfCall::abi_encode_returns(&assignmentHeadOfReturn {
                 _0: empty_assignment(),
-                _1: Vec::new(),
+                count: U256::ZERO,
+                latest: no_revision(),
             })));
         }
         answer(&chain, to, &data).map(Bytes::from)
@@ -316,17 +317,36 @@ fn answer(chain: &ChainState, to: Address, data: &[u8]) -> anyhow::Result<Vec<u8
     } else if to == REGISTRY && is::<rotationStateCall>(data) {
         let (release, generation) = chain.rotation;
         rotationStateCall::abi_encode_returns(&rotationStateReturn { enabled: true, release, generation, until: 0 })
-    } else if to == SCHEDULE && is::<assignmentOfCall>(data) {
-        let call = assignmentOfCall::abi_decode(data)?;
+    } else if to == SCHEDULE && is::<assignmentHeadOfCall>(data) {
+        let call = assignmentHeadOfCall::abi_decode(data)?;
         let (assignment, revisions) = chain
             .assignments
             .get(&(call.turn, call.position))
             .cloned()
             .unwrap_or_else(|| (empty_assignment(), Vec::new()));
-        assignmentOfCall::abi_encode_returns(&assignmentOfReturn { _0: assignment, _1: revisions })
+        let latest = revisions.last().cloned().unwrap_or_else(no_revision);
+        assignmentHeadOfCall::abi_encode_returns(&assignmentHeadOfReturn {
+            _0: assignment,
+            count: U256::from(revisions.len()),
+            latest,
+        })
+    } else if to == SCHEDULE && is::<revisionOfCall>(data) {
+        let call = revisionOfCall::abi_decode(data)?;
+        let (assignment, revisions) = chain
+            .assignments
+            .get(&(call.turn, call.position))
+            .cloned()
+            .unwrap_or_else(|| (empty_assignment(), Vec::new()));
+        let revision = revisions.get(usize::try_from(call.index)?).cloned().unwrap_or_else(no_revision);
+        revisionOfCall::abi_encode_returns(&revisionOfReturn { candidate: assignment.candidate, revision })
     } else {
         bail!("the fake chain does not answer this call to {to}")
     })
+}
+
+/// The zeros a read past an assignment's last revision answers.
+fn no_revision() -> RevisionReturn {
+    RevisionReturn { release: B256::ZERO, generation: 0 }
 }
 
 /// The release the tests' member runs.

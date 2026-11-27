@@ -6,7 +6,7 @@
 
 use std::future::Future;
 
-use alloy::primitives::{Address, B256, Bytes};
+use alloy::primitives::{Address, B256, Bytes, U256};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use anyhow::{Context, ensure};
@@ -80,6 +80,10 @@ sol! {
         external
         view
         returns (AssignmentReturn memory, RevisionReturn[] memory);
+    function assignmentHeadOf(uint64 turn, uint16 position)
+        external
+        view
+        returns (AssignmentReturn memory, uint256 count, RevisionReturn memory latest);
     function revisionOf(uint64 turn, uint16 position, uint256 index)
         external view returns (address candidate, RevisionReturn memory revision);
 }
@@ -300,12 +304,17 @@ pub(crate) async fn promotion_of(
     turn: u64,
     position: u16,
 ) -> anyhow::Result<Option<Promotion>> {
-    let assigned = call(block, "standby_assignment", domain.schedule, assignmentOfCall { turn, position }).await?;
-    let (assignment, revisions) = (assigned._0, assigned._1);
+    let assigned = call(block, "standby_assignment", domain.schedule, assignmentHeadOfCall { turn, position }).await?;
+    let assignment = assigned._0;
     if assignment.reason != PROMOTED || assignment.standbyKey != Address::from(key.0) {
         return Ok(None);
     }
-    let generation = revisions.first().context("the schedule records a promotion with no generation")?.generation;
+    ensure!(assigned.count != U256::ZERO, "the schedule records a promotion with no generation");
+    // The promotion's own generation is the first revision's, read by index so the read does not grow with
+    // the revisions the assignment's member adds.
+    let index = U256::ZERO;
+    let first = call(block, "standby_revision", domain.schedule, revisionOfCall { turn, position, index }).await?;
+    let generation = first.revision.generation;
     Ok(Some(Promotion {
         turn,
         position,
