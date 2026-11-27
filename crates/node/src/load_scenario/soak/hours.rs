@@ -65,6 +65,16 @@ pub(super) struct Interval {
     pub missing_alerts: Vec<String>,
     /// What the interval's order flow lacked (`workload_gaps`), whatever excuses its windows.
     pub workload: Vec<String>,
+    /// The storage tasks that had ended when a node of the interval was stopped, by what each is and why the node
+    /// stopped, which that node's report never saw.
+    pub storage_ended: Vec<String>,
+}
+
+impl Interval {
+    /// Records the storage tasks `ended` on the node stopped for `stopping`, before its handles are dropped.
+    pub(super) fn note_storage_ended(&mut self, ended: &[&str], stopping: &str) {
+        self.storage_ended.extend(ended.iter().map(|name| format!("{name} stopped before {stopping}")));
+    }
 }
 
 /// The least share of the requests an interval should have sent that it must have, which a generator that
@@ -123,6 +133,7 @@ pub(super) fn failures(interval: &Interval, judged_required: bool) -> Vec<String
         }
     }
     failed.extend(interval.workload.iter().cloned());
+    failed.extend(interval.storage_ended.iter().cloned());
     failed.extend(interval.unexpected_alerts.iter().map(|name| format!("alert {name} raised outside any fault")));
     failed.extend(interval.missing_alerts.iter().map(|name| format!("{name} raised no alert")));
     failed
@@ -208,6 +219,19 @@ mod tests {
     }
 
     #[test]
+    fn a_storage_task_that_ended_before_a_node_was_stopped_fails_the_interval() {
+        let mut interval = Interval { windows: vec![window(0, vec![], None)], ..Interval::default() };
+        interval.note_storage_ended(&[], "a restart");
+        assert!(failures(&interval, true).is_empty(), "no task had ended");
+        interval.note_storage_ended(&["disk watcher"], "a restart");
+        interval.note_storage_ended(&["log window"], "the final stop");
+        assert_eq!(
+            failures(&interval, true),
+            ["disk watcher stopped before a restart", "log window stopped before the final stop"]
+        );
+    }
+
+    #[test]
     fn an_interval_that_ran_no_order_flow_fails_even_when_every_window_is_excused_and_the_run_is_short() {
         let sent =
             |requests| Figures { sent: [("market".to_owned(), requests)].into(), fills: 1, ..Figures::default() };
@@ -273,6 +297,7 @@ mod tests {
             unexpected_alerts: vec!["log_sync_held".to_owned()],
             missing_alerts: vec!["slow_link".to_owned()],
             workload: Vec::new(),
+            storage_ended: Vec::new(),
         };
         let failed = failures(&interval, true);
         assert_eq!(failed.len(), 4, "{failed:?}");

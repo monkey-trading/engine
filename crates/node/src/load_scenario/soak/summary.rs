@@ -95,6 +95,7 @@ impl Soak {
         let place = self.timeline.begin("stop", &stop_alerts());
         let node = self.node.take().expect("a node");
         let (signer, log_dir) = (node.signer, node.log_dir.clone());
+        self.interval.note_storage_ended(&node.storage_ended(), "the final stop");
         node.stop(false).await.expect("the node drains");
         self.alerts.drain();
         self.timeline.end(place);
