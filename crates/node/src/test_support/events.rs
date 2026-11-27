@@ -48,6 +48,7 @@ pub fn every_event() -> Vec<Event> {
         Reject::ExpiryTooFar { latest: 2_000 },
         Reject::StakingNotInitialised,
         Reject::InsufficientStake,
+        Reject::CarriedFrontier { through: 90 },
         Reject::InvalidSessionKey,
         Reject::SessionKeyRevoked,
         Reject::SessionKeyExpired { expires_at: 1_500 },
@@ -95,6 +96,7 @@ pub fn every_event() -> Vec<Event> {
             | Reject::ExpiryTooFar { .. }
             | Reject::StakingNotInitialised
             | Reject::InsufficientStake
+            | Reject::CarriedFrontier { .. }
             | Reject::LevelTooClose { .. }
             | Reject::LevelsUnsupported => {}
         }

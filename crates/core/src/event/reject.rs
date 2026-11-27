@@ -83,6 +83,11 @@ pub enum Reject {
     StakingNotInitialised,
     /// From `V25`, an unstake of more MONKEY than the account has staked.
     InsufficientStake,
+    /// From `V92`, a stake or unstake mirrored from a block at or below `through`, the carried staking
+    /// frontier (`Staking::carried_through`).
+    CarriedFrontier {
+        through: u64,
+    },
     /// EVM credits under receipt finality require an exact custody receipt.
     CustodyReceiptRequired,
     /// An unsigned request, where the rules in force require a signature.

@@ -153,7 +153,7 @@ impl Engine {
     /// credited and refused.
     pub(crate) fn prove_fault(&mut self, fault: &ProvenFault, events: &mut Vec<Event>) {
         let refusal = self
-            .registry_mirror_refusal(&fault.chain_ref)
+            .registry_mirror_refusal(&fault.chain_ref, fault.block)
             .or_else(|| (fault.member == AccountId([0; 20])).then(|| "a fault names no member".to_owned()));
         if let Some(reason) = refusal {
             events.push(Event::ElectionRejected { chain_ref: fault.chain_ref.clone(), reason });

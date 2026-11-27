@@ -23,5 +23,6 @@ impl Engine {
         self.start_rollover_spans(version);
         self.start_levels(version);
         self.start_portfolio_margin(version);
+        self.start_carried_frontier(version);
     }
 }

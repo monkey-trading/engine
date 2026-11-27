@@ -119,6 +119,11 @@ pub struct Staking {
     /// carried genesis can check the stakes it carries are all of them (`carry`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staked_total: Option<TokenUnits>,
+    /// From `V92`, the block of the staking frontier this log's genesis carried, or for a log that carried state
+    /// before `V92`, of its completed frontier at `V92`'s activation: no event mirrored from a block at or below it
+    /// applies, nor a completed scan there (`carry`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_through: Option<u64>,
 }
 
 /// The authenticated anchor of a completed finalized staking scan.
@@ -244,7 +249,8 @@ impl Engine {
     /// `V37` the block's time, which never moves back, and from `V65` the registry's turn state at that
     /// block: the boundary of the drawn turn naming the operator, which a turn refused before `V65` left
     /// no other record of, or none, which resolves what `V65`'s activation could not see; from `V67` a
-    /// drawn turn not yet started, up to a day after the block's time, may be named.
+    /// drawn turn not yet started, up to a day after the block's time, may be named. From `V92` a block at or
+    /// below the carried frontier is refused.
     pub(crate) fn staking_progress(
         &mut self,
         block: u64,
@@ -262,6 +268,7 @@ impl Engine {
                 self.protocol_version >= ProtocolVersion::V65
                     && turn.is_none_or(|since| self.turn_names_at(since, block_time))
             })
+            && self.carried_frontier_covering(block).is_none()
             && self.staking.as_ref().is_some_and(|staking| {
                 staking.mirrored_through.is_none_or(|through| block >= through)
                     && staking.completed_through.is_none_or(|through| {
@@ -310,6 +317,7 @@ impl Engine {
             completed_through: None,
             office: None,
             staked_total,
+            carried_through: None,
         });
         if self.protocol_version >= ProtocolVersion::V50 {
             self.start_time_in_office();
@@ -318,7 +326,8 @@ impl Engine {
     }
 
     /// Mirrors a staking contract's `Staked` event: credits `amount` to `account`'s stake under
-    /// `chain_ref`, credited once, advancing the mirrored-through frontier to `block`.
+    /// `chain_ref`, credited once, advancing the mirrored-through frontier to `block`; from `V92`
+    /// refusing a `block` at or below the carried frontier.
     pub(crate) fn stake(
         &mut self,
         account: AccountId,
@@ -337,7 +346,7 @@ impl Engine {
         } else if self.staking_refs.contains(chain_ref) {
             Some(crate::event::Reject::DuplicateReference)
         } else {
-            None
+            self.carried_frontier_covering(block).map(|through| crate::event::Reject::CarriedFrontier { through })
         };
         if let Some(reason) = reason {
             events.push(Event::StakingRejected { account, amount, chain_ref: chain_ref.to_owned(), reason });
@@ -355,8 +364,8 @@ impl Engine {
 
     /// Mirrors a staking contract's `UnstakeCompleted` event, which fires only once the unstake
     /// cooldown has passed: removes `amount` from `account`'s stake under `chain_ref`, credited
-    /// once, refusing an amount above what the account has staked, and advancing the
-    /// mirrored-through frontier to `block`.
+    /// once, refusing an amount above what the account has staked, and from `V92` a `block` at or
+    /// below the carried frontier, and advancing the mirrored-through frontier to `block`.
     pub(crate) fn unstake(
         &mut self,
         account: AccountId,
@@ -371,6 +380,8 @@ impl Engine {
             Some(crate::event::Reject::InvalidAmount)
         } else if self.staking_refs.contains(chain_ref) {
             Some(crate::event::Reject::DuplicateReference)
+        } else if let Some(through) = self.carried_frontier_covering(block) {
+            Some(crate::event::Reject::CarriedFrontier { through })
         } else if self.staked.get(&account).is_none_or(|staked| staked.0 < amount.0) {
             Some(crate::event::Reject::InsufficientStake)
         } else {

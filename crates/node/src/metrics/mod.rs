@@ -34,7 +34,7 @@ use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::metrics::histogram::{Histogram, exponential_buckets};
 use prometheus_client::registry::Registry;
 /// Every `kind` a typed rejection reason can have; see `reject_kind`.
-const REJECT_KINDS: [&str; 37] = [
+const REJECT_KINDS: [&str; 38] = [
     "access",
     "payout_unavailable",
     "unknown_market",
@@ -63,6 +63,7 @@ const REJECT_KINDS: [&str; 37] = [
     "expiry_too_far",
     "staking_not_initialised",
     "insufficient_stake",
+    "carried_frontier",
     "invalid_session_key",
     "session_key_revoked",
     "session_key_expired",
@@ -484,6 +485,7 @@ fn reject_kind(reason: &Reject) -> &'static str {
         Reject::ExpiryTooFar { .. } => "expiry_too_far",
         Reject::StakingNotInitialised => "staking_not_initialised",
         Reject::InsufficientStake => "insufficient_stake",
+        Reject::CarriedFrontier { .. } => "carried_frontier",
         Reject::LevelTooClose { .. } => "level_too_close",
         Reject::LevelsUnsupported => "levels_unsupported",
     }

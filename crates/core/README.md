@@ -144,8 +144,9 @@ To add a version:
 5. Commit both files. The replay tests and CI find them with no other change.
 
 Every log starts under `V2`, so `v1.jsonl` and `v2.jsonl` both replay under it. A log whose genesis
-carries another log's state (`carry`) has its own reference log, `v90-carried.jsonl`, whose genesis
-carries the reference session's state. `reference_log` writes it when given its path after the
+carries another log's state (`carry`) has reference logs of its own, `v<N>-carried.jsonl`, whose
+genesis carries the reference session's state under version `<N>`, for each version that changes
+a carried log's rules. `reference_log` writes the newest one when given its path after the
 first, and `engine-node`'s `reference_log` writes the node's from it, as in step 4.
 
 ## License

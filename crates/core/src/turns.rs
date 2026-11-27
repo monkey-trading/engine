@@ -260,7 +260,7 @@ impl Engine {
     /// the turn in effect, and from `V72` those of refused turns (`prune_sets`).
     pub(crate) fn adopt_rotation_set(&mut self, adoption: &RegistryRotationSet, events: &mut Vec<Event>) {
         let RegistryRotationSet { set, epoch, effective_at, ref members, block, ref chain_ref, .. } = *adoption;
-        let reason = self.turns_mirror_refusal(chain_ref).or_else(|| {
+        let reason = self.turns_mirror_refusal(chain_ref, block).or_else(|| {
             let zero = AccountId([0; 20]);
             let mut candidates = std::collections::BTreeSet::new();
             let mut keys = std::collections::BTreeSet::new();
@@ -367,7 +367,7 @@ impl Engine {
     /// set of a turn's first refused assignment is kept for it.
     pub(crate) fn assign_turn(&mut self, assignment: &RegistryTurn, events: &mut Vec<Event>) {
         let RegistryTurn { turn, set, position, reason, candidate, admin_key, block, ref chain_ref } = *assignment;
-        let refusal = self.turns_mirror_refusal(chain_ref).or_else(|| {
+        let refusal = self.turns_mirror_refusal(chain_ref, block).or_else(|| {
             let zero = AccountId([0; 20]);
             if candidate == zero || admin_key == zero {
                 Some("a turn names a nonzero candidate and key".into())
@@ -487,12 +487,12 @@ impl Engine {
         self.daily_turns.refused.clear();
     }
 
-    /// Why a schedule mirror under `chain_ref` cannot apply, if it cannot: an election's reasons,
-    /// or a protocol before `V51`.
-    fn turns_mirror_refusal(&self, chain_ref: &str) -> Option<String> {
+    /// Why a schedule mirror under `chain_ref`, from `block`, cannot apply, if it cannot: an election's
+    /// reasons, or a protocol before `V51`.
+    fn turns_mirror_refusal(&self, chain_ref: &str, block: u64) -> Option<String> {
         if self.protocol_version < ProtocolVersion::V51 {
             return Some(format!("daily turns need protocol {:?}", ProtocolVersion::V51));
         }
-        self.registry_mirror_refusal(chain_ref)
+        self.registry_mirror_refusal(chain_ref, block)
     }
 }

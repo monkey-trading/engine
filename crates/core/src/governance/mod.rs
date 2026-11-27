@@ -336,7 +336,7 @@ impl Engine {
         let refusal = if self.protocol_version < ProtocolVersion::V56 {
             Some(format!("parameter votes need protocol {:?}", ProtocolVersion::V56))
         } else {
-            self.registry_mirror_refusal(chain_ref).or_else(|| {
+            self.registry_mirror_refusal(chain_ref, block).or_else(|| {
                 if self.governance.config.is_none() {
                     Some("no vote contract is recorded".into())
                 } else if command.as_ref().is_some_and(|command| command_hash(command) != hash) {

@@ -2,8 +2,9 @@
 //! the staking mirror's frontier, the emission schedule and every award, unpaid, from a source root that proves
 //! them, checks the sets complete, and continues the source's emissions with no period before the new log's
 //! first command allocating (`carried_genesis/continuation.rs`); every part that does not prove, comes out of
-//! order or leaves a value out is refused (`carried_genesis/refusals.rs`); and the staking state keeps its total
-//! staked from `V90` (`carried_genesis/staked_total.rs`).
+//! order or leaves a value out is refused (`carried_genesis/refusals.rs`); the staking state keeps its total
+//! staked from `V90` (`carried_genesis/staked_total.rs`); and from `V92` no mirror applies at or below the carried
+//! staking frontier (`carried_genesis/frontier.rs`).
 
 mod common;
 
@@ -11,6 +12,8 @@ mod common;
 mod continuation;
 #[path = "carried_genesis/fixture.rs"]
 mod fixture;
+#[path = "carried_genesis/frontier.rs"]
+mod frontier;
 #[path = "carried_genesis/refusals.rs"]
 mod refusals;
 #[path = "carried_genesis/staked_total.rs"]

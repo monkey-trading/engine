@@ -3,18 +3,18 @@
 //! The session's log then freezes as a carry's source must: the registry mirror switches rotation off, the staking
 //! mirror's frontier passes every block it mirrored, and the open emission period closes.
 //!
-//! `carried` then writes the log a carried genesis opens from the session's last command. A new log's genesis
-//! activates `V90`, sets its parameters and markets, initialises staking and
-//! carries every entitlement, stake and award the session's root proves, in parts; the next command closes the
-//! carried period with no weight and cancels the periods since. A carried staker unstakes and a new stake mirrors
-//! past the carried frontier; the first epoch close pays the carried award from its whole amount before the
-//! stakers; and a carried trader's loss adds to the entitlement it carried.
+//! `carried_genesis` opens the log a carried genesis opens from the session's last command, as `v90-carried.jsonl`
+//! does under `V90`. A new log's genesis activates the version, sets its parameters and markets, initialises staking
+//! and carries every entitlement, stake and award the session's root proves, in parts; the next command closes the
+//! carried period with no weight and cancels the periods since. Then `after_genesis`: a carried staker unstakes and
+//! a new stake mirrors past the carried frontier; the first epoch close pays the carried award from its whole amount
+//! before the stakers; and a carried trader's loss adds to the entitlement it carried.
 
 use alloy_primitives::B256;
 use engine_core::Fixed;
 use engine_core::access::AccessPolicy;
 use engine_core::carry::{CarryPart, StateCarried};
-use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
 use engine_core::operator_bounds::NOTICE_MS;
@@ -74,13 +74,14 @@ fn total(h: &Harness) -> u128 {
     h.engine.staking().and_then(|staking| staking.staked_total).expect("V90 keeps a total").0
 }
 
-/// The log whose genesis carries `alpha`'s state at its last command, as described above.
-pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
+/// The log whose genesis, under `version`, carries `alpha`'s state at its last command, through its house capital,
+/// as described above.
+pub(crate) fn carried_genesis(alpha: &mut Harness, version: ProtocolVersion) -> Harness {
     alpha.engine.state_root();
     let (parts, carried) = alpha.engine.carry_parts().expect("the frozen session carries");
     let source = alpha.engine.emissions().expect("the session emits").clone();
 
-    let mut h = node_genesis(ProtocolVersion::V90, alpha.ts + DAY_MS);
+    let mut h = node_genesis(version, alpha.ts + DAY_MS);
     h.admin(AdminCommand::SetAccessPolicy(AccessPolicy { source: source_key(), max_age_ms: 30 * DAY_MS }));
     let floor = Fixed::from_int(HOUSE_CAPITAL - 2_000_000);
     h.admin(AdminCommand::InitStaking(StakingConfig {
@@ -109,9 +110,7 @@ pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
     assert_eq!(events.first(), Some(&closed), "{events:?}");
     assert!(matches!(events[1], Event::EmissionPeriodsCancelled { last, .. } if last == current - 1), "{events:?}");
     h.cmd(Command::HouseCapital { amount: Fixed::from_int(HOUSE_CAPITAL), chain_ref: "genesis".into() });
-
-    after_genesis(&mut h, alpha);
-    h.log
+    h
 }
 
 /// Switches rotation off in the registry mirror, completes the staking mirror's frontier through every block it
@@ -153,7 +152,7 @@ fn check_carried(h: &Harness, alpha: &Harness, carried: StateCarried) {
 
 /// A carried staker unstakes and a new stake mirrors past the carried frontier; the first epoch close pays the
 /// carried award first; and a carried trader's loss adds to its entitlement.
-fn after_genesis(h: &mut Harness, alpha: &Harness) {
+pub(crate) fn after_genesis(h: &mut Harness, alpha: &Harness) {
     let (&staker, &staked) = h.engine.staked_balances().iter().next().expect("the session staked");
     let completed = h.engine.staking().and_then(|staking| staking.completed_through).expect("carried").block;
     let unstake =

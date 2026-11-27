@@ -23,6 +23,11 @@
 //! - **Emissions** continue from the source's start and halvings. The first command stamped past the carried
 //!   period's end closes it with no weight, as the source's results there are not carried, and cancels every
 //!   later period up to its own, so no period before the new log's first command after `End` allocates anything.
+//! - **The frontier**, from `V92`. `End` records the carried staking frontier's block, and an activation of `V92`
+//!   records a log's completed frontier if its genesis carried state before. The source mirrored every event of the
+//!   contracts it followed at or below it, under references this log does not hold, so a staking, registry,
+//!   schedule, vote or fault proof event mirrored from a block at or below it is refused, as is a completed scan
+//!   there (`frontier`).
 
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
@@ -38,6 +43,7 @@ use crate::types::AccountId;
 
 mod apply;
 mod build;
+mod frontier;
 
 /// The most entries one entitlement, stake or award part carries, so each command's proofs stay bounded.
 pub const MAX_CARRY_ENTRIES: usize = 128;
