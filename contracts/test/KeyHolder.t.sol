@@ -23,6 +23,8 @@ contract KeyHolderTest is SkipTest {
     Binding internal holding;
     /// @dev When set, the member the turns drawn for bob name at position 1.
     address internal second;
+    /// @dev When not empty, the order the turns drawn for bob name, in place of `second`.
+    address[] internal nextOrder;
 
     function setUp() public {
         _deployLiveness();
@@ -42,7 +44,9 @@ contract KeyHolderTest is SkipTest {
         setId = _rotate(members, stakes);
         turn = _nextTurn() + 1;
         seed = _relayPicking(turn, setId, alice);
-        if (second == address(0)) {
+        if (nextOrder.length != 0) {
+            _relayOrder(turn + 1, nextOrder);
+        } else if (second == address(0)) {
             _relayPicking(turn + 1, setId, bob);
         } else {
             address[] memory order = new address[](2);
@@ -252,5 +256,64 @@ contract KeyHolderTest is SkipTest {
         (, uint16 position) = schedule.skip();
         assertEq(position, 2, "carol, at position 1, is passed over");
         assertEq(schedule.turnOf(turn).candidate, bob);
+    }
+
+    /// @dev Bob's turn, order bob, carol, bob, dave, drawn while alice's enclave holds the keys. At the
+    /// boundary alice's enclave hands bob the keys off chain and stops; bob's enclave posts no head.
+    function _bobTakesTheKeysAndStaysSilent() internal {
+        nextOrder = [bob, carol, bob, dave];
+        _aliceHoldsTheKeys(4);
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, alice, "the chain names alice, the last enclave to land a head");
+    }
+
+    /// @dev Witnesses slot after slot until a promotion is due.
+    function _witnessToPromotion() internal {
+        for (uint256 i = 0; i < 20 && block.timestamp < schedule.promotionDueAt(); ++i) {
+            schedule.witness();
+            _nextSlot(5, 240);
+        }
+        assertGe(block.timestamp, schedule.promotionDueAt(), "a promotion is due");
+    }
+
+    /// The chain learns of a handover only from the taker's first head. Bob, drawn for the turn, takes the
+    /// keys and lands no head, so the chain goes on naming alice, who holds none, as the key holder. The
+    /// skip records nothing against bob, and the promotion names bob again, at position 2, ahead of dave,
+    /// whom he kept out, and records alice as having held the turn's keys. The security model states it.
+    function test_ADrawnMemberThatTakesTheKeysAndLandsNoHeadIsPromotedAheadOfTheMembersItKeptOut() public {
+        _bobTakesTheKeysAndStaysSilent();
+        address bobKey = schedule.promotable(bob);
+        _marked(TAKE);
+        (, uint16 skipped) = schedule.skip();
+        assertEq(skipped, 1, "the skip names carol");
+        assertFalse(schedule.heldKeys(turn, bob), "nothing is recorded against bob");
+        _witnessToPromotion();
+        (, uint16 promoted) = schedule.promote();
+        assertEq(promoted, 2, "bob's second place in the order");
+        assertEq(schedule.turnOf(turn).candidate, bob, "the silent taker takes the turn");
+        assertEq(vault.checkpointSigner(), bobKey);
+        assertFalse(schedule.heldTurn(turn, dave), "dave never held the turn");
+        assertTrue(schedule.heldKeys(turn, alice), "alice is recorded as the holder moved past");
+    }
+
+    /// The same history with one head of bob's enclave landing after the skip. It binds bob's superseded
+    /// assignment and latches nothing, yet the chain then names bob the key holder, and the promotion
+    /// passes him for dave.
+    function test_OneLandedHeadOfTheSilentTakerMovesThePromotionPastIt() public {
+        _bobTakesTheKeysAndStaysSilent();
+        OperatorSchedule.Turn memory drawn = schedule.turnOf(turn);
+        _marked(TAKE);
+        schedule.skip();
+        LogHeads.HeadV2 memory late = _nextHead();
+        (late.position, late.generation) = (drawn.position, drawn.generation);
+        late.release = registry.candidateOf(bob).release;
+        _post(late);
+        (address holder,) = logHeads.keyHolder();
+        assertEq(holder, bob, "one head names bob the key holder");
+        _witnessToPromotion();
+        (, uint16 promoted) = schedule.promote();
+        assertEq(promoted, 3, "dave's place in the order");
+        assertEq(schedule.turnOf(turn).candidate, dave);
+        assertTrue(schedule.heldKeys(turn, bob), "bob is recorded as the holder moved past");
     }
 }
