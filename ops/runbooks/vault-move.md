@@ -613,6 +613,9 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   names each condition from step 11 that does not yet hold. Nothing is written. A condition that
   waits on batch B, on the retirement of the alpha's signer or on the carry file resolves when you
   finish the step that it names. The alert resolves by itself once every condition holds.
+  Once they hold, the trading server reads the schedule's governance record again, and a record that
+  now names another vote or fault proof contract than the configuration raises
+  `governance_record_mismatch` and stops it, as at any start.
 - **`carry_refused`** is Critical. The configured registry is not the one the alpha vault reads,
   the configured staking contract is not the one that registry deployed, the configured minter mints
   another token than the staking contract holds, the carry file's source is not the alpha vault's final checkpoint, the file does

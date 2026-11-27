@@ -113,7 +113,7 @@ fn refuse(source: &str, refused: StakingTermsRefused) -> anyhow::Error {
 /// Error cases:
 /// - the record cannot be read (alert `checkpoint_startup_failed`)
 /// - it names another vote or fault proof contract than the config (alert `governance_record_mismatch`)
-pub(super) async fn governance_preflight(reader: Option<&RecordReader>) -> anyhow::Result<Option<GovernanceRecord>> {
+pub(crate) async fn governance_preflight(reader: Option<&RecordReader>) -> anyhow::Result<Option<GovernanceRecord>> {
     let Some(reader) = reader else { return Ok(None) };
     let record = reader.read().await.inspect_err(|e| {
         error!(

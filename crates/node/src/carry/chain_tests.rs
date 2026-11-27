@@ -151,12 +151,14 @@ async fn a_carried_start_refuses_a_staking_contract_the_registry_did_not_deploy(
     assert!(unmet(&state, &expected).is_empty(), "{:?}", unmet(&state, &expected));
     assert_eq!(state.registry_staking, DEPLOYED);
     assert!(check_kept(&state, &contracts(DEPLOYED)).is_ok());
-    let (_, file) = hold(|| read(DEPLOYED), (&expected, &contracts(DEPLOYED)), &path).await.unwrap();
+    let (_, file) =
+        hold(|| read(DEPLOYED), (&expected, &contracts(DEPLOYED)), &path, || async { Ok(()) }).await.unwrap();
     assert_eq!(file.source, built.source);
 
     // Another contract holding the same token and naming the same registry: the start refuses it at once, naming
     // the registry's.
-    let refused = hold(|| read(IMPOSTOR), (&expected, &contracts(IMPOSTOR)), &path).await.unwrap_err();
+    let refused =
+        hold(|| read(IMPOSTOR), (&expected, &contracts(IMPOSTOR)), &path, || async { Ok(()) }).await.unwrap_err();
     let refused = format!("{refused:#}");
     assert!(refused.contains(&format!("the registry deployed staking contract {DEPLOYED}")), "{refused}");
     assert!(refused.contains(&format!("custody.evm.staking.contract is {IMPOSTOR}")), "{refused}");

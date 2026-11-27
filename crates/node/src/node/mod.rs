@@ -58,6 +58,7 @@ use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
 use crate::tls::acme::{CertificateTask, Sealed};
 use crate::{custody::Custody, feeds, monitor, tls::serve, trusted_time, verify::Relay};
 use preflight::authorize;
+pub(crate) use preflight::governance_preflight;
 
 /// How long a start that failed with a delivered key in play stays up for its repair.
 const FAILED_START_HOLD: Duration = if cfg!(test) { Duration::from_secs(5) } else { Duration::from_secs(300) };
