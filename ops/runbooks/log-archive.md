@@ -291,6 +291,7 @@ successor's archive sync at a handover, a promoted member's gap fetch or the car
 fails rather than ending there, since the bucket holds a prefix of the log and a cache in front of it
 can answer a stale 404. The node retries the read where its caller retries: a standby's next start,
 a member's next stint, the next handover attempt.
+The alert resolves once a read serves a segment over the object.
 
 1. Read the alert's `object` field, the console lines around it, and the segment the message names.
 2. Check the object at its public URL:

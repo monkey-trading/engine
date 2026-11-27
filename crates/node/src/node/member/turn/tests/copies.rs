@@ -170,3 +170,25 @@ async fn remirror(fixture: &mut Fixture, name: &str, alter: impl FnOnce(&std::pa
     );
     last
 }
+
+/// A member's incumbent is read from the bucket its own `[archive]` names first, under the log's chain and vault, and
+/// from no bucket without the section.
+#[tokio::test]
+async fn a_members_incumbent_reads_the_bucket_its_own_archive_section_names_first() {
+    let mut fixture = Fixture::start("member-incumbent-bucket", false).await;
+    let source = crate::checkpoints::HandoverSource {
+        candidate: AccountId([0x42; 20]),
+        release: [0x22; 32],
+        api_hostname: "operator.example".into(),
+        handover_endpoint: "127.0.0.1:1".into(),
+    };
+    let turn = ScheduledTurn { source: Some(source), ..fixture.registry.turns().remove(0) };
+    assert_eq!(fixture.member().incumbent(&turn).await.unwrap().bucket, None);
+    let stand_in = crate::archive::stand_in::StandIn::start().await;
+    fixture.cfg.archive = Some(stand_in.section(Duration::from_secs(60)));
+    let prefix = crate::archive::log_prefix(fixture.cfg.custody.chain_id, fixture.cfg.custody.vault.parse().unwrap());
+    let bucket = crate::archive::Bucket::new(&stand_in.url, &prefix).unwrap();
+    let incumbent = fixture.member().incumbent(&turn).await.unwrap();
+    assert_eq!(incumbent.bucket.as_ref(), Some(&bucket));
+    assert_eq!(incumbent.archive().bucket.as_ref(), Some(&bucket), "the backfill reads the bucket first");
+}

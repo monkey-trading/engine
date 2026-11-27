@@ -38,6 +38,20 @@ fn a_published_logs_url_downloads_into_a_directory_removed_with_it() {
     assert_eq!(downloads(&parent), 0, "a failed download leaves no directory");
 }
 
+/// An interrupted download stops and removes its directory, as a failed one does, though the archive never answers.
+#[test]
+fn an_interrupted_download_leaves_no_directory() {
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url: Url = format!("http://{}", silent.local_addr().unwrap()).parse().unwrap();
+    let held = std::thread::spawn(move || silent.accept().map(|(stream, _)| stream));
+    let parent = scratch_dir("source-interrupted");
+    std::fs::create_dir_all(&parent).unwrap();
+    let e = PublishedLog::Url(url).local_until(&parent, None, std::future::ready(())).unwrap_err();
+    assert!(format!("{e:#}").contains("interrupted"), "{e:#}");
+    assert_eq!(downloads(&parent), 0, "an interrupted download leaves no directory");
+    drop(held);
+}
+
 /// A path is a path, and an archive's URL is refused when it names a query, a fragment or credentials.
 #[test]
 fn an_archives_url_names_only_where_the_archive_is() {

@@ -58,6 +58,50 @@ async fn a_whole_log_handover_onto_a_copy_a_mirror_spelt_otherwise_holds_the_pre
     }
 }
 
+/// The restore reads the bucket the successor's own `[archive]` names before the mirror: the segments the mirror
+/// no longer holds, which it answers `404` for, come from the bucket's ranges of the log's chain and vault.
+#[tokio::test]
+async fn the_archive_restore_reads_the_bucket_the_successors_archive_section_names() {
+    let operator = scratch_dir("copies-bucket-operator");
+    let node = TestSequencer::start(&operator, 1024);
+    ticks(&node, 30).await;
+    let mut exchange = Exchange::start_with("copies-bucket", Some(node.tx.clone()), Some(operator.clone())).await;
+    let mirror = mirror_of(&operator, "copies-bucket-mirror", |_, _| {});
+    let view = crate::test_support::published_manifest(&mirror).borrow().clone();
+    let ranges = view.unlisted_from().unwrap() / crate::archive::RANGE_SEQS;
+    assert!(ranges > 0, "the log holds a whole range");
+    let bucket = crate::archive::stand_in::StandIn::start().await;
+    let prefix = crate::archive::log_prefix(
+        exchange.successor.custody.chain_id,
+        exchange.successor.custody.vault.parse().unwrap(),
+    );
+    for index in 0..ranges {
+        let object = crate::archive::compress(&crate::archive::range_bytes(&mirror, &view, index).unwrap()).unwrap();
+        bucket.with(|b| b.objects.insert(crate::archive::range_key(&prefix, index), object));
+    }
+    let held: Vec<_> =
+        view.segments.iter().filter(|listed| listed.last_seq < ranges * crate::archive::RANGE_SEQS).collect();
+    assert!(!held.is_empty(), "a listed segment lies in the bucket's ranges");
+    for listed in &held {
+        std::fs::remove_file(mirror.join(&listed.file)).unwrap();
+    }
+    let url = archive(&mirror).await;
+    let sealing = format!(
+        "dir = {:?}\n[handover]\nlisten = '127.0.0.1:0'\nmirrors = [{url:?}]\ndanger_accept_invalid_certs = true",
+        exchange.successor_dir.display().to_string()
+    );
+    exchange.successor.tee.sealing = Some(toml::from_str(&sealing).unwrap());
+    exchange.successor.archive = Some(bucket.section(std::time::Duration::from_secs(60)));
+
+    sync_predecessor_log(&exchange.successor, &incumbent(), (signers(&exchange), None), &exchange.metrics)
+        .await
+        .unwrap();
+    assert!(bucket.with(|b| b.read) > 0, "the segments the mirror lacks came from the bucket");
+    let restored = Manifest::load(&exchange.successor_log).unwrap();
+    assert!(held.iter().all(|listed| restored.segments.iter().any(|have| have.file == listed.file)));
+    node.stop().await;
+}
+
 /// The archive restore before an election's whole-log take finishes a cut a crash interrupted after the
 /// truncation listed the copy's end state, while the later segments are still there unlisted, so the
 /// copy does not open by itself: the restore extends the finished cut to the mirror's copy.

@@ -11,8 +11,9 @@ use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::eip712::B256;
 use reqwest::Client;
 
+use crate::archive::Head;
 use crate::archive::RANGE_SEQS;
-use crate::archive::read::{Bucket, Head, MAX_RANGE_BYTES, Ranges, Unread};
+use crate::archive::read::{Bucket, MAX_RANGE_BYTES, Ranges, Unread};
 use crate::log::LogEntry;
 
 /// Writes to `out` the log in the bucket `log` names, through the vault's checkpoint at `seq` rooted at `root`, read
