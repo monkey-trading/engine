@@ -215,7 +215,7 @@ fn entries_of(
         };
         let mut segment = BufReader::new(segment);
         let mut seq = None;
-        while let Some(head) = next_entry(&mut segment, &mut line, |_| Ok(())).with_context(|| format!("{file}"))? {
+        while let Some(head) = next_entry(&mut segment, &mut line, |_| Ok(())).with_context(|| file.clone())? {
             if head.entry == "command" {
                 seq = Some(head.seq.with_context(|| format!("a command of {file} names no seq"))?);
             }

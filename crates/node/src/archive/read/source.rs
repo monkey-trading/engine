@@ -81,9 +81,13 @@ impl PublishedLog {
     /// Error cases:
     /// - see `local`
     pub(crate) fn local_in(&self, parent: &Path, through: Option<(u64, B256)>) -> anyhow::Result<LocalLog> {
-        self.local_until(parent, through, async {
+        let local = self.local_until(parent, through, async {
             let _ = tokio::signal::ctrl_c().await;
-        })
+        })?;
+        if let Some(dir) = &local.downloaded {
+            remove_on_interrupt(dir.clone());
+        }
+        Ok(local)
     }
 
     /// `local_in`, a download stopping when `interrupt` completes, which removes it as a failed one is.
@@ -201,6 +205,18 @@ fn interruptible(
             () = interrupt => bail!("the download was interrupted"),
         }
     })
+}
+
+/// Once the download's own handler is installed, a Ctrl-C no longer ends the process by default, so this keeps one:
+/// a thread that waits for it, removes `dir` and exits with the status a Ctrl-C gives.
+fn remove_on_interrupt(dir: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = runtime() else { return };
+        if runtime.block_on(tokio::signal::ctrl_c()).is_ok() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::process::exit(130);
+        }
+    });
 }
 
 /// The runtime a download runs on.
