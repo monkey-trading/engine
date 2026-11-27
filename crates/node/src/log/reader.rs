@@ -23,8 +23,12 @@ pub struct LogReader {
     holding: bool,
     /// Runs before each of the reader's opens of a segment's file, to interleave a removal.
     #[cfg(test)]
-    before_open: Option<Box<dyn FnMut(Open, &Path) + Send>>,
+    before_open: Option<BeforeOpen>,
 }
+
+/// A test's hook run before each of the reader's opens of a segment's file.
+#[cfg(test)]
+type BeforeOpen = Box<dyn FnMut(Open, &Path) + Send>;
 
 /// The opens of a segment's file after its existence check: the hashing check, then the read.
 #[cfg(test)]
