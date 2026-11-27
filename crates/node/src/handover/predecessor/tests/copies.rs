@@ -68,7 +68,7 @@ async fn the_archive_restore_reads_the_bucket_the_successors_archive_section_nam
     let mut exchange = Exchange::start_with("copies-bucket", Some(node.tx.clone()), Some(operator.clone())).await;
     let mirror = mirror_of(&operator, "copies-bucket-mirror", |_, _| {});
     let view = crate::test_support::published_manifest(&mirror).borrow().clone();
-    let ranges = view.unlisted_from().unwrap() / crate::archive::RANGE_SEQS;
+    let ranges = view.unlisted_from().unwrap() / crate::archive::range_seqs();
     assert!(ranges > 0, "the log holds a whole range");
     let bucket = crate::archive::stand_in::StandIn::start().await;
     let prefix = crate::archive::log_prefix(
@@ -80,7 +80,7 @@ async fn the_archive_restore_reads_the_bucket_the_successors_archive_section_nam
         bucket.with(|b| b.objects.insert(crate::archive::range_key(&prefix, index), object));
     }
     let held: Vec<_> =
-        view.segments.iter().filter(|listed| listed.last_seq < ranges * crate::archive::RANGE_SEQS).collect();
+        view.segments.iter().filter(|listed| listed.last_seq < ranges * crate::archive::range_seqs()).collect();
     assert!(!held.is_empty(), "a listed segment lies in the bucket's ranges");
     for listed in &held {
         std::fs::remove_file(mirror.join(&listed.file)).unwrap();

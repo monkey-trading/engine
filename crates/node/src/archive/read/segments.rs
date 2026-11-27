@@ -11,14 +11,16 @@ use anyhow::{Context, anyhow};
 use reqwest::{Client, Url};
 use tracing::{debug, info, warn};
 
-use crate::archive::RANGE_SEQS;
+use crate::archive::range_seqs;
 use crate::archive::read::{Bucket, Ranges, Unread};
 use crate::log::SegmentInfo;
 use crate::standby::MAX_ARCHIVE_BYTES;
 use crate::standby::archive::{Fetched, check_listing, fetch_from, fetch_manifest, validate_listing};
 
 /// The most bytes of a segment rebuilt from the bucket, a node's bound on a segment it serves; a mebibyte in tests.
-pub(crate) const MAX_REBUILT_BYTES: u64 = if cfg!(test) { 1 << 20 } else { MAX_ARCHIVE_BYTES };
+pub(crate) fn max_rebuilt_bytes() -> u64 {
+    if cfg!(test) && !crate::archive::production_sizes() { 1 << 20 } else { MAX_ARCHIVE_BYTES }
+}
 
 /// Where a backfill reads the archive: node origins in order, mirrors first, and the bucket before them when the
 /// reader's own `[archive]` names one. A list of node origins names no bucket.
@@ -116,7 +118,7 @@ impl<'a> Segments<'a> {
     ///   listing's
     pub(crate) async fn segment(&mut self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         let bytes = self.read(listed).await?;
-        let ranges = listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS;
+        let ranges = listed.first_seq / range_seqs()..=listed.last_seq / range_seqs();
         self.reported.retain(|object, index| {
             let served = ranges.contains(index);
             if served {
@@ -130,7 +132,7 @@ impl<'a> Segments<'a> {
     /// `segment`'s read of the listed bytes.
     async fn read(&mut self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         validate_listing(listed)?;
-        let index = listed.first_seq / RANGE_SEQS;
+        let index = listed.first_seq / range_seqs();
         let (mut failed, mut missing) = (None, None);
         let ahead = self.behind.is_none_or(|behind| index < behind);
         if ahead && self.ranges.is_some() {
@@ -206,7 +208,7 @@ impl<'a> Segments<'a> {
         let ranges = self.ranges.as_mut().expect("a bucket to read: the caller holds or names one");
         let bucket = ranges.bucket().to_string();
         // A listing names no more bytes than a node serves a segment, which bounds what the rebuild holds.
-        let limit = listed.bytes.min(MAX_REBUILT_BYTES);
+        let limit = listed.bytes.min(max_rebuilt_bytes());
         let bytes = ranges.seqs(self.http, (listed.first_seq, listed.last_seq), limit).await?;
         check_listing(listed, &bytes).map_err(|e| Unread::Refused(anyhow!("rebuilt from {bucket}: {e}")))?;
         debug!(segment = %listed.file, %bucket, "took the segment from the archive's bucket");

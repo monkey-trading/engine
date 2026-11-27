@@ -20,7 +20,7 @@ async fn a_backfill_reads_the_bucket_first_and_the_node_past_it() {
     bootstrap_archive(&bucket.client, &origins, &copy).await.unwrap();
     assert_eq!(log_entries(&copy), log_entries(&dir));
     for listed in view.segments.iter() {
-        let from_bucket = listed.last_seq < 3 * RANGE_SEQS;
+        let from_bucket = listed.last_seq < 3 * range_seqs();
         assert_eq!(node.asked(&listed.file), u64::from(!from_bucket), "{}", listed.file);
     }
     // The ranges it holds, each once, and the first it lacks, once: the nodes are asked first from there on.
@@ -41,7 +41,7 @@ async fn a_segment_the_bucket_holds_otherwise_comes_from_the_node() {
     bootstrap_archive(&bucket.client, &origins, &copy).await.unwrap();
     assert_eq!(log_entries(&copy), log_entries(&dir));
     let in_range = |listed: &SegmentInfo, index: u64| {
-        (listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS).contains(&index)
+        (listed.first_seq / range_seqs()..=listed.last_seq / range_seqs()).contains(&index)
     };
     for listed in listed_below(&dir, 4) {
         assert_eq!(node.asked(&listed.file), u64::from(in_range(&listed, 1)), "{}", listed.file);
@@ -95,7 +95,7 @@ async fn a_segment_no_node_serves_is_asked_of_the_bucket_again_past_a_404() {
     let served = scratch_dir("segments-stale-served");
     copy_log(&dir, &served);
     let late: Vec<SegmentInfo> =
-        listed_below(&dir, 4).into_iter().filter(|listed| listed.first_seq >= 2 * RANGE_SEQS).collect();
+        listed_below(&dir, 4).into_iter().filter(|listed| listed.first_seq >= 2 * range_seqs()).collect();
     for listed in &late {
         std::fs::remove_file(served.join(&listed.file)).unwrap();
     }
@@ -103,7 +103,7 @@ async fn a_segment_no_node_serves_is_asked_of_the_bucket_again_past_a_404() {
     let origins = Origins { bucket: Some(bucket_of(&bucket)), nodes: vec![node.url.clone()] };
     let mut segments = Segments::new(&bucket.client, &origins);
     let listings = segments.manifest().await.unwrap();
-    for listed in listings.iter().filter(|listed| listed.last_seq < 4 * RANGE_SEQS) {
+    for listed in listings.iter().filter(|listed| listed.last_seq < 4 * range_seqs()) {
         let bytes = segments.segment(listed).await.unwrap();
         assert_eq!(bytes, std::fs::read(dir.join(&listed.file)).unwrap(), "{}", listed.file);
     }
@@ -122,7 +122,7 @@ async fn a_segment_no_source_holds_is_missing_and_pages_once() {
     copy_log(&dir, &served);
     let gone: Vec<SegmentInfo> = listed_below(&dir, 4)
         .into_iter()
-        .filter(|listed| (listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS).contains(&2))
+        .filter(|listed| (listed.first_seq / range_seqs()..=listed.last_seq / range_seqs()).contains(&2))
         .collect();
     for listed in &gone {
         std::fs::remove_file(served.join(&listed.file)).unwrap();
@@ -159,7 +159,7 @@ async fn a_missing_object_resolves_once_a_segment_over_it_is_served() {
     copy_log(&dir, &served);
     let gone: Vec<SegmentInfo> = listed_below(&dir, 4)
         .into_iter()
-        .filter(|listed| (listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS).contains(&2))
+        .filter(|listed| (listed.first_seq / range_seqs()..=listed.last_seq / range_seqs()).contains(&2))
         .collect();
     for listed in &gone {
         std::fs::remove_file(served.join(&listed.file)).unwrap();
@@ -217,7 +217,7 @@ async fn a_rebuild_reads_no_further_than_a_segments_bound() {
     let padding = "x".repeat(1024);
     let ranges = 200u64;
     for index in 0..ranges {
-        let lines: String = (index * RANGE_SEQS..(index + 1) * RANGE_SEQS)
+        let lines: String = (index * range_seqs()..(index + 1) * range_seqs())
             .map(|seq| format!("{{\"entry\":\"command\",\"seq\":{seq},\"padding\":\"{padding}\"}}\n"))
             .collect();
         bucket.with(|b| {
@@ -227,13 +227,13 @@ async fn a_rebuild_reads_no_further_than_a_segments_bound() {
     let listed = SegmentInfo {
         file: crate::log::segment_name(0),
         first_seq: 0,
-        last_seq: ranges * RANGE_SEQS - 1,
+        last_seq: ranges * range_seqs() - 1,
         bytes: u64::MAX,
         sha256: "ab".repeat(32),
     };
     let origins = Origins { bucket: Some(bucket_of(&bucket)), nodes: Vec::new() };
     let e = Segments::new(&bucket.client, &origins).segment(&listed).await.unwrap_err();
-    assert!(format!("{e:#}").contains(&format!("in at most {MAX_REBUILT_BYTES} bytes")), "{e:#}");
+    assert!(format!("{e:#}").contains(&format!("in at most {} bytes", max_rebuilt_bytes())), "{e:#}");
     assert!(bucket.with(|b| b.read) < ranges, "the rebuild stopped at the bound");
 }
 

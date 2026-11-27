@@ -24,8 +24,8 @@ use tracing::{Instrument, info, info_span, warn};
 
 use crate::archive::backlog::Backlog;
 use crate::archive::{
-    Created, Finality, Object, RANGE_SEQS, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes_with,
-    range_key, same_root, stored_bound, whole_ranges,
+    Created, Finality, Object, Store, ZSTD, checkpoint_root, compress, holds, log_prefix, range_bytes_with, range_key,
+    range_seqs, same_root, stored_bound, whole_ranges,
 };
 use crate::checkpoints::CheckpointRpc;
 use crate::config::{NodeConfig, Values};
@@ -327,7 +327,7 @@ impl<F: Finality> Work<F> {
     /// - the vault cannot be read, or the copy's segment holding the checkpoint cannot be
     async fn below_finality(&mut self, view: &Manifest, next: u64) -> anyhow::Result<u64> {
         let Some(finality) = &self.finality else { return Ok(u64::MAX) };
-        let below = |anchor: &Anchor| anchor.held.as_ref().map_or(0, |(seq, _)| seq / RANGE_SEQS);
+        let below = |anchor: &Anchor| anchor.held.as_ref().map_or(0, |(seq, _)| seq / range_seqs());
         if next < below(&self.anchor) || self.anchor.differs.is_some() {
             return Ok(below(&self.anchor));
         }
@@ -451,7 +451,7 @@ impl<F: Finality> Work<F> {
             warn!(
                 alert = "archive_object_mismatch",
                 object = %range_key(self.store.prefix(), index),
-                first_seq = index * RANGE_SEQS,
+                first_seq = index * range_seqs(),
                 "the archive's object for this range differs from this node's copy of it and cannot be replaced, so \
                  this node uploads nothing past it and its host keeps the log: compare the two"
             );

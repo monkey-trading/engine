@@ -21,7 +21,7 @@ use tokio::time::{Instant, sleep};
 use crate::archive::read::origin::{bucket_of, copy_log};
 use crate::archive::stand_in::{StandIn, Vault, test_log};
 use crate::archive::window::{RestoreSources, Window};
-use crate::archive::{Origins, RANGE_SEQS, Uploader, download};
+use crate::archive::{Origins, Uploader, download, range_seqs};
 use crate::clock::test_clock::TestClock;
 use crate::config::HistorySection;
 use crate::daily_snapshots::{Bounds, Listed, MANIFEST as SNAPSHOTS, NoRoots, read_manifest, snapshot_start_against};
@@ -102,7 +102,7 @@ async fn dev_scenario_log_window() {
     let view = node.view();
     let member = node.run.join("member");
     copy_log(&node.dir, &member);
-    let lost = view.segments.iter().find(|listed| listed.first_seq >= confirmed * RANGE_SEQS).cloned().unwrap();
+    let lost = view.segments.iter().find(|listed| listed.first_seq >= confirmed * range_seqs()).cloned().unwrap();
     assert!(view.segments.last().is_some_and(|newest| newest.first_seq > lost.first_seq), "not the newest");
     let bytes = std::fs::read(node.dir.join(&lost.file)).unwrap();
     std::fs::remove_file(node.dir.join(&lost.file)).unwrap();

@@ -13,7 +13,7 @@ use tokio::net::TcpListener;
 use crate::archive::read::origin::bucket_of;
 use crate::archive::scenario::{finalize_all, ticks_until, uploading};
 use crate::archive::stand_in::{StandIn, Vault, test_log};
-use crate::archive::{Origins, RANGE_SEQS, compress, download, range_bytes, range_key};
+use crate::archive::{Origins, compress, download, range_bytes, range_key, range_seqs};
 use crate::exit::{ExitSubject, exit_bundle};
 use crate::log::{MANIFEST, SegmentInfo};
 use crate::sequencer::{Replayed, replay_path_in_domain};
@@ -46,7 +46,7 @@ async fn dev_scenario_archive_read() {
         "==> 2. the segments the bucket's first ranges hold leave the node's disk, and its archive redirects them"
     );
     let kept_from = archived - 1;
-    let moved: Vec<SegmentInfo> = listed.iter().filter(|s| s.last_seq < kept_from * RANGE_SEQS).cloned().collect();
+    let moved: Vec<SegmentInfo> = listed.iter().filter(|s| s.last_seq < kept_from * range_seqs()).cloned().collect();
     for segment in &moved {
         std::fs::remove_file(dir.join(&segment.file)).unwrap();
     }
@@ -55,7 +55,7 @@ async fn dev_scenario_archive_read() {
     let answer = bucket.client.get(format!("{url}/v1/archive/{}", first.file)).send().await.unwrap();
     assert_eq!(answer.status(), 308);
     let location = answer.headers()["location"].to_str().unwrap().to_owned();
-    assert_eq!(location, bucket_of(&bucket).object(first.first_seq / RANGE_SEQS).unwrap().as_str());
+    assert_eq!(location, bucket_of(&bucket).object(first.first_seq / range_seqs()).unwrap().as_str());
     let mut reader = crate::archive::Segments::new(&bucket.client, std::slice::from_ref(&url));
     let rebuilt = reader.segment(first).await.unwrap();
     assert_eq!(rebuilt.len() as u64, first.bytes, "the rebuilt segment is its listing's length and hash");
@@ -77,7 +77,7 @@ async fn dev_scenario_archive_read() {
     bootstrap_archive(&bucket.client, &origins, &copy).await.unwrap();
     assert_eq!(log_entries(&copy), log_entries(&local));
     assert_eq!(bucket.with(|b| b.read) - reads, archived + 1, "each range once, and the first it lacks");
-    let past = listed.iter().filter(|s| s.last_seq >= archived * RANGE_SEQS).count();
+    let past = listed.iter().filter(|s| s.last_seq >= archived * range_seqs()).count();
     println!("    {} segments from the bucket's {archived} ranges, {past} from the node", listed.len() - past);
 
     println!("==> 5. the bucket serves other bytes for an object: the backfill takes its segments from the node, and");

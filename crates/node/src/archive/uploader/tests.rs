@@ -151,7 +151,7 @@ async fn an_object_that_differs_is_reported_once_and_the_uploads_stop_there_acro
     let running = tokio::spawn(uploader.run());
     let alert = recv(&mut alerts, "archive_object_mismatch").await;
     assert_eq!(alert["object"], key);
-    assert_eq!(alert["first_seq"], RANGE_SEQS.to_string());
+    assert_eq!(alert["first_seq"], range_seqs().to_string());
     // The writer goes on, and no range past the mismatch goes up.
     let whole = whole_ranges(&node.manifest.borrow()).unwrap();
     more(&node, whole + 2).await;

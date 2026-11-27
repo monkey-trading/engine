@@ -39,11 +39,11 @@ async fn a_checkpoints_tail_goes_up_before_the_vault_finalizes_it() {
     let running = tokio::spawn(uploader.run());
     until("the newest checkpoint's tail", || metrics.archive.tail_seq.get() as u64 == seq).await;
     let ranges = metrics.archive.confirmed_ranges.get() as u64;
-    assert_eq!(ranges, finalized / RANGE_SEQS, "no range past the vault's finalized checkpoint");
+    assert_eq!(ranges, finalized / range_seqs(), "no range past the vault's finalized checkpoint");
     assert_eq!(*archived.borrow(), Some(ranges), "the window's count stops at the ranges, the tail's aside");
-    assert!(seq / RANGE_SEQS > ranges, "the tail covers ranges the bucket lacks");
+    assert!(seq / range_seqs() > ranges, "the tail covers ranges the bucket lacks");
     let view = node.manifest.borrow().clone();
-    for index in ranges..=seq / RANGE_SEQS {
+    for index in ranges..=seq / range_seqs() {
         let object = bucket.with(|b| b.objects.get(&tail_key(seq, &root, index)).cloned()).expect("the piece");
         assert!(holds(&object, &piece_bytes(&dir, &view, index, seq).unwrap()), "piece {index}");
     }
@@ -83,7 +83,7 @@ async fn every_checkpoint_from_the_vaults_finalized_one_gets_a_tail() {
     let whole = whole_ranges(&node.manifest.borrow()).unwrap();
     more(&node, whole + 3).await;
     let completed = node.manifest.borrow().unlisted_from().unwrap();
-    let later = checkpoints(&dir).into_iter().rfind(|(seq, _)| (newest + RANGE_SEQS..completed).contains(seq));
+    let later = checkpoints(&dir).into_iter().rfind(|(seq, _)| (newest + range_seqs()..completed).contains(seq));
     let (later, later_root) = later.expect("a later checkpoint in a completed segment");
     vault.finalize(later, &later_root);
     let reads = vault.reads();
@@ -132,7 +132,7 @@ async fn a_failed_read_of_the_copy_queues_its_checkpoints_once_it_reads_again() 
     let (newest, _) = newest_checkpoint(&dir);
     until("the newest tail", || metrics.archive.tail_seq.get() as u64 == newest).await;
     recv(&mut resolved, "archive_upload_lagging").await;
-    let from = whole * RANGE_SEQS;
+    let from = whole * range_seqs();
     let passed: BTreeSet<u64> = checkpoints(&dir).into_iter().map(|(seq, _)| seq).filter(|seq| *seq >= from).collect();
     assert_eq!(tails(&bucket), passed, "a tail for each checkpoint from the first range the bucket lacks");
     let pieces = bucket.with(|b| b.objects.keys().filter(|key| key.contains("/tail/")).count() as u64);
@@ -156,7 +156,7 @@ async fn a_reread_of_the_copy_queues_no_tail_twice() {
     // The ranges below the vault's finalized checkpoint are in the bucket already, so only the tails wait, and the
     // bucket refuses them: the ranges past the finalized checkpoint wait for the vault.
     let view = node.manifest.borrow().clone();
-    upload(&bucket, &dir, &view, finalized / RANGE_SEQS);
+    upload(&bucket, &dir, &view, finalized / range_seqs());
     bucket.with(|b| b.refuse_uploads = true);
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault));
     sources.send_replace(Some(node.manifest.clone()));
@@ -202,8 +202,8 @@ async fn a_tail_piece_that_reads_back_otherwise_pages_once_and_its_tail_stops() 
     let finalized = vault.finalize_past(&node, &dir, 1).await;
     more(&node, 4).await;
     let (seq, root) = newest_checkpoint(&dir);
-    let first = finalized / RANGE_SEQS;
-    assert!(seq / RANGE_SEQS > first, "the tail has pieces after its first");
+    let first = finalized / range_seqs();
+    assert!(seq / range_seqs() > first, "the tail has pieces after its first");
     let key = tail_key(seq, &root, first);
     bucket.with(|b| b.served.insert(key.clone(), compress(b"other bytes\n").unwrap()));
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault));
@@ -211,14 +211,14 @@ async fn a_tail_piece_that_reads_back_otherwise_pages_once_and_its_tail_stops() 
     let running = tokio::spawn(uploader.run());
     let alert = recv(&mut alerts, "archive_object_mismatch").await;
     assert_eq!(alert["object"], key);
-    assert_eq!(alert["first_seq"], (first * RANGE_SEQS).to_string());
+    assert_eq!(alert["first_seq"], (first * range_seqs()).to_string());
     // The later checkpoints' tails go up past it, the ranges held where the vault's finality holds them.
     more(&node, 6).await;
     let (newest, _) = newest_checkpoint(&dir);
     until("a later checkpoint's tail", || metrics.archive.tail_seq.get() as u64 == newest).await;
     assert_eq!(metrics.archive.confirmed_ranges.get() as u64, first, "the ranges wait for the vault");
     let rest = bucket
-        .with(|b| (first + 1..=seq / RANGE_SEQS).any(|index| b.objects.contains_key(&tail_key(seq, &root, index))));
+        .with(|b| (first + 1..=seq / range_seqs()).any(|index| b.objects.contains_key(&tail_key(seq, &root, index))));
     assert!(!rest, "no piece of that tail after the one that reads back otherwise");
     assert!(!drained(&mut alerts, "archive_object_mismatch"), "reported once");
     running.abort();

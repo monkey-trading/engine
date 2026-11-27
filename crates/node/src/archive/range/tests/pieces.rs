@@ -15,14 +15,14 @@ async fn a_tails_pieces_are_whole_ranges_and_then_the_lines_through_its_checkpoi
     let dir = scratch_dir("archive-tail-pieces");
     let node = TestSequencer::start(&dir, 256);
     let (seq, view) = checkpoint_in_the_open_segment(&node, &dir, 3).await;
-    let (last, whole) = (seq / RANGE_SEQS, whole_ranges(&view).unwrap());
+    let (last, whole) = (seq / range_seqs(), whole_ranges(&view).unwrap());
     assert!(seq >= view.unlisted_from().unwrap(), "the checkpoint is in the writer's active prefix");
     let lines = log_lines(&dir);
     for index in 0..=last {
         let piece = piece_bytes(&dir, &view, index, seq).unwrap();
-        let first = index * RANGE_SEQS;
+        let first = index * range_seqs();
         let expected: Vec<u8> = match index < last {
-            true => joined(lines.iter().filter(|line| (first..first + RANGE_SEQS).contains(&line.seq))),
+            true => joined(lines.iter().filter(|line| (first..first + range_seqs()).contains(&line.seq))),
             false => {
                 let through = lines.iter().position(|line| line.seq == seq && line.checkpoint).unwrap();
                 joined(lines[..=through].iter().filter(|line| line.seq >= first))
@@ -48,15 +48,15 @@ async fn a_piece_the_copy_does_not_hold_is_refused() {
     let node = TestSequencer::start(&dir, 256);
     let (seq, view) = checkpoint_in_the_open_segment(&node, &dir, 2).await;
     node.stop().await;
-    let last = seq / RANGE_SEQS;
+    let last = seq / range_seqs();
     let e = piece_bytes(&dir, &view, last + 1, seq).unwrap_err();
     assert!(format!("{e:#}").contains("past the checkpoint"), "{e:#}");
     let held = checkpoints(&dir);
     let bare = (0..seq).rev().find(|bare| held.iter().all(|(at, _)| at != bare)).expect("a seq with no checkpoint");
-    let e = piece_bytes(&dir, &view, bare / RANGE_SEQS, bare).unwrap_err();
+    let e = piece_bytes(&dir, &view, bare / range_seqs(), bare).unwrap_err();
     assert!(format!("{e:#}").contains(&format!("holds no checkpoint at seq {bare}")), "{e:#}");
     let flushed = view.active.as_ref().unwrap().last.seq;
-    let e = piece_bytes(&dir, &view, flushed / RANGE_SEQS, flushed + RANGE_SEQS).unwrap_err();
+    let e = piece_bytes(&dir, &view, flushed / range_seqs(), flushed + range_seqs()).unwrap_err();
     assert!(format!("{e:#}").contains("holds no command after"), "{e:#}");
 
     let altered = copy_of(&dir, "archive-tail-pieces-altered");
@@ -89,7 +89,7 @@ async fn checkpoint_in_the_open_segment(node: &TestSequencer, dir: &Path, ranges
         node.submit(Command::Tick).await;
         let view = node.manifest.borrow().clone();
         let completed = view.unlisted_from().unwrap();
-        let open = checkpoints(dir).into_iter().rfind(|(seq, _)| *seq >= completed && *seq >= ranges * RANGE_SEQS);
+        let open = checkpoints(dir).into_iter().rfind(|(seq, _)| *seq >= completed && *seq >= ranges * range_seqs());
         if let Some((seq, _)) = open.filter(|_| view.active.is_some()) {
             return (seq, view);
         }

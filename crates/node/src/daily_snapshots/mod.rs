@@ -77,6 +77,25 @@ const UNSIGNED_SCHEMA: u32 = 1;
 pub(crate) const MAX_SNAPSHOT_BYTES: u64 = 2 << 30;
 /// A UTC day, in sequenced milliseconds.
 const DAY_MS: Millis = 86_400_000;
+/// The length of the day a test build counts snapshots by, in sequenced milliseconds, when a run that cannot cross
+/// UTC midnights, the soak, sets one (`shorten_day`); 0 for the UTC day. A production build has no such setting.
+#[cfg(test)]
+static SHORT_DAY_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Counts snapshots by days of `ms` sequenced milliseconds from here on, in place of UTC days.
+#[cfg(test)]
+pub(crate) fn shorten_day(ms: Millis) {
+    SHORT_DAY_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The length of the day snapshots are counted by.
+fn day_ms() -> Millis {
+    #[cfg(test)]
+    if let short @ 1.. = SHORT_DAY_MS.load(std::sync::atomic::Ordering::Relaxed) {
+        return short;
+    }
+    DAY_MS
+}
 
 /// A daily snapshot as a replay reads it.
 #[derive(Deserialize)]
@@ -133,7 +152,7 @@ pub(crate) struct Listed {
 
 /// The UTC day `ts` falls on, counted from 1970-01-01.
 pub(crate) fn day(ts: Millis) -> i64 {
-    ts.div_euclid(DAY_MS)
+    ts.div_euclid(day_ms())
 }
 
 /// The offset a snapshot's file name gives, or `None` for a name that is not one's.

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
+use std::collections::BTreeSet;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -18,11 +19,14 @@ use tokio::time::timeout;
 use crate::api::{Feed, MAX_BACKFILLS};
 use crate::checkpoints::{Health, Work};
 use crate::clock::SystemClock;
+use crate::common::{CHAIN_ID, VAULT};
 use crate::config::NodeConfig;
+use crate::daily_snapshots::{Bounds, NoRoots, snapshot_start_against};
 use crate::history::derived::Deriver;
 use crate::history::runtime::Stopper;
 use crate::history::{History, HistoryPlan};
-use crate::log::{CheckpointParent, Manifest, ReplayWorkers};
+use crate::load_scenario::archived::Archived;
+use crate::log::{CheckpointDomain, CheckpointParent, Manifest, ReplayWorkers};
 use crate::sequencer::recovery_scale::flow::config;
 use crate::sequencer::recovery_scale::paired::node_config;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg};
@@ -43,6 +47,8 @@ pub(super) struct Durable {
     /// The newest checkpoint reported final, which a chain that keeps up would give a restart as the vault's
     /// finalized one: the parent a recovery reads its log under.
     pub finalized: Arc<Mutex<CheckpointParent>>,
+    /// The bucket and vault of the launch configuration, when the node runs it in place of `[snapshots]`.
+    pub archived: Option<Arc<Archived>>,
 }
 
 impl Durable {
@@ -51,7 +57,15 @@ impl Durable {
     pub(super) fn new(run: &Path, interval: Duration) -> Self {
         let key = Arc::new(EnclaveKey::generate());
         let cfg = node_config(run, interval, (AccountId(key.address()), ReplayWorkers::available()));
-        Durable { cfg, key, finalized: Arc::default() }
+        Durable { cfg, key, finalized: Arc::default(), archived: None }
+    }
+
+    /// This run as the launch configuration has it, its snapshots counted by days of `archived.day`: no
+    /// `[snapshots]`, so its caches and history index are not run, its daily snapshots beside the log in `run`.
+    pub(super) fn launching(mut self, run: &Path, archived: Arc<Archived>) -> Self {
+        archived.configure(&mut self.cfg, run);
+        self.archived = Some(archived);
+        self
     }
 
     /// The sequencer's config for a node on `dir`, as `recovery_scale`'s node has it, and the queue
@@ -62,9 +76,14 @@ impl Durable {
         (config(dir, Arc::new(SystemClock), sink, manifest, None), Reports(queued))
     }
 
-    /// The directory the caches and their history index are in.
-    pub(super) fn snapshots(&self) -> &Path {
-        &self.cfg.snapshots.as_ref().expect("[snapshots]").dir
+    /// The directory the caches and their history index are in, which the launch configuration has none of.
+    pub(super) fn snapshots(&self) -> Option<&Path> {
+        self.cfg.snapshots.as_ref().map(|snapshots| snapshots.dir.as_path())
+    }
+
+    /// The directory the daily snapshots are in, under the launch configuration.
+    pub(super) fn daily_snapshots(&self) -> Option<&Path> {
+        self.cfg.daily_snapshots.as_ref().map(|daily| daily.dir.as_path())
     }
 }
 
@@ -187,6 +206,47 @@ pub(super) fn open(
     Ok((seq, Pending { history, sealing, stopper, feed }))
 }
 
+/// Recovers the sequencer on the log in `dir` as the launch configuration starts one: the log read from the newest
+/// daily snapshot whose checkpoint the vault has finalized, which signed by this node's key, and the log after it, or,
+/// for a fresh run, an empty log. The log before that snapshot may be off the host.
+/// Error cases:
+/// - no daily snapshot serves the start, or the log after it does not read, or the sequencer refuses it
+pub(super) async fn open_launch(
+    durable: &Durable,
+    mut cfg: SequencerConfig<'_>,
+    (stats, recovering): (&Stats, bool),
+    stream: &broadcast::Sender<Arc<StreamMsg>>,
+    withdrawals: mpsc::UnboundedSender<SignedWithdrawal>,
+) -> anyhow::Result<Sequencer> {
+    if !recovering {
+        return Sequencer::recover(cfg, durable.key.clone(), stream.clone(), withdrawals);
+    }
+    let signer = AccountId(durable.key.address());
+    let parent = *durable.finalized.lock().unwrap_or_else(PoisonError::into_inner);
+    cfg.checkpoint_parent = parent;
+    let domain = CheckpointDomain { chain_id: CHAIN_ID, vault: VAULT };
+    let daily = durable.daily_snapshots().context("[daily_snapshots]")?;
+    let bounds = Bounds { finalized: parent.seq, before: None, keep_from: None };
+    let signers = BTreeSet::from([signer]);
+    let start = snapshot_start_against(None, (daily, cfg.log_dir), (domain, &signers), bounds, &NoRoots)
+        .await
+        .context("no daily snapshot serves the start")?;
+    let trust = (Some(domain), Some(signer), Some(parent));
+    let workers = ReplayWorkers::available();
+    let log = Sequencer::read_log_starting(
+        start,
+        cfg.log_dir,
+        trust,
+        Default::default(),
+        |_| {},
+        None,
+        Some(stats.clone()),
+        None,
+        workers,
+    )?;
+    Sequencer::recover_from(log, cfg, durable.key.clone(), stream.clone(), withdrawals)
+}
+
 /// What the owner returned once it was stopped. A node whose sequencer has gone leaves the owner's input
 /// closed, which it reports as it stops: that is the shutdown, not a failure. Any other error is one.
 fn shut_down(ended: anyhow::Result<()>) -> anyhow::Result<()> {
@@ -203,6 +263,7 @@ pub(super) fn report_final(
     mut reports: Reports,
     tx: mpsc::WeakSender<Request>,
     finalized: Arc<Mutex<CheckpointParent>>,
+    archived: Option<Arc<Archived>>,
 ) {
     // A restarted node's gate starts with its collateral unvalidated and withholds every checkpoint until
     // custody says it is not: the check a node's poster makes at its start, which the parent's passes.
@@ -213,6 +274,9 @@ pub(super) fn report_final(
         }
         while let Some(work) = reports.0.recv().await {
             note_final(&finalized, work.checkpoint.seq, &work.checkpoint.root);
+            if let Some(archived) = &archived {
+                archived.finalize_later(work.checkpoint.seq, work.checkpoint.root.clone());
+            }
             // Once the node's senders are gone the drain's own checkpoint arrives: it is taken, not reported.
             let Some(tx) = tx.upgrade() else { continue };
             // A sequencer that has stopped answers nothing; the loop ends when its queue does.

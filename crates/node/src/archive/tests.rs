@@ -45,7 +45,7 @@ fn each_range_is_keyed_by_its_first_seq_under_its_logs_chain_and_vault() {
     let log = log_prefix(42_161, vault);
     assert_eq!(log, format!("log/42161/0x{}/", "ab".repeat(20)));
     assert_eq!(range_key(&log, 0), format!("{log}00000000000000000000.jsonl.zst"));
-    assert_eq!(range_key(&log, 3), format!("{log}{:020}.jsonl.zst", 3 * RANGE_SEQS));
+    assert_eq!(range_key(&log, 3), format!("{log}{:020}.jsonl.zst", 3 * range_seqs()));
     assert_ne!(range_key(&log_prefix(42_161, engine_core::types::AccountId([0xac; 20])), 0), range_key(&log, 0));
 }
 

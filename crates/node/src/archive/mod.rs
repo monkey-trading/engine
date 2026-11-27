@@ -32,9 +32,11 @@ pub(crate) use finality::{Finality, same_root};
 mod range;
 #[cfg(test)]
 pub(crate) use range::range_bytes;
+#[cfg(test)]
+pub(crate) use range::set_range_seqs;
 pub(crate) use range::{
-    Head, RANGE_SEQS, absent_segments, checkpoint_root, log_prefix, next_entry, piece_bytes, range_bytes_with,
-    range_key, tail_prefix, whole_ranges,
+    Head, absent_segments, checkpoint_root, log_prefix, next_entry, piece_bytes, production_sizes, range_bytes_with,
+    range_key, range_seqs, tail_prefix, whole_ranges,
 };
 mod read;
 pub(crate) use read::{ArchiveOrigins, Bucket, Origins, Segments};
@@ -45,7 +47,7 @@ mod store;
 pub(crate) use store::{Created, Digested, Object, Store, read_public};
 mod uploader;
 pub(crate) use uploader::{Sources, Uploader};
-mod window;
+pub(crate) mod window;
 pub(crate) use window::{Window, history_start, restore_whole};
 
 #[cfg(test)]

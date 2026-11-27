@@ -21,7 +21,7 @@ use tokio::task::AbortHandle;
 use engine_core::command::Command;
 use engine_core::eip712::B256;
 
-use crate::archive::{Finality, RANGE_SEQS, Store};
+use crate::archive::{Finality, Store, range_seqs};
 use crate::config::{ArchiveSection, SecretValue};
 use crate::feeds::tests::rwa_support::TlsFront;
 use crate::log::LogEntry;
@@ -91,7 +91,7 @@ impl Vault {
 pub(crate) async fn checkpoint_past(node: &TestSequencer, dir: &Path, ranges: u64) -> (u64, String) {
     loop {
         let completed = node.manifest.borrow().unlisted_from().expect("the writer's listing");
-        let past = checkpoints(dir).into_iter().find(|(seq, _)| (ranges * RANGE_SEQS..completed).contains(seq));
+        let past = checkpoints(dir).into_iter().find(|(seq, _)| (ranges * range_seqs()..completed).contains(seq));
         if let Some(checkpoint) = past {
             return checkpoint;
         }
@@ -144,6 +144,16 @@ pub(crate) struct StandIn {
     tasks: [AbortHandle; 2],
 }
 
+/// A handle on what the stand-in holds, for a task that runs beside it.
+pub(crate) struct Handle(Arc<Mutex<Bucket>>);
+
+impl Handle {
+    /// Runs `change` on what the stand-in holds.
+    pub(crate) fn with<T>(&self, change: impl FnOnce(&mut Bucket) -> T) -> T {
+        change(&mut self.0.lock().expect("the stand-in's bucket"))
+    }
+}
+
 /// What the stand-in holds and how it answers.
 #[derive(Default)]
 pub(crate) struct Bucket {
@@ -182,7 +192,8 @@ impl StandIn {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind loopback");
         let address = listener.local_addr().expect("local addr");
         let plain = format!("ws://{address}");
-        let app = Router::new().fallback(answer).with_state(bucket.clone());
+        let app =
+            Router::new().fallback(answer).layer(axum::extract::DefaultBodyLimit::disable()).with_state(bucket.clone());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.expect("the stand-in serves") });
         let front = TlsFront::new();
         let (tls, relay) = front.relay(&plain).await;
@@ -220,6 +231,11 @@ impl StandIn {
     /// A store of the stand-in's bucket under key `prefix` with its keys.
     pub(crate) fn store(&self, prefix: &str) -> Store {
         self.store_with(prefix, SECRET_KEY)
+    }
+
+    /// A handle on what the stand-in holds, which outlives no more than the stand-in's server does.
+    pub(crate) fn handle(&self) -> Handle {
+        Handle(self.bucket.clone())
     }
 
     /// Runs `change` on what the stand-in holds.

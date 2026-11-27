@@ -873,9 +873,13 @@ whole inside the guest, with its clients and price stand-ins beside it. Driving 
 trading server from outside the guest needs the load test to target a trading server at an address,
 which it does not do yet.
 
-The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. Give it a
-list with this one line, and make its data disk 600G, since its caches and history index can grow
-by about 400 GB in a run:
+The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. It runs the
+launch configuration's storage by default: the log's ranges, tails and daily snapshots go to a stand-in
+bucket held in the soak's memory, and the log's and the snapshots' windows remove segments and snapshots
+from the disk, so the log and the snapshots are the disk it needs and the guest's memory holds the bucket
+(`scripts/dev-soak.sh` gives the figures). Add `SOAK_STORAGE=0` to the line for the paired recovery caches and
+history index instead, which can grow by about 400 GB in a run. Give it a
+list with this one line, and make its data disk 600G:
 
 ```text
 soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak

@@ -16,7 +16,7 @@ async fn a_resume_takes_the_last_range_whose_segments_left_the_host_as_the_bucke
     upload(&bucket, &dir, &view, 4);
     assert!(absent_segments(&dir, &view, 3).unwrap().is_empty(), "nothing absent before the window removes it");
     // As the window removes them: each segment whose every range the bucket holds.
-    for listed in view.segments.iter().filter(|listed| listed.last_seq < 4 * RANGE_SEQS) {
+    for listed in view.segments.iter().filter(|listed| listed.last_seq < 4 * range_seqs()) {
         std::fs::remove_file(dir.join(&listed.file)).unwrap();
     }
     assert!(!absent_segments(&dir, &view, 3).unwrap().is_empty(), "the last range in the bucket lost a segment");
@@ -45,13 +45,13 @@ async fn a_range_whose_segment_the_host_lost_waits_until_another_copy_uploads_it
     let copy = scratch_dir("archive-absent-copy");
     copy_log(&dir, &copy);
     upload(&bucket, &dir, &view, 2);
-    let lost = view.segments.iter().find(|listed| listed.first_seq >= 2 * RANGE_SEQS).cloned().unwrap();
+    let lost = view.segments.iter().find(|listed| listed.first_seq >= 2 * range_seqs()).cloned().unwrap();
     std::fs::remove_file(dir.join(&lost.file)).unwrap();
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_millis(200), None);
     let archived = uploader.archived();
     sources.send_replace(Some(node.manifest.clone()));
     let running = tokio::spawn(uploader.run());
-    let waiting = lost.first_seq / RANGE_SEQS;
+    let waiting = lost.first_seq / range_seqs();
     until("a failed attempt at the lost segment's range", || metrics.archive.failures.get() >= 2).await;
     assert_eq!(*archived.borrow(), Some(waiting), "the uploader waits at the range");
     recv(&mut alerts, "archive_upload_lagging").await;

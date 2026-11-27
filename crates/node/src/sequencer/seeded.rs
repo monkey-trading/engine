@@ -36,6 +36,18 @@ impl Sequencer {
         self.flush()
     }
 
+    /// `take_over_checkpointed` with the dashboard record `stats` tracked from before the first command, so the stats
+    /// worker's fold holds every entry of the log, as the daily snapshots need it to carry the replay state.
+    /// Error cases:
+    /// - trusted time refuses the stamp, or the log cannot be written
+    pub(crate) fn take_over_tracked(&mut self, engine: Engine, stats: crate::stats::Stats) -> anyhow::Result<()> {
+        self.take_over(engine);
+        self.track_stats(stats);
+        self.sequence(Command::Tick)?.context("trusted time admits the first stamp")?;
+        self.checkpoint()?;
+        self.flush()
+    }
+
     /// Reads the log in `dir`, written by a sequencer that took over `base`, as recovery reads a whole
     /// log (`read_log_with_authorities`): replayed from `base` under `signer` in `domain`, each mark
     /// handed to `marks` and each command recorded into `stats`, `observe` seeing each entry first, and

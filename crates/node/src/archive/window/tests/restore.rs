@@ -122,7 +122,7 @@ async fn an_interrupted_whole_restore_leaves_one_run_of_segments() {
     let view = fixture.view();
     fixture.node.stop().await;
     let first = view.segments.iter().position(|listed| listed.file == removed[0]).unwrap();
-    let key = crate::archive::range_key(&test_log(), view.segments[first].first_seq / RANGE_SEQS);
+    let key = crate::archive::range_key(&test_log(), view.segments[first].first_seq / range_seqs());
     fixture.bucket.with(|b| b.objects.remove(&key));
     let mut cfg = dev_config();
     let mut section = fixture.bucket.section(Duration::from_secs(3600));

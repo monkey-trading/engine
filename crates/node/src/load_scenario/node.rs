@@ -8,7 +8,10 @@
 //! its root taken on the root worker. With a `Durable` the node also runs as one with `[snapshots]`
 //! does (`durable`): its history owner publishes the paired recovery caches, each checkpoint is
 //! reported final at once as a chain that keeps up would, and a stopped node starts again from its
-//! newest cache.
+//! newest cache. With a `Durable` that runs the launch configuration (`archived`), it runs as one with
+//! `[daily_snapshots]` and `[archive]`: its log's ranges and its snapshots go to a stand-in bucket, its log's
+//! local window and its older snapshots leave the host, and a stopped node starts again from its newest daily
+//! snapshot and the log after it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
@@ -28,12 +31,13 @@ use tokio::task::AbortHandle;
 use tokio::time::{interval, timeout};
 
 use crate::access::AccessClient;
-use crate::api::{ApiState, MAX_BACKFILLS, Signing, router};
+use crate::api::{ApiState, MAX_BACKFILLS, ServedSnapshots, Signing, router};
 use crate::clock::SystemClock;
 use crate::common::{CHAIN_ID, VAULT, operator};
 use crate::config::{ApiSection, ProxyProtocolSection};
 use crate::history::Reader;
 use crate::limits::ApiLimits;
+use crate::load_scenario::archived::StorageTask;
 use crate::load_scenario::durable::{self, Durable, Owner};
 use crate::load_scenario::venues::{Venues, template};
 use crate::log::Manifest;
@@ -85,6 +89,9 @@ pub(super) struct Node {
     sync_end: Option<SyncEnd>,
     history: Option<Owner>,
     tasks: Vec<AbortHandle>,
+    /// The storage tasks of the launch configuration: the archive's uploader, the log's local window, the
+    /// snapshots' uploader and the disk watcher.
+    storage: Vec<StorageTask>,
 }
 
 /// The template's `[api]`, with the loopback as the trusted PROXY protocol peer the clients come
@@ -116,11 +123,13 @@ impl Node {
         let (withdrawals, _signed) = mpsc::unbounded_channel();
         let (manifest_tx, manifest) = watch::channel(Manifest::default());
         let access = Arc::new(AccessClient::new(&venues.access).expect("the screening client"));
+        let launch = durable.is_some_and(|durable| durable.archived.is_some());
         let (cfg, reports) = match durable {
             // As `recovery_scale`'s node, the config a recovery checks against the book.
-            Some(_) => {
+            Some(durable) => {
                 let (cfg, reports) = Durable::sequencer(dir, manifest_tx);
-                (SequencerConfig { metrics: metrics.clone(), ..cfg }, Some(reports))
+                let daily_snapshots = durable.daily_snapshots().map(Path::to_owned);
+                (SequencerConfig { metrics: metrics.clone(), daily_snapshots, ..cfg }, Some(reports))
             }
             None => {
                 let cfg = SequencerConfig {
@@ -145,6 +154,12 @@ impl Node {
                 let seq = Sequencer::recover(cfg, key.clone(), stream.clone(), withdrawals).expect("an empty log");
                 (seq, None)
             }
+            Some(durable) if launch => {
+                let seq = durable::open_launch(durable, cfg, (&stats, recovering), &stream, withdrawals)
+                    .await
+                    .expect("the log opens from its newest daily snapshot");
+                (seq, None)
+            }
             Some(durable) => {
                 let (seq, history) = durable::open(durable, cfg, (&stats, recovering), &stream, withdrawals)
                     .expect("the paired log opens");
@@ -152,17 +167,30 @@ impl Node {
             }
         };
         seq.trust(trusted_now()).expect("a trusted time sample");
-        if let Boot::Book(engine) = boot {
-            seq.take_over_checkpointed(*engine).expect("the book's first checkpoint");
+        // A node that publishes daily snapshots tracks the record from before its first command, so the fold holds
+        // every entry of the log.
+        let tracked = match boot {
+            Boot::Book(engine) if launch => {
+                seq.take_over_tracked(*engine, stats.clone()).expect("the book's first checkpoint");
+                true
+            }
+            Boot::Book(engine) => {
+                seq.take_over_checkpointed(*engine).expect("the book's first checkpoint");
+                false
+            }
+            Boot::Recover => false,
+        };
+        if !tracked {
+            seq.track_stats(stats.clone());
         }
-        seq.track_stats(stats.clone());
         seq.pipeline_log_syncs().expect("the log sync thread");
         let sync_end = seq.log_sync_end();
         let history = history.map(|history| history.run(&seq, dir, &manifest));
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let sequencer = Worker::start(seq.run(rx), None).expect("the sequencer's thread");
         if let Some(reports) = reports {
-            durable::report_final(reports, tx.downgrade(), durable.expect("a durable node").finalized.clone());
+            let durable = durable.expect("a durable node");
+            durable::report_final(reports, tx.downgrade(), durable.finalized.clone(), durable.archived.clone());
         }
 
         let time_out = Arc::new(AtomicBool::new(false));
@@ -205,8 +233,10 @@ impl Node {
             payouts_enabled: false,
             clock,
             log_dir: dir.to_owned(),
-            daily_snapshots: None,
-            manifest,
+            daily_snapshots: durable
+                .filter(|_| launch)
+                .and_then(|durable| ServedSnapshots::for_config(&durable.cfg).expect("the snapshots' bucket")),
+            manifest: manifest.clone(),
             backfills: Arc::new(Semaphore::new(MAX_BACKFILLS)),
             limits: limits.clone(),
             history: Reader::new(PathBuf::new(), watch::channel(true).1),
@@ -217,7 +247,9 @@ impl Node {
             status: Default::default(),
             collateral: None,
             listing: Default::default(),
-            archive_objects: None,
+            archive_objects: durable
+                .filter(|_| launch)
+                .and_then(|durable| crate::archive::Bucket::for_config(&durable.cfg).expect("the archive's bucket")),
             operators: None,
             operator_hostname: None,
             signing: Arc::new(Signing::new(key.clone(), CHAIN_ID, VAULT, api.heartbeat_interval, trusted)),
@@ -226,7 +258,24 @@ impl Node {
         tasks.push(tokio::spawn(serving).abort_handle());
         tasks.push(tokio::spawn(crate::limits::run_retain(limits)).abort_handle());
         let signer = AccountId(key.address());
-        Node { tx, metrics, stats, signer, log_dir: dir.to_owned(), api, time_out, sequencer, sync_end, history, tasks }
+        let storage = match durable.and_then(|durable| durable.archived.as_ref().map(|a| (durable, a))) {
+            Some((durable, archived)) => archived.run_beside(&durable.cfg, manifest, &metrics),
+            None => Vec::new(),
+        };
+        Node {
+            tx,
+            metrics,
+            stats,
+            signer,
+            log_dir: dir.to_owned(),
+            api,
+            time_out,
+            sequencer,
+            sync_end,
+            history,
+            tasks,
+            storage,
+        }
     }
 
     /// Stops every task, then lets the sequencer drain its queue and write its final checkpoint.
@@ -235,8 +284,9 @@ impl Node {
     /// - the history owner failed, or with `publishes` did not take the final cache in time: a stop that
     ///   nothing starts after leaves the owner to end its turn
     pub(super) async fn stop(self, publishes: bool) -> anyhow::Result<()> {
-        let Node { tx, sequencer, sync_end, tasks, history, .. } = self;
+        let Node { tx, sequencer, sync_end, tasks, history, storage, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
+        storage.iter().for_each(|(_, task)| task.abort());
         // Every sender but this one went with the tasks; the sequencer drains once it goes.
         drop(tx);
         let mut sequencer = sequencer;
@@ -255,6 +305,11 @@ impl Node {
         self.history.as_ref()?.behind().await
     }
 
+    /// The storage tasks of the launch configuration that have ended, by what they are: each runs for the node's life.
+    pub(super) fn storage_ended(&self) -> Vec<&'static str> {
+        self.storage.iter().filter(|(_, task)| task.is_finished()).map(|(name, _)| *name).collect()
+    }
+
     /// Whether the history owner runs, which publishes the recovery caches.
     pub(super) fn history_runs(&self) -> bool {
         self.history.as_ref().is_some_and(Owner::takes_captures)
@@ -266,8 +321,9 @@ impl Node {
     /// Error cases:
     /// - the sequencer's thread did not end within `DRAIN`
     pub(super) async fn kill(self) -> anyhow::Result<()> {
-        let Node { tx, mut sequencer, sync_end, tasks, history, .. } = self;
+        let Node { tx, mut sequencer, sync_end, tasks, history, storage, .. } = self;
         tasks.iter().for_each(AbortHandle::abort);
+        storage.iter().for_each(|(_, task)| task.abort());
         let outcome = std::mem::replace(&mut sequencer.outcome, oneshot::channel().1);
         // Dropping the worker cancels the sequencer at its next async boundary. This node's own sender stays
         // until it has ended, so the queue cannot close, and the sequencer drain, before the cancel lands.
