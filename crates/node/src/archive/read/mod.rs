@@ -65,6 +65,9 @@ pub(crate) enum Unread {
 pub(crate) struct Ranges {
     bucket: Bucket,
     held: Option<(u64, Arc<Vec<u8>>)>,
+    /// Whether the reader's next seqs are before the last's, as a restore's are, so it reads each call's ranges from
+    /// the last and holds the first, the one the next call ends in.
+    backwards: bool,
 }
 
 impl Bucket {
@@ -132,7 +135,12 @@ impl std::fmt::Display for Bucket {
 impl Ranges {
     /// A reader of `bucket`'s ranges, holding none yet.
     pub(crate) fn new(bucket: Bucket) -> Self {
-        Self { bucket, held: None }
+        Self { bucket, held: None, backwards: false }
+    }
+
+    /// A reader of `bucket`'s ranges whose calls take seqs each before those of the call before, newest first.
+    pub(crate) fn newest_first(bucket: Bucket) -> Self {
+        Self { backwards: true, ..Self::new(bucket) }
     }
 
     /// The bucket read.
@@ -156,14 +164,18 @@ impl Ranges {
         if first > last {
             return Err(Unread::Refused(anyhow!("seqs {first} to {last} are no range")));
         }
-        let mut lines = Vec::new();
-        for index in first / RANGE_SEQS..=last / RANGE_SEQS {
+        let mut indexes: Vec<u64> = (first / RANGE_SEQS..=last / RANGE_SEQS).collect();
+        if self.backwards {
+            indexes.reverse();
+        }
+        let (mut chunks, mut taken_bytes) = (Vec::new(), 0u64);
+        for index in indexes {
             let object = self.object(http, index).await?;
             // The listing that names the seqs is untrusted: the range's end past `u64::MAX` is its last seq.
             let end =
                 index.checked_add(1).and_then(|next| next.checked_mul(RANGE_SEQS)).map_or(u64::MAX, |next| next - 1);
             let wanted = (first.max(index * RANGE_SEQS), last.min(end));
-            let room = limit.saturating_sub(lines.len() as u64);
+            let room = limit.saturating_sub(taken_bytes);
             let taken = spawn_blocking(move || lines_of(&object, index, wanted, room))
                 .await
                 .map_err(|e| Unread::Unreachable(anyhow!("reading a range stopped: {e}")))?
@@ -172,9 +184,11 @@ impl Ranges {
                     format!("the archive's object {object}, read for seqs {first} to {last} in at most {limit} bytes")
                 })
                 .map_err(Unread::Refused)?;
-            lines.extend_from_slice(&taken);
+            taken_bytes += taken.len() as u64;
+            chunks.push((index, taken));
         }
-        Ok(lines)
+        chunks.sort_by_key(|(index, _)| *index);
+        Ok(chunks.into_iter().flat_map(|(_, taken)| taken).collect())
     }
 
     /// Range `index`'s object, compressed: the one held, or read from the bucket and held.

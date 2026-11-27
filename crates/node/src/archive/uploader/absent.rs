@@ -30,9 +30,12 @@ impl<F: Finality> Work<F> {
         }
         let (http, bucket) = self.store.reader()?;
         let sources = RestoreSources { http, bucket, nodes: Vec::new() };
-        for listed in absent {
-            let bytes =
-                sources.read_back(&listed).await.with_context(|| format!("{} is not on this host", listed.file))?;
+        let mut ranges = sources.ranges();
+        for listed in absent.into_iter().rev() {
+            let bytes = sources
+                .read_back_through(&mut ranges, &listed)
+                .await
+                .with_context(|| format!("{} is not on this host", listed.file))?;
             info!(segment = %listed.file, "this host lacks a segment of the range, which is read from the bucket");
             supplied.insert(listed.file, bytes);
         }

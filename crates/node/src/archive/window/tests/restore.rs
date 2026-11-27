@@ -264,3 +264,23 @@ async fn segments_the_floors_keep_come_back_once_a_floor_moves_back() {
     commands(&fixture.dir);
     fixture.node.stop().await;
 }
+
+/// Segments put back from one range, or from the two that a segment spans, read each range's object from the bucket
+/// once: here segments of four commands lost from ranges of six, the second of them spanning two ranges.
+#[tokio::test]
+async fn segments_put_back_from_one_range_read_its_object_once() {
+    let fixture = Fixture::start("window-restore-reads", 60).await;
+    let ranges = fixture.archive_all();
+    let view = fixture.view();
+    let lost: Vec<SegmentInfo> = view.segments[3..=5].to_vec();
+    assert_eq!(lost.iter().map(|l| l.first_seq / RANGE_SEQS).collect::<Vec<_>>(), [2, 2, 3]);
+    assert_eq!(lost.iter().map(|l| l.last_seq / RANGE_SEQS).collect::<Vec<_>>(), [2, 3, 3]);
+    lost.iter().for_each(|listed| std::fs::remove_file(fixture.dir.join(&listed.file)).unwrap());
+    let (mut window, _archived) = fixture.window((600, 30), ranges);
+    let before = fixture.bucket.with(|b| b.read);
+    let pass = window.pass(&view).await.unwrap();
+    assert_eq!(pass.restored.len(), 3, "{pass:?}");
+    assert_eq!(fixture.bucket.with(|b| b.read) - before, 2, "ranges 2 and 3, once each");
+    log_entries(&fixture.dir);
+    fixture.node.stop().await;
+}

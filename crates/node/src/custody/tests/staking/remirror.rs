@@ -44,3 +44,30 @@ async fn while_the_stakes_are_mirrored_again_only_the_staking_contracts_events_m
     assert!(!node.read(move |engine| engine.is_staking_credited(&switched)).await, "the registry event did not mirror");
     node.stop().await;
 }
+
+/// The engine's refusal of a frontier while the stakes are mirrored again is the re-mirror's own: it pages at once as
+/// a contradiction, where the same refusal otherwise waits as a stamp the node's time may admit.
+#[tokio::test]
+async fn a_refused_frontier_while_the_stakes_are_mirrored_again_pages_at_once() {
+    let dir = scratch("staking-remirror-refused");
+    let node = Node::start_confirmed(&dir);
+    init_staking(&node).await;
+    let account = AccountId([9; 20]);
+    mirror_window(&node, &[staked(1, 1, account, 500)], &dir, true).await.unwrap();
+    // A window ending before the frontier the engine completed is refused.
+    let behind = |remirroring| {
+        let (reader, mut cursor, mut range) = (StubReader(vec![]), cursor_at(1), AdaptiveSize::new(1_000));
+        let (path, node) = (dir.join("staking-cursor-behind.json"), &node);
+        async move {
+            let bound = (true, false, false, false);
+            let window = (1, end_at(2), None);
+            mirror(&reader, &node.tx, &mut cursor, &path, &mut range, window, bound, (None, remirroring)).await
+        }
+    };
+    let refused = behind(true).await.expect_err("the frontier is behind the one completed");
+    assert!(matches!(refused, PollError::Stalled(Stall::Inconsistent(_))), "{refused:?}");
+    assert!(format!("{refused:?}").contains("mirrored again"), "{refused:?}");
+    let waits = behind(false).await.expect_err("the same refusal outside a re-mirror");
+    assert!(matches!(waits, PollError::Stalled(Stall::Refused(_))), "{waits:?}");
+    node.stop().await;
+}

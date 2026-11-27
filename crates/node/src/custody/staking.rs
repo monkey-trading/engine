@@ -237,6 +237,7 @@ impl StakingCursor {
 /// Error cases:
 /// - stalled: a read fails, an event is not on the canonical block there, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
+/// - stalled as inconsistent: with `remirroring`, the engine refuses the window's frontier, which pages at once
 /// - fatal: the sequencer has stopped, or the cursor cannot be stored
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn mirror<V: VaultReader>(
@@ -322,6 +323,13 @@ pub(super) async fn mirror<V: VaultReader>(
             _ => None,
         });
         if let Some(reason) = refused {
+            // While the stakes are mirrored again the refusal is the re-mirror's own: its frontier or total
+            // is wrong, no wait clears it, and it pages at once as a contradiction.
+            if remirroring {
+                return Err(PollError::inconsistent(anyhow!(
+                    "the engine refused the staking frontier while the carried stakes are mirrored again: {reason}"
+                )));
+            }
             let refused = anyhow::anyhow!("the engine refused staking progress: {reason}");
             return Err(PollError::Stalled(Stall::Refused(refused)));
         }

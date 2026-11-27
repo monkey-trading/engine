@@ -59,11 +59,24 @@ impl Sources {
         Ok(Some(Self { http: Store::client()?, bucket, nodes }))
     }
 
-    /// `listed`'s bytes read back from the bucket's ranges, as its listing names them.
+    /// A reader of the bucket's ranges for segments taken newest first, as a restore takes them. It holds an object
+    /// it read: one reader across a restore's segments reads a range once for all the segments it holds, where a
+    /// reader for each reads it again for each.
+    pub(crate) fn ranges(&self) -> Ranges {
+        Ranges::newest_first(self.bucket.clone())
+    }
+
+    /// `listed`'s bytes read back from the bucket's ranges, as its listing names them, through a reader of its own.
+    /// Error cases:
+    /// - as `read_back_through`
+    pub(crate) async fn read_back(&self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
+        self.read_back_through(&mut self.ranges(), listed).await
+    }
+
+    /// `listed`'s bytes read back from the bucket's ranges through `ranges`, as its listing names them.
     /// Error cases:
     /// - the bucket lacks a range of it, cannot be read, or gives back other bytes than the listing names
-    pub(crate) async fn read_back(&self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
-        let mut ranges = Ranges::new(self.bucket.clone());
+    pub(crate) async fn read_back_through(&self, ranges: &mut Ranges, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         // Bounded apart from the listing, which a whole replay's manifest, the host's, names.
         let limit = listed.bytes.min(crate::archive::read::MAX_REBUILT_BYTES);
         let bytes = match ranges.seqs(&self.http, (listed.first_seq, listed.last_seq), limit).await {
@@ -92,11 +105,12 @@ impl Sources {
     }
 
     /// `listed`'s bytes from the bucket, or else from the first node origin that serves them as its listing names
-    /// them; a node's redirect to the bucket, which was read first, is passed over.
+    /// them; a node's redirect to the bucket, which was read first, is passed over. The bucket is read through
+    /// `ranges`.
     /// Error cases:
     /// - no source gives back the bytes the listing names: each source's failure
-    pub(crate) async fn fetch(&self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
-        let mut failed = match self.read_back(listed).await {
+    pub(crate) async fn fetch(&self, ranges: &mut Ranges, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
+        let mut failed = match self.read_back_through(ranges, listed).await {
             Ok(bytes) => return Ok(bytes),
             Err(e) => vec![format!("{e:#}")],
         };
@@ -156,6 +170,7 @@ impl Window {
             }
         }
         let (mut restored, mut tried, mut lacking) = (Vec::new(), 0, false);
+        let mut ranges = self.restore.ranges();
         for (at, segment) in listed.iter().enumerate().rev() {
             if local.contains(&segment.first_seq) {
                 continue;
@@ -173,7 +188,7 @@ impl Window {
                 continue;
             }
             tried += 1;
-            match self.put_back(view, segment).await {
+            match self.put_back(view, &mut ranges, segment).await {
                 Ok(()) => {
                     local.insert(segment.first_seq);
                     restored.push(segment.file.clone());
@@ -211,12 +226,13 @@ impl Window {
         })
     }
 
-    /// Reads `segment` from the archive and writes it into the log directory, `view`'s still.
+    /// Reads `segment` from the archive, the bucket through `ranges`, and writes it into the log directory, `view`'s
+    /// still.
     /// Error cases:
     /// - no source gives it back (`Sources::fetch`), or it cannot be written (`write`)
     /// - the directory is no longer the one `view` lists
-    async fn put_back(&self, view: &Manifest, segment: &SegmentInfo) -> anyhow::Result<()> {
-        let bytes = self.restore.fetch(segment).await?;
+    async fn put_back(&self, view: &Manifest, ranges: &mut Ranges, segment: &SegmentInfo) -> anyhow::Result<()> {
+        let bytes = self.restore.fetch(ranges, segment).await?;
         ensure!(self.describes(view).await?, "the log's directory is no longer the one its writer lists");
         let (dir, listed) = (self.dir.clone(), segment.clone());
         spawn_blocking(move || write(&dir, &listed, &bytes)).await??;
@@ -348,8 +364,9 @@ async fn put_back_all(sources: &Sources, dir: &Path, lacking: &[SegmentInfo]) ->
         let staged = dir.to_owned();
         spawn_blocking(move || remove_staged(&staged)).await??;
     }
+    let mut ranges = sources.ranges();
     for listed in lacking.iter().rev() {
-        let bytes = sources.fetch(listed).await?;
+        let bytes = sources.fetch(&mut ranges, listed).await?;
         let (into, listed, written) = (dir.to_owned(), listed.clone(), listed.file.clone());
         spawn_blocking(move || write(&into, &listed, &bytes)).await??;
         info!(segment = %written, "put back from the archive");

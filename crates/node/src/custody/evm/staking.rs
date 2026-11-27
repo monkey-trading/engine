@@ -39,6 +39,8 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// Error cases:
     /// - stalled: a staking read fails, an event is not on the canonical block there, a mirrored contract is
     ///   not the one its parent or the schedule's governance record names, or the engine refuses a mirror
+    /// - stalled: while the carried stakes are mirrored again, `remirror_start`'s stalls: no deployment block is
+    ///   configured, or the registry has code before it
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
     pub(super) async fn mirror_staking(
         &mut self,
@@ -272,10 +274,10 @@ impl<V: VaultReader> DepositWatcher<V> {
     }
 
     /// Where a carried genesis's stakes are mirrored again from: the staking contract's deployment, before which
-    /// the first window checks it has no code.
+    /// the first window checks the registry that deploys it has no code.
     /// Error cases:
-    /// - stalled: no deployment block is configured, or the staking contract has code before it, so the window
-    ///   would miss its events
+    /// - stalled: no deployment block is configured, or the registry that deploys the staking contract has code
+    ///   before it, so the window would miss the staking contract's events
     /// - stalled: a read fails
     pub(in crate::custody) async fn remirror_start(
         &self,
@@ -294,8 +296,9 @@ impl<V: VaultReader> DepositWatcher<V> {
             // The registry deploys the staking contract in its own deployment, so it has code from the same block.
             if self.vault.registry_staking(at).await.map_err(PollError::rpc)?.is_some() {
                 return Err(PollError::inconsistent(anyhow!(
-                    "the staking contract has code before custody.evm.staking.deployment_block {deployed}: mirroring \
-                     the carried stakes again from there would miss the events before it"
+                    "the registry, which deploys the staking contract, has code before \
+                     custody.evm.staking.deployment_block {deployed}: mirroring the carried stakes again from there \
+                     would miss the events before it"
                 )));
             }
         }

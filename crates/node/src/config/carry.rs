@@ -1,5 +1,5 @@
-//! `[genesis.carry]`: the log whose final checkpoint a new log's genesis carries MONKEY, stakes and awards from,
-//! at a move to a new vault (`engine_core::carry`, `crate::carry`).
+//! `[genesis.carry]`: the log whose final checkpoint a new log's genesis carries MONKEY entitlements and awards
+//! from, and whose stakes it mirrors again, at a move to a new vault (`engine_core::carry`, `crate::carry`).
 
 use std::path::PathBuf;
 
@@ -24,16 +24,17 @@ pub struct CarrySection {
 impl NodeConfig {
     /// Checks `[genesis.carry]`, when present.
     /// Error cases:
-    /// - no `[genesis.staking]`, which the carry's stakes need initialised first
+    /// - no `[genesis.staking]`, which the stakes mirrored again need initialised first
     /// - custody other than EVM, or EVM custody without `[custody.evm.staking]`: the start reads the source
-    ///   vault, the registry and the minter through the custody quorum, and the stakes continue the mirror
+    ///   vault, the registry and the minter through the custody quorum, and the stakes are mirrored again
+    ///   from the staking contract
     /// - no `custody.evm.staking.deployment_block`, from which the carried stakes are mirrored again
     /// - the source vault is this node's own
     pub(super) fn validate_carry(&self) -> anyhow::Result<()> {
         let Some(carry) = &self.genesis.carry else { return Ok(()) };
         ensure!(
             self.genesis.staking.is_some(),
-            "[genesis.carry] needs [genesis.staking], which the carry's stakes join"
+            "[genesis.carry] needs [genesis.staking], which the stakes mirrored again join"
         );
         let staking = self.custody.evm.as_ref().and_then(|evm| evm.staking.as_ref());
         let Some(staking) = staking.filter(|_| self.custody.provider == CustodyProvider::Evm) else {
