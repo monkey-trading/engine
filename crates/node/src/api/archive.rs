@@ -19,7 +19,7 @@ use tracing::field::display;
 use tracing::{Span, error, warn};
 
 use crate::api::{ApiError, ApiState};
-use crate::archive::RANGE_SEQS;
+use crate::archive::range_seqs;
 use crate::config::NodeConfig;
 use crate::daily_snapshots::{self, SnapshotBucket};
 use crate::log::{ArchiveReader, MANIFEST, SegmentInfo, open_segment_archive, segment_seq};
@@ -119,7 +119,7 @@ pub async fn archive(State(s): State<ApiState>, Path(file): Path<String>) -> Res
             Ok(reader) => Ok(Some(Served::Segment(listed, reader))),
             // Only a file that is gone is in the bucket's keeping: one that is there and fails its check pages.
             Err(e) => match (&s.archive_objects, s.log_dir.join(&listed.file).try_exists()) {
-                (Some(bucket), Ok(false)) => Ok(Some(Served::Moved(bucket.object(listed.first_seq / RANGE_SEQS)?))),
+                (Some(bucket), Ok(false)) => Ok(Some(Served::Moved(bucket.object(listed.first_seq / range_seqs())?))),
                 _ => Err(e),
             },
         }

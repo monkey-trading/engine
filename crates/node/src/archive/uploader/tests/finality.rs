@@ -21,7 +21,7 @@ async fn a_range_waits_for_the_vaults_finalized_checkpoint() {
     tokio::time::sleep(10 * FINALITY_EVERY).await;
     assert_eq!(bucket.with(|b| b.created), 0, "nothing goes up before the vault's first finalized checkpoint");
     // A checkpoint at the second range's last seq: the first range ends below it, the second does not.
-    vault.finalize(2 * RANGE_SEQS - 1, &root_at(&dir, 2 * RANGE_SEQS - 1));
+    vault.finalize(2 * range_seqs() - 1, &root_at(&dir, 2 * range_seqs() - 1));
     until("the first range confirmed", || metrics.archive.confirmed_ranges.get() == 1).await;
     tokio::time::sleep(10 * FINALITY_EVERY).await;
     let ranges = bucket.with(|b| b.objects.keys().filter(|key| !key.contains("/tail/")).cloned().collect::<Vec<_>>());
@@ -44,7 +44,7 @@ async fn a_copy_that_holds_another_history_uploads_nothing_past_the_last_checkpo
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault.clone()));
     sources.send_replace(Some(node.manifest.clone()));
     let running = tokio::spawn(uploader.run());
-    vault.finalize(2 * RANGE_SEQS - 1, &root_at(&dir, 2 * RANGE_SEQS - 1));
+    vault.finalize(2 * range_seqs() - 1, &root_at(&dir, 2 * range_seqs() - 1));
     until("the first range confirmed", || metrics.archive.confirmed_ranges.get() == 1).await;
 
     let (seq, root) = checkpoint_past(&node, &dir, 4).await;
@@ -79,7 +79,7 @@ async fn a_restart_reads_back_no_range_of_a_copy_that_parts_from_the_vaults_hist
         b.objects.insert(range_key(&test_log(), 1), compress(b"the successor's bytes\n").unwrap());
     });
     let vault = Vault::default();
-    vault.finalize(2 * RANGE_SEQS - 1, &root_at(&dir, 2 * RANGE_SEQS - 1));
+    vault.finalize(2 * range_seqs() - 1, &root_at(&dir, 2 * range_seqs() - 1));
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault.clone()));
     sources.send_replace(Some(node.manifest.clone()));
     let running = tokio::spawn(uploader.run());
@@ -97,7 +97,7 @@ async fn a_restart_reads_back_no_range_of_a_copy_that_parts_from_the_vaults_hist
     vault.finalize(seq, &root);
     sources.send_replace(Some(node.manifest.clone()));
     recv(&mut resolved, "archive_copy_superseded").await;
-    let below = seq / RANGE_SEQS;
+    let below = seq / range_seqs();
     until("the ranges below the checkpoint uploaded", || bucket.with(|b| b.created) >= below - 2).await;
     assert_eq!(metrics.archive.mismatches.get(), 0);
     running.abort();
@@ -128,7 +128,7 @@ async fn a_checkpoint_in_the_open_segment_waits_for_the_segment() {
     while node.manifest.borrow().unlisted_from().unwrap() <= seq {
         node.submit(Command::Tick).await;
     }
-    let below = (seq / RANGE_SEQS) as i64;
+    let below = (seq / range_seqs()) as i64;
     until("the ranges below the checkpoint confirmed", || metrics.archive.confirmed_ranges.get() >= below).await;
     running.abort();
     node.stop().await;
@@ -141,7 +141,7 @@ async fn a_vault_that_cannot_be_read_is_retried() {
     let node = node_with(&dir, 2).await;
     let vault = Vault::default();
     vault.fail_next(3);
-    vault.finalize(2 * RANGE_SEQS - 1, &root_at(&dir, 2 * RANGE_SEQS - 1));
+    vault.finalize(2 * range_seqs() - 1, &root_at(&dir, 2 * range_seqs() - 1));
     let (uploader, sources, metrics) = uploading(&bucket, &dir, Duration::from_secs(3600), Some(vault.clone()));
     sources.send_replace(Some(node.manifest.clone()));
     let running = tokio::spawn(uploader.run());

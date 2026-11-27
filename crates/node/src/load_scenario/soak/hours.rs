@@ -130,14 +130,14 @@ pub(super) fn failures(interval: &Interval, judged_required: bool) -> Vec<String
 
 /// What fails memory at `now` against the first interval's `first`: resident memory more than
 /// `MEMORY_GROWTH` over it, plus the share the newest cache's size has grown by, which tracks the
-/// state's.
-pub(super) fn memory_failure(first: Standing, now: Standing) -> Option<String> {
+/// state's, and `held_mib` more, the bucket's stand-in that this process holds in memory beside the node.
+pub(super) fn memory_failure(first: Standing, now: Standing, held_mib: u64) -> Option<String> {
     let state_growth = (now.state_bytes as f64 / first.state_bytes.max(1) as f64 - 1.0).max(0.0);
-    let bound = first.rss_mib as f64 * (1.0 + MEMORY_GROWTH + state_growth);
+    let bound = first.rss_mib as f64 * (1.0 + MEMORY_GROWTH + state_growth) + held_mib as f64;
     (now.rss_mib as f64 > bound).then(|| {
         format!(
             "memory {} MiB over {bound:.0} MiB: the first interval's {} MiB, {:.0}% more, \
-             and the state's growth of {:.0}%",
+             the state's growth of {:.0}% and the {held_mib} MiB the stand-in bucket has taken",
             now.rss_mib,
             first.rss_mib,
             MEMORY_GROWTH * 100.0,
@@ -285,13 +285,16 @@ mod tests {
     #[test]
     fn memory_may_grow_a_tenth_and_as_much_as_the_state_does() {
         let first = Standing { rss_mib: 1_000, state_bytes: 100 };
-        let at = |rss_mib, state_bytes| memory_failure(first, Standing { rss_mib, state_bytes });
+        let at = |rss_mib, state_bytes| memory_failure(first, Standing { rss_mib, state_bytes }, 0);
         assert!(at(1_100, 100).is_none(), "a tenth over, state unchanged");
         assert!(at(1_101, 100).is_some(), "past a tenth");
         assert!(at(1_290, 120).is_none(), "a tenth and the state's fifth");
         assert!(at(1_310, 120).is_some(), "past both");
         assert!(at(900, 50).is_none(), "a state that shrank gives no extra room, and less memory is fine");
         assert!(at(1_101, 50).is_some(), "a state that shrank gives no extra room");
+        let held = |rss_mib, held_mib| memory_failure(first, Standing { rss_mib, state_bytes: 100 }, held_mib);
+        assert!(held(1_400, 300).is_none(), "a tenth and what the stand-in bucket holds");
+        assert!(held(1_401, 300).is_some(), "past both");
     }
 
     #[test]

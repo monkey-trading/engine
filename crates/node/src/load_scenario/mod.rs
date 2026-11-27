@@ -41,6 +41,7 @@
 //! `LOAD_RWA_MOVES` (each other market's mid moves a second on each of its connections, at most two on
 //! CME Group's, whose stand-in reads its prices twice a second) and `LOAD_SOURCE_DELAY_MS` (200).
 
+mod archived;
 mod durable;
 pub(crate) mod generator;
 mod host;

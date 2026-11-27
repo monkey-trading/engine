@@ -24,7 +24,7 @@ use tokio::time::Instant;
 use tracing::{Instrument, Span, info, info_span, warn};
 
 use crate::archive::uploader::{Found, Source, Work};
-use crate::archive::{Finality, RANGE_SEQS, Store, piece_bytes, range_key, tail_prefix};
+use crate::archive::{Finality, Store, piece_bytes, range_key, range_seqs, tail_prefix};
 use crate::log::{Checkpoint, LogEntry, LogReader, Manifest, Offset};
 
 /// How many confirmed tails are remembered, so another copy of the same history does not upload them again.
@@ -109,7 +109,7 @@ impl<F: Finality> Work<F> {
         self.tails.unread = true;
         let held = self.tails.scan.take().map(|held| held.into_inner().unwrap_or_else(PoisonError::into_inner));
         let (dir, manifest) = (self.dir.clone(), manifest.clone());
-        let from = Offset { seq: self.backlog.next * RANGE_SEQS, index: 0 };
+        let from = Offset { seq: self.backlog.next * range_seqs(), index: 0 };
         let (reader, found) = spawn_blocking(move || {
             let mut reader = match held {
                 Some(reader) => reader,
@@ -159,7 +159,7 @@ impl<F: Finality> Work<F> {
     /// - the piece cannot be built, or the bucket cannot take or serve it
     async fn piece(&mut self, view: &Manifest) -> (anyhow::Result<()>, Span) {
         let tail = self.tails.queue.front().expect("a tail waits: the caller checked");
-        let (seq, root, last) = (tail.seq, tail.root, tail.seq / RANGE_SEQS);
+        let (seq, root, last) = (tail.seq, tail.root, tail.seq / range_seqs());
         let index = tail.next.max(self.backlog.next);
         if index > last {
             self.confirmed();
@@ -191,7 +191,7 @@ impl<F: Finality> Work<F> {
         match self.found_at(store, key, raw).await? {
             Found::Confirmed => {
                 info!(?created, bytes, stored, "confirmed in the archive");
-                match index == seq / RANGE_SEQS {
+                match index == seq / range_seqs() {
                     true => self.confirmed(),
                     false => self.tails.queue.front_mut().expect("the tail uploaded").next = index + 1,
                 }
@@ -238,7 +238,7 @@ impl<F: Finality> Work<F> {
             warn!(
                 alert = "archive_object_mismatch",
                 object = %key,
-                first_seq = index * RANGE_SEQS,
+                first_seq = index * range_seqs(),
                 "the archive's object for this piece of a checkpoint's tail differs from this node's copy of it and \
                  cannot be replaced, so this node uploads no more of that tail: compare the two"
             );

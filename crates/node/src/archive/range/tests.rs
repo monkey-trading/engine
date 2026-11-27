@@ -18,7 +18,7 @@ mod pieces;
 async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
     let dir = scratch_dir("archive-range-written");
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().unwrap() < 10 * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().unwrap() < 10 * range_seqs() {
         node.submit(Command::Tick).await;
     }
     node.stop().await;
@@ -54,7 +54,7 @@ async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
         assert_eq!(ranges[0], ranges[3], "range {index}, read a line at a time from one long segment");
         let first: LogEntry = serde_json::from_slice(ranges[0].split(|byte| *byte == b'\n').next().unwrap()).unwrap();
         assert!(
-            matches!(&first, LogEntry::Command(command) if command.sequenced.seq == index * RANGE_SEQS),
+            matches!(&first, LogEntry::Command(command) if command.sequenced.seq == index * range_seqs()),
             "range {index} starts at its first seq's command"
         );
         joined.extend_from_slice(&ranges[0]);
@@ -62,7 +62,7 @@ async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
     assert_eq!(joined, lines[..joined.len()], "the ranges are the log's lines in order");
     let next = lines[joined.len()..].split(|byte| *byte == b'\n').next().unwrap();
     let next: LogEntry = serde_json::from_slice(next).unwrap();
-    assert!(matches!(next, LogEntry::Command(command) if command.sequenced.seq == whole * RANGE_SEQS));
+    assert!(matches!(next, LogEntry::Command(command) if command.sequenced.seq == whole * range_seqs()));
 }
 
 /// A range is refused before a completed segment holds its last seq, and when a segment it reads differs from
@@ -71,7 +71,7 @@ async fn a_range_is_the_same_bytes_however_the_copy_is_cut() {
 async fn a_range_not_yet_whole_or_read_from_a_changed_segment_is_refused() {
     let dir = scratch_dir("archive-range-refused");
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().unwrap() < 2 * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().unwrap() < 2 * range_seqs() {
         node.submit(Command::Tick).await;
     }
     let view = node.manifest.borrow().clone();
@@ -92,7 +92,7 @@ async fn a_range_not_yet_whole_or_read_from_a_changed_segment_is_refused() {
 async fn a_copys_checkpoint_is_read_from_its_completed_segments() {
     let dir = scratch_dir("archive-range-checkpoint");
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().unwrap() < 3 * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().unwrap() < 3 * range_seqs() {
         node.submit(Command::Tick).await;
     }
     let view = node.manifest.borrow().clone();
@@ -122,7 +122,7 @@ async fn a_respelt_copy_of_a_range_holds_it_and_another_history_does_not() {
     use crate::archive::{compress, holds};
     let dir = scratch_dir("archive-range-respelt");
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().unwrap() < 3 * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().unwrap() < 3 * range_seqs() {
         node.submit(Command::Tick).await;
     }
     let raw = range_bytes(&dir, &node.manifest.borrow(), 1).unwrap();

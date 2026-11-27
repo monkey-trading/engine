@@ -54,7 +54,7 @@ async fn a_bucket_lacking_a_piece_or_holding_another_root_is_refused() {
     // The vault's tail, read under another root.
     upload_tail(&bucket, (&dir, &view), (seq, root), 2);
     let other = B256::repeat_byte(0xab);
-    for index in 2..=seq / RANGE_SEQS {
+    for index in 2..=seq / range_seqs() {
         let object = bucket.with(|b| b.objects[&tail_key(seq, &root, index)].clone());
         bucket.with(|b| b.objects.insert(tail_key(seq, &other, index), object));
     }
@@ -73,7 +73,7 @@ pub(crate) fn log(bucket: &StandIn) -> Bucket {
 
 /// The seq and root of the first checkpoint the log in `dir` holds in range `index`.
 pub(crate) fn checkpoint_in(dir: &Path, index: u64) -> (u64, B256) {
-    let (seq, root) = checkpoints(dir).into_iter().find(|(seq, _)| seq / RANGE_SEQS == index).unwrap();
+    let (seq, root) = checkpoints(dir).into_iter().find(|(seq, _)| seq / range_seqs() == index).unwrap();
     (seq, root.parse().unwrap())
 }
 
@@ -85,7 +85,7 @@ fn root_at(dir: &Path, seq: u64) -> String {
 /// Puts the pieces of the tail of the checkpoint at `seq` rooted at `root` into `bucket`, from piece `from`, built from
 /// the log in `dir` as the uploader builds them.
 pub(crate) fn upload_tail(bucket: &StandIn, (dir, view): (&Path, &Manifest), (seq, root): (u64, B256), from: u64) {
-    for index in from..=seq / RANGE_SEQS {
+    for index in from..=seq / range_seqs() {
         let object = compress(&piece_bytes(dir, view, index, seq).unwrap()).unwrap();
         bucket.with(|b| b.objects.insert(tail_key(seq, &root, index), object));
     }
@@ -94,7 +94,7 @@ pub(crate) fn upload_tail(bucket: &StandIn, (dir, view): (&Path, &Manifest), (se
 /// The log in `dir`'s lines through the checkpoint at `seq`: its ranges before the checkpoint's, then the tail's
 /// piece of the checkpoint's own.
 pub(crate) fn through(dir: &Path, view: &Manifest, seq: u64) -> Vec<u8> {
-    let last = seq / RANGE_SEQS;
+    let last = seq / range_seqs();
     let mut lines: Vec<u8> = (0..last).flat_map(|index| range_bytes(dir, view, index).unwrap()).collect();
     lines.extend(piece_bytes(dir, view, last, seq).unwrap());
     lines

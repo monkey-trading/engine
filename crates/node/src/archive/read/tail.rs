@@ -12,8 +12,8 @@ use engine_core::eip712::B256;
 use reqwest::Client;
 
 use crate::archive::Head;
-use crate::archive::RANGE_SEQS;
-use crate::archive::read::{Bucket, MAX_RANGE_BYTES, Ranges, Unread};
+use crate::archive::range_seqs;
+use crate::archive::read::{Bucket, Ranges, Unread, max_range_bytes};
 use crate::log::LogEntry;
 
 /// Writes to `out` the log in the bucket `log` names, through the vault's checkpoint at `seq` rooted at `root`, read
@@ -30,14 +30,14 @@ pub(crate) async fn read_through(
     (seq, root): (u64, B256),
     out: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let last = seq / RANGE_SEQS;
+    let last = seq / range_seqs();
     let (mut ranges, mut pieces) = (Ranges::new(log.clone()), Ranges::new(log.tail(seq, &root)?));
     let mut in_tail = false;
     for index in 0..=last {
-        let wanted = (index * RANGE_SEQS, if index < last { (index + 1) * RANGE_SEQS - 1 } else { seq });
+        let wanted = (index * range_seqs(), if index < last { (index + 1) * range_seqs() - 1 } else { seq });
         let mut lines = None;
         if !in_tail {
-            match ranges.seqs(http, wanted, MAX_RANGE_BYTES).await {
+            match ranges.seqs(http, wanted, max_range_bytes()).await {
                 Ok(read) => lines = Some(read),
                 // The bucket's ranges are a prefix of the log, and the tail's pieces go on from the first it lacks.
                 Err(Unread::Missing { .. }) => in_tail = true,
@@ -46,7 +46,7 @@ pub(crate) async fn read_through(
         }
         let lines = match lines {
             Some(lines) => lines,
-            None => pieces.seqs(http, wanted, MAX_RANGE_BYTES).await.map_err(|unread| match unread {
+            None => pieces.seqs(http, wanted, max_range_bytes()).await.map_err(|unread| match unread {
                 Unread::Missing { object, .. } => anyhow!(
                     "the archive's bucket holds neither range {index} at {} nor the tail's piece of it at {object}, so \
                      it does not hold the log through the checkpoint at seq {seq} rooted at {root}",
