@@ -217,6 +217,25 @@ cast code $STAKING --block <block> --rpc-url $RPC
 The first command prints `0x`, and the second the contract's code. A configuration that names
 `[genesis.carry]` without `deployment_block` does not load.
 
+The launch trading server reads the staking contract's logs for every block from `deployment_block` to
+the alpha's frontier, so every custody provider must serve `eth_getLogs` and block headers back to that
+block, and a provider that prunes history older than the alpha has run fails the catch-up. Check before
+the move that each one does:
+
+```shell
+cast logs --from-block <block> --to-block <block + 999> --address $STAKING --rpc-url <each provider>
+```
+
+The command prints the events in that range, or nothing if there are none. A provider that has pruned the range answers with an error, and one that caps the range answers with an error naming the cap. The trading
+server reads the range in windows of at most `custody.evm.max_block_range` blocks, 1,000 in the
+release configurations, one window after another with no wait between them. A provider that refuses a
+window of that size makes the server halve it, so a provider with a small cap lengthens the catch-up in
+proportion. Arbitrum One produces about four blocks a second, so a month of the alpha is about 10
+million blocks, 10,000 windows. Each window costs the provider about as many calls as one ordinary poll,
+which the RPC budget counts, and the estimate is a second or two a window, so the
+catch-up takes about three to six hours for a month, and in proportion for any other length. Time it
+on the first windows and adjust.
+
 Set `[genesis.staking]`'s `start_ms` after the latest time the launch log's genesis can run: step 11's
 D, plus a margin that covers step 8's three-day fallback. The engine refuses a staking start before the
 genesis's own stamp, and the start refuses with `carry_refused`, before anything is written, a carry it
@@ -486,8 +505,9 @@ the minter mints the token the staking contract holds, so a wrong address refuse
 source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
 in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
 is claimable from that checkpoint. Its custody watcher then mirrors the staking contract's events
-again, from `deployment_block` to the point to which the alpha had mirrored them, and no
-distribution epoch closes until it reaches that point with the alpha's total staked.
+again, from `deployment_block` to the point to which the alpha had mirrored them, a window after a
+window with no wait between them, and no distribution epoch closes until it reaches that point with the
+alpha's total staked. The catch-up takes hours, as step 4 estimates; `/v1/monkey` shows how far it has read.
 
 **Changes the live system.** The owner approved the execution when D was scheduled.
 
@@ -500,8 +520,9 @@ curl -sf $API/v1/monkey | jq .staking
 
 The first command prints `v93`, or a later version. The second shows the
 alpha's emission schedule. The third lists the carried awards, with nothing paid. The fourth shows
-`remirror` with the alpha's point and total staked while the stakes are mirrored again, and `null`
-once they are, when `total_staked` is the total that `jq -r .totals.staked carry.json` prints.
+`remirror` while the stakes are mirrored again, with the alpha's point and total staked, and the
+block read through, `read_through_block`, and the blocks left to the alpha's point, `blocks_left`
+(both `null` before the first window), and `null` once they are, when `total_staked` is the total that `jq -r .totals.staked carry.json` prints.
 
 **If it fails:** follow [The carried genesis holds or is refused](#the-carried-genesis-holds-or-is-refused).
 Before any deposit, the launch log can be abandoned and started fresh.

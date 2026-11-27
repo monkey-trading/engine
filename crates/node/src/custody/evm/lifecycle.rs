@@ -68,8 +68,9 @@ impl<V: VaultReader> DepositWatcher<V> {
             self.chain.prune_below(checkpoint.block);
         }
         if eligible < from {
-            self.mirror_staking(tx, release.tagged, release.tagged.map(|tag| tag.number.min(eligible))).await?;
-            return Ok(Polled::Waiting);
+            let behind =
+                self.mirror_staking(tx, release.tagged, release.tagged.map(|tag| tag.number.min(eligible))).await?;
+            return Ok(if behind { Polled::Read { caught_up: false } } else { Polled::Waiting });
         }
         let release_at = if let Some(released) = release.tagged {
             if released.number > tagged.number {
@@ -185,8 +186,10 @@ impl<V: VaultReader> DepositWatcher<V> {
                 None => {}
             }
         }
-        self.mirror_staking(tx, release.tagged, release_at).await?;
-        self.finish_confirmed_read(tx, to, eligible).await
+        // A carried genesis's stakes still behind the source's frontier read their next window at once.
+        let remirroring = self.mirror_staking(tx, release.tagged, release_at).await?;
+        let polled = self.finish_confirmed_read(tx, to, eligible).await?;
+        Ok(if remirroring { Polled::Read { caught_up: false } } else { polled })
     }
 
     /// Applies complete canonical receipts after every orphan reversal has been acknowledged.

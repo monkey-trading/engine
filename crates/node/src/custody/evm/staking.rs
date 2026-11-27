@@ -42,15 +42,19 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// - stalled: while the carried stakes are mirrored again, `remirror_start`'s stalls: no deployment block is
     ///   configured, or the registry has code before it
     /// - fatal: the sequencer has stopped, or the staking cursor cannot be stored
+    ///
+    /// Returns whether a carried genesis's stakes are still behind the source's frontier with more final blocks
+    /// to read, so the poll loop reads the next window at once instead of after its interval. Each window is
+    /// still bounded by `staking_range`, and read with all its checks.
     pub(super) async fn mirror_staking(
         &mut self,
         tx: &mpsc::Sender<Request>,
         release: Option<BlockRef>,
         release_at: Option<u64>,
-    ) -> Result<(), PollError> {
-        let Some(mut to) = release_at else { return Ok(()) };
+    ) -> Result<bool, PollError> {
+        let Some(mut to) = release_at else { return Ok(false) };
         if self.staking.is_none() {
-            return Ok(());
+            return Ok(false);
         };
         let Some((anchor, mirrored, remirror)) = query(tx, |engine| {
             engine.staking().map(|staking| (staking.completed_through, staking.mirrored_through, staking.remirror))
@@ -58,7 +62,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         .await
         .map_err(PollError::Fatal)?
         else {
-            return Ok(());
+            return Ok(false);
         };
         let start = match remirror {
             Some(_) => self.remirror_start(anchor, mirrored).await?,
@@ -71,8 +75,9 @@ impl<V: VaultReader> DepositWatcher<V> {
             return Err(PollError::inconsistent(anyhow!("finalized staking anchor changed")));
         }
         if from > to {
-            return Ok(());
+            return Ok(false);
         }
+        let final_to = to;
         // The cursor advances per completed chunk until it reaches the release tag, so catch-up reports
         // progress instead of restarting against a moving end. Event-read failures shrink the range (see
         // `staking::mirror`).
@@ -239,7 +244,8 @@ impl<V: VaultReader> DepositWatcher<V> {
             (bound, schedule_bound, vote_bound, fault_bound),
             (turns, remirror.is_some()),
         )
-        .await
+        .await?;
+        Ok(remirror.is_some_and(|pending| to < pending.through.block.min(final_to)))
     }
 
     /// Whether the schedule's governance record, read at `at`, settles the configured vote and fault proof
