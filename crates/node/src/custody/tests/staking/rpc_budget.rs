@@ -1,6 +1,8 @@
 //! What each custody provider sees, in JSON-RPC calls, from one operator and two members sharing its
 //! account: the deposit watcher's polls, measured over a fake chain at Arbitrum One's block rate, and
-//! one read of each fixed-interval reader through the real quorum, each multiplied by its cadence.
+//! one read of each fixed-interval reader through the real quorum, each multiplied by its cadence. The watcher is
+//! measured once caught up: a carried log's staking re-mirror reads its windows back to back, once, which the
+//! budget does not count.
 //! The RPC budget in `ops/runbooks/feed-and-custody-failures.md` holds the figures it prints:
 //! `cargo test -p engine-node --lib rpc_budget -- --ignored --nocapture --test-threads=1`.
 

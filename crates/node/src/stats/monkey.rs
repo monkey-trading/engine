@@ -53,6 +53,10 @@ struct StakingView {
 struct RemirrorView {
     through_block: u64,
     staked_total: TokenUnits,
+    /// The block the mirror has read through, none before its first window.
+    read_through_block: Option<u64>,
+    /// The blocks left to read to `through_block`, none before the first window.
+    blocks_left: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -121,9 +125,14 @@ impl Stats {
             total_staked: TokenUnits(inner.staked),
             stakers: inner.stakers,
             cooldown_ms: staking.config.cooldown_ms,
-            remirror: staking.remirror.map(|pending| RemirrorView {
-                through_block: pending.through.block,
-                staked_total: pending.staked_total,
+            remirror: staking.remirror.map(|pending| {
+                let read = staking.completed_through.map(|completed| completed.block);
+                RemirrorView {
+                    through_block: pending.through.block,
+                    staked_total: pending.staked_total,
+                    read_through_block: read,
+                    blocks_left: read.map(|read| pending.through.block.saturating_sub(read)),
+                }
             }),
         });
         let distribution = engine.staking().map(|staking| {

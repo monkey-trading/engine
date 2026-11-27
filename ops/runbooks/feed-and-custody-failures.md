@@ -741,10 +741,16 @@ reading once a stint so a member notices its own promotion promptly.
 
 **`max_block_range` and `stall_critical_after` at 15 s.** Both stay. At 15 s the watcher reads about 60
 new blocks a poll, far under `max_block_range = 1000`, and after an outage it reads 1,000 a poll, which
-is about 67 blocks a second against 4 produced. The staking mirror's range read stays within it too. A
-provider that refuses a range this large makes the watcher halve the range and grow it back
+is about 67 blocks a second against 4 produced. The staking mirror's range read stays within it too.
+A provider that refuses a range this large makes the watcher halve the range and grow it back
 (`custody/sizing.rs`), so the value is a ceiling. `stall_critical_after` is 1 hour, 240 polls, so the
 longer interval does not change when a stall pages.
+
+The one exception to the poll interval is a carried log's staking re-mirror, once, after a move to a new
+vault ([vault-move.md](vault-move.md)): while it is behind the alpha's frontier the watcher reads its next
+window at once, so a provider sees the poll's calls, and a header and a by-hash read for each window that
+holds events, back to back at the pace the providers answer, for the hours that runbook estimates. The
+figures in this section are for the watcher once it has caught up.
 
 ## Checkpoint endpoint
 

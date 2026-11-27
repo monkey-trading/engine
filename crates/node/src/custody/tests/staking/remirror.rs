@@ -71,3 +71,53 @@ async fn a_refused_frontier_while_the_stakes_are_mirrored_again_pages_at_once() 
     assert!(matches!(waits, PollError::Stalled(Stall::Refused(_))), "{waits:?}");
     node.stop().await;
 }
+
+/// The reference source's carry, applied to `node` after its `InitStaking`: its stakes are left to mirror again, to
+/// the source's frontier, whose block this returns.
+async fn carried_node(node: &Node) -> u64 {
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90-carried.jsonl"));
+    let file = crate::carry::build(path, None).unwrap();
+    init_staking(node).await;
+    for part in file.parts {
+        let events = node.submit(Command::Admin(AdminCommand::CarryState(part))).await;
+        assert_eq!(events.iter().filter(|e| matches!(e, Event::AdminRejected { .. })).count(), 0, "{events:?}");
+    }
+    node.read(|engine| engine.staking().and_then(|staking| staking.remirror).map(|pending| pending.through.block))
+        .await
+        .expect("the carry leaves the stakes to be mirrored again")
+}
+
+/// While a carried genesis's stakes are behind the source's frontier, each poll reads one window and the next
+/// follows at once, not after the poll interval: the poll says it has not caught up, until the window that
+/// reaches the frontier.
+#[tokio::test]
+async fn while_behind_the_sources_frontier_each_poll_asks_for_the_next_window_at_once() {
+    let dir = scratch("remirror-pace");
+    let node = Node::start_confirmed(&dir);
+    let through = carried_node(&node).await;
+    assert!(through >= 4, "the reference source's frontier is block {through}");
+    let (range, chains) = (through / 4, poll_chains(through + 10));
+    let toml = format!(
+        r#"{}
+        staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}", deployment_block = 0, registry = {{ contract = "{REGISTRY}" }} }}
+        "#,
+        // The deposit scan starts at the head, so it is caught up at once and only the staking mirror is behind.
+        evm_toml(&dir, range).replace("start_block = 0", &format!("start_block = {}", through + 10)),
+        dir.join("staking-cursor.json").display()
+    );
+    let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+    let quorum =
+        Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect()).unwrap();
+    let mut watcher = DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap();
+    let mut read = 0;
+    // The windows below the frontier. The one that reaches it ends the re-mirror, and this stub chain's block there
+    // is not the source's.
+    for window in 1..=through.div_ceil(range) - 1 {
+        let polled = watcher.poll(&node.tx).await.unwrap();
+        assert!(!polled.caught_up(), "window {window}: the poll waits its interval with the frontier still ahead");
+        read = node.read(|engine| engine.staking().and_then(|staking| staking.completed_through)).await.unwrap().block;
+        assert_eq!(read, window * range - 1, "window {window} is one range of blocks");
+    }
+    assert!(read < through);
+    node.stop().await;
+}
