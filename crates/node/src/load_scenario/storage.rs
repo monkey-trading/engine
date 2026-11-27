@@ -20,8 +20,13 @@
 //! load, the node's included. Only an order-to-fill or stream-lag tail over its bar by no more than the
 //! block is excused, and only when every breach of the window is one. A stall in the node's own code,
 //! or cores it keeps busy, leaves the probe unblocked, and a median, a price's stamp, which does not
-//! wait on the sync, and the busy share are never excused. A host whose scheduler counts no thread's
-//! time, that names no disk under the probe's file or whose filesystem takes no direct writes runs no
+//! wait on the sync, and the busy share are never excused.
+//!
+//! A stall that straddles a window's edge holds orders in the next window too, which the probe's block
+//! may not reach, so a window beside an excused one whose every breach is a tail a stall can hold is
+//! covered with it (`covered`). A leg with fewer than `MIN_JUDGED` of its windows left to judge measured
+//! too little to say either way: it is inconclusive and runs again on the same node (`rerun`). A host
+//! whose scheduler counts no thread's time, that names no disk under the probe's file or whose filesystem takes no direct writes runs no
 //! probe, since it could excuse nothing.
 
 use std::collections::BTreeSet;
@@ -35,6 +40,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::load_scenario::Window;
 use crate::load_scenario::host::{Waited, Waits, backing_disks};
 use crate::load_scenario::report::Breach;
 
@@ -50,6 +56,10 @@ const STALLED: Duration = Duration::from_millis(50);
 /// it: the orders and frames a stall held leave once it ends, and reach the generator within a few
 /// milliseconds.
 pub(super) const MARGIN: Duration = Duration::from_millis(100);
+/// The fewest windows a leg must have left to judge, once the storage's are excused, for a tail over its
+/// bar to fail it: three of five, a majority and the least for which a tail is allowed a miss
+/// (`judged * MISSES / WINDOWS` is 0 below it, so one window would decide the leg).
+pub(super) const MIN_JUDGED: usize = 3;
 /// The budgets a stall of the storage holds: an order's fill and a stream frame leave only once the
 /// log's sync is done.
 const HELD_BY_THE_SYNC: [&str; 2] = ["order_to_fill_us", "stream_lag_ms"];
@@ -250,9 +260,7 @@ pub(super) fn excuse(breaches: &[Breach], storage: &Storage) -> Option<String> {
     let stalled = on_storage && slower(during.ops, window.ops) && slower(during.bytes, window.bytes);
     let explained = |breach: &Breach| {
         let per_ms = if breach.budget.ends_with("_ms") { 1.0 } else { 1e3 };
-        HELD_BY_THE_SYNC.contains(&breach.budget)
-            && matches!(breach.quantile, "p99" | "p999")
-            && breach.figure <= breach.bar + blocked_ms * per_ms
+        held_by_a_stall(breach) && breach.figure <= breach.bar + blocked_ms * per_ms
     };
     (stalled && !breaches.is_empty() && breaches.iter().all(explained)).then(|| {
         format!(
@@ -261,6 +269,26 @@ pub(super) fn excuse(breaches: &[Breach], storage: &Storage) -> Option<String> {
             during.ops, window.ops
         )
     })
+}
+
+/// Whether `breach` is a tail a stall of the storage can hold: an order-to-fill or stream-lag p99 or p999.
+fn held_by_a_stall(breach: &Breach) -> bool {
+    HELD_BY_THE_SYNC.contains(&breach.budget) && matches!(breach.quantile, "p99" | "p999")
+}
+
+/// Which of `windows` the storage's stalls cover: each excused one, and a neighbour of one with
+/// breaches, all of them tails a stall can hold. A neighbour with no breach measured something, and one
+/// with a median or busy-share breach is not a stall's.
+pub(super) fn covered(windows: &[Window]) -> Vec<bool> {
+    let excused =
+        |index: Option<usize>| index.and_then(|index| windows.get(index)).is_some_and(|w| w.excused.is_some());
+    let stalled = |window: &Window| !window.breaches.is_empty() && window.breaches.iter().all(held_by_a_stall);
+    (0..windows.len())
+        .map(|at| {
+            let window = &windows[at];
+            window.excused.is_some() || (stalled(window) && (excused(at.checked_sub(1)) || excused(Some(at + 1))))
+        })
+        .collect()
 }
 
 #[cfg(test)]
