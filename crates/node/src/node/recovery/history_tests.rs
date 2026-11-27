@@ -278,22 +278,22 @@ fn resign(path: &std::path::Path, cfg: &NodeConfig, alter: impl FnOnce(&mut serd
 }
 
 /// A node's log with a daily snapshot after marks in both markets, and what the node answered once it stopped.
-pub(super) struct Written {
-    pub(super) cfg: NodeConfig,
-    pub(super) key: Arc<EnclaveKey>,
+pub(crate) struct Written {
+    pub(crate) cfg: NodeConfig,
+    pub(crate) key: Arc<EnclaveKey>,
     /// The record the node kept, every scan it asked for installed.
-    stats: Stats,
+    pub(crate) stats: Stats,
     /// Every page of both markets the node's marks cache served.
     pages: Vec<MarksPage>,
     /// The newest snapshot.
-    snapshot: Listed,
+    pub(crate) snapshot: Listed,
 }
 
 impl Written {
     /// Runs a node with `[daily_snapshots]` and a scan due at every command, as `name`, from ten minutes before a
     /// UTC midnight: genesis, which the first snapshot follows, marks before midnight and after it, the day's
     /// snapshot at the first checkpoint past it, and marks after that, then stops it.
-    pub(super) async fn run(name: &str) -> Self {
+    pub(crate) async fn run(name: &str) -> Self {
         let root = scratch_dir(name);
         let mut cfg = dev_config();
         cfg.node.log_dir = root.join("log");
@@ -385,7 +385,7 @@ async fn pages(reader: &Reader) -> Vec<MarksPage> {
 }
 
 /// Removes the log's segments that end before `seq`, which a start from the snapshot there does not read.
-fn remove_segments_before(dir: &std::path::Path, seq: u64) {
+pub(crate) fn remove_segments_before(dir: &std::path::Path, seq: u64) {
     let mut firsts: Vec<(u64, std::path::PathBuf)> = std::fs::read_dir(dir)
         .unwrap()
         .filter_map(|entry| {
