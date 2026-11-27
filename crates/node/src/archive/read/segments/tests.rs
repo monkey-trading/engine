@@ -6,7 +6,7 @@ use crate::archive::read::origin::{bucket_of, copy_log, listed_below, log_of, se
 use crate::archive::stand_in::{StandIn, test_log};
 use crate::archive::{range_bytes, range_key};
 use crate::standby::archive::{bootstrap_archive, fetch_manifest};
-use crate::test_support::{capture_alerts, log_entries, scratch_dir};
+use crate::test_support::{capture_alerts, capture_alerts_and_resolutions, log_entries, scratch_dir};
 
 /// A backfill takes the segments the bucket's ranges hold from the bucket, reading each object once, and asks the
 /// node only for the segments past them, which the bucket has yet to hold: the copy is the node's log.
@@ -145,6 +145,44 @@ async fn a_segment_no_source_holds_is_missing_and_pages_once() {
     let copy = scratch_dir("segments-missing-copy");
     let e = bootstrap_archive(&bucket.client, &origins, &copy).await.unwrap_err();
     assert!(format!("{e:#}").contains("archive_segment_missing"), "the backfill stops at the object: {e:#}");
+}
+
+/// The page for a missing object resolves, under the object it names, once a segment over it is served.
+#[tokio::test]
+async fn a_missing_object_resolves_once_a_segment_over_it_is_served() {
+    let (bucket, (dir, view)) = (StandIn::start().await, log_of("segments-resolved", 4).await);
+    upload(&bucket, &dir, &view, 4);
+    let (_guard, mut alerts, mut resolved) = capture_alerts_and_resolutions();
+    let key = range_key(&test_log(), 2);
+    let held = bucket.with(|b| b.objects.remove(&key)).unwrap();
+    let served = scratch_dir("segments-resolved-served");
+    copy_log(&dir, &served);
+    let gone: Vec<SegmentInfo> = listed_below(&dir, 4)
+        .into_iter()
+        .filter(|listed| (listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS).contains(&2))
+        .collect();
+    for listed in &gone {
+        std::fs::remove_file(served.join(&listed.file)).unwrap();
+    }
+    let node = serve(&served, None).await;
+    let origins = Origins { bucket: Some(bucket_of(&bucket)), nodes: vec![node.url.clone()] };
+    let mut segments = Segments::new(&bucket.client, &origins);
+    segments.segment(&gone[0]).await.unwrap_err();
+    let object = bucket_of(&bucket).object(2).unwrap().to_string();
+    assert_eq!(alerts.try_recv().unwrap()["object"], object);
+    let ended = |resolved: &mut tokio::sync::mpsc::UnboundedReceiver<crate::test_support::Alert>| {
+        std::iter::from_fn(|| resolved.try_recv().ok())
+            .filter(|line| line["alert_resolved"] == "archive_segment_missing")
+            .collect::<Vec<_>>()
+    };
+    assert!(ended(&mut resolved).is_empty(), "nothing resolves while the object is missing");
+    bucket.with(|b| b.objects.insert(key, held));
+    for listed in &gone {
+        segments.segment(listed).await.unwrap();
+    }
+    let resolutions = ended(&mut resolved);
+    assert_eq!(resolutions.len(), 1, "{resolutions:?}");
+    assert_eq!(resolutions[0]["object"], object);
 }
 
 /// A segment the bucket rebuilds to other bytes than its listing is no integrity failure of the archive, since the

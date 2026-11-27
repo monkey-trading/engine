@@ -81,13 +81,31 @@ impl PublishedLog {
     /// Error cases:
     /// - see `local`
     pub(crate) fn local_in(&self, parent: &Path, through: Option<(u64, B256)>) -> anyhow::Result<LocalLog> {
+        let local = self.local_until(parent, through, async {
+            let _ = tokio::signal::ctrl_c().await;
+        })?;
+        if let Some(dir) = &local.downloaded {
+            remove_on_interrupt(dir.clone());
+        }
+        Ok(local)
+    }
+
+    /// `local_in`, a download stopping when `interrupt` completes, which removes it as a failed one is.
+    /// Error cases:
+    /// - see `local`, or `interrupt` completes before the download does
+    fn local_until(
+        &self,
+        parent: &Path,
+        through: Option<(u64, B256)>,
+        interrupt: impl Future<Output = ()>,
+    ) -> anyhow::Result<LocalLog> {
         match (self, through) {
             (Self::Path(path), None) => Ok(LocalLog { path: path.clone(), downloaded: None }),
             (Self::Url(url), None) => {
                 let dir = download_dir(parent);
                 let local = LocalLog { path: dir.clone(), downloaded: Some(dir) };
                 eprintln!("downloading the archive at {url} into {}", local.path.display());
-                runtime()?.block_on(download(&archive_client(false)?, url, &local.path))?;
+                interruptible(download(&archive_client(false)?, url, &local.path), interrupt)?;
                 Ok(local)
             }
             (Self::Bucket(url), Some(through)) => {
@@ -97,7 +115,7 @@ impl PublishedLog {
                 std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
                 let mut file = BufWriter::new(File::create(&local.path).context("creating the log's file")?);
                 let (http, log) = (archive_client(false)?, Bucket::new(url, "")?);
-                runtime()?.block_on(read_through(&http, &log, through, &mut file))?;
+                interruptible(read_through(&http, &log, through, &mut file), interrupt)?;
                 file.flush().context("writing the log's file")?;
                 Ok(local)
             }
@@ -171,6 +189,34 @@ pub(crate) async fn download(http: &reqwest::Client, url: &Url, dir: &Path) -> a
 fn download_dir(parent: &Path) -> PathBuf {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_nanos());
     parent.join(format!("engine-archive-{}-{nanos}", std::process::id()))
+}
+
+/// Runs `download` to its end on a runtime of its own, or stops it when `interrupt` completes, so that a Ctrl-C
+/// returns through the caller, which removes the partial download, instead of ending the process with it in place.
+/// Error cases:
+/// - the runtime does not build, `download` fails, or `interrupt` completes first
+fn interruptible(
+    download: impl Future<Output = anyhow::Result<()>>,
+    interrupt: impl Future<Output = ()>,
+) -> anyhow::Result<()> {
+    runtime()?.block_on(async {
+        tokio::select! {
+            done = download => done,
+            () = interrupt => bail!("the download was interrupted"),
+        }
+    })
+}
+
+/// Once the download's own handler is installed, a Ctrl-C no longer ends the process by default, so this keeps one:
+/// a thread that waits for it, removes `dir` and exits with the status a Ctrl-C gives.
+fn remove_on_interrupt(dir: PathBuf) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = runtime() else { return };
+        if runtime.block_on(tokio::signal::ctrl_c()).is_ok() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::process::exit(130);
+        }
+    });
 }
 
 /// The runtime a download runs on.

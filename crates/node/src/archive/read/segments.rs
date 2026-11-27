@@ -5,11 +5,11 @@
 //! that, so a node origin cannot send it elsewhere. A segment is taken only as the bytes its listing names,
 //! whichever source served it.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use anyhow::{Context, anyhow};
 use reqwest::{Client, Url};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::archive::RANGE_SEQS;
 use crate::archive::read::{Bucket, Ranges, Unread};
@@ -50,8 +50,8 @@ pub(crate) struct Segments<'a> {
     /// The first range the bucket lacked or could not serve: the bucket holds a prefix of the log, so from that
     /// range on the nodes are asked first, and the bucket again only for a segment none of them serves.
     behind: Option<u64>,
-    /// The objects reported missing, each once.
-    reported: BTreeSet<Url>,
+    /// The objects reported missing, each once, with the range each holds, until a segment over it is served.
+    reported: BTreeMap<Url, u64>,
 }
 
 impl ArchiveOrigins for [String] {
@@ -95,7 +95,7 @@ impl<'a> Segments<'a> {
     pub(crate) fn new(http: &'a Client, origins: &'a (impl ArchiveOrigins + ?Sized)) -> Self {
         let ranges = origins.bucket().cloned().map(Ranges::new);
         let own = ranges.is_some();
-        Self { http, nodes: origins.nodes(), ranges, own, behind: None, reported: BTreeSet::new() }
+        Self { http, nodes: origins.nodes(), ranges, own, behind: None, reported: BTreeMap::new() }
     }
 
     /// The archive's manifest, from the node origins (`fetch_manifest`).
@@ -108,12 +108,27 @@ impl<'a> Segments<'a> {
     /// The bytes of the completed segment `listed`, as its listing names them: from the bucket's ranges first,
     /// unless the bucket lacked or failed an earlier range, then from each node origin in order, following a
     /// node's redirect to the bucket, and from the bucket once more when no node serves it. A `404` from the
-    /// bucket for a segment no node serves pages Warning `archive_segment_missing`, once per object.
+    /// bucket for a segment no node serves pages Warning `archive_segment_missing`, once per object, which a
+    /// served segment over the object resolves.
     /// Error cases:
     /// - the listing is not canonical (`ArchiveIntegrity`)
     /// - no source serves the listed bytes: the last failure, an `ArchiveIntegrity` for bytes other than the
     ///   listing's
     pub(crate) async fn segment(&mut self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
+        let bytes = self.read(listed).await?;
+        let ranges = listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS;
+        self.reported.retain(|object, index| {
+            let served = ranges.contains(index);
+            if served {
+                info!(alert_resolved = "archive_segment_missing", %object, "a segment over the object is served");
+            }
+            !served
+        });
+        Ok(bytes)
+    }
+
+    /// `segment`'s read of the listed bytes.
+    async fn read(&mut self, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         validate_listing(listed)?;
         let index = listed.first_seq / RANGE_SEQS;
         let (mut failed, mut missing) = (None, None);
@@ -151,8 +166,8 @@ impl<'a> Segments<'a> {
                 Err(unread) => self.note(unread, (&mut failed, &mut missing)),
             }
         }
-        if let Some(object) = missing {
-            self.report(listed, &object);
+        if let Some((object, index)) = missing {
+            self.report(listed, &object, index);
             let gone = format!("archive_segment_missing: the archive's bucket has no object at {object}");
             failed = Some(match failed {
                 Some(failed) => failed.context(gone),
@@ -200,12 +215,12 @@ impl<'a> Segments<'a> {
 
     /// Records why the bucket did not serve a segment: a missing object and an unreachable bucket put it behind,
     /// and a refused object is logged, since the uploader pages for an object other than the log's.
-    fn note(&mut self, unread: Unread, (failed, missing): (&mut Option<anyhow::Error>, &mut Option<Url>)) {
+    fn note(&mut self, unread: Unread, (failed, missing): (&mut Option<anyhow::Error>, &mut Option<(Url, u64)>)) {
         match unread {
             Unread::Missing { index, object } => {
                 self.behind = Some(self.behind.map_or(index, |behind| behind.min(index)));
                 debug!(%object, "the archive's bucket has no object here yet");
-                *missing = Some(object);
+                *missing = Some((object, index));
             }
             Unread::Unreachable(e) => {
                 let at = self.ranges.as_ref().map(|ranges| ranges.bucket().to_string()).unwrap_or_default();
@@ -221,8 +236,8 @@ impl<'a> Segments<'a> {
     }
 
     /// Pages Warning `archive_segment_missing` for `object`, which `listed` needs and no node served, once.
-    fn report(&mut self, listed: &SegmentInfo, object: &Url) {
-        if self.reported.insert(object.clone()) {
+    fn report(&mut self, listed: &SegmentInfo, object: &Url, index: u64) {
+        if self.reported.insert(object.clone(), index).is_none() {
             warn!(
                 alert = "archive_segment_missing",
                 %object,

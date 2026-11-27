@@ -22,9 +22,32 @@ pub(crate) const RANGE_SEQS: u64 = if cfg!(test) { 6 } else { 10_000 };
 
 /// What a log line's entry is, and its seq.
 #[derive(Deserialize)]
-struct Head {
-    entry: String,
-    seq: Option<u64>,
+pub(crate) struct Head {
+    pub(crate) entry: String,
+    pub(crate) seq: Option<u64>,
+}
+
+/// Reads `reader`'s next line that is not blank into `line`, replacing it, and gives the entry it holds: the one
+/// walk of a log's lines that the uploader's reads of segments and the reader's reads of ranges share. `read` is
+/// called with the bytes of each line read, blank ones included.
+/// Error cases:
+/// - the reader fails, `read` fails, or the line is not an entry
+pub(crate) fn next_entry(
+    reader: &mut impl BufRead,
+    line: &mut Vec<u8>,
+    mut read: impl FnMut(usize) -> anyhow::Result<()>,
+) -> anyhow::Result<Option<Head>> {
+    loop {
+        line.clear();
+        let n = reader.read_until(b'\n', line).context("reading a line")?;
+        if n == 0 {
+            return Ok(None);
+        }
+        read(n)?;
+        if !line.trim_ascii().is_empty() {
+            return serde_json::from_slice(line).map(Some).context("a line that is not a log entry");
+        }
+    }
 }
 
 /// The key prefix of a log's objects: its custody chain and vault, which no other log shares, since a vault
@@ -192,15 +215,7 @@ fn entries_of(
         };
         let mut segment = BufReader::new(segment);
         let mut seq = None;
-        loop {
-            line.clear();
-            if segment.read_until(b'\n', &mut line).with_context(|| format!("reading {file}"))? == 0 {
-                break;
-            }
-            if line.trim_ascii().is_empty() {
-                continue;
-            }
-            let head: Head = serde_json::from_slice(&line).with_context(|| format!("a line of {file}"))?;
+        while let Some(head) = next_entry(&mut segment, &mut line, |_| Ok(())).with_context(|| file.clone())? {
             if head.entry == "command" {
                 seq = Some(head.seq.with_context(|| format!("a command of {file} names no seq"))?);
             }

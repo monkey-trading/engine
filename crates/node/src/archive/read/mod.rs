@@ -6,17 +6,16 @@
 //! from its ranges must be the bytes its listing names (`standby::archive::check_listing`), and a copy built from
 //! them replays, its seals, links and checkpoint roots checked, as any copy of the log does.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail, ensure};
 use engine_core::eip712::B256;
 use reqwest::{Client, Url};
-use serde::Deserialize;
 use tokio::task::spawn_blocking;
 
-use crate::archive::{Object, RANGE_SEQS, log_prefix, range_key, read_public, tail_prefix};
+use crate::archive::{Object, RANGE_SEQS, log_prefix, next_entry, range_key, read_public, tail_prefix};
 use crate::config::NodeConfig;
 
 mod segments;
@@ -62,13 +61,6 @@ pub(crate) enum Unread {
 pub(crate) struct Ranges {
     bucket: Bucket,
     held: Option<(u64, Arc<Vec<u8>>)>,
-}
-
-/// What a log line's entry is, and a command's seq.
-#[derive(Deserialize)]
-struct Head {
-    entry: String,
-    seq: Option<u64>,
 }
 
 impl Bucket {
@@ -225,18 +217,12 @@ fn lines_of(object: &[u8], index: u64, (first, last): (u64, u64), limit: u64) ->
     let mut reader = BufReader::new(decoder.take(MAX_RANGE_BYTES + 1));
     let (mut taken, mut line, mut read) = (Vec::new(), Vec::new(), 0u64);
     let mut seq: Option<u64> = None;
-    loop {
-        line.clear();
-        let n = reader.read_until(b'\n', &mut line).context("decompressing the zstd frame")?;
-        if n == 0 {
-            break;
-        }
+    let mut inflated = |n: usize| {
         read += n as u64;
         ensure!(read <= MAX_RANGE_BYTES, "it decompresses past {MAX_RANGE_BYTES} bytes");
-        if line.trim_ascii().is_empty() {
-            continue;
-        }
-        let head: Head = serde_json::from_slice(&line).context("a line that is not a log entry")?;
+        Ok(())
+    };
+    while let Some(head) = next_entry(&mut reader, &mut line, &mut inflated).context("decompressing the zstd frame")? {
         if head.entry == "command" {
             let next = seq
                 .map_or(Some(index * RANGE_SEQS), |seq| seq.checked_add(1))
