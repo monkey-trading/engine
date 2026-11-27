@@ -7,6 +7,7 @@ use engine_core::emissions::TokenUnits;
 use engine_core::types::AccountId;
 
 use super::*;
+use crate::custody::GovernanceRecord;
 use crate::test_support::scratch_dir;
 
 const VAULT: Address = Address::repeat_byte(0x11);
@@ -120,7 +121,11 @@ async fn a_start_refuses_a_contract_the_move_does_not_keep_while_it_holds() {
 /// What `hold` refuses over a chain that reads `state` and a config naming `contracts`, which it must refuse at its
 /// first read: one that waits instead fails the test, rather than holding it for good.
 async fn refused_at_once(state: MoveState, contracts: &MoveContracts, path: &Path) -> String {
-    let held = tokio::time::timeout(RECHECK / 2, hold(|| async { Ok(state) }, (&expected(), contracts), path)).await;
+    let held = tokio::time::timeout(
+        RECHECK / 2,
+        hold(|| async { Ok(state) }, (&expected(), contracts), path, || async { Ok(()) }),
+    )
+    .await;
     format!("{:#}", held.expect("refused at the first read, not held").unwrap_err())
 }
 
@@ -157,7 +162,7 @@ async fn a_start_holds_until_the_move_is_done_and_the_file_is_there() {
         async move { if n == 1 { Err(anyhow!("no quorum")) } else { Ok(state) } }
     };
     let started = tokio::time::Instant::now();
-    let (state, read_back) = hold(read_chain, (&expected(), &kept()), &path).await.unwrap();
+    let (state, read_back) = hold(read_chain, (&expected(), &kept()), &path, || async { Ok(()) }).await.unwrap();
     assert_eq!((state, read_back.source), (done(), source));
     assert_eq!(reads.get(), 4);
     assert_eq!(started.elapsed(), 3 * RECHECK);
@@ -169,7 +174,7 @@ async fn a_start_refuses_a_file_that_is_not_a_carry_file() {
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("carry.json");
     fs::write(&path, b"{}").unwrap();
-    let error = hold(|| async { Ok(done()) }, (&expected(), &kept()), &path).await.unwrap_err();
+    let error = hold(|| async { Ok(done()) }, (&expected(), &kept()), &path, || async { Ok(()) }).await.unwrap_err();
     assert!(format!("{error:#}").contains("is not a carry file"), "{error:#}");
 }
 
@@ -221,4 +226,32 @@ fn a_members_copy_is_held_to_the_carry_its_config_names() {
     assert!(!serves_copy(&other, Some(&carried)));
     assert!(!serves_copy(&none, Some(&carried)));
     assert!(!serves_copy(&named, None), "no copy open");
+}
+
+/// A record that names the configured contracts at the start but another once the wait ends, as a schedule whose
+/// record the timelock fills during the wait does: the start reads it again and refuses before it carries anything.
+#[tokio::test(start_paused = true)]
+async fn a_start_reads_the_governance_record_again_once_the_wait_ends() {
+    const VOTE: Address = Address::repeat_byte(0x5f);
+    const FAULT_PROOF: Address = Address::repeat_byte(0x5e);
+    let (_guard, mut alerts) = crate::test_support::capture_alerts();
+    let dir = scratch_dir("carry-hold-record");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("carry.json");
+    let source = CarrySource { chain_id: 42_161, vault: AccountId(SOURCE.into_array()), seq: 70, root: ROOT };
+    fs::write(&path, serde_json::to_vec(&file(source)).unwrap()).unwrap();
+    let configured = (Some(VOTE), Some(FAULT_PROOF));
+    // Read before the wait, the record names nothing yet: the start goes on to wait.
+    let before = RecordReader::fixed(configured, Some(GovernanceRecord::Unset));
+    governance_preflight(Some(&before)).await.unwrap();
+    // The wait ends with the record naming another vote contract.
+    let after = RecordReader::fixed(
+        configured,
+        Some(GovernanceRecord::Set { vote: Address::repeat_byte(0x6e), fault_proof: FAULT_PROOF }),
+    );
+    let recheck = || async { governance_preflight(Some(&after)).await.map(drop) };
+    let refused = hold(|| async { Ok(done()) }, (&expected(), &kept()), &path, recheck).await.unwrap_err();
+    assert!(format!("{refused:#}").contains("not the configured"), "{refused:#}");
+    let alert = alerts.try_recv().expect("the refusal raises Critical");
+    assert_eq!(alert["alert"].as_str(), "governance_record_mismatch");
 }

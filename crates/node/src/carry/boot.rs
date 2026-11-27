@@ -5,7 +5,9 @@
 //! must then be the one the source vault reads, the configured staking contract the one that registry deployed, the
 //! minter must mint the token the staking contract holds, the file must name the source vault's last accepted
 //! checkpoint, and the genesis it carries must apply in full on a scratch engine at the minter's emission budget, or
-//! the start stops with Critical `carry_refused` before anything is written.
+//! the start stops with Critical `carry_refused` before anything is written. Once the move is done the start reads
+//! the schedule's governance record again (`governance_preflight`), as the record it read before the wait may have
+//! changed, and refuses under Critical `governance_record_mismatch` one that names another configured contract.
 //! Every start also refuses a log whose carried source is not the config's, and a member refuses it before it takes a
 //! turn's keys or registers its standby key (from the operator's archive while it holds no copy, `archive`), as a
 //! whole-log take does before it confirms the handover.
@@ -27,7 +29,8 @@ use crate::carry::{CarryFile, read};
 use crate::checkpoints::emission_budget::check_recorded;
 use crate::clock::Clock;
 use crate::config::NodeConfig;
-use crate::custody::ContractQuorum;
+use crate::custody::{ContractQuorum, RecordReader};
+use crate::node::governance_preflight;
 use crate::sequencer::genesis::check_carried_genesis_at;
 use crate::sequencer::{Sequencer, carried_genesis_commands};
 
@@ -123,17 +126,22 @@ pub(crate) fn check_source(file: &CarryFile, (seq, root): (u64, B256), expected:
 /// Holds until the chain shows the move done and the carry file at `path` reads, raising Warning `carry_waiting`
 /// with what is missing, rechecking every `RECHECK`; returns the state and the file. Each read of the chain is held
 /// to `check_kept` at once, as waiting for a move that the configured contracts can never complete is no wait.
+/// Once the move is done and the file reads, `recheck` runs, so the record it reads is the one at the wait's end.
 /// Error cases:
 /// - the file is there but does not read as a carry file
 /// - a read of the chain shows the configured `contracts` are not the ones the move keeps (`check_kept`)
-pub(crate) async fn hold<F, R>(
+/// - `recheck` refuses
+pub(crate) async fn hold<F, R, C, G>(
     read_chain: R,
     (expected, contracts): (&Expected, &MoveContracts),
     path: &Path,
+    recheck: C,
 ) -> anyhow::Result<(MoveState, CarryFile)>
 where
     R: Fn() -> F,
     F: Future<Output = anyhow::Result<MoveState>>,
+    C: Fn() -> G,
+    G: Future<Output = anyhow::Result<()>>,
 {
     let mut waited = false;
     loop {
@@ -143,6 +151,7 @@ where
                 let unmet = unmet(&state, expected);
                 if unmet.is_empty() && path.exists() {
                     let (file, sha256) = read(path)?;
+                    recheck().await?;
                     if waited {
                         info!(alert_resolved = "carry_waiting", "the move is done; carrying from {}", path.display());
                     }
@@ -191,7 +200,10 @@ pub(crate) async fn carried_parts(
     };
     let quorum = ContractQuorum::connect(&cfg.custody, "carry")?;
     let read_chain = || chain::read(quorum.quorum(), contracts, (expected.chain_id, evm.usdc));
-    let (state, file) = hold(read_chain, (&expected, &contracts), &carry.file).await.inspect_err(refused)?;
+    // The record `node::run` read before this wait may have changed during it: read it again once the move is done.
+    let record = RecordReader::connect(&cfg.custody)?;
+    let recheck = || async { governance_preflight(record.as_ref()).await.map(drop) };
+    let (state, file) = hold(read_chain, (&expected, &contracts), &carry.file, recheck).await.inspect_err(refused)?;
     let at = state.source_checkpoint.ok_or_else(|| anyhow!("held until the source vault holds a checkpoint"))?;
     check_source(&file, at, &expected).inspect_err(refused)?;
     let cmds = carried_genesis_commands(&cfg.genesis, &file.parts);
