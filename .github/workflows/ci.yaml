@@ -160,10 +160,10 @@ jobs:
                 crates/node/src/archive/read/mod.rs | crates/node/src/archive/read/segments.rs \
                   | crates/node/src/archive/read/source.rs | crates/node/src/archive/window/restore.rs \
                   | crates/node/src/archive/window/bounds.rs)
-                  areas+=" rust $anvil log_heads scenario_tests recovery_scale" ;;
-                # The log archive: its uploader, its bucket's stand-in, its readers' tests and its dev scenarios,
-                # which no other scenario turns on.
-                crates/node/src/archive/*) areas+=" rust scenario_tests" ;;
+                  areas+=" rust $anvil log_heads scenario_tests recovery_scale soak" ;;
+                # The log archive: its uploader, its bucket's stand-in, its readers' tests and its dev scenarios, which
+                # no other scenario turns on but the soak, whose node runs the archive beside its log.
+                crates/node/src/archive/*) areas+=" rust scenario_tests soak" ;;
                 crates/node/src/verify/tests/* | crates/node/src/api/tests.rs | crates/node/src/api/tests/* \
                   | crates/node/src/log/authenticated_tests*)
                   areas+=" rust attestation_verifier" ;;

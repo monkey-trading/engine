@@ -1,29 +1,38 @@
 //! The soak (#909): the node load scenario run for hours at ten times launch flow, on a node that
 //! takes what a long run gives it. Run by `scripts/dev-soak.sh`; `SOAK_HOURS` sets its length.
 //!
-//! The node is the load scenario's, run as a node with `[snapshots]` is (`durable`): its history owner
-//! publishes a recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time, and the generator drives
-//! it through its API and stream as the load scenario's does, in intervals of `SOAK_REPORT_MINUTES`,
-//! each a leg of the generator's, judged in windows of `SOAK_WINDOW_SECS`. While it runs:
+//! The node is the load scenario's, run with the launch configuration's storage (`archived`, `durable`): its
+//! log's ranges and its daily snapshots go to a loopback stand-in for the bucket, the log's local window and the
+//! older snapshots leave the host, and a restart goes on from the newest daily snapshot and the log after it. That
+//! shape runs no history index, which `[snapshots]`' paired index replaces and the log's window cannot run beside;
+//! `SOAK_STORAGE=0` runs the node as one with `[snapshots]` instead (`durable`): its history owner publishes a
+//! recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time. The generator drives it through its API and
+//! stream as the load scenario's does, in intervals of `SOAK_REPORT_MINUTES`, each a leg of the generator's, judged
+//! in windows of `SOAK_WINDOW_SECS`. While it runs:
 //! - every `SOAK_FAULT_MINUTES` one of #867's faults is injected, in turn (`faults`): a stalled
 //!   venue, a dropped one, a slow link, a quiet product, both venues down, and trusted time down;
-//! - every `SOAK_RESTART_HOURS` the node is stopped and started again from its newest cache on the
-//!   same API address, the generator's connections and subscribers reconnecting as clients do. The
-//!   first stop drains, which leaves its newest cache at the final checkpoint; the next drops the node
-//!   as a crash does (`Node::kill`: no drain, no final checkpoint), so the start replays the log past
-//!   its newest cache; and so on in turn.
+//! - every `SOAK_RESTART_HOURS` the node is stopped and started again from its newest daily snapshot (its newest
+//!   cache with `SOAK_STORAGE=0`) on the same API address, the generator's connections and subscribers
+//!   reconnecting as clients do. The first stop drains; the next drops the node as a crash does (`Node::kill`: no
+//!   drain, no final checkpoint), so the start replays the log past its snapshot or cache; and so on in turn.
 //!
 //! At the end of each interval it prints the figures the load scenario prints, then the interval's
 //! report (`SOAK`): the windows judged against #904's launch bar, those a fault, a restart or the start
 //! excuses apart (`timeline`); memory (macOS's physical footprint, which counts compressed pages, else
-//! resident) against the first interval's, allowed the growth of the newest cache, which the state's size
-//! sets; the bytes the log and the caches hold on disk and the log's growth a command; the stats worker's
-//! lag; each fault's recovery and each restart's; and the alerts no event excused. It passes if every
+//! resident) against the first interval's, allowed the growth of the state, as the newest snapshot's or cache's
+//! size sets it, and the stand-in bucket's bytes; the bytes the log and the daily snapshots, or the caches, hold on
+//! disk and the log's growth a command; what the bucket holds and the host has let go (`stored`); the stats
+//! worker's lag; each fault's recovery and each restart's; and the alerts no event excused. It passes if every
 //! interval does (`hours`) and the log replays to its roots from the book at the end, as the load
-//! scenario's does. It runs no marks cache or alert outbox, so it reports no disk for them.
+//! scenario's does, the segments the host lacks read back from the bucket first. It runs no marks cache or alert
+//! outbox, so it reports no disk for them. The storage runs at a test build's timings (the window passes every
+//! 20 ms, the uploaders poll every 20 ms) and, past the sizes `archive::set_range_seqs` sets, a test build's
+//! bounds.
 //!
 //! `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20), `SOAK_RESTART_HOURS` (2,
-//! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300, the template's), `SOAK_MULTIPLE`
+//! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_STORAGE` (1; 0 for `[snapshots]`' caches), `SOAK_DAY_MINUTES` (twice
+//! the report interval: the day snapshots and the windows count in), `SOAK_SNAPSHOT_SECS` (300, the template's,
+//! with `SOAK_STORAGE=0`), `SOAK_MULTIPLE`
 //! (10), `SOAK_SHORT` (1 for a run that tests the harness, as CI's does: an interval with every window
 //! excused passes and memory is not bounded), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_DIR`
 //! (a scratch directory, removed with the run; named, it is kept) and `SOAK_LOG_DIR` (the log's directory
@@ -366,7 +375,7 @@ impl Soak {
         self.samples.push((memory_mib().0, behind));
     }
 
-    /// Stops the node and starts it again from its newest cache, on the same API address. A node that does
+    /// Stops the node and starts it again from its newest cache, or its newest daily snapshot, on the same API address. A node that does
     /// not stop cleanly ends the run: nothing may start beside what could still write the log.
     async fn restart(&mut self) {
         self.alerts.drain();
@@ -384,6 +393,9 @@ impl Soak {
         let stopped = if abrupt { old.kill().await } else { old.stop(true).await };
         if let Err(error) = stopped {
             panic!("the node did not stop for its restart, so the soak ends rather than start beside it: {error:#}");
+        }
+        if let Some(stored) = &self.stored {
+            stored.writer_settled().await;
         }
         let down = stopping.elapsed();
         let listener = rebind(self.api).await;
