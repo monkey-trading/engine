@@ -3,8 +3,9 @@
 //! them, checks the sets complete, and continues the source's emissions with no period before the new log's
 //! first command allocating (`carried_genesis/continuation.rs`); every part that does not prove, comes out of
 //! order or leaves a value out is refused (`carried_genesis/refusals.rs`); the staking state keeps its total
-//! staked from `V90` (`carried_genesis/staked_total.rs`); and from `V92` no mirror applies at or below the carried
-//! staking frontier (`carried_genesis/frontier.rs`).
+//! staked from `V90` (`carried_genesis/staked_total.rs`); from `V92` no mirror applies at or below the carried
+//! staking frontier (`carried_genesis/frontier.rs`); and from `V93` the stakes are mirrored again rather than
+//! carried (`carried_genesis/remirror.rs`).
 
 mod common;
 
@@ -16,6 +17,8 @@ mod fixture;
 mod frontier;
 #[path = "carried_genesis/refusals.rs"]
 mod refusals;
+#[path = "carried_genesis/remirror.rs"]
+mod remirror;
 #[path = "carried_genesis/staked_total.rs"]
 mod staked_total;
 
@@ -25,6 +28,7 @@ use engine_core::awards::Award;
 use engine_core::carry::{CarryPart, CarrySource, MAX_CARRY_ENTRIES, StateCarried};
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::staking::UsdcUnits;
 use fixture::{STAKERS, UNSTAKED, carry, destination, source};
 
@@ -32,7 +36,7 @@ use fixture::{STAKERS, UNSTAKED, carry, destination, source};
 fn a_carried_genesis_takes_every_value_the_source_root_proves() {
     let mut alpha = source();
     let root = B256::from(alpha.engine.state_root());
-    let (parts, totals) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, totals) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     let seq = alpha.engine.last_seq().expect("the source has commands");
     let expected = CarrySource { chain_id: CHAIN_ID, vault: VAULT, seq, root };
     assert!(matches!(&parts[0], CarryPart::Begin { source, .. } if *source == expected), "{:?}", parts[0]);
@@ -86,7 +90,7 @@ fn the_parts_carry_at_most_the_batch_bound_each_in_increasing_order() {
     };
     alpha.cmd(progress);
     alpha.engine.state_root();
-    let (parts, totals) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, totals) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     let stakes: Vec<usize> = parts
         .iter()
         .filter_map(|part| match part {

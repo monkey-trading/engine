@@ -42,6 +42,17 @@ struct StakingView {
     total_staked: TokenUnits,
     stakers: u64,
     cooldown_ms: Millis,
+    /// While a carried genesis's stakes are mirrored again, from `V93`: the stake totals above are partial until
+    /// then, and no epoch closes.
+    remirror: Option<RemirrorView>,
+}
+
+/// A carried genesis's stakes being mirrored again: the source's frontier block they are mirrored to, and the
+/// total staked they reach there.
+#[derive(Serialize)]
+struct RemirrorView {
+    through_block: u64,
+    staked_total: TokenUnits,
 }
 
 #[derive(Serialize)]
@@ -110,6 +121,10 @@ impl Stats {
             total_staked: TokenUnits(inner.staked),
             stakers: inner.stakers,
             cooldown_ms: staking.config.cooldown_ms,
+            remirror: staking.remirror.map(|pending| RemirrorView {
+                through_block: pending.through.block,
+                staked_total: pending.staked_total,
+            }),
         });
         let distribution = engine.staking().map(|staking| {
             let config = staking.config;

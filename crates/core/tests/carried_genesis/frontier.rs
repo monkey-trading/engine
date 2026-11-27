@@ -29,7 +29,7 @@ const SECOND_STAKE: (u64, &str) = (2, "0xstake:2");
 /// emission period.
 fn carried_at(version: ProtocolVersion) -> Harness {
     let alpha = source();
-    let (parts, _) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, _) = alpha.engine.carry_parts(version).expect("the source carries");
     let mut h = destination_at(&alpha, version);
     carry(&mut h, &parts);
     h.cmd(Command::Tick);

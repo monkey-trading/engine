@@ -4,6 +4,7 @@
 use anyhow::{Context, ensure};
 
 use crate::log::catalog::CheckpointLocator;
+use crate::log::segments::MAX_SEGMENT_BYTES;
 use crate::log::{Checkpoint, EncodedCommand, LogEntry, LogWriter, Offset};
 
 /// What an appended line holds, as the segment's bookkeeping reads it.
@@ -24,7 +25,7 @@ impl LogWriter {
     }
 
     /// Buffers one entry as a JSON line, and returns its offset. A command first completes the
-    /// current segment if it is full.
+    /// current segment if it is full, by its commands or by its line's bytes (`MAX_SEGMENT_BYTES`).
     /// Error cases:
     /// - completing the current segment or starting a new one fails
     /// - a withdrawal or checkpoint comes before any command in this segment, including a
@@ -57,8 +58,11 @@ impl LogWriter {
             Appended::Command(seq) => Offset::start_of(seq),
             _ => self.last.context("log entry before the first command of its segment")?.next(),
         };
+        let full = |commands: u64, bytes: u64| {
+            commands >= self.segment_commands || (commands > 0 && bytes + line.len() as u64 > MAX_SEGMENT_BYTES)
+        };
         if let Appended::Command(seq) = appended
-            && self.open.as_ref().is_none_or(|(segment, _)| segment.commands >= self.segment_commands)
+            && self.open.as_ref().is_none_or(|(segment, _)| full(segment.commands, segment.bytes))
         {
             self.start_segment(seq)?;
         }

@@ -522,7 +522,9 @@ failure. Nothing is lost, and clients see no change.
   those. The manifest keeps every line, and `/v1/archive/snapshots/<file>` answers 308 to the object
   of a snapshot the host no longer holds. `engine replay --snapshots <server URL>` and a member's
   start from a snapshot follow it; a member follows it only to the bucket its own `[archive]` names.
-- **Size.** At 10,000 sequence numbers a range of launch flow is about 5.5 MB. On 30 minutes of launch
+- **Size.** At 10,000 sequence numbers a range of launch flow is about 5.5 MB. The range that holds a
+  carried genesis can hold all of it, up to the carry file's bound of 1 GiB, and a reader takes a range
+  of that size beside the range's other entries. On 30 minutes of launch
   flow at 10,000 accounts, zstd's level 1 compressed the log about 6.1 times, to under a megabyte a
   range, at over a gigabyte a second. Higher levels up to 15 compressed less, level 19 about 6.8 times
   at under 10 MB a second, and gzip about 5.1 times. The tails hold about the log again, since each

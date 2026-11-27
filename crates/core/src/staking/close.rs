@@ -136,8 +136,12 @@ impl Engine {
 
     /// `mirrored_close` for a command stamped `now`. From `V83` it is `open` itself once both have passed
     /// its end, however late, so each held epoch closes in turn, at the stake set mirrored when the
-    /// frontier passed its end, and none is skipped.
+    /// frontier passed its end, and none is skipped. None while a carried genesis's stakes are mirrored again.
     fn mirrored_close_at(&self, config: &StakingConfig, open: u64, now: Millis) -> Option<u64> {
+        // From `V93` a carried genesis's stakes are all mirrored again before a close pays them (`remirror`).
+        if self.remirroring() {
+            return None;
+        }
         let reached = self.finalised_chain_time()?;
         let passed = config.epochs_elapsed(reached.min(now));
         if self.protocol_version >= ProtocolVersion::V83 {

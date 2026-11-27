@@ -95,6 +95,10 @@ pub struct StakingCustodySection {
     /// elections the watcher mirrors with the staking events from `V37`. The watcher refuses a
     /// staking contract that this registry's `staking()` does not name.
     pub registry: RegistryCustodySection,
+    /// The block the staking contract was deployed in, from which a log whose genesis carried another
+    /// log's state mirrors the stakes again (`V93`); a config naming `[genesis.carry]` needs it.
+    #[serde(default)]
+    pub deployment_block: Option<u64>,
 }
 
 /// The operator registry the watcher mirrors.

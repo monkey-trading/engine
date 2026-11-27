@@ -80,7 +80,7 @@ async fn fork_bound_empty_and_partial_staking_responses_cannot_advance_canonical
             &mut AdaptiveSize::new(1_000),
             (1, end_at(3), None),
             (true, true, true, true),
-            None,
+            (None, false),
         )
         .await;
         assert!(result.is_err(), "a fork endpoint cannot certify canonical completeness");
@@ -129,7 +129,7 @@ async fn canonical_bound_staking_responses_apply_events_and_complete_the_proven_
         &mut AdaptiveSize::new(1_000),
         (1, end_at(3), None),
         (true, true, true, true),
-        None,
+        (None, false),
     )
     .await
     .unwrap();

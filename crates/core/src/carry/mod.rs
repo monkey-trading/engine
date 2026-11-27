@@ -3,7 +3,7 @@
 //! award, each proven against that root, so MONKEY, its stakes and the awards outlive a move to a new vault.
 //!
 //! - **Parts.** The node alone sequences `AdminCommand::CarryState`, in genesis, as parts in a fixed order, each
-//!   the command after the last: `Begin`; the entitlements, then the stakes, in batches of at most
+//!   the command after the last: `Begin`; the entitlements, then before `V93` the stakes, in batches of at most
 //!   `MAX_CARRY_ENTRIES` in strictly increasing account order; the awards from id 0 in order, the last batch with
 //!   the proof that the source holds no award at the next id; then `End`. A refused part changes nothing, and a
 //!   node refuses to serve a log whose genesis holds one.
@@ -16,10 +16,14 @@
 //! - **Values.** Each entitlement and stake is the leaf the source root holds for its account, and each award
 //!   the record it holds under its id. A carried award owes its whole amount: the source's payments are not
 //!   carried, and neither are distributions, balances, positions, orders, approvals, deposits or the award cap.
-//! - **Completeness.** `End` checks that the entitlements sum to the source's total entitled, the stakes to its
-//!   total staked, and that the awards run from id 0 to the first the source holds none at. It then takes the
-//!   source's emission schedule, open period and totals, and its staking mirror's frontier on top of the staking
-//!   this log initialised, and records the source in the remaining-state leaf.
+//! - **Completeness.** `End` checks that the entitlements sum to the source's total entitled, before `V93` the
+//!   stakes to its total staked, and that the awards run from id 0 to the first the source holds none at. It then
+//!   takes the source's emission schedule, open period and totals, and its staking mirror's frontier on top of the
+//!   staking this log initialised, and records the source in the remaining-state leaf.
+//! - **Stakes, from `V93`,** are mirrored again from the kept staking contract rather than carried, so their number
+//!   bounds no part: `End` records the source's completed frontier and total staked, and no epoch closes until the
+//!   new log's mirror reaches that frontier with the stakes summing to that total (`staking::remirror`). A source
+//!   with nothing staked hands on its frontier as before.
 //! - **Emissions** continue from the source's start and halvings. The first command stamped past the carried
 //!   period's end closes it with no weight, as the source's results there are not carried, and cancels every
 //!   later period up to its own, so no period before the new log's first command after `End` allocates anything.

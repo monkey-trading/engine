@@ -445,7 +445,8 @@ impl Engine {
     }
 
     /// Why a registry mirror under `chain_ref`, from `block`, cannot apply, if it cannot: from `V92` a block at
-    /// or below the carried frontier among the reasons.
+    /// or below the carried frontier among the reasons, and from `V93` any block while a carried genesis's stakes
+    /// are mirrored again.
     pub(crate) fn registry_mirror_refusal(&self, chain_ref: &str, block: u64) -> Option<String> {
         if self.protocol_version < ProtocolVersion::V37 {
             Some(format!("operator elections need protocol {:?}", ProtocolVersion::V37))
@@ -453,6 +454,9 @@ impl Engine {
             Some("staking is not initialised".into())
         } else if self.staking_refs.contains(chain_ref) {
             Some(format!("chain reference {chain_ref} is already mirrored"))
+        } else if self.remirroring() {
+            // From `V93` the blocks a carried genesis mirrors again are the source's, whose registry state it left.
+            Some("no registry event mirrors while the carried stakes are mirrored again".into())
         } else {
             self.carried_frontier_covering(block)
                 .map(|through| format!("block {block} is at or below the carried staking frontier at block {through}"))

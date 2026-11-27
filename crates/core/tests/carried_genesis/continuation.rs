@@ -8,6 +8,7 @@ use engine_core::awards::{AwardPaid, Severity};
 use engine_core::command::Command;
 use engine_core::emissions::TokenUnits;
 use engine_core::event::Event;
+use engine_core::protocol::ProtocolVersion;
 use engine_core::staking::UsdcUnits;
 use engine_core::types::AccountId;
 
@@ -20,7 +21,7 @@ use crate::fixture::{
 /// A new log carried from `source`, its genesis credited with house capital, and the credit's events.
 fn carried() -> (Harness, Harness, Vec<Event>) {
     let alpha = source();
-    let (parts, _) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, _) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     let mut h = destination(&alpha);
     carry(&mut h, &parts);
     let credit = h.cmd(Command::HouseCapital { amount: Fixed::from_int(HOUSE_CAPITAL), chain_ref: "genesis".into() });

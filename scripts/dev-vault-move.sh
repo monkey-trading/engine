@@ -9,7 +9,8 @@
 # checkpoint and refuses one from while rotation was on;
 # that after the guardian retires the alpha's signer and one timelock batch moves the registry's custody and
 # MONKEY's minter to a launch vault, the launch node passes its start's checks and its genesis carries every
-# entitlement, stake and award, each award unpaid, with no period before its first command allocating;
+# entitlement and award, each award unpaid, with no period before its first command allocating, and no stake: the
+# launch node mirrors the staking contract's events again from its deployment, to each stake the alpha held;
 # that the trader claims the rest of its MONKEY against the launch vault, the minter's total equal to the carried
 # entitlement, a new stake mirrors once past the carried frontier, and a close pays the carried award from its
 # whole amount;

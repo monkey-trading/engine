@@ -7,7 +7,8 @@
 //!   commands under their own chain references, credited once, and records the highest finalised
 //!   block a credited mirror sequenced: the authenticated frontier a restart resumes from, which a
 //!   host-controlled cursor cannot skip past. An unstake applies only once its cooldown has
-//!   passed, so stake a snapshot sees persists through the cooldown.
+//!   passed, so stake a snapshot sees persists through the cooldown. From `V93` a log whose genesis carried
+//!   another's state mirrors the staking contract's events again up to the carried frontier first (`remirror`).
 //! - **Epochs** are the half-open windows `[start + n·epoch_ms, start + (n+1)·epoch_ms)` of
 //!   sequenced time. The first command at or after an epoch's end closes it, before anything else
 //!   the command does, exactly as emission periods finalise; epochs no command witnessed are
@@ -65,6 +66,7 @@ use crate::types::{AccountId, MAX_STAMP_MS, Millis};
 mod close;
 mod excess;
 mod office;
+mod remirror;
 pub use office::{Stint, TimeInOffice};
 
 /// One USDC base unit in `Fixed`'s raw units (9 decimals against USDC's 6).
@@ -120,10 +122,24 @@ pub struct Staking {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staked_total: Option<TokenUnits>,
     /// From `V92`, the block of the staking frontier this log's genesis carried, or for a log that carried state
-    /// before `V92`, of its completed frontier at `V92`'s activation: no event mirrored from a block at or below it
-    /// applies, nor a completed scan there (`carry`).
+    /// before `V92`, of its completed frontier at `V92`'s activation, or from `V93`, for a genesis that left its
+    /// stakes to be mirrored again, of the source's frontier once they are: no event mirrored from a block at or
+    /// below it applies, nor a completed scan there (`carry`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carried_through: Option<u64>,
+    /// From `V93`, the source's stake set a carried genesis mirrors again (`remirror`), until the completed
+    /// frontier reaches the source's with the stakes summing to its total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remirror: Option<Remirror>,
+}
+
+/// The stake set a `V93` carried genesis mirrors again from the staking contract: the source's completed frontier
+/// and its total staked there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Remirror {
+    pub through: StakingCheckpoint,
+    pub staked_total: TokenUnits,
 }
 
 /// The authenticated anchor of a completed finalized staking scan.
@@ -250,7 +266,8 @@ impl Engine {
     /// block: the boundary of the drawn turn naming the operator, which a turn refused before `V65` left
     /// no other record of, or none, which resolves what `V65`'s activation could not see; from `V67` a
     /// drawn turn not yet started, up to a day after the block's time, may be named. From `V92` a block at or
-    /// below the carried frontier is refused.
+    /// below the carried frontier is refused, and from `V93` one the stakes mirrored again refuse (`remirror`), the
+    /// source's frontier, reached, becoming the carried one.
     pub(crate) fn staking_progress(
         &mut self,
         block: u64,
@@ -279,9 +296,18 @@ impl Engine {
             events.push(Event::AdminRejected { reason: "invalid staking finalized frontier".into() });
             return;
         }
+        if let Some(reason) = self.remirror_refusal(block, block_hash, named_turn) {
+            events.push(Event::AdminRejected { reason });
+            return;
+        }
         let time = block_time.or(reached);
-        self.staking.as_mut().expect("checked above").completed_through =
-            Some(StakingCheckpoint { block, block_hash, time });
+        let staking = self.staking.as_mut().expect("checked above");
+        staking.completed_through = Some(StakingCheckpoint { block, block_hash, time });
+        // `remirror_refusal` let a frontier at the source's own through only with the source's total.
+        if staking.remirror.is_some_and(|pending| block == pending.through.block) {
+            staking.remirror = None;
+            staking.carried_through = Some(block);
+        }
         if let Some(turn) = named_turn {
             self.governance.turns_drawn = false;
             if let Some(since) = turn {
@@ -318,6 +344,7 @@ impl Engine {
             office: None,
             staked_total,
             carried_through: None,
+            remirror: None,
         });
         if self.protocol_version >= ProtocolVersion::V50 {
             self.start_time_in_office();

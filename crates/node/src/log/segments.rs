@@ -1,7 +1,8 @@
 //! The log on disk: a directory of segment files, each named for the seq of its first command
 //! (`00000000000000000000.jsonl`), and `manifest.jsonl`. The writer appends to the last segment
-//! and starts a new one at a command once the current one holds `segment_commands` commands, so a
-//! seq's entries never straddle two segments. A completed segment is never written again; the
+//! and starts a new one at a command once the current one holds `segment_commands` commands, or
+//! would pass `MAX_SEGMENT_BYTES` with that command's line, so a seq's entries never straddle two
+//! segments and a member fetches any segment whole. A completed segment is never written again; the
 //! manifest gets one line for it with its seq range, size, and SHA-256. Completed segments and the
 //! manifest are the public archive. Recovery reads the log a segment at a time, a line at a time,
 //! and hands on nothing of a completed segment before it matches its listing.
@@ -24,6 +25,12 @@ use crate::log::writer::seal::SealWork;
 use crate::log::{ActivePrefix, Holds, LogEntry, Offset, ReadAuthority, by_entry, offset_of, parse_line, read_lines};
 
 pub const MANIFEST: &str = "manifest.jsonl";
+
+/// The most bytes a segment holds before a command whose line would take it past them starts the next: half of
+/// what a member's fetch of one segment reads (`standby::MAX_ARCHIVE_BYTES`), so a segment's last command line and
+/// the entries after it fit too. Only a carried genesis's parts, whose number its source sets, near it; a single
+/// line larger than it still takes a segment of its own.
+pub(crate) const MAX_SEGMENT_BYTES: u64 = crate::standby::MAX_ARCHIVE_BYTES / 2;
 
 /// The completed segments, oldest first, and the last entry the writer has flushed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

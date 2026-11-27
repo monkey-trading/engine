@@ -132,12 +132,18 @@ an index: load only the rule whose hint matches the current action.
   frontier, the emission schedule and every award, unpaid, from another log's checkpoint root, each proven against
   it, the sets checked complete against the source's totals and an absent next award id, consecutive commands only
   and nothing else credited first; the first command after it closes the carried period with no weight; the staking
-  state's total staked, set at activation and kept by every mirrored stake; from `V92` no staking, registry,
-  schedule, vote or fault proof mirror, nor a completed scan, at or below the carried frontier's block, which the
-  genesis records, or a log carried before `V92` records at the activation (`carry/frontier.rs`,
-  `tests/carried_genesis/frontier.rs`); `Engine::carry_parts` builds the parts, `tests/carried_genesis.rs` and
-  `tests/carried_genesis/`, and `tests/reference/v90-carried.jsonl` and `v92-carried.jsonl` are logs whose genesis
-  carries the reference session's frozen state, the newest of which `examples/reference_log` writes given a second
+  state's total staked, set at activation and kept by every mirrored stake; from `V92` no staking, registry, schedule,
+  vote or fault proof mirror, nor a completed scan, at or below the carried frontier's block, which the genesis
+  records, or a log carried before `V92` records at the activation (`carry/frontier.rs`,
+  `tests/carried_genesis/frontier.rs`); from `V93` no stake is carried: `End` records the source's completed frontier
+  and total staked, the node mirrors the kept staking contract's events again from its deployment
+  (`custody.evm.staking.deployment_block`) to that frontier, with no registry event and no epoch close until the
+  frontier holds the source's total, which then becomes the carried frontier (`staking/remirror.rs`,
+  `tests/carried_genesis/remirror.rs`), so the carry file, bounded at 1 GiB, never grows with the stakers
+  (`crates/node/src/carry/scale_tests.rs`); `Engine::carry_parts` builds the parts for the version that carries them,
+  `tests/carried_genesis.rs` and `tests/carried_genesis/`, and `tests/reference/v90-carried.jsonl`,
+  `v92-carried.jsonl` and `v93-carried.jsonl` are logs whose genesis carries the reference session's frozen state, the
+  newest of which `examples/reference_log` writes given a second
   path),
   from `V78` the operator's status notice (`notice.rs`: one 1 to 280 character plain-text message, no markup or link, set and cleared by the operator's signed `SetNotice` and `ClearNotice` whether or not votes govern, held in state with the time it was set, `tests/notice.rs`),
   protocol versions, and the
@@ -217,7 +223,7 @@ an index: load only the rule whose hint matches the current action.
   its slots at a time per account, one slot per signed request, and a production floor of 68 slots a second
   of `access.timeout`),
   sequencer (each command's log entry built around its events encoded once, its seal's link, digest and line
-  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, with a public archive), the log's archive in object storage (`archive/`,
+  byte for byte the typed entry's, `log/encoded.rs` and `sequencer/stamped.rs`; a batch's log writes and data sync run on a `log-sync` thread, `sequencer/pipeline.rs`, so the next price is stamped while the last batch reaches storage and its thread makes no call on the log file, and replies, stream messages, signed withdrawals and checkpoint posts leave in batch order once their sync is done, with no request taken while the oldest batch's sync is held past 5 s (Critical `log_sync_held`); the API's views, `ApiState::read`, run on the stats worker's engine copy, which applies only durable batches; from #925 the state root's catch-up runs on the `state-root` thread, `root_worker/`, which owns the tree: the sequencer copies leaf writes out in pieces of about a millisecond and waits only for a checkpoint's commit, a paced checkpoint deferred while that wait would pass about 25 ms and taken in full after 30 s under Warning `root_backlog_held` (`sequencer/roots.rs`), each version released once its checkpoint is durable, and account, exit and claim proofs and payouts' first proofs read there; its wake-up handshake is checked under `loom`, a dev-dependency), the public log with signed checkpoints (segmented, a segment ending before a command that would take it past `log::segments::MAX_SEGMENT_BYTES`, half what a member fetches, with a public archive), the log's archive in object storage (`archive/`,
   `[archive]`: for the process's life, beside the log writer in use, the serving sequencer's or a following member's copy's,
   the log in fixed ranges of 10,000 seqs, each built from the copy's checked segments however they are cut
   (`archive/range.rs`), compressed with zstd and uploaded create-only to an S3-compatible bucket, Cloudflare R2 in
@@ -903,7 +909,9 @@ an index: load only the rule whose hint matches the current action.
   the host's product names, the rotation contracts and `[snapshots]`: a change to the template changes them too, and
   a decided value outside those goes into the template as well. Every section
   rejects unknown keys. The optional `[genesis.carry]` names a source log's vault and the carry file `engine carry`
-  wrote, whose state the genesis carries after `[genesis.staking]` (EVM custody with `[custody.evm.staking]` only).
+  wrote, whose state the genesis carries after `[genesis.staking]` (EVM custody with `[custody.evm.staking]` only,
+  whose `deployment_block`, the block that deployed the staking contract, it requires, as the new log mirrors the
+  stakes again from there).
   `access-source.md` documents the optional signed screening source,
   declaration API, held collateral, local fixture scenario and promotion requirements.
 - **image/** — the reproducible confidential VM image for AMD SEV-SNP, launched with Secure TSC:
@@ -1135,8 +1143,9 @@ an index: load only the rule whose hint matches the current action.
   MONKEY from the minter, a voted award is paid in part, rotation turns off, `engine carry` builds the carry from the
   alpha's last accepted checkpoint and refuses one from while rotation was on, the guardian retires the alpha's
   signer and one timelock batch moves custody and minting to a launch vault, the launch node's genesis carries every
-  entitlement, stake and award, unpaid, the trader claims the rest, a new stake mirrors once, a close pays the carried
-  award, the launch log replays and checks against the alpha's, and a raised entitlement is refused;
+  entitlement and award, unpaid, and from `V93` no stake, which it mirrors again from the staking contract's
+  deployment, the trader claims the rest, a new stake mirrors once, a close pays the carried award, the launch log
+  replays and checks against the alpha's, and a raised entitlement is refused;
   `dev-seed-relay.sh`, the seed relay scenario on two Anvil chains, one as Ethereum with its EIP-4788
   contract and one as Arbitrum, with a stand-in bridge applying the alias and a stand-in beacon node: the
   relayer relays three daily seeds, a wrong epoch or sender reverts, and with the beacon node stopped

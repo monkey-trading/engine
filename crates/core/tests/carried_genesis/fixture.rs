@@ -165,7 +165,7 @@ fn vote_award(h: &mut Harness) {
 }
 
 /// Mirrors the registry turning rotation on or off in `block`.
-fn switch_rotation(h: &mut Harness, enabled: bool, block: u64) {
+pub fn switch_rotation(h: &mut Harness, enabled: bool, block: u64) {
     let chain_ref = format!("0xrotation:{enabled}");
     let events = h.cmd(Command::SwitchRotation { enabled, election_cancelled: false, block, chain_ref });
     assert!(events.iter().any(|e| matches!(e, Event::RotationSwitched { .. })), "{events:?}");

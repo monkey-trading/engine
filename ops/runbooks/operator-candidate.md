@@ -106,7 +106,7 @@ trading server.
 | --- | --- |
 | `[genesis]`: the launch genesis, including the close-spread ceilings and staking, and `[genesis.carry]`'s `vault` when the launch log carried another log's state | `node.listen`, the `[api]` limits and origins, and `[api.tls.acme]` with its hostname and contact |
 | `node.auth = "eip712"`, `custody.chain_id` and `custody.vault` | The `[custody.evm]` providers and their credentials, and the `[checkpoints]` endpoint and relayer |
-| The `[custody.evm.staking]` contract and registry addresses | The `[feeds]` venues, vendors and symbols, and the names of their secrets |
+| The `[custody.evm.staking]` contract and registry addresses, with its `deployment_block` when the launch log carried another log's state | The `[feeds]` venues, vendors and symbols, and the names of their secrets |
 | The `[access]` `source` and `max_age`, which the log records once | The `[time]` servers, `[metrics]`, `[alerts]`, and the `[access]` endpoint |
 | | `operator.public_key`, which is **the candidate's own admin key**, the `[tee.sealing]` directory, and the handover listener |
 

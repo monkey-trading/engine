@@ -83,7 +83,7 @@ async fn mirror_range(
         &mut range,
         (from, end_at(to), None),
         (true, true, true, true),
-        None,
+        (None, false),
     )
     .await
 }
@@ -391,5 +391,6 @@ use stub::StubReader;
 mod faults;
 mod record;
 mod registry;
+mod remirror;
 mod rpc_budget;
 mod vote;

@@ -88,6 +88,7 @@ mod v89;
 mod v90;
 mod v91;
 mod v92;
+mod v93;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -103,7 +104,7 @@ pub(crate) const GOLD: MarketId = 11;
 pub(crate) const OIL: MarketId = 12;
 
 /// Writes the session to the given path and prints the event counts; given a second path, writes there the log
-/// whose genesis carries the state the session ends in under the latest version (`v92::carried`).
+/// whose genesis carries the state the session ends in under the latest version (`v93::carried`).
 /// Fails if a path is missing, already exists, or cannot be written.
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
@@ -111,7 +112,7 @@ fn main() -> anyhow::Result<()> {
     let mut session = session::session();
     write(&path, session.log.clone())?;
     if let Some(carried) = args.next() {
-        write(&carried, v92::carried(&mut session))?;
+        write(&carried, v93::carried(&mut session))?;
     }
     Ok(())
 }
@@ -151,11 +152,20 @@ mod tests {
     }
 
     #[test]
-    fn the_carried_log_replays_from_a_new_engine() {
+    fn the_v92_carried_log_replays_from_a_new_engine() {
         let mut engine = Engine::new();
         for sequenced in v92::carried(&mut session::session()) {
             engine.apply(&sequenced).expect("the carried log replays");
         }
         assert!(engine.carried_from().is_some());
+    }
+
+    #[test]
+    fn the_v93_carried_log_replays_from_a_new_engine_with_its_stakes_mirrored_again() {
+        let mut engine = Engine::new();
+        for sequenced in v93::carried(&mut session::session()) {
+            engine.apply(&sequenced).expect("the carried log replays");
+        }
+        assert!(engine.carried_from().is_some() && !engine.remirroring());
     }
 }

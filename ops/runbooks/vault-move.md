@@ -25,10 +25,13 @@ approval, and an approval for one step does not cover the next.
 ## Know before you start
 
 - **What the launch log carries.** Its genesis carries, from the alpha's final accepted checkpoint,
-  each account's MONKEY entitlement in full, each account's staked MONKEY with the point to which
-  the alpha had mirrored the staking contract, every bug bounty award, and the emission schedule
-  with its totals. The engine proves every carried value against the alpha's checkpoint root and
-  checks that no entitlement, stake or award is left out.
+  each account's MONKEY entitlement in full, every bug bounty award, and the emission schedule with
+  its totals. The engine proves every carried value against the alpha's checkpoint root and checks
+  that no entitlement or award is left out. The genesis carries no stake: it records the point to
+  which the alpha had mirrored the staking contract and the alpha's total staked, and the launch
+  trading server then mirrors the staking contract's events again, from its deployment to that
+  point. No distribution epoch closes until the stakes it mirrors again reach the alpha's total
+  there, which leaves each account with the stake it held in the alpha.
 - **What stays behind.** USDC balances, positions, working orders, withdrawal approvals, deposits,
   session keys, volume tiers, toxicity scores, elections, rotation sets, turns, pending votes and
   the awards' cap do not carry. The alpha's USDC stays on the alpha vault, and only the alpha
@@ -200,6 +203,18 @@ carries the alpha's state:
 vault = "0x..."            # $ALPHA_VAULT
 file = "/data/carry.json"  # the carry file that step 9 writes
 ```
+
+Set `[custody.evm.staking]`'s `deployment_block` to the block in which the registry deployed the
+staking contract, from which the launch trading server mirrors the stakes again. The block is the
+deployment transaction's, and the staking contract has no code before it:
+
+```shell
+cast code $STAKING --block <block - 1> --rpc-url $RPC
+cast code $STAKING --block <block> --rpc-url $RPC
+```
+
+The first command prints `0x`, and the second the contract's code. A configuration that names
+`[genesis.carry]` without `deployment_block` does not load.
 
 Set `[genesis.staking]`'s `start_ms` after the latest time the launch log's genesis can run: step 11's
 D, plus a margin that covers step 8's three-day fallback. The engine refuses a staking start before the
@@ -403,15 +418,15 @@ $ENGINE carry --log <alpha log copy> --seq $S --out carry.json --archive-config 
 
 The command replays the log to its checkpoint at `$S`, checks the checkpoint's root, writes
 `carry.json`, and prints the totals and the file's SHA-256. It refuses to overwrite `carry.json`, and
-refuses a carry over 48 MiB, which the launch log's first segment could not hold for the members
-that fetch it from the archive.
-The totals name the accounts that hold an entitlement or a stake, the MONKEY entitled, the MONKEY
-staked and the number of awards. The owner reviews them, and the file and its totals are published
-with the launch, so that anyone can see what each alpha account carries:
+refuses a carry over 1 GiB, about 700,000 entitlements, which the launch trading server reads into
+memory at its start. The stakes add nothing to the file, however many there are.
+The totals name the accounts that hold an entitlement, the MONKEY entitled, the alpha's total staked,
+which the launch log mirrors again, and the number of awards. The owner reviews them, and the file
+and its totals are published with the launch, so that anyone can see what each alpha account
+carries:
 
 ```shell
 jq -r '.parts[] | select(.part == "entitlements") | .entries[] | "\(.account) \(.amount)"' carry.json > entitlements.txt
-jq -r '.parts[] | select(.part == "stakes") | .entries[] | "\(.account) \(.amount)"' carry.json > stakes.txt
 ```
 
 Then put the file where the launch configuration's `[genesis.carry] file` names it: stop the launch
@@ -469,7 +484,9 @@ the configuration's staking contract is the one that registry deployed, whose ev
 the minter mints the token the staking contract holds, so a wrong address refuses at once instead of waiting. Once every condition holds it checks that the carry file's
 source is the alpha vault's `latestSeq` and its root there, that the genesis with the carry applies
 in full, and that the carried emission budget matches the minter's cap. It sequences its genesis with the carry, and then its first checkpoint. Carried MONKEY
-is claimable from that checkpoint.
+is claimable from that checkpoint. Its custody watcher then mirrors the staking contract's events
+again, from `deployment_block` to the point to which the alpha had mirrored them, and no
+distribution epoch closes until it reaches that point with the alpha's total staked.
 
 **Changes the live system.** The owner approved the execution when D was scheduled.
 
@@ -477,10 +494,15 @@ is claimable from that checkpoint.
 curl -sf $API/v1/benchmarks | jq -r .protocol_version
 curl -sf $API/v1/monkey | jq .emissions
 curl -sf $API/v1/awards | jq .
+curl -sf $API/v1/monkey | jq .staking
 ```
 
-The first command prints `v92`, or a later version: from V92 the launch log refuses a staking or registry event at or below the carried frontier. The second shows the alpha's emission schedule. The third lists the
-carried awards, with nothing paid.
+The first command prints `v93`, or a later version: from V93 the launch log mirrors the stakes again
+rather than carrying them, and from V92 it refuses a staking or registry event at or below the carried
+frontier, which from V93 is the alpha's point once the stakes are mirrored again. The second shows the
+alpha's emission schedule. The third lists the carried awards, with nothing paid. The fourth shows
+`remirror` with the alpha's point and total staked while the stakes are mirrored again, and `null`
+once they are, when `total_staked` is the total that `jq -r .totals.staked carry.json` prints.
 
 **If it fails:** follow [The carried genesis holds or is refused](#the-carried-genesis-holds-or-is-refused).
 Before any deposit, the launch log can be abandoned and started fresh.
@@ -499,9 +521,9 @@ These checks only read.
 
    After the usual replay, the command replays the alpha's log to the carried sequence number. It
    requires the alpha's checkpoint there to hold the carried root, signed by a checkpoint signer
-   that the alpha's log names. It requires the launch log's carried entitlements, stakes, emissions
-   and staking frontier, and its awards with nothing paid, to equal the alpha's state there, and the
-   replay to have applied every part. It passes only when it exits with status 0 and its last line
+   that the alpha's log names. It requires the launch log's carried entitlements and emissions, its
+   awards with nothing paid, and each account's stake once the launch log has mirrored the stakes
+   again, to equal the alpha's state there, and the replay to have applied every part. It passes only when it exits with status 0 and its last line
    begins `carried from:`; any other exit is a failure, whatever it printed before.
 
    The replay ties the carried root to the alpha's signed checkpoint, not to the chain. Compare it
@@ -524,21 +546,14 @@ These checks only read.
 
    `<account>` is an account in `entitlements.txt`. After its claim, the two values are equal.
 
-3. Check each carried stake against the staking contract at the block to which the alpha had
-   mirrored it. A staker's MONKEY counts in the engine until its unstake completes, so the engine's
-   stake is the contract's `stakes` plus the amount of its pending unstake. The reads need an RPC
-   provider that serves state at past blocks, and `bc`:
+3. Check that the stakes are mirrored again in full:
 
    ```shell
-   B=$(jq -r '.parts[0].globals | fromjson | .staking.completed_through.block' carry.json)
-   while read -r account amount; do
-     staked=$(cast call $STAKING 'stakes(address)(uint256)' $account --block $B --rpc-url $RPC | cut -d' ' -f1)
-     pending=$(cast call $STAKING 'unstakes(address)(uint256,uint256)' $account --block $B --rpc-url $RPC | head -1 | cut -d' ' -f1)
-     [ "$(echo "$staked + $pending" | bc)" = "$amount" ] || echo "differs: $account"
-   done < stakes.txt
+   curl -sf $API/v1/monkey | jq '.staking.remirror'
    ```
 
-   The loop prints nothing.
+   The command prints `null`. The replay in check 1 has compared each account's stake with the
+   alpha's.
 
 Publish the results with the carry file.
 
@@ -556,7 +571,7 @@ Deposit the house's capital in real USDC with `depositToHouse`, as step 11 of
 Members register standby keys with the launch schedule, as
 [Register your standby key](operator-candidate.md#register-your-standby-key) describes, and the
 timelock approves each member's launch release. Each member's configuration names the launch
-operator's `[genesis.carry]` `vault`, as [The candidate's configuration](operator-candidate.md#the-candidates-configuration)
+operator's `[genesis.carry]` `vault` and `custody.evm.staking.deployment_block`, as [The candidate's configuration](operator-candidate.md#the-candidates-configuration)
 requires, and so does every later release of the launch log, an upgrade's included: a member whose
 configuration does not raises `carry_refused`, registers no standby key, and stops at its turn
 before it takes the keys, and an upgrade's release stops before the handover completes. A member
@@ -608,6 +623,13 @@ Use this section when `carry_waiting` or `carry_refused` fires on the launch tra
   disk, and start the trading server again. If the configuration is wrong, prepare a new release,
   which takes the timelock's three-day delay. Before any deposit, you may instead abandon the log:
   with the trading server stopped, remove `node.log_dir` and `history.dir`, and start again.
+- **The stakes are not mirrored again.** After the genesis, `/v1/monkey` keeps `staking.remirror` set,
+  and no distribution epoch closes. `custody_chain_inconsistent` naming
+  `custody.evm.staking.deployment_block` means that the configuration's block is after the staking
+  contract's deployment, and the mirror would miss the events before it: prepare a new release with
+  the block that step 4 finds, and abandon the log before any deposit. A staking frontier the engine
+  refuses, whose reason says that the stakes mirrored again sum to less than the alpha's total, means
+  that a window missed an event: abandon the log before any deposit, and start again.
 
 A trading server whose log has carried a genesis refuses to start under a configuration that names
 another source vault, or another chain. A configuration that names `[genesis.carry]` likewise

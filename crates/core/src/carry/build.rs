@@ -14,19 +14,21 @@ use crate::emissions::TokenUnits;
 use crate::engine::Engine;
 use crate::merkle::tree::{StateTree, Version};
 use crate::merkle::{award_key, entitlement_key, globals_key, staked_key};
+use crate::protocol::ProtocolVersion;
 use crate::types::AccountId;
 
 impl Engine {
     /// The parts of a genesis carrying this engine's state at its last root, which must be the root of its last
-    /// command, in the canonical batches, and what they carry. Each part passes the checks a carried genesis makes
-    /// of it, and every carried value is the one the root proves.
+    /// command, in the canonical batches, and what they carry, for a genesis that carries them under `into`: from
+    /// `V93` with no stake parts, as that genesis mirrors the stakes again. Each part passes the checks a carried
+    /// genesis makes of it, and every carried value is the one the root proves.
     /// Error cases:
     /// - no root of the last command, or the tree detached
     /// - client auth other than EIP-712
     /// - a source `Begin` refuses (`SourceView::check`): before `V90`, emissions or staking not initialised, a
     ///   staking mirror whose completed frontier misses a block it mirrored, or rotation's switch on
     /// - results in the open emission period, or an award a passed vote waits to apply, which a carry would lose
-    pub fn carry_parts(&self) -> Result<(Vec<CarryPart>, StateCarried), String> {
+    pub fn carry_parts(&self, into: ProtocolVersion) -> Result<(Vec<CarryPart>, StateCarried), String> {
         let (tree, version) = self.committed().ok_or("the engine holds no state root of its own")?;
         if self.last_seq != Some(version.seq()) {
             return Err(format!(
@@ -64,8 +66,11 @@ impl Engine {
         parts.extend(
             entitlements.chunks(MAX_CARRY_ENTRIES).map(|chunk| CarryPart::Entitlements { entries: chunk.to_vec() }),
         );
-        let stakes = balances(&self.staked, staked_key)?;
-        parts.extend(stakes.chunks(MAX_CARRY_ENTRIES).map(|chunk| CarryPart::Stakes { entries: chunk.to_vec() }));
+        let carries_stakes = into < ProtocolVersion::V93;
+        if carries_stakes {
+            let stakes = balances(&self.staked, staked_key)?;
+            parts.extend(stakes.chunks(MAX_CARRY_ENTRIES).map(|chunk| CarryPart::Stakes { entries: chunk.to_vec() }));
+        }
         let awards = self
             .awards
             .iter()
@@ -80,7 +85,8 @@ impl Engine {
         parts.extend(chunks.into_iter().map(|awards| CarryPart::Awards { awards, next: None }));
         parts.push(CarryPart::Awards { awards: last, next: Some(AbsenceProof { other, siblings: absent }) });
         parts.push(CarryPart::End);
-        let accounts: BTreeSet<&AccountId> = self.entitlements.keys().chain(self.staked.keys()).collect();
+        let stakers = self.staked.keys().filter(|_| carries_stakes);
+        let accounts: BTreeSet<&AccountId> = self.entitlements.keys().chain(stakers).collect();
         let carried = StateCarried {
             source,
             accounts: accounts.len() as u64,

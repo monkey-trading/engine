@@ -128,8 +128,8 @@ enum Cmd {
         #[arg(long, requires = "carry_source")]
         carry_source_archive_config: Option<PathBuf>,
     },
-    /// Build the carry file a new log's genesis takes MONKEY entitlements, stakes and awards from, from a source
-    /// log's published checkpoint, and print what it carries and its SHA-256.
+    /// Build the carry file a new log's genesis takes MONKEY entitlements, awards and the total staked from, from a
+    /// source log's published checkpoint, and print what it carries and its SHA-256.
     Carry(CarryArgs),
     /// Build the proofs an account, or the house, exits the vault with, or the receipt the root holds
     /// at a vault deposit id, from a published log alone, against the root of its checkpoint at
