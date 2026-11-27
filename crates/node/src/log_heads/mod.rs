@@ -20,7 +20,7 @@ mod submission;
 #[cfg(test)]
 mod tests;
 pub(crate) mod v2;
-pub(crate) use v2::{HeadV2, Heartbeat, Hold, SignedHead, TurnHeads};
+pub(crate) use v2::{HEAD_GAS_FLOOR, HeadV2, Heartbeat, Hold, SignedHead, TurnHeads, is_v2_head_call};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
