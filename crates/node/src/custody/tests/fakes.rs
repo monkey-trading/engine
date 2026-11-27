@@ -21,13 +21,13 @@ use crate::clock::now_ms;
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{
-    Beneficiary, BlockRef, DepositWatcher, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity,
-    VaultReader, VaultRecord,
+    Beneficiary, BlockRef, DepositWatcher, Finality, GovernanceRecord, PostedHead, StakingEvent, VaultDeposit,
+    VaultIdentity, VaultReader, VaultRecord,
 };
-use crate::log::{LogEntry, Manifest};
+use crate::log::Manifest;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal};
 use crate::tee::EnclaveKey;
-use crate::test_support::{dev_config, log_entries, sequencer_config, trusted_now};
+use crate::test_support::{dev_config, sequencer_config, trusted_now};
 
 pub(super) const CHAIN_ID: u64 = 42161;
 pub(super) const VAULT: Address = Address::repeat_byte(0x7a);
@@ -287,6 +287,10 @@ impl VaultReader for FakeChain {
         Ok(self.0.lock().unwrap().schedule.registry)
     }
 
+    async fn governance_record(&self, at: BlockRef) -> anyhow::Result<GovernanceRecord> {
+        Ok(self.0.lock().unwrap().schedule.record_at(at.number))
+    }
+
     async fn registry_staking(&self, at: BlockRef) -> anyhow::Result<Option<Address>> {
         let chain = self.0.lock().unwrap();
         if chain.staking_deployed_at.is_some_and(|at_deploy| at.number < at_deploy) {
@@ -474,13 +478,6 @@ pub(super) fn usdc(amount: &str) -> Fixed {
     amount.parse().unwrap()
 }
 
-/// How many deposit and house-capital commands the log in `dir` holds.
-pub(super) fn deposit_commands(dir: &Path) -> usize {
-    let deposit = |cmd: &Command| matches!(cmd, Command::Deposit { .. } | Command::HouseCapital { .. });
-    let entries = log_entries(&dir.join("log"));
-    entries.iter().filter(|e| matches!(e, LogEntry::Command(c) if deposit(&c.sequenced.cmd))).count()
-}
-
 /// Waits, in paused time, until the watcher has started `polls` polls in all.
 pub(super) async fn wait_for_polls(chain: &FakeChain, polls: u64) {
     while chain.0.lock().unwrap().polls < polls {
@@ -493,7 +490,7 @@ pub(crate) use sequencer::{engine_sequencer, refusing_sequencer};
 mod epochs;
 pub(super) use epochs::LOG_HEADS;
 mod files;
-pub(super) use files::{evm_toml, scratch, stored_cursor};
+pub(super) use files::{deposit_commands, evm_toml, scratch, stored_cursor};
 mod logs;
 pub(super) use logs::Logs;
 pub(super) mod schedule;

@@ -307,6 +307,7 @@ impl Sequencer {
             log_check,
             governance: cfg.governance,
             fault_proof: cfg.fault_proof,
+            governance_record: cfg.governance_record,
             roots: roots::Roots::start(cfg.metrics.state_root.reads_refused.clone())?,
             metrics: cfg.metrics,
             gate: cfg.checkpoints.map(|sink| {

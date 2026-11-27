@@ -1,12 +1,13 @@
 //! The rotation contracts' launch dev scenario on a local Anvil, which `scripts/dev-launch-values.sh`
 //! runs: beside the vault and the registry, the log heads, the seed receiver, the operator schedule, the
 //! parameter vote and the fault proof deploy with the values `ops/runbooks/production-deployment.toml`
-//! holds, and the timelock names the schedule in the registry. The node then reads them back: the
-//! liveness rule's read through the custody quorum finds the launch heartbeat rule, which the node does
-//! not refuse at the production template's ticker, and the node's custody watcher mirrors past the
-//! deployment, each window having found the registry naming the configured schedule, the schedule naming
-//! the registry with this build's turn length, the vote contract naming the schedule and the fault proof
-//! naming the vault.
+//! holds, and the timelock names the schedule in the registry and records the vote and the fault proof in
+//! the schedule's governance record. The node then reads them back: the liveness rule's read through the
+//! custody quorum finds the launch heartbeat rule, which the node does not refuse at the production
+//! template's ticker, and the node's custody watcher mirrors past the deployment, each window having found
+//! the registry naming the configured schedule, the schedule naming the registry with this build's turn
+//! length, the vote contract naming the schedule, the fault proof naming the vault, and the schedule's
+//! governance record naming both.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,6 +25,8 @@ use super::{address, completed_through, dev_parameters};
 use crate::checkpoints::scenario::deploy;
 use crate::config::NodeConfig;
 use crate::custody::StandbyReader;
+use crate::custody::evm::{BlockRef, GovernanceRecord, VaultReader};
+use crate::custody::quorum::Quorum;
 use crate::liveness::chain::{LivenessDomain, Rule, view};
 use crate::liveness::operator::limits::refused;
 use crate::standby_key::chain::{StandbyChain, StandbyDomain};
@@ -54,6 +57,10 @@ sol! {
     function blockMillis() external view returns (uint64);
     function normalWindow() external view returns (uint64);
     function fastWindow() external view returns (uint64);
+    function governanceRecord() external view returns (address);
+    function setGovernanceContracts(address vote_, address faultProof_) external;
+    function vote() external view returns (address);
+    function faultProof() external view returns (address);
 }
 
 /// A heartbeat rule as `OperatorSchedule.Liveness` takes it.
@@ -106,16 +113,25 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
         (Some(schedule), Some((vote, TTL_MS)), Some((fault_proof, PENALTY)));
 
     // 2. The timelock lengthens the election epoch to a day, as a schedule needs, names the vault and the
-    //    schedule in the registry, and the registry in the vault.
+    //    schedule in the registry, and the registry in the vault, and records the parameter vote and the
+    //    fault proof in the governance record the schedule created.
     let daily = Parameters { epochLength: DAY_SECS, ..dev_parameters().0 };
+    let record = chain.view(schedule, governanceRecordCall {}).await;
+    let unrecorded = latest_block(&chain).await;
     chain
         .govern_each(vec![
             (chain.registry, setParametersCall { parameters: daily }.abi_encode()),
             (chain.registry, setCustodyCall { vault_: chain.vault, schedule_: schedule }.abi_encode()),
             (chain.vault, setRegistryCall { registry_: chain.registry }.abi_encode()),
+            (record, setGovernanceContractsCall { vote_: vote, faultProof_: fault_proof }.abi_encode()),
         ])
         .await;
     assert_eq!(chain.view(chain.registry, scheduleCall {}).await, schedule, "the registry names the schedule");
+    assert_eq!(
+        (chain.view(record, voteCall {}).await, chain.view(record, faultProofCall {}).await),
+        (vote, fault_proof),
+        "the schedule's governance record names the parameter vote and the fault proof"
+    );
     let held = chain.view(schedule, livenessCall {}).await;
     assert_eq!((held._0, held._1, held._2, held._3), liveness);
     let lowest = chain.view(schedule, livenessMinimumsCall {}).await;
@@ -157,9 +173,29 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
     assert_eq!(refused(read.rule, tick), None, "the node refuses to sequence under the launch rule");
     println!("PASS: the node reads the launch rule through its custody quorum and accepts it at a {tick:?} ticker");
 
+    // The node's own reader of the schedule's governance record, through the custody quorum: nothing before the
+    // timelock filled it, both contracts after, and no record at all from a contract with no such getter, which
+    // reverts.
+    let records = Quorum::connect(custody.evm.as_ref().unwrap(), chain.vault).unwrap();
+    records.identity().await.unwrap();
+    let filled = latest_block(&chain).await;
+    assert_eq!(records.governance_record(unrecorded).await.unwrap(), GovernanceRecord::Unset);
+    assert_eq!(records.governance_record(filled).await.unwrap(), GovernanceRecord::Set { vote, fault_proof });
+    let anvil: NodeConfig =
+        toml::from_str(&std::fs::read_to_string(crate::test_support::ANVIL_CONFIG).unwrap()).unwrap();
+    let mut without = custody_section(&chain, &dir, anvil.custody).evm.unwrap();
+    without.staking.as_mut().unwrap().registry.schedule = Some(log_heads);
+    let without = Quorum::connect(&without, chain.vault).unwrap();
+    without.identity().await.unwrap();
+    assert_eq!(without.governance_record(filled).await.unwrap(), GovernanceRecord::Absent);
+    println!(
+        "PASS: the node reads the schedule's governance record as unset, then as both contracts, and none from a contract without it"
+    );
+
     // 4. The node starts with the contracts configured, and its custody watcher mirrors past the deployment:
     //    each window first checks the registry's schedule, the schedule's registry and turn length, the vote
-    //    contract's schedule and the fault proof's vault, and mirrors nothing past a refusal.
+    //    contract's schedule and the fault proof's vault, and the schedule's governance record naming both,
+    //    and mirrors nothing past a refusal.
     let deployed: U64 = chain.provider.request("eth_blockNumber", ()).await.unwrap();
     let deployed = deployed.to::<u64>();
     let node = Node::start(&chain, enclave).await;
@@ -170,8 +206,15 @@ async fn dev_scenario_the_rotation_contracts_deploy_at_the_launch_values_and_the
     let faults = node.query(|e| e.operator_faults().config).await.expect("the node records the fault proof");
     assert_eq!((faults.contract.0, faults.penalty), (fault_proof.0.0, PENALTY));
     println!(
-        "PASS: the node's custody watcher accepted the schedule, its turns, the vote contract and the fault proof, \
-         and mirrored past block {deployed}"
+        "PASS: the node's custody watcher accepted the schedule, its turns, the vote contract and the fault proof \
+         its governance record names, and mirrored past block {deployed}"
     );
     node.stop().await;
+}
+
+/// The chain's latest block, as the custody reads take it.
+async fn latest_block(chain: &Chain) -> BlockRef {
+    let block: serde_json::Value = chain.provider.request("eth_getBlockByNumber", ("latest", false)).await.unwrap();
+    let number = u64::from_str_radix(block["number"].as_str().unwrap().trim_start_matches("0x"), 16).unwrap();
+    BlockRef { number, hash: block["hash"].as_str().unwrap().parse().unwrap() }
 }

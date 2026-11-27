@@ -452,10 +452,18 @@ an index: load only the rule whose hint matches the current action.
   `node/turn_keys.rs`; an incumbent that stopped for a turn's member keeps the log's turns, and
   admits a later turn's member the set gave notice; from V56 the vote contract's passed proposals,
   decoded as the admin command their bytes are the canonical JSON of, once it is read to name the
-  schedule, with `ApplyProposal` sequenced for a passed change once its seven days have run,
+  schedule and, once the schedule's governance record names one, only from that one (read at the release tag's
+  block while the registry names the schedule, `custody/evm/staking.rs`, `custody/rpc/record.rs`; a schedule that
+  reverts the getter keeps its contracts' own answers; `/v1/operators` marks the proposals of another unavailable;
+  a start reads the record the same way before it records the config's vote and fault proof contracts, refusing to
+  start on another under Critical `governance_record_mismatch`, `node/preflight.rs` over `custody/record.rs`, a
+  member's in `ready`, and the sequencer records them, at the start or after a voted `V70`, only while the record the
+  start or the watcher last read names no other, `sequencer/governance.rs`),
+  with `ApplyProposal` sequenced for a passed change once its seven days have run,
   `sequencer/governance.rs`, from V65 each staking frontier carrying the turn the registry's `rotationState()`
   names the operator by, from V67 else the schedule's last drawn turn when it has yet to start, and a start refused on a log recording another vote contract; from V70
-  the fault proof contract's proven faults, once it is read to name the vault, with the contract and
+  the fault proof contract's proven faults, once it is read to name the vault and, once the schedule's
+  governance record names one, only from that one, with the contract and
   penalty the config names recorded once `V70` is in force, at a start or after a passed activation,
   and a start refused on a log recording others), the
   standby (`standby/`: a `--standby` node follows the operator in effect's signed stream into a
@@ -781,7 +789,10 @@ an index: load only the rule whose hint matches the current action.
   `src/ParameterVote.sol` takes the votes that change the engine's governed parameters while rotation is on: a
   member of the schedule's rotation set in effect proposes a command, members of that set vote yes with the weights
   it adopted, and the vote that takes the yes weight past two thirds of its total emits `ProposalPassed`, which the
-  engine mirrors from `V56` and holds to its own limits. `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
+  engine mirrors from `V56` and holds to its own limits. `src/GovernanceRecord.sol` is the record each schedule
+  creates as it deploys (`governanceRecord()`): the registry's timelock fills it once (`setGovernanceContracts`) with a
+  vote contract over the schedule and a fault proof contract over its vault, which the node binds the contracts it
+  mirrors to (`test/GovernanceRecord.t.sol`). `test/fixtures/seed-relay/mainnet.json` is recorded mainnet data, which
   `scripts/seed-relay-fixtures.sh` regenerates. `foundry.toml` enables the
   optimizer, without which the vault exceeds EIP-170's size limit.
 - **config/** — node configs. `dev.toml` runs the TEE, custody and feeds as mocks on one machine,

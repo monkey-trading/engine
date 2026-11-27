@@ -27,7 +27,8 @@ use tracing::debug;
 use crate::config::{EvmCustodySection, FinalityTag, SecretUrl, redact};
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{
-    BlockRef, Finality, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader, VaultRecord,
+    BlockRef, Finality, GovernanceRecord, PostedHead, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
+    VaultRecord,
 };
 
 // The vault's ABI, as `contracts/src/Vault.sol` declares it.
@@ -60,6 +61,7 @@ sol! {
 
 mod decode;
 pub(super) use decode::decode_count;
+mod record;
 mod staking;
 
 /// Historical vault events cannot authenticate a trader's funding address.
@@ -258,6 +260,11 @@ impl VaultReader for VaultRpc {
             return Ok(None);
         }
         Ok(Some(registryCall::abi_decode_returns(&out).context("decoding the schedule's registry")?))
+    }
+
+    /// The contracts the configured schedule's governance record names in the canonical block `at` (`record`).
+    async fn governance_record(&self, at: BlockRef) -> anyhow::Result<GovernanceRecord> {
+        self.read_governance_record(at).await
     }
 
     /// `account`'s native balance in the canonical block `at`.

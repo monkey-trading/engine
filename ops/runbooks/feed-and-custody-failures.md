@@ -655,7 +655,7 @@ and the operator list are read from the code.
 | Liveness caller (35 s, a quarter of the heartbeat interval, member between turns) | 16 | 39,497 |
 | Follow stint (16 s, member between turns) | 22 | 118,800 |
 | Seed relay (60 s, every member) | 11 to 12 | 17,000 |
-| Operator list (60 s, only with `registry.lens`) | about 12 to 20 | up to 29,000 |
+| Operator list (60 s, only with `registry.lens`) | about 14 to 24 | up to 35,000 |
 
 The watcher's 21 calls a poll are 12 block headers, 6 `eth_call`, 2 `eth_getLogs` and one
 `eth_chainId`, however many blocks the poll adds:
@@ -710,7 +710,7 @@ calls. The harness counts 295,956 calls a day for three nodes then, about 346,00
 | Provider | Published limit | The load against it | Result |
 | --- | --- | --- | --- |
 | Alchemy | Free: 30,000,000 compute units a month and 300 a second. Pay as you go: $0.525 per million compute units and 10,000 a second ([pricing plans](https://www.alchemy.com/docs/reference/pricing-plans)). `eth_getBlockByNumber` costs 20, `eth_call` 26, `eth_getLogs` 60 and `eth_chainId` 0 ([compute unit costs](https://www.alchemy.com/docs/reference/compute-unit-costs)) | About 17 million units a day, 504 million a month, and about 194 a second on average | The free tier does not fit. Pay as you go fits, at about $264 a month. |
-| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 57 million credits a day | Team fits, at $225 a month, using 76% of its daily credits. The operator list's reads, when `registry.lens` is set, take it to about 79%. |
+| Infura | Free: 3,000,000 credits a day and 500 a second. Developer: 15,000,000 a day for $50 a month. Team: 75,000,000 a day for $225 a month ([pricing](https://docs.infura.io/get-started/pricing/), [plans](https://www.infura.io/pricing)). `eth_getBlockByNumber`, `eth_call` and `eth_getBalance` cost 80 credits, `eth_getLogs` 255 and `eth_chainId` 5 ([credit costs](https://docs.infura.io/get-started/pricing/credit-cost/)) | About 57 million credits a day | Team fits, at $225 a month, using 76% of its daily credits. The operator list's reads, when `registry.lens` is set, take it to about 80%. |
 | dRPC | Free: 210,000,000 compute units per 30 days, with a dynamic limit of about 2,100 compute units a second ([free plan, 2025-05-13](https://blog.drpc.org/upcoming-changes-to-drpcs-free-plan-effective-june-1-2025/)). Pay as you go: 20 units a request, $6 per million requests ([flat pricing, 2025-05-29](https://blog.drpc.org/announcing-flat-pricing-simple-transparent-fair/)) | About 446 million units per 30 days, 22 million requests | The free tier does not fit. Pay as you go fits, at about $134 a month. |
 | PublicNode | None published ([publicnode.com](https://www.publicnode.com/)) | | Cannot be budgeted. A free public endpoint can limit any client without notice, so it counts as a provider that may fail, never as one the quorum can rest on. |
 
@@ -718,7 +718,7 @@ Check each limit on the provider's page before relying on it, because they chang
 
 **What fits.** The cheapest set that carries the load with room to spare is dRPC on pay as you go
 and Infura's Team plan, at about $360 a month together, with PublicNode as the third provider.
-Infura's plan leaves about 24% of its daily credits spare, or 21% with the operator list, and a
+Infura's plan leaves about 24% of its daily credits spare, or 20% with the operator list, and a
 provider past its daily limit fails every read until the day resets. Alchemy on pay as you go, in
 Infura's place, costs about $400 a month with dRPC and has no daily limit. The quorum rests on the
 two paid providers, and loses its majority whenever either of them fails, so a second paid provider

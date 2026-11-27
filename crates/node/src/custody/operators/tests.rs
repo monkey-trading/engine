@@ -8,10 +8,13 @@ use alloy::sol_types::{SolCall, SolValue};
 use serde_json::{Value, json};
 
 use super::lens::registryCall;
-use super::lens::{CANDIDATE_LIMIT, Election, Operator, Overview, Parameters, Row, candidatesCall, overviewCall};
+use super::lens::{CANDIDATE_LIMIT, Overview, Row, candidatesCall, overviewCall};
 use super::*;
 use crate::custody::chain::BlockLink;
-use crate::custody::evm::{Finality, StakingEvent, VaultDeposit, VaultIdentity};
+use crate::custody::evm::{Finality, GovernanceRecord, StakingEvent, VaultDeposit, VaultIdentity};
+
+mod lens_rows;
+use lens_rows::{overview, row};
 
 const CHAIN_ID: u64 = 42_161;
 const USDC: Address = Address::repeat_byte(0x0c);
@@ -36,6 +39,8 @@ pub(super) struct Model {
     rows: Vec<Row>,
     /// The vote contract's proposals, by id from 1.
     pub(super) proposals: Vec<super::proposals::ProposalView>,
+    /// The schedule the registry names, and what that schedule's governance record names.
+    pub(super) record: (Address, GovernanceRecord),
 }
 
 #[derive(Clone)]
@@ -51,65 +56,6 @@ pub(super) struct Provider {
     fail_from: Option<usize>,
 }
 
-/// `index`'s candidate: addresses and registration order run opposite ways, so a list in the lens's
-/// order is not in registration order.
-fn row(index: usize, total: usize) -> Row {
-    let byte = u8::try_from(index + 1).unwrap();
-    Row {
-        candidate: Address::repeat_byte(byte),
-        adminKey: Address::repeat_byte(byte.wrapping_add(100)),
-        enclave: Address::repeat_byte(byte.wrapping_add(50)),
-        bond: U256::from(2_000u64) * U256::from(10).pow(U256::from(18)),
-        release: B256::repeat_byte(byte),
-        registration: (total - index) as u64,
-        apiHostname: format!("api-{index}.example").into_bytes().into(),
-        handoverEndpoint: format!("handover-{index}.example:9443").into_bytes().into(),
-        votes: U256::from(index as u64 + 1) * U256::from(10).pow(U256::from(18)),
-        eligible: index.is_multiple_of(2),
-        role: u8::from(index == 1) * 2,
-    }
-}
-
-fn overview(count: usize) -> Overview {
-    Overview {
-        rotationEnabled: true,
-        parameters: Parameters {
-            epochLength: 86_400,
-            finalityMargin: 600,
-            eligibilityBps: 500,
-            quorumBps: 2_000,
-            maxCandidates: 100,
-            minSelfBond: U256::from(1_000u64) * U256::from(10).pow(U256::from(18)),
-            livenessTimeout: 259_200,
-        },
-        openEpoch: 7,
-        openEpochStart: FINAL_TIME - 3_600,
-        totalStaked: U256::from(9_000u64) * U256::from(10).pow(U256::from(18)),
-        candidateCount: U256::from(count),
-        inEffect: Operator {
-            candidate: Address::repeat_byte(2),
-            adminKey: Address::repeat_byte(102),
-            release: B256::repeat_byte(2),
-            since: FINAL_TIME - 86_400,
-        },
-        named: Operator {
-            candidate: Address::repeat_byte(2),
-            adminKey: Address::repeat_byte(102),
-            release: B256::repeat_byte(2),
-            since: FINAL_TIME - 86_400,
-        },
-        pending: Election {
-            epoch: 6,
-            candidate: Address::repeat_byte(3),
-            adminKey: Address::repeat_byte(103),
-            release: B256::repeat_byte(3),
-            effectiveAt: FINAL_TIME + 604_800,
-            promoted: false,
-        },
-        pendingPromotion: false,
-    }
-}
-
 impl Provider {
     /// A provider whose lens lists `count` candidates.
     fn with(count: usize) -> Self {
@@ -121,6 +67,7 @@ impl Provider {
             overview: overview(count),
             rows: (0..count).map(|index| row(index, count)).collect(),
             proposals: Vec::new(),
+            record: (Address::ZERO, GovernanceRecord::Absent),
         };
         Self { model, calls: Arc::default(), down: false, fails: None, fail_from: None }
     }
@@ -160,6 +107,14 @@ impl VaultReader for Provider {
 
     async fn staking_events(&self, _from: u64, _to: BlockRef) -> anyhow::Result<Vec<StakingEvent>> {
         Ok(Vec::new())
+    }
+
+    async fn registry_schedule(&self, _at: BlockRef) -> anyhow::Result<Address> {
+        Ok(self.model.record.0)
+    }
+
+    async fn governance_record(&self, _at: BlockRef) -> anyhow::Result<GovernanceRecord> {
+        Ok(self.model.record.1)
     }
 
     async fn contract_call(&self, at: BlockRef, to: Address, data: Bytes) -> anyhow::Result<Bytes> {

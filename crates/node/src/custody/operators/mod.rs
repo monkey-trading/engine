@@ -6,7 +6,8 @@
 //! that fails leaves the last list in place for as long as `custody.evm.finality_stalled_after`,
 //! then the route answers 503 until a read succeeds. The reader has its own quorum state, apart
 //! from the deposit watcher's. With a vote contract configured, the read also takes its open
-//! proposals at the same block (`proposals`).
+//! proposals at the same block (`proposals`), once the schedule's governance record names it or while
+//! the record names none.
 
 mod lens;
 mod proposals;
@@ -84,6 +85,8 @@ pub struct OperatorsReader<R> {
     lens: Address,
     /// The vote contract whose open proposals the read takes; `None` without one.
     vote: Option<Address>,
+    /// The schedule whose governance record must name that vote contract, once it names one.
+    schedule: Option<Address>,
     every: Duration,
     reads: watch::Sender<Option<Arc<Read>>>,
     episodes: crate::episodes::Episodes,
@@ -105,6 +108,7 @@ impl OperatorsReader<VaultRpc> {
         let (registry, every) = (staking.registry.contract, api.operators_interval);
         let (mut reader, feed) = Self::new(quorum, chain, (registry, lens), every, evm.finality_stalled_after);
         reader.vote = staking.registry.vote.as_ref().map(|vote| vote.contract);
+        reader.schedule = staking.registry.schedule;
         Ok(Some((reader, feed)))
     }
 }
@@ -129,6 +133,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
                 registry,
                 lens,
                 vote: None,
+                schedule: None,
                 every,
                 reads,
                 episodes: Default::default(),

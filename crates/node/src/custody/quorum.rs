@@ -17,11 +17,12 @@ use tracing::{error, info, warn};
 use crate::config::EvmCustodySection;
 use crate::custody::chain::BlockLink;
 use crate::custody::evm::{
-    BlockRef, Finality, HeadSupport, RangedDeposits, StakingEvent, VaultDeposit, VaultIdentity, VaultReader,
-    VaultRecord,
+    BlockRef, Finality, GovernanceRecord, HeadSupport, RangedDeposits, StakingEvent, VaultDeposit, VaultIdentity,
+    VaultReader, VaultRecord,
 };
 use crate::custody::rpc::{InvalidRpcResponse, VaultRpc};
 
+mod calls;
 mod deposits;
 mod posted_head;
 mod staking;
@@ -291,6 +292,11 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
         self.vote("schedule_registry", answers).map(|v| v.0)
     }
 
+    /// The same governance record at the same canonical block hash (`calls`).
+    async fn governance_record(&self, at: BlockRef) -> anyhow::Result<GovernanceRecord> {
+        self.voted_governance_record(at).await
+    }
+
     /// Identical balances of `account` at the same canonical block hash.
     /// Error cases:
     /// - no quorum
@@ -312,28 +318,6 @@ impl<R: VaultReader + Sync> VaultReader for Quorum<R> {
 }
 
 impl<R: VaultReader + Sync> Quorum<R> {
-    /// `contract_call`, its quorum and provider alerts kept under `operation`, so each distinct call
-    /// of a caller has its own episode and one that succeeds cannot end another's.
-    /// Error cases:
-    /// - no quorum
-    pub(crate) async fn call_as(
-        &self,
-        operation: &'static str,
-        at: BlockRef,
-        to: Address,
-        data: Bytes,
-    ) -> anyhow::Result<Bytes> {
-        let answers = join_all(self.providers.iter().enumerate().map(|(i, (_, r))| {
-            let data = data.clone();
-            async move {
-                self.qualified(i)?;
-                r.contract_call(at, to, data).await
-            }
-        }))
-        .await;
-        self.vote(operation, answers).map(|v| v.0)
-    }
-
     /// `account`'s balance at the highest block a majority declares final.
     /// Error cases:
     /// - the providers have no identity, finality or balance quorum, or name no final block

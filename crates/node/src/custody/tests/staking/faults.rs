@@ -1,10 +1,12 @@
 //! The fault proof contract's proven faults mirror only from a contract configured over the custody
-//! vault, once it is read to record that vault.
+//! vault, once it is read to record that vault, and, once the schedule's governance record names a
+//! fault proof contract, only from that one.
 
 use alloy::primitives::Address;
 use engine_core::operator_faults::{FaultProofConfig, Penalty};
 
 use super::*;
+use crate::custody::evm::GovernanceRecord;
 use crate::test_support::capture_alerts_and_resolutions;
 
 const SCHEDULE: Address = Address::repeat_byte(0x5c);
@@ -21,6 +23,37 @@ async fn a_fault_proof_contract_recording_another_vault_stalls_the_poll_before_a
     let expected = format!("the fault proof contract {FAULT_PROOF} records vault {other}, not the configured {VAULT}");
     assert!(cause.to_string().contains(&expected), "{cause}");
     assert!(!node.read(|e| e.is_staking_credited(&proven_ref())).await, "a fault mirrored");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn a_fault_proof_contract_the_schedules_record_does_not_name_stalls_the_poll_before_any_mirror() {
+    let dir = scratch("fault-proof-not-recorded");
+    let node = penalising_node(&dir).await;
+    // The configured contract answers that it proves faults over the vault, as a lookalike would, but
+    // the schedule's record names the timelock's fault proof contract.
+    let chains = fault_chains(Some(VAULT));
+    let recorded = Address::repeat_byte(0x6f);
+    record(&chains, GovernanceRecord::Set { vote: Address::repeat_byte(0x5f), fault_proof: recorded });
+    let error = fault_watcher(&chains, &dir).poll(&node.tx).await.unwrap_err();
+    let PollError::Stalled(Stall::Inconsistent(cause)) = error else { panic!("{error:?}") };
+    let expected = format!(
+        "the schedule's governance record names fault proof contract {recorded}, not the configured {FAULT_PROOF}"
+    );
+    assert!(cause.to_string().contains(&expected), "{cause}");
+    assert!(!node.read(|e| e.is_staking_credited(&proven_ref())).await, "a fault mirrored");
+    assert!(node.read(|e| e.operator_faults().haircuts.is_empty()).await, "a haircut started");
+    node.stop().await;
+}
+
+#[tokio::test]
+async fn the_fault_proof_contract_the_schedules_record_names_mirrors_its_proven_faults() {
+    let dir = scratch("fault-proof-recorded");
+    let node = penalising_node(&dir).await;
+    let chains = fault_chains(Some(VAULT));
+    record(&chains, GovernanceRecord::Set { vote: Address::repeat_byte(0x5f), fault_proof: FAULT_PROOF });
+    fault_watcher(&chains, &dir).poll(&node.tx).await.unwrap();
+    assert!(node.read(|e| e.is_staking_credited(&proven_ref())).await);
     node.stop().await;
 }
 
@@ -149,6 +182,13 @@ fn quiet_chains(vault: Option<Address>) -> [FakeChain; 3] {
         state.schedule.fault_proof = Some((FAULT_PROOF, vault));
     }
     chains
+}
+
+/// Sets what the schedule's governance record names, from the first block, on every chain.
+fn record(chains: &[FakeChain; 3], record: GovernanceRecord) {
+    for chain in chains {
+        chain.0.lock().unwrap().schedule.record = Some((0, record));
+    }
 }
 
 /// The confirmed watcher over `chains`, configured with the fake chain's registry, the schedule and

@@ -90,6 +90,9 @@ maximum = 4
 
 # `ParameterVote`'s constructor: how long a proposal takes votes on the normal path, whose change applies
 # seven days after the log records it, and on the fast path, whose restriction applies at once, in seconds.
+# The schedule creates a governance record as it deploys, and the timelock records this vote and the
+# `FaultProof` in it once ("Deploy the rotation contracts", step 7), from their deployed addresses: no value
+# here. A trading server binds the vote and fault proof contracts it mirrors to that record.
 [parameter_vote]
 normal_window = 259200 # 3 days
 fast_window = 3600 # 1 hour

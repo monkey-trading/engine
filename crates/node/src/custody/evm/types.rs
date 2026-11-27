@@ -124,6 +124,13 @@ pub trait VaultReader {
         async { anyhow::bail!("this reader does not read the schedule's registry") }
     }
 
+    /// The vote and fault proof contracts the configured schedule's governance record names, in the
+    /// canonical block `at`. A reader that cannot read it refuses.
+    fn governance_record(&self, at: BlockRef) -> impl Future<Output = anyhow::Result<GovernanceRecord>> + Send {
+        let _ = at;
+        async { anyhow::bail!("this reader does not read the schedule's governance record") }
+    }
+
     /// The native balance of `account` in the canonical block `at`. A reader that cannot read it
     /// refuses.
     fn account_balance(&self, at: BlockRef, account: Address) -> impl Future<Output = anyhow::Result<U256>> + Send {
@@ -187,6 +194,19 @@ pub struct RangedDeposits {
     pub boundary: Option<B256>,
 }
 
+/// What a schedule's governance record (`contracts/src/GovernanceRecord.sol`) names: the vote and fault
+/// proof contracts the registry's timelock recorded for the schedule's nodes to mirror.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GovernanceRecord {
+    /// The schedule keeps no record: deployed before schedules made one, it reverts the getter. Its
+    /// contracts are bound only by their own answers about their parents, for good.
+    Absent,
+    /// The schedule has no code at the block, or its record names no contracts yet.
+    Unset,
+    /// The recorded contracts.
+    Set { vote: Address, fault_proof: Address },
+}
+
 /// A block by height and hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockRef {
@@ -235,6 +255,24 @@ pub struct VaultDeposit {
     pub payer: Option<AccountId>,
     /// USDC base units the vault received.
     pub units: U256,
+}
+
+impl GovernanceRecord {
+    /// Why the record refuses a configured `vote` or `fault_proof` contract: it names another. `None` while it
+    /// names none, for a schedule that keeps none, and for a contract the config does not name.
+    pub fn refusal(&self, vote: Option<Address>, fault_proof: Option<Address>) -> Option<String> {
+        let Self::Set { vote: recorded_vote, fault_proof: recorded_fault_proof } = *self else { return None };
+        if let Some(vote) = vote.filter(|vote| *vote != recorded_vote) {
+            return Some(format!(
+                "the schedule's governance record names vote contract {recorded_vote}, not the configured {vote}"
+            ));
+        }
+        fault_proof.filter(|fault_proof| *fault_proof != recorded_fault_proof).map(|fault_proof| {
+            format!(
+                "the schedule's governance record names fault proof contract {recorded_fault_proof}, not the configured {fault_proof}"
+            )
+        })
+    }
 }
 
 impl VaultDeposit {

@@ -6,9 +6,10 @@
 # other budget, epoch or cooldown. Then, on a second Anvil, the rotation contracts deploy beside the
 # vault and the registry from the same file: the log heads, the seed receiver, the operator schedule
 # at the launch heartbeat rule, the parameter vote and the fault proof. The timelock names the schedule
-# in the registry. The node reads the heartbeat rule through its custody quorum and does not refuse it,
-# and its custody watcher, which checks the registry's schedule, the schedule's turn length, the vote
-# contract's schedule and the fault proof's vault, mirrors past the deployment.
+# in the registry and records the vote and the fault proof in the schedule's governance record. The node
+# reads the heartbeat rule through its custody quorum and does not refuse it, and its custody watcher,
+# which checks the registry's schedule, the schedule's turn length, the vote contract's schedule, the
+# fault proof's vault and the governance record naming both, mirrors past the deployment.
 # Needs Anvil, Forge, Cargo, Python 3, and installed Soldeer dependencies. No external RPC or keys are
 # used.
 set -euo pipefail

@@ -15,7 +15,7 @@ use engine_core::governance::decode_command;
 use engine_core::types::{AccountId, Millis};
 use serde::Serialize;
 
-use crate::custody::evm::{BlockRef, VaultReader};
+use crate::custody::evm::{BlockRef, GovernanceRecord, VaultReader};
 use crate::custody::operators::OperatorsReader;
 
 sol! {
@@ -86,6 +86,7 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
     /// The open proposals of the vote contract `vote` at `at`, whose time is `time_ms`.
     /// Error cases:
     /// - the providers lack a quorum for a call
+    /// - the schedule the registry names records another vote contract
     /// - a page is not the ids asked for, or a command does not hash to its proposal's hash
     /// - a count, weight or time out of range
     pub(super) async fn read_proposals(
@@ -94,6 +95,17 @@ impl<R: VaultReader + Sync> OperatorsReader<R> {
         at: BlockRef,
         time_ms: Millis,
     ) -> anyhow::Result<OpenProposals> {
+        // Once the configured schedule's governance record names a vote contract, while the registry names that
+        // schedule, the configured one must be it: its own answer would vouch for any contract that answers so.
+        if let Some(schedule) = self.schedule
+            && self.quorum.registry_schedule(at).await? == schedule
+            && let GovernanceRecord::Set { vote: recorded, .. } = self.quorum.governance_record(at).await?
+        {
+            ensure!(
+                recorded == vote,
+                "the schedule's governance record names vote contract {recorded}, not the configured {vote}"
+            );
+        }
         let input = proposalCountCall {}.abi_encode().into();
         let out = self.quorum.call_as("vote_count", at, vote, input).await?;
         // No code at the block: the contract is not deployed yet, so it holds no proposal.

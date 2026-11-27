@@ -128,6 +128,7 @@ async fn run_member(
         anchor: Some(anchor),
         emission_budget: None,
         staking_terms,
+        governance_record: None,
         heads: None,
         generations: BTreeMap::from([(turn, GENERATION)]),
         sample: sample_around(&crate::clock::SystemClock),

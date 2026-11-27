@@ -235,6 +235,7 @@ impl Node {
             approval_registry: post_checkpoints.then(|| approvals.clone()),
             governance: setup::governance(chain),
             fault_proof: setup::fault_proof(chain),
+            governance_record: None,
             metrics: metrics.clone(),
             ..sequencer_config(&dir, manifest_tx)
         };

@@ -34,6 +34,7 @@ use member::{Ended, Handed};
 pub(crate) mod ready;
 use ready::Start;
 mod run;
+pub use run::run;
 pub(crate) use run::run_with_cpu;
 mod price_feeds;
 pub(crate) mod secrets;
@@ -54,7 +55,6 @@ use crate::log::Manifest;
 use crate::metrics::Metrics;
 use crate::sequencer::turns::TurnSealing;
 use crate::sequencer::{Request, Sequencer, SequencerConfig, genesis_commands};
-use crate::telemetry::Telemetry;
 use crate::tls::acme::{CertificateTask, Sealed};
 use crate::{custody::Custody, feeds, monitor, tls::serve, trusted_time, verify::Relay};
 use preflight::authorize;
@@ -64,14 +64,6 @@ const FAILED_START_HOLD: Duration = if cfg!(test) { Duration::from_secs(5) } els
 /// How long the sequencer gets to drain and checkpoint after a shutdown signal.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 const CHANNEL_CAPACITY: usize = 65_536;
-
-/// Runs the node until a shutdown signal, or until the first supervised task stops, then delivers
-/// the alerts already logged, for up to `SHUTDOWN_GRACE`.
-/// Error cases:
-/// - see `serve_node`
-pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
-    Box::pin(run_with_cpu(cfg, telemetry, None, KeyStart::default())).await
-}
 
 /// Runs every task but alert routing, which it supervises, from a member's `replica` when given, until
 /// a shutdown signal or a successor's confirmed handover ends it, which it reports with what the
@@ -91,6 +83,8 @@ pub async fn run(cfg: NodeConfig, telemetry: Telemetry) -> anyhow::Result<()> {
 ///   another emission period budget than the one the log records
 /// - with a staking contract configured, it cannot be read, the configured registry did not deploy it, or the log
 ///   or genesis records another epoch or cooldown than it holds (see `preflight::staking_preflight`)
+/// - with a vote or fault proof contract configured, the schedule's governance record cannot be read or names
+///   another (see `preflight::governance_preflight`)
 /// - any supervised task stops or panics, or the sequencer cannot drain in time, none of them, once
 ///   the first read of the chain has set `chain_read`, a delivered key's doing
 #[allow(clippy::too_many_arguments)]
@@ -183,7 +177,7 @@ async fn serve_node(
     log.prove_legacy_withdrawals(&cfg.custody)
         .await
         .inspect_err(|e| error!(alert = "legacy_withdrawal_unproven", "refusing writable recovery: {e:#}"))?;
-    let (emission_budget, staking_terms) =
+    let (emission_budget, staking_terms, governance_record) =
         preflight::chain_terms(cfg, ready.as_ref(), checkpoint_setup.as_ref(), &log).await?;
 
     let vault: AccountId = cfg.custody.vault.parse().context("custody.vault")?;
@@ -240,10 +234,12 @@ async fn serve_node(
         log_check: log_check_setup,
         governance: cfg.governance()?,
         fault_proof: cfg.fault_proof()?,
+        governance_record: governance_record.as_ref().map(watch::Sender::subscribe),
     };
     let custody = Custody::connect(&cfg.custody, log.last_seq())
         .inspect_err(|e| error!(alert = "custody_connect_failed", "refusing to serve: {e:#}"))?
-        .with_access(access.clone());
+        .with_access(access.clone())
+        .with_governance_record(governance_record);
     authorize(
         checkpoint_setup.as_ref().map(|setup| (&setup.poster, anchor.as_ref())),
         Some((&log, &seq_cfg, AccountId(key.address()))),

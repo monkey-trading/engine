@@ -131,6 +131,7 @@ pub struct Sequencer {
     log_check: log_check::LogCheck,
     governance: Option<engine_core::governance::GovernanceConfig>,
     fault_proof: Option<engine_core::operator_faults::FaultProofConfig>,
+    governance_record: Option<watch::Receiver<crate::custody::GovernanceRecord>>,
     metrics: Arc<Metrics>,
     gate: Option<Gate>,
     roots: roots::Roots,
