@@ -139,7 +139,7 @@ async fn a_listed_segment_the_host_no_longer_holds_redirects_to_its_range_object
     state.archive_objects = Some(bucket.clone());
     let moved = ask(&state, &gone.file).await.expect("a redirect");
     assert_eq!(moved.status(), 308);
-    let object = bucket.object(gone.first_seq / crate::archive::RANGE_SEQS).unwrap();
+    let object = bucket.object(gone.first_seq / crate::archive::range_seqs()).unwrap();
     assert_eq!(moved.headers()[axum::http::header::LOCATION], object.as_str());
     assert!(to_bytes(moved.into_body(), usize::MAX).await.unwrap().is_empty(), "nothing relayed");
     let served = ask(&state, &held.file).await.expect("a held segment");

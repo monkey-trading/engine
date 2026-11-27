@@ -49,7 +49,7 @@ use tokio::task::spawn_blocking;
 use tokio::time::{Instant, sleep};
 use tracing::{debug, info, warn};
 
-use crate::archive::{RANGE_SEQS, Sources, Uploader};
+use crate::archive::{Sources, Uploader, range_seqs};
 use crate::config::{HistorySection, NodeConfig};
 use crate::log::{Manifest, SegmentInfo, list_segments};
 use crate::metrics::Metrics;
@@ -242,7 +242,7 @@ impl Window {
         // Until the uploader's resume has found what the bucket holds, every segment would look unarchived: none
         // leaves, and only one the host must keep whatever the bucket holds is put back, which the resume may need.
         let known = *self.archived.borrow();
-        let archived = known.map_or(u64::MAX, |archived| archived.saturating_mul(RANGE_SEQS));
+        let archived = known.map_or(u64::MAX, |archived| archived.saturating_mul(range_seqs()));
         let dir = self.dir.clone();
         let mut local: BTreeSet<u64> =
             spawn_blocking(move || list_segments(&dir)).await??.into_iter().map(|(seq, _)| seq).collect();

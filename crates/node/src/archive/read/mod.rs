@@ -15,11 +15,11 @@ use engine_core::eip712::B256;
 use reqwest::{Client, Url};
 use tokio::task::spawn_blocking;
 
-use crate::archive::{Object, RANGE_SEQS, log_prefix, next_entry, range_key, read_public, tail_prefix};
+use crate::archive::{Object, log_prefix, next_entry, range_key, range_seqs, read_public, tail_prefix};
 use crate::config::NodeConfig;
 
 mod segments;
-pub(crate) use segments::MAX_REBUILT_BYTES;
+pub(crate) use segments::max_rebuilt_bytes;
 pub(crate) use segments::{ArchiveOrigins, Origins, Segments};
 mod source;
 #[cfg(test)]
@@ -38,8 +38,11 @@ pub(crate) const RANGE_BYTES: u64 = (256 << 20) + crate::carry::MAX_FILE_BYTES;
 /// The most bytes of a range's object a reader reads: as many as one range holds, which its lines never pass
 /// compressed, though launch flow compresses a range to under a megabyte.
 pub(crate) const MAX_OBJECT_BYTES: u64 = RANGE_BYTES;
-/// The most bytes a reader decompresses from one range's object (`RANGE_BYTES`); a mebibyte in tests.
-const MAX_RANGE_BYTES: u64 = if cfg!(test) { 1 << 20 } else { RANGE_BYTES };
+/// The most bytes a reader decompresses from one range's object (`RANGE_BYTES`); a mebibyte in a test build, which a
+/// run at production's sizes (`archive::set_range_seqs`) leaves.
+fn max_range_bytes() -> u64 {
+    if cfg!(test) && !crate::archive::production_sizes() { 1 << 20 } else { RANGE_BYTES }
+}
 
 /// Where a log's objects stand at the bucket's public origin: the directory of its range objects.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,7 +100,7 @@ impl Bucket {
         let base = location.join("./").with_context(|| format!("the directory of {location}"))?;
         let bucket = Self { base };
         ensure!(
-            bucket.object(first_seq / RANGE_SEQS)? == *location,
+            bucket.object(first_seq / range_seqs())? == *location,
             "a redirect for seq {first_seq} names {location}, not the object of the range holding it"
         );
         Ok(bucket)
@@ -164,7 +167,7 @@ impl Ranges {
         if first > last {
             return Err(Unread::Refused(anyhow!("seqs {first} to {last} are no range")));
         }
-        let mut indexes: Vec<u64> = (first / RANGE_SEQS..=last / RANGE_SEQS).collect();
+        let mut indexes: Vec<u64> = (first / range_seqs()..=last / range_seqs()).collect();
         if self.backwards {
             indexes.reverse();
         }
@@ -173,8 +176,8 @@ impl Ranges {
             let object = self.object(http, index).await?;
             // The listing that names the seqs is untrusted: the range's end past `u64::MAX` is its last seq.
             let end =
-                index.checked_add(1).and_then(|next| next.checked_mul(RANGE_SEQS)).map_or(u64::MAX, |next| next - 1);
-            let wanted = (first.max(index * RANGE_SEQS), last.min(end));
+                index.checked_add(1).and_then(|next| next.checked_mul(range_seqs())).map_or(u64::MAX, |next| next - 1);
+            let wanted = (first.max(index * range_seqs()), last.min(end));
             let room = limit.saturating_sub(taken_bytes);
             let taken = spawn_blocking(move || lines_of(&object, index, wanted, room))
                 .await
@@ -232,18 +235,18 @@ impl Unread {
 /// - the lines come to more than `limit` bytes
 fn lines_of(object: &[u8], index: u64, (first, last): (u64, u64), limit: u64) -> anyhow::Result<Vec<u8>> {
     let decoder = zstd::stream::read::Decoder::with_buffer(object).context("reading a zstd frame")?;
-    let mut reader = BufReader::new(decoder.take(MAX_RANGE_BYTES + 1));
+    let mut reader = BufReader::new(decoder.take(max_range_bytes() + 1));
     let (mut taken, mut line, mut read) = (Vec::new(), Vec::new(), 0u64);
     let mut seq: Option<u64> = None;
     let mut inflated = |n: usize| {
         read += n as u64;
-        ensure!(read <= MAX_RANGE_BYTES, "it decompresses past {MAX_RANGE_BYTES} bytes");
+        ensure!(read <= max_range_bytes(), "it decompresses past {} bytes", max_range_bytes());
         Ok(())
     };
     while let Some(head) = next_entry(&mut reader, &mut line, &mut inflated).context("decompressing the zstd frame")? {
         if head.entry == "command" {
             let next = seq
-                .map_or(Some(index * RANGE_SEQS), |seq| seq.checked_add(1))
+                .map_or(Some(index * range_seqs()), |seq| seq.checked_add(1))
                 .context("it holds seqs past the last")?;
             let named = head.seq.context("a command names no seq")?;
             ensure!(named == next, "it holds seq {named} where seq {next} belongs");

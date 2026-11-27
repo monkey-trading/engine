@@ -12,7 +12,7 @@ use tokio::time::{Instant, sleep, timeout};
 
 use crate::archive::range::tests::resegmented;
 use crate::archive::stand_in::{StandIn, Vault, checkpoint_past, checkpoints, test_log};
-use crate::archive::{RANGE_SEQS, Uploader, holds, range_bytes, range_key, whole_ranges};
+use crate::archive::{Uploader, holds, range_bytes, range_key, range_seqs, whole_ranges};
 use crate::log::{LogEntry, Manifest};
 use crate::metrics::Metrics;
 use crate::test_support::{
@@ -40,14 +40,17 @@ async fn dev_scenario_log_archive() {
     sleep(Duration::from_millis(200)).await;
     assert_eq!(bucket.with(|b| b.created), 0, "nothing goes up before the vault finalizes a checkpoint");
     let first = vault.finalize_past(&node, &dir, 3).await;
-    until("the ranges below it confirmed", || metrics.archive.confirmed_ranges.get() as u64 == first / RANGE_SEQS)
+    until("the ranges below it confirmed", || metrics.archive.confirmed_ranges.get() as u64 == first / range_seqs())
         .await;
     sleep(Duration::from_millis(200)).await;
-    assert_eq!(bucket.with(|b| b.created), first / RANGE_SEQS, "no range past the vault's checkpoint goes up");
+    assert_eq!(bucket.with(|b| b.created), first / range_seqs(), "no range past the vault's checkpoint goes up");
     let whole = finalize_all(&node, &dir, &vault, &metrics).await;
     check_objects(&bucket, &dir, &node.manifest.borrow().clone(), whole);
     let (raw, stored) = (metrics.archive.confirmed_bytes.get(), metrics.archive.stored_bytes.get());
-    println!("    {} ranges below seq {first} first, then {whole}; {raw} bytes stored as {stored}", first / RANGE_SEQS);
+    println!(
+        "    {} ranges below seq {first} first, then {whole}; {raw} bytes stored as {stored}",
+        first / range_seqs()
+    );
 
     println!("==> 2. the bucket goes down: sequencing goes on, the backlog grows and archive_upload_lagging fires");
     quiet(&mut alerts, &mut resolved).await;
@@ -168,9 +171,9 @@ pub(super) async fn finalize_all(node: &TestSequencer, dir: &Path, vault: &Vault
 async fn finalize_all_after(node: &TestSequencer, dir: &Path, vault: &Vault, ranges: u64) -> u64 {
     loop {
         let completed = node.manifest.borrow().unlisted_from().unwrap();
-        let whole = completed / RANGE_SEQS;
+        let whole = completed / range_seqs();
         let last = checkpoints(dir).into_iter().rfind(|(seq, _)| *seq < completed);
-        if let Some((seq, root)) = last.filter(|(seq, _)| whole >= ranges && *seq >= whole * RANGE_SEQS) {
+        if let Some((seq, root)) = last.filter(|(seq, _)| whole >= ranges && *seq >= whole * range_seqs()) {
             vault.finalize(seq, &root);
             return whole;
         }

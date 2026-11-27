@@ -25,6 +25,15 @@ pub(super) struct Config {
     /// A directory for the log apart from `SOAK_DIR`'s caches and history index (`SOAK_LOG_DIR`), as a node
     /// whose log has a volume of its own has it; the log is its `log` directory, kept with the run.
     pub(super) log_dir: Option<PathBuf>,
+    /// Whether the node runs the launch configuration's storage (`SOAK_STORAGE`, 1 unless 0): its log's archive and
+    /// daily snapshots in a stand-in bucket, the log's and the snapshots' windows on the host, and a restart from the
+    /// newest daily snapshot, in place of the paired recovery caches and history index of `[snapshots]`, which the
+    /// log's window cannot run beside.
+    pub(super) storage: bool,
+    /// The day a daily snapshot is taken at the first checkpoint of (`SOAK_DAY_MINUTES`): the report interval twice
+    /// over unless set, since a run's real clock crosses at most one UTC midnight in eight hours, which prunes
+    /// nothing; 1,440 is the UTC day. The windows follow it (`load_scenario::archived`).
+    pub(super) day: Duration,
 }
 
 impl Config {
@@ -40,9 +49,10 @@ impl Config {
             Duration::from_secs_f64(value * unit)
         };
         let restart_every = secs("SOAK_RESTART_HOURS", 2.0, 3_600.0);
+        let report = secs("SOAK_REPORT_MINUTES", 60.0, 60.0);
         let config = Config {
             total: secs("SOAK_HOURS", 8.0, 3_600.0),
-            report: secs("SOAK_REPORT_MINUTES", 60.0, 60.0),
+            report,
             fault_every: secs("SOAK_FAULT_MINUTES", 20.0, 60.0),
             restart_every: (!restart_every.is_zero()).then_some(restart_every),
             window: secs("SOAK_WINDOW_SECS", 120.0, 1.0),
@@ -53,6 +63,8 @@ impl Config {
                 .map(|names| names.split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect())
                 .unwrap_or_default(),
             log_dir: get("SOAK_LOG_DIR").map(PathBuf::from),
+            storage: get("SOAK_STORAGE").is_none_or(|value| value != "0"),
+            day: get("SOAK_DAY_MINUTES").map_or(report * 2, |_| secs("SOAK_DAY_MINUTES", 0.0, 60.0)),
         };
         assert!(!config.total.is_zero() && !config.window.is_zero(), "SOAK_HOURS and SOAK_WINDOW_SECS are above 0");
         assert!(config.report >= config.window, "SOAK_REPORT_MINUTES holds at least one window");
@@ -60,6 +72,7 @@ impl Config {
         let outlived = Duration::from_millis(SESSION_LIFE_MS as u64).saturating_sub(Duration::from_secs(3_600));
         assert!(config.total < outlived, "SOAK_HOURS is under the traders' session keys' life less an hour");
         assert!(!config.fault_every.is_zero() && config.multiple > 0.0, "a fault cadence and a multiple above 0");
+        assert!(config.day >= Duration::from_secs(60), "SOAK_DAY_MINUTES is at least a minute");
         config
     }
 
@@ -141,6 +154,18 @@ mod tests {
         assert_eq!(names, ["a", "b"]);
         assert_eq!(self::config(&[]).log_dir, None, "the log is beside the caches unless named");
         assert_eq!(self::config(&[("SOAK_LOG_DIR", "/logs")]).log_dir, Some(PathBuf::from("/logs")));
+    }
+
+    #[test]
+    fn the_storage_is_on_unless_turned_off_and_its_day_is_two_intervals_unless_set() {
+        let full = config(&[]);
+        assert!(full.storage);
+        assert_eq!(full.day, Duration::from_secs(2 * 3_600), "an eight-hour run holds four days of snapshots");
+        assert!(!config(&[("SOAK_STORAGE", "0")]).storage);
+        assert!(config(&[("SOAK_STORAGE", "1")]).storage);
+        let short = config(&[("SOAK_REPORT_MINUTES", "3"), ("SOAK_WINDOW_SECS", "20"), ("SOAK_DAY_MINUTES", "2")]);
+        assert_eq!(short.day, Duration::from_secs(120));
+        assert_eq!(config(&[("SOAK_DAY_MINUTES", "1440")]).day, Duration::from_secs(86_400), "the UTC day");
     }
 
     #[test]

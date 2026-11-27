@@ -113,7 +113,7 @@ touches a live system, but a tag and a published release need the owner's approv
    not fit to release.**
 
    Then run the node soak, eight hours at ten times launch flow on the launch book with each feed
-   fault in turn and a restart from the newest cache every two hours, in a quiet window, where
+   fault in turn and a restart from the newest daily snapshot every two hours, in a quiet window, where
    `<dir>` is a directory on a disk with room for its log:
 
    ```shell

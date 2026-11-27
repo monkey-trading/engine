@@ -18,7 +18,38 @@ use crate::log::{LogEntry, Manifest, SegmentInfo, open_active_archive, open_segm
 
 /// How many sequence numbers one object of the archive holds: 10,000, about 5.5 MB of launch flow and under a
 /// megabyte compressed; six in tests, so ranges cross the test log's four-command segments.
-pub(crate) const RANGE_SEQS: u64 = if cfg!(test) { 6 } else { 10_000 };
+#[cfg(not(test))]
+const RANGE_SEQS: u64 = 10_000;
+/// How many sequence numbers a range holds in a test build, which a run that wants production's, the soak, sets
+/// (`set_range_seqs`); 0 for the test default of six.
+#[cfg(test)]
+static TEST_RANGE_SEQS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Makes ranges hold `seqs` sequence numbers from here on, in a test build.
+#[cfg(test)]
+pub(crate) fn set_range_seqs(seqs: u64) {
+    TEST_RANGE_SEQS.store(seqs, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a test build runs at production's sizes (`set_range_seqs`): ranges of 10,000 seqs and the bounds on
+/// what is read back that go with them.
+pub(crate) fn production_sizes() -> bool {
+    #[cfg(test)]
+    return TEST_RANGE_SEQS.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    #[cfg(not(test))]
+    true
+}
+
+/// How many sequence numbers one range holds.
+pub(crate) fn range_seqs() -> u64 {
+    #[cfg(test)]
+    return match TEST_RANGE_SEQS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => 6,
+        seqs => seqs,
+    };
+    #[cfg(not(test))]
+    RANGE_SEQS
+}
 
 /// What a log line's entry is, and its seq.
 #[derive(Deserialize)]
@@ -58,7 +89,7 @@ pub(crate) fn log_prefix(chain_id: u64, vault: AccountId) -> String {
 
 /// The key of range `index`'s object, under the log's `prefix`.
 pub(crate) fn range_key(prefix: &str, index: u64) -> String {
-    format!("{prefix}{:020}.jsonl.zst", index * RANGE_SEQS)
+    format!("{prefix}{:020}.jsonl.zst", index * range_seqs())
 }
 
 /// The key prefix of the tail of the checkpoint at `seq` rooted at `root`, under the log's `prefix`, which a reader
@@ -71,7 +102,7 @@ pub(crate) fn tail_prefix(prefix: &str, seq: u64, root: &B256) -> String {
 /// Error cases:
 /// - the last listing cannot be read
 pub(crate) fn whole_ranges(view: &Manifest) -> anyhow::Result<u64> {
-    Ok(view.unlisted_from()? / RANGE_SEQS)
+    Ok(view.unlisted_from()? / range_seqs())
 }
 
 /// The bytes of range `index`: the lines of every entry whose seq is in it, in log order, read from `view`'s
@@ -94,7 +125,7 @@ pub(crate) fn range_bytes_with(
     index: u64,
     supplied: &BTreeMap<String, Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
-    let (first, last) = (index * RANGE_SEQS, (index + 1) * RANGE_SEQS - 1);
+    let (first, last) = (index * range_seqs(), (index + 1) * range_seqs() - 1);
     ensure!(last < view.unlisted_from()?, "range {index}: seq {last} is not in a completed segment yet");
     let mut range = Vec::new();
     entries_of((dir, supplied), view, first..=last, |_, line| {
@@ -113,10 +144,10 @@ pub(crate) fn range_bytes_with(
 /// - the copy holds no checkpoint at `seq`
 /// - as `range_bytes`, the active prefix's hash standing for a completed segment's listing
 pub(crate) fn piece_bytes(dir: &Path, view: &Manifest, index: u64, seq: u64) -> anyhow::Result<Vec<u8>> {
-    let last = seq / RANGE_SEQS;
+    let last = seq / range_seqs();
     ensure!(index <= last, "range {index} is past the checkpoint at seq {seq}");
-    let first = index * RANGE_SEQS;
-    let end = if index < last { first + RANGE_SEQS - 1 } else { seq };
+    let first = index * range_seqs();
+    let end = if index < last { first + range_seqs() - 1 } else { seq };
     let (mut piece, mut through) = (Vec::new(), None);
     let whole = entries_of((dir, &BTreeMap::new()), view, first..=end, |head, line| {
         piece.extend_from_slice(line);
@@ -159,7 +190,7 @@ pub(crate) fn checkpoint_root(dir: &Path, view: &Manifest, seq: u64) -> anyhow::
 /// Error cases:
 /// - no completed segment holds the range's first or last seq, a listing cannot be read, or `dir` cannot be probed
 pub(crate) fn absent_segments(dir: &Path, view: &Manifest, index: u64) -> anyhow::Result<Vec<SegmentInfo>> {
-    let (first, last) = (index * RANGE_SEQS, (index + 1) * RANGE_SEQS - 1);
+    let (first, last) = (index * range_seqs(), (index + 1) * range_seqs() - 1);
     ensure!(last < view.unlisted_from()?, "seq {last} is not in a completed segment yet");
     let (mut ordinal, _) =
         view.containing(first)?.with_context(|| format!("no completed segment holds seq {first}"))?;

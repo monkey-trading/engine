@@ -1,29 +1,38 @@
 //! The soak (#909): the node load scenario run for hours at ten times launch flow, on a node that
 //! takes what a long run gives it. Run by `scripts/dev-soak.sh`; `SOAK_HOURS` sets its length.
 //!
-//! The node is the load scenario's, run as a node with `[snapshots]` is (`durable`): its history owner
-//! publishes a recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time, and the generator drives
-//! it through its API and stream as the load scenario's does, in intervals of `SOAK_REPORT_MINUTES`,
-//! each a leg of the generator's, judged in windows of `SOAK_WINDOW_SECS`. While it runs:
+//! The node is the load scenario's, run with the launch configuration's storage (`archived`, `durable`): its
+//! log's ranges and its daily snapshots go to a loopback stand-in for the bucket, the log's local window and the
+//! older snapshots leave the host, and a restart goes on from the newest daily snapshot and the log after it. That
+//! shape runs no history index, which `[snapshots]`' paired index replaces and the log's window cannot run beside;
+//! `SOAK_STORAGE=0` runs the node as one with `[snapshots]` instead (`durable`): its history owner publishes a
+//! recovery cache every `SOAK_SNAPSHOT_SECS` of sequenced time. The generator drives it through its API and
+//! stream as the load scenario's does, in intervals of `SOAK_REPORT_MINUTES`, each a leg of the generator's, judged
+//! in windows of `SOAK_WINDOW_SECS`. While it runs:
 //! - every `SOAK_FAULT_MINUTES` one of #867's faults is injected, in turn (`faults`): a stalled
 //!   venue, a dropped one, a slow link, a quiet product, both venues down, and trusted time down;
-//! - every `SOAK_RESTART_HOURS` the node is stopped and started again from its newest cache on the
-//!   same API address, the generator's connections and subscribers reconnecting as clients do. The
-//!   first stop drains, which leaves its newest cache at the final checkpoint; the next drops the node
-//!   as a crash does (`Node::kill`: no drain, no final checkpoint), so the start replays the log past
-//!   its newest cache; and so on in turn.
+//! - every `SOAK_RESTART_HOURS` the node is stopped and started again from its newest daily snapshot (its newest
+//!   cache with `SOAK_STORAGE=0`) on the same API address, the generator's connections and subscribers
+//!   reconnecting as clients do. The first stop drains; the next drops the node as a crash does (`Node::kill`: no
+//!   drain, no final checkpoint), so the start replays the log past its snapshot or cache; and so on in turn.
 //!
 //! At the end of each interval it prints the figures the load scenario prints, then the interval's
 //! report (`SOAK`): the windows judged against #904's launch bar, those a fault, a restart or the start
 //! excuses apart (`timeline`); memory (macOS's physical footprint, which counts compressed pages, else
-//! resident) against the first interval's, allowed the growth of the newest cache, which the state's size
-//! sets; the bytes the log and the caches hold on disk and the log's growth a command; the stats worker's
-//! lag; each fault's recovery and each restart's; and the alerts no event excused. It passes if every
+//! resident) against the first interval's, allowed the growth of the state, as the newest snapshot's or cache's
+//! size sets it, and the stand-in bucket's bytes; the bytes the log and the daily snapshots, or the caches, hold on
+//! disk and the log's growth a command; what the bucket holds and the host has let go (`stored`); the stats
+//! worker's lag; each fault's recovery and each restart's; and the alerts no event excused. It passes if every
 //! interval does (`hours`) and the log replays to its roots from the book at the end, as the load
-//! scenario's does. It runs no marks cache or alert outbox, so it reports no disk for them.
+//! scenario's does, the segments the host lacks read back from the bucket first. It runs no marks cache or alert
+//! outbox, so it reports no disk for them. The storage runs at a test build's timings (the window passes every
+//! 20 ms, the uploaders poll every 20 ms) and, past the sizes `archive::set_range_seqs` sets, a test build's
+//! bounds.
 //!
 //! `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20), `SOAK_RESTART_HOURS` (2,
-//! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300, the template's), `SOAK_MULTIPLE`
+//! 0 for none), `SOAK_WINDOW_SECS` (120), `SOAK_STORAGE` (1; 0 for `[snapshots]`' caches), `SOAK_DAY_MINUTES` (twice
+//! the report interval: the day snapshots and the windows count in), `SOAK_SNAPSHOT_SECS` (300, the template's,
+//! with `SOAK_STORAGE=0`), `SOAK_MULTIPLE`
 //! (10), `SOAK_SHORT` (1 for a run that tests the harness, as CI's does: an interval with every window
 //! excused passes and memory is not bounded), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_DIR`
 //! (a scratch directory, removed with the run; named, it is kept) and `SOAK_LOG_DIR` (the log's directory
@@ -35,6 +44,8 @@ mod alerts;
 mod config;
 mod faults;
 mod hours;
+mod stored;
+mod summary;
 mod support;
 mod timeline;
 
@@ -45,13 +56,13 @@ use std::process::ChildStdin;
 use std::time::Duration;
 
 use engine_core::command::Command;
-use engine_core::types::AccountId;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior, interval, interval_at, sleep_until, timeout};
 
 use crate::clock::now_ms;
 use crate::common::launch_book::{NamedCounts, build};
 use crate::feeds::venue::Timing;
+use crate::load_scenario::archived::Archived;
 use crate::load_scenario::durable::Durable;
 use crate::load_scenario::node::{Boot, Node};
 use crate::load_scenario::plan::{Leg, Line, Plan, requests_per_second};
@@ -59,11 +70,10 @@ use crate::load_scenario::report::{Snapshot, judge, print, unmeasured};
 use crate::load_scenario::soak::alerts::Alerts;
 use crate::load_scenario::soak::config::Config;
 use crate::load_scenario::soak::faults::{Done, Rig, priced_within};
-use crate::load_scenario::soak::hours::{
-    Disk, Interval, Restarted, Standing, Win, baseline, dir_bytes, failures, median, memory_failure, workload_gaps,
-};
-use crate::load_scenario::soak::support::{Reaper, memory_mib, newest_cache, rebind};
-use crate::load_scenario::soak::timeline::{Timeline, WINDOW_SETTLE, restart_alerts, start_alerts, stop_alerts};
+use crate::load_scenario::soak::hours::{Disk, Interval, Restarted, Standing, Win, workload_gaps};
+use crate::load_scenario::soak::stored::Stored;
+use crate::load_scenario::soak::support::{Reaper, memory_mib, rebind};
+use crate::load_scenario::soak::timeline::{Timeline, WINDOW_SETTLE, restart_alerts, start_alerts};
 use crate::load_scenario::venues::{self, Venues};
 use crate::load_scenario::{
     ACCOUNTS, ACCOUNTS_PER_CLIENT, Generator, LINE_WITHIN, QUOTING_PER_CENT, book_mix, env, moves, spawn_generator,
@@ -115,6 +125,17 @@ async fn run() {
     if let Some(log) = &config.log_dir {
         durable.cfg.node.log_dir = log.join("log");
     }
+    if config.storage {
+        // Ranges of production's size, not a test build's six.
+        crate::archive::set_range_seqs(10_000);
+        // A stopped node's snapshot writer finishes before its stop returns, as a process that ends leaves none to
+        // race the next node's, within the stop's drain (`node::DRAIN`).
+        crate::daily_snapshots::wait_on_drop(Duration::from_secs(100));
+        if config.day != Duration::from_secs(86_400) {
+            crate::daily_snapshots::shorten_day(config.day.as_millis() as i64);
+        }
+        durable = durable.launching(&dir, Archived::start(config.day).await);
+    }
     let (listener, api) = crate::load_scenario::node::listen().await;
     let node =
         Node::start(Boot::Book(Box::new(base.engine())), &durable.cfg.node.log_dir, listener, &venues, Some(&durable))
@@ -141,6 +162,13 @@ async fn run() {
     let mut soak = Soak::new(config, durable, venues, (node, api), (timing, alerts, began));
     soak.drive(&plan).await;
     let (signer, log_dir) = soak.finish().await;
+    // A log whose older segments left the host is read from the bucket first, which puts them back.
+    if let Some(stored) = &soak.stored {
+        stored.archived.read_plain(&mut soak.durable.cfg);
+        let put = crate::archive::restore_whole(&soak.durable.cfg, &log_dir).await;
+        println!("SOAK replay: segments put back from the bucket: {put:?}");
+        put.expect("the segments the host lacks are read back from the bucket");
+    }
     let replayed = crate::sequencer::replay::replay_path_from(base.engine(), &log_dir, signer, Default::default())
         .expect("the log replays");
     println!(
@@ -179,6 +207,12 @@ struct Soak {
     starting: Option<usize>,
     /// Every interval's failures, by the interval.
     failed: Vec<(String, Vec<String>)>,
+    /// The node's storage, when it runs the launch configuration (`SOAK_STORAGE`).
+    stored: Option<Stored>,
+    /// How many bytes the stand-in bucket held when the memory baseline was set.
+    held_at_first: u64,
+    /// When the generator began.
+    driven: Instant,
 }
 
 impl Soak {
@@ -190,6 +224,15 @@ impl Soak {
         (timing, alerts, began): (Timing, mpsc::UnboundedReceiver<Alert>, Instant),
     ) -> Self {
         let known = config.known_alerts.clone();
+        let stored = durable.archived().map(|archived| {
+            let daily = durable.daily_snapshots().expect("[daily_snapshots]").to_owned();
+            let history = crate::config::HistorySection {
+                dir: durable.cfg.history.dir.clone(),
+                retention: durable.cfg.history.retention,
+                marks: None,
+            };
+            Stored::new(archived.clone(), durable.cfg.node.log_dir.clone(), daily, history)
+        });
         let (start, window) = (Snapshot::take(&node.metrics), Snapshot::take(&node.metrics));
         let mut timeline = Timeline::default();
         // The start lasts until the generator's first leg: the book's own alerts and the warm-up are its.
@@ -215,6 +258,9 @@ impl Soak {
             restarts: 0,
             starting: Some(starting),
             failed: Vec::new(),
+            stored,
+            held_at_first: 0,
+            driven: Instant::now(),
         }
     }
 
@@ -234,6 +280,7 @@ impl Soak {
         let mut child = Reaper(child);
         self.legs = plan.legs.clone();
         let began = Instant::now();
+        self.driven = began;
         let mut fault_ticks = interval_at(began + self.config.fault_every, self.config.fault_every);
         fault_ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut samples = interval(self.config.sample_every());
@@ -331,7 +378,7 @@ impl Soak {
         self.samples.push((memory_mib().0, behind));
     }
 
-    /// Stops the node and starts it again from its newest cache, on the same API address. A node that does
+    /// Stops the node and starts it again from its newest cache, or its newest daily snapshot, on the same API address. A node that does
     /// not stop cleanly ends the run: nothing may start beside what could still write the log.
     async fn restart(&mut self) {
         self.alerts.drain();
@@ -341,6 +388,10 @@ impl Soak {
         let abrupt = self.restarts % 2 == 1;
         self.restarts += 1;
         self.carried += Snapshot::take(&old.metrics).since(&self.start).commands;
+        let off_host = self.stored.as_ref().map_or(0, |stored| stored.figures().off_host);
+        if let Some(stored) = self.stored.as_mut() {
+            stored.restarted(self.driven.elapsed(), off_host);
+        }
         let stopping = Instant::now();
         let stopped = if abrupt { old.kill().await } else { old.stop(true).await };
         if let Err(error) = stopped {
@@ -363,9 +414,10 @@ impl Soak {
         self.alerts.drain();
         self.timeline.end(place);
         println!(
-            "SOAK restart ({}): stopped in {down:?}, recovered to its first command from the newest cache in \
-             {recovered:?}, every market priced {}",
+            "SOAK restart ({}): stopped in {down:?}, recovered to its first command from the newest {} in \
+             {recovered:?}, with {off_host} segments of the log off the host, every market priced {}",
             if abrupt { "crash, no drain" } else { "drained" },
+            if self.stored.is_some() { "daily snapshot" } else { "cache" },
             priced.as_ref().map_or_else(|why| format!("NOT: {why}"), |took| format!("{took:?} after"))
         );
         self.interval.restarts.push(Restarted { abrupt, stopped: down, recovered, priced });
@@ -414,86 +466,5 @@ impl Soak {
                 writeln!(answers, "next").expect("the generator reads");
             }
         }
-    }
-
-    /// Judges and prints the interval that has ended.
-    async fn report(&mut self, leg: &str, commands: f64) {
-        self.alerts.drain();
-        let mut interval = std::mem::take(&mut self.interval);
-        let (unexplained, counts) = self.alerts.report(&self.timeline);
-        interval.unexpected_alerts = unexplained;
-        let mut failed = failures(&interval, !self.config.short);
-        let disk =
-            Disk { log: dir_bytes(&self.durable.cfg.node.log_dir), snapshots: dir_bytes(self.durable.snapshots()) };
-        let rss: Vec<u64> = self.samples.iter().map(|(rss, _)| *rss).collect();
-        let standing = Standing {
-            rss_mib: if rss.is_empty() { memory_mib().0 } else { median(&rss) },
-            state_bytes: newest_cache(&self.durable),
-        };
-        self.first = baseline(self.first, standing);
-        let first = self.first.unwrap_or(standing);
-        if !self.config.short && self.first.is_some() {
-            failed.extend(memory_failure(first, standing));
-        }
-        if !self.node().history_runs() {
-            failed.push("the history owner stopped, so the node takes no more recovery caches".to_owned());
-        }
-        let (excused, judged) =
-            interval.windows.iter().fold((0, 0), |(excused, judged), window| match window.excused {
-                Some(_) => (excused + 1, judged),
-                None => (excused, judged + 1),
-            });
-        let behind = self.samples.iter().map(|(_, behind)| *behind).max().unwrap_or(0);
-        let grown = disk.log.saturating_sub(self.disk.log);
-        println!("SOAK {leg} windows={} judged={judged} excused={excused}", interval.windows.len());
-        println!(
-            "SOAK {leg} memory {} median={} max={} first_interval_median={} newest_cache_bytes={}",
-            memory_mib().1,
-            standing.rss_mib,
-            self.samples.iter().map(|(rss, _)| *rss).max().unwrap_or(0),
-            first.rss_mib,
-            standing.state_bytes
-        );
-        println!(
-            "SOAK {leg} disk_bytes log={} caches_and_history_index={} marks_cache=not run alert_outbox=not run; \
-             log_growth_bytes={grown} commands={commands:.0} log_bytes_per_command={:.0}",
-            disk.log,
-            disk.snapshots,
-            grown as f64 / commands.max(1.0)
-        );
-        println!("SOAK {leg} stats_worker_behind_max_commands={behind}");
-        println!(
-            "SOAK {leg} history_owner takes_captures={} index_behind_commands={:?}",
-            self.node().history_runs(),
-            self.node().history_behind().await
-        );
-        println!("SOAK {leg} alerts raised: {counts:?}");
-        let verdict = if failed.is_empty() { "PASS".to_owned() } else { format!("FAIL {failed:?}") };
-        println!("SOAK {leg} verdict {verdict}");
-        self.disk = disk;
-        self.samples.clear();
-        self.failed.push((leg.to_owned(), failed));
-    }
-
-    /// Stops the node, and returns its signer and log, to replay.
-    async fn finish(&mut self) -> (AccountId, PathBuf) {
-        let place = self.timeline.begin("stop", &stop_alerts());
-        let node = self.node.take().expect("a node");
-        let (signer, log_dir) = (node.signer, node.log_dir.clone());
-        node.stop(false).await.expect("the node drains");
-        self.alerts.drain();
-        self.timeline.end(place);
-        // What ended after the last report: a fault, a restart or an alert no interval has judged.
-        let mut tail = std::mem::take(&mut self.interval);
-        (tail.unexpected_alerts, _) = self.alerts.report(&self.timeline);
-        self.failed.push(("after the last interval".to_owned(), failures(&tail, false)));
-        (signer, log_dir)
-    }
-
-    /// Fails the run if any interval failed.
-    fn conclude(&self) {
-        let failed: Vec<_> = self.failed.iter().filter(|(_, why)| !why.is_empty()).collect();
-        println!("SOAK {} of {} intervals failed", failed.len(), self.failed.len());
-        assert!(failed.is_empty(), "the soak failed: {failed:?}");
     }
 }

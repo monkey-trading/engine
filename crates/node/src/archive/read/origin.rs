@@ -16,7 +16,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::archive::stand_in::{StandIn, test_log};
-use crate::archive::{Bucket, RANGE_SEQS, compress, range_bytes, range_key};
+use crate::archive::{Bucket, compress, range_bytes, range_key, range_seqs};
 use crate::log::{MANIFEST, Manifest, SegmentInfo, SegmentedLog};
 use crate::test_support::{SEGMENT_COMMANDS, TestSequencer, published_manifest, scratch_dir};
 
@@ -38,7 +38,7 @@ impl Origin {
 pub(crate) async fn log_of(name: &str, ranges: u64) -> (PathBuf, Manifest) {
     let dir = scratch_dir(name);
     let node = TestSequencer::start(&dir, 256);
-    while node.manifest.borrow().unlisted_from().expect("the writer's listing") < ranges * RANGE_SEQS {
+    while node.manifest.borrow().unlisted_from().expect("the writer's listing") < ranges * range_seqs() {
         node.submit(Command::Tick).await;
     }
     node.stop().await;
@@ -66,7 +66,7 @@ pub(crate) fn bucket_of(bucket: &StandIn) -> Bucket {
 /// The listings of the log in `dir` whose seqs all fall in its first `ranges` ranges.
 pub(crate) fn listed_below(dir: &Path, ranges: u64) -> Vec<SegmentInfo> {
     let view = published_manifest(dir).borrow().clone();
-    view.segments.iter().filter(|listed| listed.last_seq < ranges * RANGE_SEQS).cloned().collect()
+    view.segments.iter().filter(|listed| listed.last_seq < ranges * range_seqs()).cloned().collect()
 }
 
 /// Serves the archive of the log in `dir`: its manifest and each file it holds. A segment `dir`'s manifest lists
@@ -90,7 +90,7 @@ pub(crate) async fn serve(dir: &Path, moved: Option<Bucket>) -> Origin {
                 });
                 match (listed, moved) {
                     (Some(listed), Some(bucket)) => {
-                        let object = bucket.object(listed.first_seq / RANGE_SEQS).expect("an object URL");
+                        let object = bucket.object(listed.first_seq / range_seqs()).expect("an object URL");
                         (StatusCode::PERMANENT_REDIRECT, [(LOCATION, object.to_string())]).into_response()
                     }
                     _ => StatusCode::NOT_FOUND.into_response(),

@@ -8,7 +8,7 @@ use super::history_tests::Written;
 use super::*;
 use crate::archive::origin::upload;
 use crate::archive::stand_in::StandIn;
-use crate::archive::{RANGE_SEQS, whole_ranges};
+use crate::archive::{range_seqs, whole_ranges};
 use crate::test_support::published_manifest;
 
 /// The written log's bucket, holding its whole ranges, and the oldest segments whose every range it holds, removed
@@ -20,7 +20,7 @@ async fn trimmed(written: &Written) -> (StandIn, Vec<crate::log::SegmentInfo>) {
     let whole = whole_ranges(&view).unwrap();
     upload(&bucket, &dir, &view, whole);
     let removed: Vec<_> =
-        view.segments.iter().filter(|listed| listed.last_seq < whole * RANGE_SEQS).take(3).cloned().collect();
+        view.segments.iter().filter(|listed| listed.last_seq < whole * range_seqs()).take(3).cloned().collect();
     assert_eq!(removed.len(), 3, "the log holds segments the bucket holds");
     for listed in &removed {
         std::fs::remove_file(dir.join(&listed.file)).unwrap();

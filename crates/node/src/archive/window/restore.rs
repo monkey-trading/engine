@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::archive::read::{Ranges, Unread};
 use crate::archive::window::{Floors, FreshStart, MAX_RESTORES, Window, fresh_start};
-use crate::archive::{Bucket, RANGE_SEQS, Store};
+use crate::archive::{Bucket, Store, range_seqs};
 use crate::config::NodeConfig;
 use crate::log::{MANIFEST, Manifest, SegmentInfo, list_segments};
 use crate::standby::MAX_ARCHIVE_BYTES;
@@ -78,7 +78,7 @@ impl Sources {
     /// - the bucket lacks a range of it, cannot be read, or gives back other bytes than the listing names
     pub(crate) async fn read_back_through(&self, ranges: &mut Ranges, listed: &SegmentInfo) -> anyhow::Result<Vec<u8>> {
         // Bounded apart from the listing, which a whole replay's manifest, the host's, names.
-        let limit = listed.bytes.min(crate::archive::read::MAX_REBUILT_BYTES);
+        let limit = listed.bytes.min(crate::archive::read::max_rebuilt_bytes());
         let bytes = match ranges.seqs(&self.http, (listed.first_seq, listed.last_seq), limit).await {
             Ok(bytes) => bytes,
             Err(Unread::Missing { object, .. }) => return Err(anyhow!("the bucket has no object at {object}")),
@@ -92,7 +92,7 @@ impl Sources {
     /// Error cases:
     /// - an object's URL does not form, or the origin cannot be asked or answers other than `200` or `404`
     pub(crate) async fn lacks_a_range(&self, listed: &SegmentInfo) -> anyhow::Result<bool> {
-        for index in listed.first_seq / RANGE_SEQS..=listed.last_seq / RANGE_SEQS {
+        for index in listed.first_seq / range_seqs()..=listed.last_seq / range_seqs() {
             let url = self.bucket.object(index)?;
             let answer = self.http.head(url.clone()).send().await.with_context(|| format!("asking for {url}"))?;
             match answer.status() {

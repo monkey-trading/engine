@@ -122,7 +122,7 @@ async fn an_interrupted_whole_restore_leaves_one_run_of_segments() {
     let view = fixture.view();
     fixture.node.stop().await;
     let first = view.segments.iter().position(|listed| listed.file == removed[0]).unwrap();
-    let key = crate::archive::range_key(&test_log(), view.segments[first].first_seq / RANGE_SEQS);
+    let key = crate::archive::range_key(&test_log(), view.segments[first].first_seq / range_seqs());
     fixture.bucket.with(|b| b.objects.remove(&key));
     let mut cfg = dev_config();
     let mut section = fixture.bucket.section(Duration::from_secs(3600));
@@ -273,8 +273,8 @@ async fn segments_put_back_from_one_range_read_its_object_once() {
     let ranges = fixture.archive_all();
     let view = fixture.view();
     let lost: Vec<SegmentInfo> = view.segments[3..=5].to_vec();
-    assert_eq!(lost.iter().map(|l| l.first_seq / RANGE_SEQS).collect::<Vec<_>>(), [2, 2, 3]);
-    assert_eq!(lost.iter().map(|l| l.last_seq / RANGE_SEQS).collect::<Vec<_>>(), [2, 3, 3]);
+    assert_eq!(lost.iter().map(|l| l.first_seq / range_seqs()).collect::<Vec<_>>(), [2, 2, 3]);
+    assert_eq!(lost.iter().map(|l| l.last_seq / range_seqs()).collect::<Vec<_>>(), [2, 3, 3]);
     lost.iter().for_each(|listed| std::fs::remove_file(fixture.dir.join(&listed.file)).unwrap());
     let (mut window, _archived) = fixture.window((600, 30), ranges);
     let before = fixture.bucket.with(|b| b.read);

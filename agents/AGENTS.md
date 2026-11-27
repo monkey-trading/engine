@@ -1204,13 +1204,20 @@ an index: load only the rule whose hint matches the current action.
   a loaded runner's tolerance, in the windows a stall of the runner's own storage does not excuse (`storage.rs`), then
   the log replayed from the rebuilt book (`replay::replay_path_from`);
   `dev-soak.sh`, the soak dev scenario (`load_scenario/soak/`, #909): that load for hours at ten times launch flow on a node
-  that publishes paired recovery caches (`load_scenario/durable.rs`), in report intervals judged by window against #904's
+  that runs the launch configuration's storage (`load_scenario/archived.rs`, `durable.rs`: `[daily_snapshots]` and `[archive]`
+  with a `local_window`, no `[snapshots]`, which the log's window cannot run beside): its log's ranges, its checkpoints' tails
+  and its daily snapshots go to a loopback stand-in for the bucket below a stand-in vault, the log's window and the snapshots'
+  window remove from the host what the bucket holds and the newest snapshots do not need, and a restart goes on from the newest
+  daily snapshot and the log after it, with the log's older segments off the host and read back from the bucket before the final
+  replay; a day of sequenced time is `SOAK_DAY_MINUTES`, counted by a test-build setting (`daily_snapshots::shorten_day`), and
+  `soak/stored.rs` reports and judges what the bucket and the host hold; `SOAK_STORAGE=0` runs the node with paired recovery
+  caches instead; in report intervals judged by window against #904's
   bar outside what a fault, a restart or the start excuses (`timeline.rs`), #867's faults injected in turn through links in
   front of the crypto stand-ins (`faults.rs`: a stalled venue, a dropped one, a slow link, a quiet product, both venues
   down, trusted time down, each followed by every market priced again within its deadline), the node stopped and started
-  again from its newest cache, and each interval's report of latency, resident memory against the first interval's
-  (allowed the newest cache's growth), the log's and the caches' bytes on disk, the stats worker's lag and the alerts no
-  event that explains it excused (`alerts.rs`, `hours.rs`); `--rotation` repeats the short-turns scenario instead;
+  again, and each interval's report of latency, resident memory against the first interval's
+  (allowed the newest cache's or snapshot's growth and the stand-in bucket's bytes), the stores' bytes on disk, the stats worker's lag and the alerts no
+  event that explains it excused (`alerts.rs`, `hours.rs`, `summary.rs`); `--rotation` repeats the short-turns scenario instead;
   `dev-recovery-scale.sh`, the recovery dev scenario (`sequencer/recovery_scale/`, #908): a node's sequencer takes over
   the launch book on a test clock and writes 30 days of launch flow and 3 of ten times it on accelerated sequenced time
   (`flow.rs`: the template's ticks, each market's price commands at `load_scenario`'s live rates while its venue is
@@ -1616,7 +1623,8 @@ Run from the repo root:
   reference workload's time against a fast runner's, and each bar line prints the scale and the scaled bar, as do `dev-load`'s order-to-fill and stream-lag bars
 - Soak dev scenario: `./scripts/dev-soak.sh [hours]` (needs only Cargo; by hand before each release, with
   `SOAK_DIR` on a disk with room for the log, and `SOAK_LOG_DIR` for a log on another volume; `SOAK_HOURS` (8), `SOAK_REPORT_MINUTES` (60), `SOAK_FAULT_MINUTES` (20),
-  `SOAK_RESTART_HOURS` (2), `SOAK_WINDOW_SECS` (120), `SOAK_SNAPSHOT_SECS` (300), `SOAK_MULTIPLE` (10), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_SHORT` (1 for a run that tests the harness) set the run and
+  `SOAK_RESTART_HOURS` (2), `SOAK_WINDOW_SECS` (120), `SOAK_STORAGE` (1; 0 for paired recovery caches), `SOAK_DAY_MINUTES` (twice the report
+  interval; the day snapshots and the windows count in), `SOAK_SNAPSHOT_SECS` (300, with `SOAK_STORAGE=0`), `SOAK_MULTIPLE` (10), `SOAK_KNOWN_ALERTS` (alerts to expect, by name) and `SOAK_SHORT` (1 for a run that tests the harness) set the run and
   `LOAD_ACCOUNTS` and the load scenario's other variables size the load; CI runs nine minutes at 10,000 accounts);
   `./scripts/dev-soak.sh --rotation [hours]` runs the short-turns scenario again and again for the hours
 - Recovery dev scenario: `./scripts/dev-recovery-scale.sh` (needs only Cargo and disk for the log, which it

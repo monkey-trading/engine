@@ -873,9 +873,13 @@ whole inside the guest, with its clients and price stand-ins beside it. Driving 
 trading server from outside the guest needs the load test to target a trading server at an address,
 which it does not do yet.
 
-The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. Give it a
-list with this one line, and make its data disk 600G, since its caches and history index can grow
-by about 400 GB in a run:
+The eight-hour soak at ten times launch flow runs the same way, in a guest of its own. It runs the
+launch configuration's storage by default: the log's ranges, tails and daily snapshots go to a stand-in
+bucket held in the soak's memory, and the log's and the snapshots' windows remove segments and snapshots
+from the disk, so the log and the snapshots are the disk it needs and the guest's memory holds the bucket
+(`scripts/dev-soak.sh` gives the figures). Add `SOAK_STORAGE=0` to the line for the paired recovery caches and
+history index instead, which can grow by about 400 GB in a run. Give it a
+list with this one line, and make its data disk 600G:
 
 ```text
 soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak
@@ -885,12 +889,12 @@ soak SOAK_DIR=/data/tmp/soak /bench/engine_node --ignored --exact --nocapture lo
 
 A flush of the history index's and the recovery caches' buffered writes on the log's disk can hold the log's
 batch syncs, which is why the image mounts the log on a disk of its own. Measure the difference on this host
-with the soak at ten times launch flow, once for each leg, on the host as step 4 above runs a list (the guest's
+with the soak at ten times launch flow and `SOAK_STORAGE=0`, which runs the history index and the recovery caches whose flushes this measures, once for each leg, on the host as step 4 above runs a list (the guest's
 launch script attaches a second disk only to the image's own init, which the benchmark guest does not use), one
 leg after the other, with `<nvme0>` and `<nvme1>` the mount points of the host's two NVMe drives:
 
 1. **Shared.** The log on the derived stores' drive. The list's line is
-   `soak SOAK_DIR=<nvme0>/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak`,
+   `soak SOAK_STORAGE=0 SOAK_DIR=<nvme0>/soak /bench/engine_node --ignored --exact --nocapture load_scenario::soak::dev_scenario_soak`,
    so the log is in `<nvme0>/soak/log` beside the caches and the history index.
 2. **Separate.** The log on its own drive. The line also names `SOAK_LOG_DIR=<nvme1>/soak`, so the log is in
    `<nvme1>/soak/log` and the caches and history index stay in `<nvme0>/soak`. The two paths must be on

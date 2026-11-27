@@ -15,7 +15,7 @@ use tokio::task::spawn_blocking;
 use crate::PublishedLog;
 use crate::archive::scenario::{until, uploading};
 use crate::archive::stand_in::{StandIn, Vault, checkpoints, newest_checkpoint, test_log};
-use crate::archive::{RANGE_SEQS, range_key};
+use crate::archive::{range_key, range_seqs};
 use crate::exit::{ExitSubject, exit_bundle};
 use crate::metrics::Metrics;
 use crate::sequencer::replay_path_in_domain;
@@ -38,7 +38,7 @@ async fn dev_scenario_log_tail() {
         let finalized = vault.latest().map_or(0, |(seq, _)| seq);
         let (seq, _) = post_next(&node, &dir, &vault, &metrics).await;
         // A reader takes the ranges until the first the bucket lacks, then the tail's pieces from there.
-        let last = seq / RANGE_SEQS;
+        let last = seq / range_seqs();
         let first = bucket.with(|b| (0..=last).find(|index| !b.objects.contains_key(&range_key(&test_log(), *index))));
         let first = first.expect("the checkpoint's own range is not whole in the bucket");
         let pieces = tail_pieces(&bucket, seq);
@@ -117,7 +117,7 @@ async fn dev_scenario_log_tail() {
 /// the new one; returns its seq and root.
 async fn post_next(node: &TestSequencer, dir: &Path, vault: &Vault, metrics: &Metrics) -> (u64, String) {
     let from = vault.latest().map_or(0, |(seq, _)| seq);
-    while newest_checkpoint(dir).0 < from + 2 * RANGE_SEQS {
+    while newest_checkpoint(dir).0 < from + 2 * range_seqs() {
         node.submit(Command::Tick).await;
     }
     let (seq, root) = checkpoints(dir).pop().expect("a checkpoint");
@@ -137,7 +137,7 @@ fn tail_pieces(bucket: &StandIn, seq: u64) -> Vec<u64> {
             .keys()
             .filter_map(|key| key.strip_prefix(&tail))
             .filter_map(|rest| rest.split_once('/'))
-            .map(|(_, piece)| piece.trim_end_matches(".jsonl.zst").parse::<u64>().unwrap() / RANGE_SEQS)
+            .map(|(_, piece)| piece.trim_end_matches(".jsonl.zst").parse::<u64>().unwrap() / range_seqs())
             .collect()
     })
 }
