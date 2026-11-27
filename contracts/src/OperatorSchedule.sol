@@ -724,7 +724,25 @@ contract OperatorSchedule is SeedSchedule {
 
     /// @notice Turn `turn`'s assignment at `position`, and its releases and generations in order.
     function assignmentOf(uint64 turn, uint16 position) external view returns (Assignment memory, Revision[] memory) {
-        return (assignments[turn][position], revisions[turn][position]);
+        return (_assignment(turn, position), revisions[turn][position]);
+    }
+
+    /// @dev The one copy of an assignment into memory both reads share, which keeps the runtime under EIP-170.
+    function _assignment(uint64 turn, uint16 position) private view returns (Assignment memory) {
+        return assignments[turn][position];
+    }
+
+    /// @notice Turn `turn`'s assignment at `position`, how many revisions it has and the latest, zeros when
+    /// it has none, at a cost that does not grow with the revisions.
+    function assignmentHeadOf(uint64 turn, uint16 position)
+        external
+        view
+        returns (Assignment memory, uint256 count, Revision memory latest)
+    {
+        Revision[] storage list = revisions[turn][position];
+        count = list.length;
+        if (count != 0) latest = list[count - 1];
+        return (_assignment(turn, position), count, latest);
     }
 
     /// @notice Turn `turn`'s assignment at `position`: its member, and its revision at `index`, zeros past

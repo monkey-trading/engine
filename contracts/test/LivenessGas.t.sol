@@ -4,6 +4,7 @@ pragma solidity 0.8.36;
 import {console} from "forge-std/Test.sol";
 
 import {LogHeads} from "../src/LogHeads.sol";
+import {OperatorSchedule} from "../src/OperatorSchedule.sol";
 import {LivenessTest} from "./helpers/LivenessTest.sol";
 
 /// Reports, before refunds and with cold storage as in their own transactions, a live and a held
@@ -73,5 +74,38 @@ contract LivenessGasTest is LivenessTest {
         assertLt(witnessGas, 95_000);
         assertLt(promoteGas, 550_000);
         assertLt(registerGas, 115_000);
+    }
+
+    /// A member's own moves to the release it holds add revisions to its assignment. `assignmentHeadOf`
+    /// answers the same assignment, count and latest revision as `assignmentOf` at a cost that
+    /// does not grow with them, where `assignmentOf` pays about 5,000 gas for each.
+    function test_AnAssignmentsHeadReadsAtACostThatDoesNotGrowWithItsRevisions() public {
+        _beat();
+        uint16 position = schedule.turnOf(turn).position;
+        uint256[2] memory counts = [uint256(20), 220];
+        uint256[2] memory headCosts;
+        uint256[2] memory listCosts;
+        uint256 made = 0;
+        for (uint256 k = 0; k < 2; ++k) {
+            for (; made < counts[k]; ++made) {
+                vm.prank(alice);
+                registry.setRelease(_digest(1), CONFIG);
+            }
+            (OperatorSchedule.Assignment memory assignment, OperatorSchedule.Revision[] memory list) =
+                schedule.assignmentOf(turn, position);
+            vm.cool(address(schedule));
+            (OperatorSchedule.Assignment memory read, uint256 count, OperatorSchedule.Revision memory latest) =
+                schedule.assignmentHeadOf(turn, position);
+            headCosts[k] = vm.lastCallGas().gasTotalUsed;
+            assertEq(abi.encode(read), abi.encode(assignment), "the same assignment");
+            assertEq(count, list.length, "every revision counted");
+            assertGt(count, counts[k], "the moves added revisions");
+            assertEq(abi.encode(latest), abi.encode(list[count - 1]), "the latest revision");
+            vm.cool(address(schedule));
+            schedule.assignmentOf(turn, position);
+            listCosts[k] = vm.lastCallGas().gasTotalUsed;
+        }
+        assertEq(headCosts[1], headCosts[0], "the head's cost does not grow");
+        assertGt(listCosts[1], listCosts[0] + 200 * 4_000, "the list's cost does");
     }
 }

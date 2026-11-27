@@ -716,7 +716,7 @@ an index: load only the rule whose hint matches the current action.
   (`boundUnder`). `OperatorSchedule` holds the heartbeat rule within deployment bounds, marks
   slots (`witness`), promotes the next qualified member's vouched standby key to the vault's signer in a
   new epoch with no timelock (`promote`, `Vault.promoteSigner`), keeps every assignment and its release
-  revisions (`assignmentOf`), and registers standby keys from the candidate with a vouch from the vault's
+  revisions (`assignmentOf`, and `assignmentHeadOf` for the assignment with its revision count and latest at a cost that does not grow with them), and registers standby keys from the candidate with a vouch from the vault's
   signer or a promotable standby key, recovered by `LogHeads.recover` (`registerStandby`, `promotable`);
   `promotionDueAt` is the earliest time a promotion could pass. From #596 it skips a turn whose current
   assignment no head latched within `takeWindow` marked slots to the next member in its order, in a new
