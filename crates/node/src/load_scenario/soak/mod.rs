@@ -392,6 +392,8 @@ impl Soak {
         if let Some(stored) = self.stored.as_mut() {
             stored.restarted(self.driven.elapsed(), off_host);
         }
+        // The storage tasks that ended before this stop are failures of the interval: the node's handles go with it.
+        self.interval.note_storage_ended(&old.storage_ended(), "a restart");
         let stopping = Instant::now();
         let stopped = if abrupt { old.kill().await } else { old.stop(true).await };
         if let Err(error) = stopped {
