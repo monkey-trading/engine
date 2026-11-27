@@ -400,11 +400,15 @@ readers take them from there.
 
 **What is happening.** The node's log lists a segment that its host does not hold, and that it must
 keep: one after the oldest segment on the host, which a restart's read of the log refuses to skip,
-or one whose ranges the bucket does not hold yet. Neither the bucket nor any archive mirror gave it
-back. The alert names the newest such segment; the window tries the ones before it once that one is
-back, so each in turn may page. The host removed or lost the file, since the window removes a segment only once the bucket
-gives it back. The trading server keeps sequencing, but its uploads wait at that segment's range and
-`archive_upload_lagging` follows, and a restart refuses a log with a gap.
+one the daily snapshots or the history index keep, from the floors on, or one whose ranges the bucket
+does not hold yet. Neither the bucket nor any archive mirror gave it back. The alert names the newest
+such segment; the window tries the ones before it once that one is back, and the console logs each it
+cannot put back while the episode stays open. A segment after the oldest on the host, or one the
+bucket does not hold yet, the host removed or lost, since the window removes a segment only once the
+bucket gives it back; one the floors keep may be one the window removed before a floor moved back,
+which comes back, and the alert resolves, once the bucket answers. While the bucket lacks the
+segment's range, the uploads wait at it and `archive_upload_lagging` follows, and a restart refuses a
+log with a gap.
 
 1. Read the segment the alert's message names, and the console lines around it.
 2. Check whether a member's copy holds the segment: on a member, `ls <node.log_dir>/<segment>`. A

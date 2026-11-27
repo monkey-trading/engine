@@ -1679,9 +1679,10 @@ Known limits:
 - The host can withhold the newer snapshots, so a start goes on from an older one and replays more of
   the log, or remove the log's segments before the newest usable snapshot's checkpoint. A start with no
   usable snapshot then puts the segments it lacks back from the archive's bucket before it replays the
-  whole log, as does a start with a posted head older than the links the snapshot carries, and each
-  refuses to serve where neither the bucket nor an archive mirror gives them back. A start never takes a
-  snapshot the vault has not finalized.
+  whole log, as does a start with a posted head older than the links the snapshot carries, and a
+  rebuild of the account history index puts back those it takes, and each refuses to serve where neither
+  the bucket nor an archive mirror gives them back, the rebuild under `history_recovery_failed`. A start
+  never takes a snapshot the vault has not finalized.
 - A trading server or a member that started from a daily snapshot did not replay the log before the
   snapshot's checkpoint, so its own check at a handover or a promotion counts only for a range that
   starts after that checkpoint, and a member answers another's question only for a range that starts

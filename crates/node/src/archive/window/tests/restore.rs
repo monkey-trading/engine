@@ -216,17 +216,17 @@ async fn a_whole_replay_writes_no_listing_not_named_for_its_first_seq() {
     assert!(!fixture.dir.parent().unwrap().join("outside.jsonl").exists());
 }
 
-/// A window that starts following removes what an earlier process's crash left staged, and leaves this process's own,
-/// which a restore beside it may be writing.
+/// A window that starts following removes what an earlier process's crash left staged, whatever process id that ran
+/// under, and leaves this process's own, which a restore beside it may be writing.
 #[test]
 fn a_window_removes_only_an_earlier_processs_staged_restores() {
     let dir = scratch_dir("window-staged");
     std::fs::create_dir_all(&dir).unwrap();
     let file = crate::log::segment_name(4);
-    let (earlier, mine) = (format!("{file}.restoring.1.0"), format!("{file}.restoring.{}.0", std::process::id()));
-    for staged in [&earlier, &mine] {
-        std::fs::write(dir.join(staged), b"part").unwrap();
-    }
+    let earlier = format!("{file}.restoring.{:016x}.0", std::process::id());
+    std::fs::write(dir.join(&earlier), b"part").unwrap();
+    let mine = crate::archive::window::restore::staged(&dir, &file);
+    std::fs::write(&mine, b"part").unwrap();
     crate::archive::window::restore::remove_staged(&dir).unwrap();
-    assert!(!dir.join(&earlier).exists() && dir.join(&mine).exists());
+    assert!(!dir.join(&earlier).exists() && mine.exists(), "an earlier run's goes, as under the same process id");
 }

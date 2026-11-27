@@ -22,10 +22,13 @@ use crate::log::{MANIFEST, Manifest, SegmentInfo, list_segments};
 use crate::standby::MAX_ARCHIVE_BYTES;
 use crate::standby::archive::{Fetched, check_listing, fetch_from, validate_listing};
 
-/// What a segment's file name is followed by while its restored bytes are written, then this process's id and a count
-/// of its restores, so concurrent restores of one segment each write a file of their own; no reader of the log takes
-/// such a file as a segment (`log::segment_seq`).
+/// What a segment's file name is followed by while its restored bytes are written, then this process's run (`RUN`)
+/// and a count of its restores, so concurrent restores of one segment each write a file of their own; no reader of the
+/// log takes such a file as a segment (`log::segment_seq`).
 const RESTORING: &str = ".restoring.";
+/// A number this process drew at random, naming its staged files apart from an earlier process's, which a guest that
+/// starts the same way each boot may have run under the same process id.
+static RUN: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| rand::RngCore::next_u64(&mut rand::rngs::OsRng));
 /// Restores this process has staged.
 static STAGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -223,7 +226,7 @@ impl Window {
 
 /// Writes `bytes`, which are `listed`'s, into the log directory `dir` as its file: under a name of its own first,
 /// created anew, synced, then renamed into place and the directory synced, so a crash leaves the segment whole or
-/// absent, and a restore of the same segment beside it writes another file.
+/// absent, and a restore of the same segment beside it writes another file. A write that fails removes its file.
 /// Error cases:
 /// - `listed` is not named for its first seq (`validate_listing`), so its name could reach outside `dir`
 /// - the file cannot be written, synced or renamed, or the directory synced
@@ -231,14 +234,20 @@ pub(crate) fn write(dir: &Path, listed: &SegmentInfo, bytes: &[u8]) -> anyhow::R
     validate_listing(listed)?;
     let staged = staged(dir, &listed.file);
     let mut file = File::create_new(&staged).with_context(|| format!("creating {}", staged.display()))?;
-    file.write_all(bytes).with_context(|| format!("writing {}", staged.display()))?;
-    file.sync_all().with_context(|| format!("syncing {}", staged.display()))?;
-    std::fs::rename(&staged, dir.join(&listed.file)).with_context(|| format!("renaming {}", staged.display()))?;
+    let written = (|| {
+        file.write_all(bytes).with_context(|| format!("writing {}", staged.display()))?;
+        file.sync_all().with_context(|| format!("syncing {}", staged.display()))?;
+        std::fs::rename(&staged, dir.join(&listed.file)).with_context(|| format!("renaming {}", staged.display()))
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    written?;
     File::open(dir)?.sync_all().with_context(|| format!("syncing {}", dir.display()))
 }
 
 /// Removes the staged files a crash of an earlier process left in `dir` part way through a restore, leaving this
-/// process's, which a restore of its own may be writing.
+/// process's run's, which a restore of its own may be writing.
 /// Error cases:
 /// - the directory cannot be listed, or a staged file removed
 pub(crate) fn remove_staged(dir: &Path) -> anyhow::Result<()> {
@@ -249,7 +258,7 @@ pub(crate) fn remove_staged(dir: &Path) -> anyhow::Result<()> {
     };
     for item in listing {
         let path = item.with_context(|| format!("listing {}", dir.display()))?.path();
-        let mine = format!("{RESTORING}{}.", std::process::id());
+        let mine = format!("{RESTORING}{:016x}.", *RUN);
         let name = path.file_name().and_then(|name| name.to_str()).unwrap_or_default();
         if name.contains(RESTORING) && !name.contains(&mine) {
             std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
@@ -328,10 +337,15 @@ pub(crate) async fn history_start(
 }
 
 /// Puts `lacking`, listings of the log in `dir` the host lacks, back from `sources`, newest first: an interruption
-/// leaves the host's segments one run, which every read of the directory requires. How many it put back.
+/// leaves the host's segments one run, which every read of the directory requires. What an earlier process's crash
+/// left staged is removed first. How many it put back.
 /// Error cases:
 /// - a listing is not named for its first seq, or cannot be read from the archive or written
 async fn put_back_all(sources: &Sources, dir: &Path, lacking: &[SegmentInfo]) -> anyhow::Result<u64> {
+    if !lacking.is_empty() {
+        let staged = dir.to_owned();
+        spawn_blocking(move || remove_staged(&staged)).await??;
+    }
     for listed in lacking.iter().rev() {
         let bytes = sources.fetch(listed).await?;
         let (into, listed, written) = (dir.to_owned(), listed.clone(), listed.file.clone());
@@ -355,7 +369,7 @@ fn lacking(dir: &Path) -> anyhow::Result<Vec<SegmentInfo>> {
 }
 
 /// A name of its own `file` is written under before it is renamed into place.
-fn staged(dir: &Path, file: &str) -> PathBuf {
+pub(super) fn staged(dir: &Path, file: &str) -> PathBuf {
     let n = STAGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    dir.join(format!("{file}{RESTORING}{}.{n}", std::process::id()))
+    dir.join(format!("{file}{RESTORING}{:016x}.{n}", *RUN))
 }

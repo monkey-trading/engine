@@ -46,10 +46,10 @@ pub(crate) struct Floors {
     pub history: Option<u64>,
 }
 
-/// The daily snapshots whose file was read whole as its listing names it, its SHA-256 included, by file, with the
-/// length and modification time the file had then: one that changed since is read again.
+/// The daily snapshots whose file was read, by file, with the length and modification time it had then and whether it
+/// hashed as its listing names it: one that changed since is read again, and one that did not is not.
 #[derive(Default)]
-pub(crate) struct Checked(BTreeMap<String, (u64, Option<SystemTime>)>);
+pub(crate) struct Checked(BTreeMap<String, ((u64, Option<SystemTime>), bool)>);
 
 /// Where a new or discarded history index takes a log whose first segment left the host from (`fresh_start`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,8 +137,8 @@ impl Checked {
     /// when it is new here or changed since.
     fn hashes(&mut self, snapshots: &Path, listing: &Listed, file: &std::fs::Metadata) -> bool {
         let seen = (file.len(), file.modified().ok());
-        if self.0.get(&listing.file) == Some(&seen) {
-            return true;
+        if let Some((_, whole)) = self.0.get(&listing.file).filter(|(read, _)| *read == seen) {
+            return *whole;
         }
         let read = std::fs::File::open(snapshots.join(&listing.file)).and_then(|mut file| {
             let (mut hash, mut chunk) = (Sha256::new(), vec![0; 1 << 20]);
@@ -150,9 +150,10 @@ impl Checked {
             }
         });
         let whole = read.is_ok_and(|sha256| sha256 == listing.sha256);
-        if whole {
-            self.0.insert(listing.file.clone(), seen);
+        if !whole {
+            tracing::warn!(snapshot = %listing.file, "a daily snapshot's file does not hash as its listing names it");
         }
+        self.0.insert(listing.file.clone(), (seen, whole));
         whole
     }
 }

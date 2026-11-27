@@ -249,8 +249,8 @@ an index: load only the rule whose hint matches the current action.
   (`window/bounds.rs`), a read of it from the bucket just before gives back its listing's bytes, and no reader inside the
   node holds it (`log/holds.rs`, which `LogReader` takes before it opens a segment, checked under the lock the removal
   holds; a stream client's feed is `unheld`); a listed segment the host must keep and lacks is put back from the bucket or
-  a mirror, newest first and none after one that fails (one before the oldest on the host only while the bucket lacks a
-  range of it), else Critical `log_segment_missing` for that one, a reader or the bucket's read-back holding a segment two
+  a mirror, newest first and none after one that fails (one before the oldest on the host only while the floors keep it or
+  the bucket lacks a range of it), else Critical `log_segment_missing` for that one, a reader or the bucket's read-back holding a segment two
   days past the window Warning `log_window_held`, passes failing for an hour, as over a directory without the newest
   segment its writer names, Warning `log_window_failing`; every whole replay (a start with no snapshot, a posted head
   older than a snapshot's links, a member replica, a handover's copy) first puts back what the window removed, newest
