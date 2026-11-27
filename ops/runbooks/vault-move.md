@@ -457,7 +457,7 @@ curl -sf $API/v1/monkey | jq .emissions
 curl -sf $API/v1/awards | jq .
 ```
 
-The first command prints `v90`, or a later version. The second shows the alpha's emission schedule. The third lists the
+The first command prints `v92`, or a later version: from V92 the launch log refuses a staking or registry event at or below the carried frontier. The second shows the alpha's emission schedule. The third lists the
 carried awards, with nothing paid.
 
 **If it fails:** follow [The carried genesis holds or is refused](#the-carried-genesis-holds-or-is-refused).
