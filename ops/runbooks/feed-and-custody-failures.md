@@ -749,12 +749,20 @@ longer interval does not change when a stall pages.
 ## Checkpoint endpoint
 
 Use this procedure when `checkpoint_post_failed`, `checkpoint_relayer_low`, `log_head_post_failed`,
-`log_head_stalled` or `log_head_read_failed` fires.
+`log_head_stalled`, `log_head_read_failed` or `checkpoint_endpoint_disagrees` fires.
 
 `[checkpoints].rpc_url` is an endpoint separate from the custody providers, and it carries the
 relayer's transactions. It must support `eth_sendTransaction`, `eth_getTransactionByHash` and
 `eth_getTransactionCount`, hold the funded relayer account, and serve historical nonce reads. It has
 no authority over funds.
+
+The holder of the keys also reads, through this endpoint, the vault's current release and the turn
+that admit a successor, and the rotation switch before it sends delivered secrets. A strict majority
+of the custody providers must read the same at the same block before anything moves. When they
+differ, `checkpoint_endpoint_disagrees` fires, the holder hands nothing over, and a handover waits
+until they agree. Compare the endpoint's answer with a custody provider's at the block the alert
+names, for example `cast call $VAULT 'currentRelease()(bytes32)' --block <block> --rpc-url <url>`.
+An endpoint that answers wrongly is replaced in step 4.
 
 If the endpoint is down, or the relayer cannot pay for gas, posts fail with `checkpoint_post_failed`
 and the checkpoints queue. The queue is bounded, and a full queue raises `checkpoint_backlog`.

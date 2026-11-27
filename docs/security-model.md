@@ -1396,6 +1396,18 @@ request gives its place up to the new one. The new release fetches its quote's v
 before it connects, so its request follows the challenge by one quote. The delivery listener holds
 connections the same way, and quotes for at most eight of them at once.
 
+The holder reads what names a successor's release in two ways before it stops. Its checkpoint
+endpoint, a single provider, reads the vault's current release, its generation and its fold at the
+endpoint's finalized block or, from a daily turn's boundary, the turn that the finalised schedule
+names there, with the registered release and admin key of the turn's member. A strict majority of
+the custody providers must then read the same at that block, which they must name by the same hash
+and hold final. Any difference refuses the request, raises the Warning
+`checkpoint_endpoint_disagrees`, and sequencing goes on. While the custody providers' latest agreed
+block shows a turn naming the operator, that read fixes the successor's release itself, and the
+endpoint can only refuse. The delivered secrets move only once the endpoint and the custody
+providers each read the registry's rotation switch off, both at the finalized block and at the
+latest.
+
 The trading server's credentials reach it only encrypted to a one-time key whose quote proves that
 an enclave of the release holds it. They are its RPC provider keys, its market-data vendor keys and
 key pairs, its screening source key, the seed relayer's Ethereum provider and beacon
@@ -1448,6 +1460,10 @@ Known limits:
 - A holder admits a skip's member, and hands it the keys, from the latest block that the custody
   quorum agrees on, before the skip is final, as [liveness and promotion](#liveness-and-promotion)
   describes.
+- A holder whose checkpoint endpoint disagrees with the custody providers, or runs more than a
+  minute ahead of their finality, keeps its keys and its secrets until they agree, so a faulty
+  endpoint can stall a handover. A strict majority of the custody providers is trusted for what it
+  reads, as it is for deposits.
 - A host that restores an older sealed file of delivered secrets gets the older bundle, whose
   version the enclave's attested status shows. Nothing bounds such a restore more tightly, so the
   operator revokes a rotated credential at its provider.

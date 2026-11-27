@@ -17,8 +17,9 @@ mod tail;
 mod tail_handover;
 mod turns;
 use tail::write_log_tail;
+mod quorum;
 mod vault;
-use vault::{Rotation, Vault};
+use vault::{Majority, Rotation, Vault};
 
 use super::*;
 
@@ -95,6 +96,8 @@ struct Exchange {
     assignments: Arc<crate::handover::assigned::tests::FakeAssignments>,
     /// The checkpoint the vault accepted last, as both sides read it: none until a test sets one.
     finalized: Arc<Mutex<Option<(u64, String)>>>,
+    /// The custody quorum's reads, as the predecessor confirms its vault's with them.
+    majority: Arc<Majority>,
 }
 
 #[tokio::test]
@@ -287,6 +290,15 @@ impl Exchange {
         let stand_in = Box::new(MockSealer { launch_digest: RELEASE });
         let secrets = Arc::new(SecretStore::open(&dir, stand_in, PREDECESSOR_CONFIG).unwrap());
         let assignments = Arc::new(crate::handover::assigned::tests::FakeAssignments::default());
+        let vault = Vault {
+            signer: AccountId([0; 20]),
+            current: current.clone(),
+            synced: synced.clone(),
+            rotation: rotation.clone(),
+            scheduled: scheduled.clone(),
+            finalized: finalized.clone(),
+        };
+        let majority = Arc::new(Majority::of(&vault));
         let predecessor = Predecessor {
             listener,
             // Every connection here comes from loopback: one address holds any number, as peers on as many
@@ -303,14 +315,8 @@ impl Exchange {
             signer: AccountId(old.enclave_key().unwrap().address()),
             store: store.clone(),
             attestor: Box::new(MockAttestor),
-            vault: Vault {
-                signer: AccountId([0; 20]),
-                current: current.clone(),
-                synced: synced.clone(),
-                rotation: rotation.clone(),
-                scheduled: scheduled.clone(),
-                finalized: finalized.clone(),
-            },
+            vault,
+            quorum: majority.clone(),
             log_dir: predecessor_log.clone(),
             trusted: TrustedClock::new(Arc::new(SystemClock), samples_rx, Duration::from_secs(1)),
             drain,
@@ -351,6 +357,7 @@ impl Exchange {
             metrics: crate::metrics::Metrics::new(),
             assignments,
             finalized,
+            majority,
         }
     }
 

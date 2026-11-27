@@ -11,7 +11,10 @@
 //! stopped, the turns retained at the stop answer, for turns up to `turns::SOURCE_LOOKBACK` past the
 //! last one they know. The holder reads the assignment again just before its stop and, once stopped,
 //! before the keys go: one that moved since the admission refuses that successor, and the stopped
-//! holder goes on serving the member now named.
+//! holder goes on serving the member now named. With no turn naming the operator at the latest agreed
+//! block, or no reader, the finalised schedule's turn or the vault's own release, which the checkpoint
+//! endpoint reads, decide only once the custody quorum reads the same at the same block
+//! (`quorum::confirmed_generation`).
 
 use anyhow::{Context, bail, ensure};
 use engine_core::turns::{DailyTurns, TURN_MS};
@@ -20,17 +23,20 @@ use engine_core::types::Millis;
 use crate::checkpoints::{CheckpointChain, Observation};
 use crate::handover::Predecessor;
 use crate::handover::assigned::{Assigned, Binding, Reason};
+use crate::handover::quorum::confirmed_generation;
 use crate::handover::turns::{SOURCE_LOOKBACK, named_generation};
 use crate::tee::sealing::Release;
 
 impl<C: CheckpointChain> Predecessor<C> {
     /// Whether this release may hand its keys to a successor running `release` whose request binds
     /// `binding`, by the latest agreed block's assignment when this listener reads one, and by the
-    /// finalised schedule at `at` and trusted time as before otherwise (see the module).
+    /// finalised schedule at `at` and trusted time as before otherwise, which the custody quorum must
+    /// read as the checkpoint endpoint does (`confirmed_generation`; see the module).
     /// Error cases:
     /// - the latest assignment cannot be read, is not the one `binding` names, or names another release
     /// - a draw, a promotion or a revised skip fails the finalised checks (`named_generation`,
     ///   `ensure_logged`), or another skip the log's notice rule (`ensure_noticed`)
+    /// - with no latest assignment, the finalised checks fail, or the custody quorum reads otherwise
     pub(super) async fn admit_turn(
         &self,
         binding: Option<&Binding>,
@@ -43,7 +49,7 @@ impl<C: CheckpointChain> Predecessor<C> {
             None => None,
         };
         let Some(assigned) = latest else {
-            let (_, turn) = named_generation(&self.vault, at, release, reached).await?;
+            let (_, turn) = confirmed_generation(&self.vault, self.quorum.as_ref(), at, release, reached).await?;
             if let Some(turn) = turn {
                 self.ensure_logged(&turn).await?;
             }

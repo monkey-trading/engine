@@ -45,6 +45,8 @@ mod record;
 pub(crate) use crate::custody::evm::GovernanceRecord;
 pub(crate) use record::RecordReader;
 mod registry;
+mod release_reads;
+pub(crate) use release_reads::ReleaseReader;
 mod rpc;
 pub(crate) mod staking;
 mod staking_terms;

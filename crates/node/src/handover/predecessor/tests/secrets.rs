@@ -18,7 +18,7 @@ fn named(exchange: &Exchange) -> Vec<crate::config::NamedSecret> {
 
 impl Exchange {
     /// The successor's side, asking for the secrets alone, signed for by `operator`.
-    async fn fetch(&self, operator: AccountId) -> anyhow::Result<crate::secrets::SignedBundle> {
+    pub(super) async fn fetch(&self, operator: AccountId) -> anyhow::Result<crate::secrets::SignedBundle> {
         let sealer = MockSealer { launch_digest: UPGRADE };
         fetch_secrets(&self.successor, &self.address, &sealer, &MockAttestor, operator, &named(self)).await
     }
@@ -29,7 +29,7 @@ impl Exchange {
     }
 
     /// The dev config's operator, whose key `crate::secrets::tests::operator_key` is.
-    fn operator(&self) -> AccountId {
+    pub(super) fn operator(&self) -> AccountId {
         self.successor.operator().unwrap().address
     }
 }

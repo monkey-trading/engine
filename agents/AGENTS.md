@@ -438,7 +438,10 @@ an index: load only the rule whose hint matches the current action.
   a node the vault does not name serves only its attestation until governance registers it;
   `handover/`: an upgrade the vault's timelock approved, or an election the registry in effect
   names, takes the keys — and the sealed tail segment, so no seq is missing — over HPKE after each
-  release attests the other; the elected successor resolves the incumbent's handover endpoint from
+  release attests the other, the holder admitting a release, a turn or, for the delivered secrets, a
+  rotation switch its checkpoint endpoint reads only once a strict majority of the custody providers
+  reads the same at the same final block (`handover/quorum.rs`, `custody/release_reads.rs`); the
+  elected successor resolves the incumbent's handover endpoint from
   the registry's recorded source and fetches the published log first), the trusted time check against
   Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, which from V75 records a staking frontier at the engine's time once an epoch has ended past it, `custody/mock_frontier.rs`, or EVM vault deposits over alloy, each window of blocks read once with the hash of its last block and checked for a reorganisation each poll by that boundary's header read again, walking back through the stored window ends on a mismatch, and each receipt's block and the deposit count read again once final before its principal is released (`custody/evm/progress.rs`, `custody/tests/confirmed/scan/boundary.rs`), from V83 holding a reorganisation's transitions until each orphan is paired or, at the eligible head, disproved, and moving its receipts in one command, `custody/evm/lifecycle/transitions.rs`, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress

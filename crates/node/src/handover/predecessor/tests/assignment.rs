@@ -369,6 +369,7 @@ pub(super) async fn listener_over(
             scheduled: exchange.scheduled.clone(),
             finalized: exchange.finalized.clone(),
         },
+        quorum: exchange.majority.clone(),
         log_dir: exchange.successor_log.clone(),
         trusted: TrustedClock::new(Arc::new(SystemClock), samples, Duration::from_secs(1)),
         drain,
