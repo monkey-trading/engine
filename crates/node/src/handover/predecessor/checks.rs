@@ -19,8 +19,11 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// set within count and byte budgets the keys message and memory hold. The successor is
     /// expected to hold the rest from the archive; a transfer past these bounds is refused before
     /// the stop, with a message that says to sync the archive first.
+    /// Each listed segment must also still be on this host: `archive.local_window` may have removed an
+    /// old one, and a read that fails after the stop leaves the predecessor stopped with nothing sent.
     /// Error cases:
     /// - the manifest or the log directory cannot be read
+    /// - a listed segment past the tip is no longer in the log directory
     pub(super) fn transfer_bounds(&self, tip: Option<u64>) -> anyhow::Result<()> {
         const MAX_TAILS: usize = 1024;
         const MAX_TRANSFER_BYTES: u64 = 8 << 30;
@@ -40,6 +43,17 @@ impl<C: CheckpointChain> Predecessor<C> {
                 "the log segment {} is over the handover's 64 MiB frame bound: the successor cannot take it",
                 listed.file
             );
+            match std::fs::metadata(self.log_dir.join(&listed.file)) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(anyhow!(
+                        "the log segment {} is no longer on this host, so it cannot be sent: sync the successor's \
+                         copy from the archive first",
+                        listed.file
+                    ));
+                }
+                Err(e) => return Err(e).with_context(|| format!("reading {}", listed.file)),
+            }
             count += 1;
             bytes += listed.bytes;
         }

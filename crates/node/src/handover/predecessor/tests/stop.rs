@@ -1,6 +1,6 @@
 //! The handover's stop and the final checkpoint it hands over: refused with the checkpoint gate's
 //! causes while it would withhold the checkpoint, ended only when the drained log has the final
-//! checkpoint.
+//! checkpoint, and refused before it when a segment it would send is no longer on its host.
 
 use super::*;
 
@@ -102,4 +102,23 @@ fn the_final_head_is_the_checkpoint_of_the_last_command_the_sequencer_published(
     (6..40).for_each(|seq| publish(&tx, LogEntry::Command(command(seq))));
     publish(&tx, LogEntry::Checkpoint(checkpoint(39, &root("cc"))));
     assert_eq!(Published::new(rx, Some(5), Some(&recovered)).final_head().unwrap().seq, 39);
+}
+
+/// A whole-log take of a segment the host's log window removed is refused before the stop, saying to
+/// sync the successor's copy from the archive first: the predecessor is never asked to stop, so it
+/// sequences on.
+#[tokio::test]
+async fn a_segment_the_window_removed_is_refused_before_the_stop() {
+    let mut exchange = Exchange::start("handover-window-removed").await;
+    exchange.make_upgrade_current();
+    write_log_tail(&exchange.predecessor_log, 3, &exchange.old.enclave_key().unwrap());
+    std::fs::remove_file(exchange.predecessor_log.join(format!("{:020}.jsonl", 0))).unwrap();
+    let taken = timeout(Duration::from_secs(5), exchange.take())
+        .await
+        .expect("the predecessor stopped for a segment it could not send");
+    let Err(err) = taken else { panic!("keys left with a segment the host no longer holds") };
+    let err = format!("{err:#}");
+    assert!(err.contains("no longer on this host") && err.contains("sync the successor's copy"), "{err}");
+    assert!(exchange.drains.try_recv().is_err(), "the predecessor asked to stop");
+    assert!(!exchange.run.is_finished(), "the refusal ended the predecessor");
 }
