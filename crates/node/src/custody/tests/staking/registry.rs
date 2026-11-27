@@ -147,7 +147,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut AdaptiveSize::new(1_000),
         (1, end_at(3), None),
         (false, true, true, true),
-        None,
+        (None, false),
     )
     .await
     .unwrap_err();
@@ -164,7 +164,7 @@ async fn events_stall_until_the_registry_binding_is_verified() {
         &mut AdaptiveSize::new(1_000),
         (1, end_at(3), None),
         (true, true, true, true),
-        None,
+        (None, false),
     )
     .await
     .unwrap();
@@ -342,4 +342,47 @@ fn schedule_watcher_with_range(
 /// What `account` has staked in the engine, and the rotation sets it has mirrored.
 async fn mirrored(node: &Node, account: AccountId) -> (TokenUnits, Vec<u32>) {
     node.read(move |engine| (engine.staked(account), engine.daily_turns().sets.keys().copied().collect())).await
+}
+
+/// A carried genesis's stakes are mirrored again from the configured block of the staking contract's deployment,
+/// which the first window checks the contract has no code before: no block, or one after the deployment, which would
+/// miss the events before it, stalls; a window that resumes past the first checks nothing more.
+#[tokio::test]
+async fn the_carried_stakes_are_mirrored_again_only_from_a_block_before_the_staking_contracts_code() {
+    let dir = scratch("remirror-start");
+    let chains = poll_chains(10);
+    for chain in &chains {
+        chain.0.lock().unwrap().staking_deployed_at = Some(5);
+    }
+    // A poll reads the providers' identity first, which admits them to the reads after it.
+    let watcher = async |deployment: Option<u64>| {
+        let line = deployment.map(|block| format!(", deployment_block = {block}")).unwrap_or_default();
+        let toml = format!(
+            r#"{}
+            staking = {{ contract = "0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", cursor_path = "{}"{line}, registry = {{ contract = "{REGISTRY}" }} }}
+            "#,
+            evm_toml(&dir, 100),
+            dir.join("staking-cursor.json").display()
+        );
+        let cfg: EvmCustodySection = toml::from_str(&toml).unwrap();
+        let quorum =
+            Quorum::new(chains.iter().enumerate().map(|(i, chain)| (format!("p{i}"), chain.clone())).collect())
+                .unwrap();
+        quorum.identity().await.unwrap();
+        DepositWatcher::start(quorum, &cfg, CHAIN_ID, VAULT, None).unwrap()
+    };
+    let stalled = |error: PollError| match error {
+        PollError::Stalled(Stall::Inconsistent(cause)) => cause.to_string(),
+        other => panic!("{other:?}"),
+    };
+    let none = stalled(watcher(None).await.remirror_start(None, None).await.unwrap_err());
+    assert!(none.contains("deployment_block must name"), "{none}");
+    let late = stalled(watcher(Some(8)).await.remirror_start(None, None).await.unwrap_err());
+    assert!(late.contains("has code before custody.evm.staking.deployment_block 8"), "{late}");
+    assert_eq!(watcher(Some(5)).await.remirror_start(None, None).await.unwrap(), 5);
+    assert_eq!(
+        watcher(Some(8)).await.remirror_start(None, Some(9)).await.unwrap(),
+        8,
+        "a resumed window checks nothing"
+    );
 }

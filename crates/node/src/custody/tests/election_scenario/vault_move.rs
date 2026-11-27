@@ -5,11 +5,11 @@
 //! the alpha settles at a checkpoint its vault accepts, and `engine carry` builds the carry from its log, which it
 //! refuses at an earlier checkpoint, while rotation was on. The guardian retires the alpha's signer; the launch
 //! vault and its schedule deploy, and one timelock batch moves the registry's custody and MONKEY's minter to them.
-//! The launch node holds until the chain shows the move done, then sequences a genesis carrying every entitlement,
-//! stake and award, each award unpaid. The trader claims the rest of its MONKEY against the launch vault, a
-//! member's new stake mirrors once past the carried frontier, and a close pays the carried award from its whole
-//! amount. The launch log replays and checks against the alpha's, and a carry file with an entitlement raised by
-//! one unit is refused.
+//! The launch node holds until the chain shows the move done, then sequences a genesis carrying every entitlement
+//! and award, each award unpaid, and mirrors the staking contract's events again until each stake is the alpha's.
+//! The trader claims the rest of its MONKEY against the launch vault, a member's new stake mirrors once past the
+//! carried frontier, and a close pays the carried award from its whole amount. The launch log replays and checks
+//! against the alpha's, and a carry file with an entitlement raised by one unit is refused.
 
 mod helpers;
 
@@ -199,19 +199,23 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
     let started = Instant::now();
     let mut node = Node::start_posting_checkpoints(&chain, launch).await;
     let alpha = crate::exit::engine_at_checkpoint(&alpha_dir, seq).unwrap();
-    let carried = node
-        .query(|e| {
-            let staking = e.staking().map(|staking| staking.mirrored_through);
-            (e.carried_from(), e.entitlements().clone(), e.staked_balances().clone(), staking, e.awards().clone())
-        })
-        .await;
+    let carried = node.query(|e| (e.carried_from(), e.entitlements().clone(), e.awards().clone())).await;
     let unpaid: std::collections::BTreeMap<u64, Award> =
         alpha.awards().iter().map(|(id, award)| (*id, Award { paid: UsdcUnits(0), ..award.clone() })).collect();
     assert_eq!(carried.0, Some(file.source));
     assert_eq!((file.source.vault, file.source.seq), (AccountId(alpha_vault.into()), seq));
-    assert_eq!((&carried.1, &carried.2), (alpha.entitlements(), alpha.staked_balances()));
-    assert_eq!(carried.3, alpha.staking().map(|staking| staking.mirrored_through));
-    assert_eq!(carried.4, unpaid);
+    assert_eq!(&carried.1, alpha.entitlements());
+    assert_eq!(carried.2, unpaid);
+    // The genesis carried no stake: the launch node mirrors the staking contract's events again from its
+    // deployment, and each stake is the alpha's once it reaches the alpha's frontier.
+    assert!(!file.parts.iter().any(|part| matches!(part, CarryPart::Stakes { .. })), "the carry holds no stake");
+    node.wait("the carried stakes to be mirrored again", |e| !e.remirroring()).await;
+    let theirs = alpha.staking().and_then(|staking| staking.completed_through).expect("the alpha completed its scan");
+    let (stakes, completed) =
+        node.query(|e| (e.staked_balances().clone(), e.staking().and_then(|staking| staking.completed_through))).await;
+    assert_eq!(&stakes, alpha.staked_balances(), "each stake is the alpha's");
+    assert!(!stakes.is_empty() && completed.is_some_and(|completed| completed.block >= theirs.block));
+    println!("PASS: the launch log mirrored each of the alpha's {} stakes again, to its frontier", stakes.len());
     let recorded = node.query(|e| (e.governance().config, e.operator_faults().config)).await;
     assert_eq!(recorded.0.map(|config| config.vote.0), Some(vote.0.0), "the launch node records its vote contract");
     assert_eq!(recorded.1.map(|config| config.contract.0), Some(fault_proof.0.0), "and its fault proof contract");
@@ -221,8 +225,8 @@ async fn dev_scenario_the_launch_log_carries_monkey_stakes_and_awards_from_the_a
     assert_eq!(after, alpha_entitled, "no period before the launch log's first command allocated");
     node.wait("the mirror to catch up past the move", move |e| completed_through(e) >= Some(head)).await;
     println!(
-        "PASS: the launch log carried every entitlement, stake and award, each award unpaid, from seq {seq}; its \
-         mirror caught up from the carried frontier in {:?}",
+        "PASS: the launch log carried every entitlement and award, each award unpaid, from seq {seq}; its mirror \
+         caught up from the staking contract's deployment in {:?}",
         started.elapsed()
     );
 

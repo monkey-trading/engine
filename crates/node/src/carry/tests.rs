@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use engine_core::carry::CarryPart;
-use engine_core::command::{AdminCommand, Command, Sequenced};
+use engine_core::command::{Command, Sequenced};
+use engine_core::staking::StakingCheckpoint;
 use engine_core::types::AccountId;
 
 use super::*;
@@ -28,7 +30,7 @@ fn write_entries(label: &str, entries: &[LogEntry]) -> PathBuf {
 }
 
 /// The engine `parts` leave after a fresh node's genesis staking, as a start's pre-run runs them.
-fn pre_run(parts: &[CarryPart]) -> engine_core::Engine {
+pub(super) fn pre_run(parts: &[CarryPart]) -> engine_core::Engine {
     pre_run_at(parts, 0).unwrap()
 }
 
@@ -161,7 +163,8 @@ fn a_file_whose_totals_are_not_what_its_parts_carry_is_refused() {
 fn the_replay_refuses_an_unfinished_carry_and_one_its_engine_refused() {
     let source = write_entries("carry-replayed-source", &signed_fixture(Path::new(CARRIED)));
     let file = build(&source, None).unwrap();
-    let carried = write_entries("carry-replayed-carried", &engine_core_parts(&file.parts));
+    let (stakes, through) = source_stakes(&source, &file);
+    let carried = write_entries("carry-replayed-carried", &carried_log(&file, &stakes, through));
     assert!(check_replayed(&pre_run(&file.parts), &carried, Some(&source)).is_ok());
     let nothing = engine_core::Engine::new();
     assert!(check_replayed(&nothing, &carried, None).is_ok());
@@ -189,7 +192,8 @@ fn the_replay_check_ties_a_carried_log_to_its_signed_source() {
     let source = write_entries("carry-replay-source", &signed_fixture(Path::new(CARRIED)));
     let file = build(&source, None).unwrap();
     apply_after_genesis(&file);
-    let carried = write_entries("carry-replay-carried", &engine_core_parts(&file.parts));
+    let (stakes, through) = source_stakes(&source, &file);
+    let carried = write_entries("carry-replay-carried", &carried_log(&file, &stakes, through));
     let from = check_carried(&carried, &source).unwrap();
     assert_eq!((from.source, from.accounts, from.awards), (file.source, file.totals.accounts, file.totals.awards));
     assert_eq!(from.signer, AccountId(crate::tee::EnclaveKey::test_key().address()));
@@ -206,40 +210,85 @@ fn the_replay_check_ties_a_carried_log_to_its_signed_source() {
     let forged = write_entries("carry-replay-forged", &forged);
     assert!(format!("{:#}", check_carried(&carried, &forged).unwrap_err()).contains("checkpoint"));
 
-    // A carried log that left a stake out of its genesis carried other values than the source's state.
+    // A carried log that left an entitlement out of its genesis carried other values than the source's state.
     let mut short = file.clone();
     for part in &mut short.parts {
-        if let CarryPart::Stakes { entries } = part {
+        if let CarryPart::Entitlements { entries } = part {
             entries.pop();
         }
     }
-    let entries: Vec<LogEntry> = engine_core_parts(&short.parts);
-    let partial = write_entries("carry-replay-partial", &entries);
+    let partial = write_entries("carry-replay-partial", &carried_log(&short, &stakes, through));
     let error = check_carried(&partial, &source).unwrap_err();
     assert!(format!("{error:#}").contains("other values"), "{error:#}");
+
+    // Its stakes mirrored again to the source's total but split otherwise are not the source's; one short of the
+    // total never reaches the frontier, so the log ends before they are all mirrored again.
+    let mut moved = stakes.clone();
+    let (first, second) = (*moved.keys().next().unwrap(), AccountId([0x5f; 20]));
+    let amount = moved.remove(&first).unwrap();
+    moved.insert(second, amount);
+    let split = write_entries("carry-replay-split", &carried_log(&file, &moved, through));
+    let error = check_carried(&split, &source).unwrap_err();
+    assert!(format!("{error:#}").contains("not the source's"), "{error:#}");
+    let mut fewer = stakes.clone();
+    fewer.pop_first();
+    let short = write_entries("carry-replay-short", &carried_log(&file, &fewer, through));
+    let error = check_carried(&short, &source).unwrap_err();
+    assert!(format!("{error:#}").contains("before its stakes are mirrored again"), "{error:#}");
 }
 
-/// `parts` as unapplied command entries, which `check_carried` reads without replaying.
-fn engine_core_parts(parts: &[CarryPart]) -> Vec<LogEntry> {
-    (0..)
-        .zip(parts)
-        .map(|(seq, part)| {
-            let cmd = Command::Admin(AdminCommand::CarryState(part.clone()));
-            LogEntry::Command(CommandEntry { sequenced: Sequenced { seq, ts: 0, cmd }, events: None, seal: None })
-        })
-        .collect()
+/// The stakes the source log at `path` holds at `file`'s carried checkpoint, and its completed frontier there.
+fn source_stakes(path: &Path, file: &CarryFile) -> (BTreeMap<AccountId, TokenUnits>, StakingCheckpoint) {
+    let engine = crate::exit::engine_at_checkpoint(path, file.source.seq).unwrap();
+    let through = engine.staking().and_then(|staking| staking.completed_through).expect("a completed scan");
+    (engine.staked_balances().clone(), through)
+}
+
+/// The log a fresh node writes carrying `file`: its genesis, stamped 0, then `stakes` mirrored again, one stake an
+/// account at the source's frontier `through`, and that frontier, as the watcher sequences them.
+fn carried_log(
+    file: &CarryFile,
+    stakes: &BTreeMap<AccountId, TokenUnits>,
+    through: StakingCheckpoint,
+) -> Vec<LogEntry> {
+    let mut cfg = crate::test_support::dev_config();
+    cfg.genesis.staking = Some(engine_core::staking::StakingConfig {
+        liquidity_floor: engine_core::Fixed::from_int(1),
+        epoch_ms: 86_400_000,
+        start_ms: 86_400_000,
+        cooldown_ms: 3 * 86_400_000,
+    });
+    let cmds = crate::sequencer::carried_genesis_commands(&cfg.genesis, &file.parts);
+    let (auth, operator) = (cfg.client_auth().unwrap(), cfg.operator().unwrap());
+    let mut log = crate::sequencer::genesis::sequenced_genesis(&auth, operator, cmds, 0);
+    let block = through.block;
+    let mirrors = stakes.iter().map(|(&account, &amount)| Command::Stake {
+        account,
+        amount,
+        block,
+        chain_ref: format!("0xagain:{account}"),
+    });
+    let frontier =
+        Command::StakingProgress { block, block_hash: through.block_hash, block_time: through.time, named_turn: None };
+    let seq = log.len() as u64;
+    log.extend((seq..).zip(mirrors.chain([frontier])).map(|(seq, cmd)| Sequenced { seq, ts: 0, cmd }));
+    log.into_iter().map(|sequenced| LogEntry::Command(CommandEntry { sequenced, events: None, seal: None })).collect()
 }
 
 #[test]
-fn a_carry_past_what_the_first_segment_holds_for_its_members_is_refused() {
-    let mut file = build(Path::new(CARRIED), None).unwrap();
-    let CarryPart::Begin { globals, .. } = &mut file.parts[0] else { unreachable!("Begin comes first") };
-    globals.push_str(&" ".repeat(MAX_FILE_BYTES as usize));
-    let out = scratch_dir("carry-file-oversize").join("carry.json");
-    fs::create_dir_all(out.parent().unwrap()).unwrap();
-    let error = write(&file, &out).unwrap_err();
-    assert!(format!("{error:#}").contains("first segment"), "{error:#}");
-    assert!(!out.exists(), "nothing is written");
+fn a_carry_past_what_a_start_reads_into_memory_is_refused_both_ways() {
+    let file = build(Path::new(CARRIED), None).unwrap();
+    let bytes = encode_within(&file, u64::MAX).unwrap();
+    let length = bytes.len() as u64;
+    assert_eq!(encode_within(&file, length).unwrap(), bytes, "a carry at the bound is built");
+    let error = encode_within(&file, length - 1).unwrap_err();
+    assert!(format!("{error:#}").contains("a start reads into memory"), "{error:#}");
+    let path = scratch_dir("carry-file-oversize").join("carry.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    assert_eq!(read_within(&path, length).unwrap().0, file, "and read");
+    let error = read_within(&path, length - 1).unwrap_err();
+    assert!(format!("{error:#}").contains("longer than a carry file may be"), "{error:#}");
 }
 
 #[test]

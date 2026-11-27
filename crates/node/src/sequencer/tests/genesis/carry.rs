@@ -1,21 +1,27 @@
 //! A carried genesis is all or nothing too: parts that apply but leave the carry unfinished, and a genesis the
 //! stamp it takes refuses, are refused before anything is written, and a log whose genesis credited its house
-//! capital with a carry still open is refused at recovery.
+//! capital with a carry still open is refused at recovery. A log that carried stakes before `V93` refused them
+//! still recovers: its parts are judged under its own rules, not the latest.
 
 use std::path::Path;
 
 use engine_core::Engine;
 use engine_core::carry::CarryPart;
-use engine_core::command::Sequenced;
+use engine_core::command::{Command, Sequenced};
 use engine_core::staking::StakingConfig;
 
 use super::*;
+use crate::log::LogEntry;
 use crate::sequencer::GenesisProgress;
 use crate::sequencer::carried_genesis_commands;
+use crate::sequencer::fixture_tests::{replay_trusted, signed_fixture};
+use crate::sequencer::genesis::is_carry_part;
 use crate::sequencer::required::activation_commands;
 
 /// The node's reference log whose genesis carries the reference session's state, a source at its last checkpoint.
 const CARRIED: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v90-carried.jsonl");
+/// The node's reference log whose genesis carried the reference session's state, stakes included, under `V92`.
+const CARRIED_V92: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/reference/v92-carried.jsonl");
 
 /// The dev genesis, staking from the start.
 fn staked_genesis() -> Genesis {
@@ -85,4 +91,23 @@ fn a_genesis_credited_with_its_carry_still_open_is_refused_at_recovery() {
     let err = progress.ensure_closed().unwrap_err();
     assert!(format!("{err:#}").contains("did not end"), "{err:#}");
     assert!(engine.carry_progress().is_some());
+}
+
+#[test]
+fn a_log_that_carried_stakes_before_v93_still_matches_its_genesis_under_the_latest_rules() {
+    let entries = signed_fixture(Path::new(CARRIED_V92));
+    let stakes = |entry: &LogEntry| match entry {
+        LogEntry::Command(command) => {
+            matches!(command.sequenced.cmd, Command::Admin(AdminCommand::CarryState(CarryPart::Stakes { .. })))
+        }
+        _ => false,
+    };
+    assert!(entries.iter().any(stakes), "the log carried stakes, which `V93` refuses");
+    let replayed = replay_trusted(&entries).unwrap();
+    let (cfg, operator) = (dev_config(), dev_config().operator().unwrap());
+    let ceilings = cfg.genesis.close_spread_ceilings;
+    let notional = cfg.genesis.params.toxicity.notional;
+    let genesis: Vec<_> =
+        replayed.genesis.as_config(notional, &ceilings).into_iter().filter(|cmd| !is_carry_part(cmd)).collect();
+    replayed.genesis.ensure_matches(&genesis, &ceilings, &signed(31_337), operator).unwrap();
 }

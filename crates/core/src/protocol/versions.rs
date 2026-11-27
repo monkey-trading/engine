@@ -549,4 +549,9 @@ pub enum ProtocolVersion {
     /// mirrored from a block at or below it is refused, as is a completed scan there: the source log mirrored
     /// every event of the contracts it followed there, under references this log does not hold (`carry`).
     V92,
+    /// A carried genesis carries no stakes (`carry`): the new log mirrors the kept staking contract's events again,
+    /// from its deployment to the carried completed frontier, with no registry event in between, and no epoch
+    /// closes until that frontier is reached with the stakes summing to the source's total staked (`staking`).
+    /// Reaching it records it as the carried frontier, at or below which `V92` refuses every mirror.
+    V93,
 }

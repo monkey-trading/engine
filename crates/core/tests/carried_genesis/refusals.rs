@@ -139,7 +139,7 @@ const TAMPERS: [Tamper; 17] = [
 #[test]
 fn every_tampered_part_is_refused_and_changes_nothing() {
     let alpha = source();
-    let (parts, _) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, _) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     for (what, tamper, reason) in TAMPERS {
         let mut tampered = parts.clone();
         tamper(&mut tampered);
@@ -165,7 +165,7 @@ fn every_tampered_part_is_refused_and_changes_nothing() {
 #[test]
 fn a_part_after_another_command_or_a_second_begin_is_refused() {
     let alpha = source();
-    let (parts, _) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, _) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     let mut h = destination(&alpha);
     assert_eq!(part(&mut h, parts[0].clone()).last(), Some(&Event::AdminApplied));
     assert!(refusal(&part(&mut h, parts[0].clone())).contains("already carried state"));
@@ -182,7 +182,7 @@ fn a_part_after_another_command_or_a_second_begin_is_refused() {
 #[test]
 fn a_carry_into_a_log_past_its_genesis_or_before_v90_is_refused() {
     let alpha = source();
-    let (parts, _) = alpha.engine.carry_parts().expect("the source carries");
+    let (parts, _) = alpha.engine.carry_parts(ProtocolVersion::V90).expect("the source carries");
     let begin = parts[0].clone();
 
     let mut unstaked = genesis(ProtocolVersion::V90);
@@ -211,7 +211,7 @@ fn source_after(change: fn(&mut Harness)) -> Result<(), String> {
     let mut h = source();
     change(&mut h);
     h.engine.state_root();
-    h.engine.carry_parts().map(|_| ())
+    h.engine.carry_parts(ProtocolVersion::V90).map(|_| ())
 }
 
 /// Mirrors the registry turning rotation on or off in `block`, and the mirror's frontier completing it.
@@ -276,7 +276,7 @@ fn a_source_before_v90_or_without_signed_requests_builds_no_parts() {
         Command::StakingProgress { block: 1, block_hash: B256::repeat_byte(1), block_time: None, named_turn: None };
     earlier.cmd(progress);
     earlier.engine.state_root();
-    let error = earlier.engine.carry_parts().expect_err("a V89 source");
+    let error = earlier.engine.carry_parts(ProtocolVersion::V90).expect_err("a V89 source");
     assert!(error.contains("before V90"), "{error}");
 
     let mut unsigned = Harness::empty();
@@ -284,6 +284,6 @@ fn a_source_before_v90_or_without_signed_requests_builds_no_parts() {
     unsigned.admin(AdminCommand::SetOperator(crate::common::operator()));
     unsigned.admin(AdminCommand::ActivateProtocol { version: ProtocolVersion::V90 });
     unsigned.engine.state_root();
-    let error = unsigned.engine.carry_parts().expect_err("an unsigned source");
+    let error = unsigned.engine.carry_parts(ProtocolVersion::V90).expect_err("an unsigned source");
     assert!(error.contains("no EIP-712 client auth"), "{error}");
 }

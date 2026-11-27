@@ -1281,22 +1281,35 @@ Known limits:
 ## The move to a new vault
 
 A deployment can move to a new vault and start a new log whose genesis carries, from the old log's
-final checkpoint, each account's MONKEY entitlement and staked MONKEY, the point to which the old log
-had mirrored the staking contract, the emission schedule with its totals, and every bug bounty award.
-Only the trading server sequences a carried genesis, in its genesis, after staking is initialised
-and before anything is credited, staked, entitled or awarded. Distributions, balances, positions,
-orders, approvals and deposits are not carried, and each carried award owes its whole amount.
+final checkpoint, each account's MONKEY entitlement, the emission schedule with its totals, and every
+bug bounty award. The genesis carries no stake. It records the point to which the old log had
+mirrored the staking contract and the old log's total staked, and the new log then mirrors the kept
+staking contract's own events again, from its deployment to that point, as it mirrors any. Only the
+trading server sequences a carried genesis, in its genesis, after staking is initialised and before
+anything is credited, staked, entitled or awarded. Distributions, balances, positions, orders,
+approvals and deposits are not carried, and each carried award owes its whole amount.
 
 The engine proves every carried value against the old log's checkpoint root, which the genesis
 names, so a host or a configuration author cannot alter a value. The old log's remaining state,
 proven against the same root, must record the old vault and its chain as its client
 authentication, the carried sequence number as its last instruction, protocol V90 or later, and
 rotation's switch off. The engine checks that the carried sets are complete. The entitlements must
-sum to the old log's total entitled, the stakes must sum to its total staked, and the awards must
-run from id 0 to an id at which the root proves no award. Because every value is at least zero and
-every account is carried at most once, no account with a positive entitlement or stake can be left
-out. A part that fails any check is refused, and the trading server refuses to serve a log whose
-genesis holds a refused part.
+sum to the old log's total entitled, and the awards must run from id 0 to an id at which the root
+proves no award. Because every value is at least zero and every account is carried at most once, no
+account with a positive entitlement can be left out. A part that fails any check is refused, and the
+trading server refuses to serve a log whose genesis holds a refused part.
+
+While the stakes are mirrored again, the new log's mirror reads only the staking contract's events,
+names no turn, and goes no further than the old log's point; no registry, schedule, vote or fault
+event mirrors, as those blocks hold the old log's history; and no distribution epoch closes. The
+mirror reaches the old log's point only at its block hash and only with the stakes summing to the old
+log's total staked. Since the old log's stakes come from those same events, in the same order, the
+new log then holds the old log's stake set, which `--carry-source` checks account by account. The
+stakes add nothing to the carry, so no number of stakers, one-unit stakes included, can make a source
+impossible to carry. The carry file is bounded at 1 GiB, about 700,000 entitlements with their
+proofs. The genesis spreads over log segments that a member fetches whole, and an archive reader
+takes a range of that size beside the range's other entries, as the archive's range that holds the
+genesis may hold all of it.
 
 At its first start, before its genesis, the trading server reads the chain at a `finalized` block
 through the custody providers. It carries only from the old vault's latest checkpoint, and only once
@@ -1314,16 +1327,20 @@ it has claimed already. No emission period before the new log's first instructio
 allocates MONKEY. The first instruction past the carried period closes that period with no weight,
 and cancels every later period up to its own.
 
-The old log mirrored every staking and registry event up to the carried point, under references the
-new log does not hold, so mirroring one of them again would count it twice. The trading server's
-scan starts above that point, and the engine refuses a staking, registry, schedule, vote or fault
-proof event from a block at or below it, and a completed scan there.
+The old log mirrored every staking and registry event up to the carried point. The new log mirrors
+none of the registry, schedule, vote or fault proof events there, whose references it does not
+hold, so mirroring one of them again would apply it twice. Once the stakes are mirrored again, or
+at the genesis when the old log held no stake, the trading server's scan continues above that
+point, and the engine refuses a staking, registry, schedule, vote or fault proof event from a block
+at or below it, and a completed scan there.
 
 Replaying the new log alone verifies that every carried value is in the logged root, that the root
-is the state after the logged sequence number of a log whose custody was the logged vault, and that
-the carried sets are complete. `engine replay --carry-source` also replays the old log to the
-carried sequence number, requires the old log's signed checkpoint there to hold the carried root,
-and requires the carried state to equal the old log's state there.
+is the state after the logged sequence number of a log whose custody was the logged vault, that the
+carried sets are complete, and that the stakes mirrored again sum to the old log's total staked at
+its point. `engine replay --carry-source` also replays the old log to the carried sequence number,
+requires the old log's signed checkpoint there to hold the carried root, and requires the carried
+state, and the stake set the new log holds once its stakes are mirrored again, to equal the old
+log's state there.
 
 Known limits:
 
@@ -1347,6 +1364,13 @@ Known limits:
 - A log carried under protocol V90 or V91 has the engine's refusal only once it activates V92, from
   the point its own scan has completed then, as the
   [version list](../crates/core/src/protocol/versions.rs) describes.
+- The stakes mirrored again rest on the custody providers' quorum, as every mirrored event does.
+  The new log reads them from the staking contract's deployment block, which its configuration names
+  and which the first window checks the contract has no code before. A window that still misses an
+  event leaves the stakes short of the old log's total, so the mirror never reaches the old log's
+  point and no epoch closes; such a log must be abandoned before anything is deposited to it.
+- Every one-unit stake stays in the new log's state and is mirrored again into its first segments,
+  at the cost of the gas that staked it.
 
 ## The enclave and its keys
 

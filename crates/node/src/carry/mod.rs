@@ -17,6 +17,7 @@ use clap::Args;
 use engine_core::Engine;
 use engine_core::carry::{CarryPart, CarrySource, StateCarried};
 use engine_core::emissions::TokenUnits;
+use engine_core::protocol::ProtocolVersion;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -28,10 +29,12 @@ mod chain;
 mod replay;
 pub use replay::{CarriedFrom, check_carried};
 
-/// The largest carry file built or read: three quarters of the largest archive file a member fetches, since the
-/// genesis's carry parts all fall in the log's first segment, which members and standbys fetch whole. A source
-/// whose carry is larger is refused, rather than open a log no member could follow.
-const MAX_FILE_BYTES: u64 = crate::standby::MAX_ARCHIVE_BYTES / 4 * 3;
+/// The largest carry file built or read: 1 GiB, about 700,000 entitlements at up to 1.5 KB each with its proof, and
+/// no stake, which the new log mirrors again. The genesis's parts spread over segments a member fetches whole
+/// (`log::segments::MAX_SEGMENT_BYTES`), and an archive reader takes a range holding all of them (the archive's
+/// `RANGE_BYTES`), so the bound is the start's memory: it holds the file, its parts and the genesis commands its
+/// checks run at once, a few times the file, well within a production guest's 16 GiB or more.
+pub(crate) const MAX_FILE_BYTES: u64 = 1 << 30;
 
 /// `engine carry`'s arguments.
 #[derive(Args)]
@@ -134,9 +137,10 @@ pub struct CarryFile {
     pub parts: Vec<CarryPart>,
 }
 
-/// The carry file of the published log at `path` at its checkpoint `seq`, or its last checkpoint without one.
-/// The log's commands must reproduce that checkpoint's root; signatures are not checked, since the new log's
-/// first start requires the root to be the one the source vault accepted.
+/// The carry file of the published log at `path` at its checkpoint `seq`, or its last checkpoint without one, for a
+/// genesis under this build's latest protocol, which carries no stake. The log's commands must reproduce that
+/// checkpoint's root; signatures are not checked, since the new log's first start requires the root to be the one
+/// the source vault accepted.
 /// Error cases:
 /// - the log cannot be read, holds no checkpoint, or none at `seq`, or its commands do not reproduce its root
 /// - the source's state cannot be carried (`Engine::carry_parts`): before `V90`, results in the open emission
@@ -147,8 +151,9 @@ pub fn build(path: &Path, seq: Option<u64>) -> anyhow::Result<CarryFile> {
         None => last_checkpoint(path)?.with_context(|| format!("{} holds no checkpoint", path.display()))?,
     };
     let engine = crate::exit::engine_at_checkpoint(path, seq)?;
-    let (parts, totals) =
-        engine.carry_parts().map_err(|refused| anyhow!("the log's state at seq {seq} cannot be carried: {refused}"))?;
+    let (parts, totals) = engine
+        .carry_parts(ProtocolVersion::LATEST)
+        .map_err(|refused| anyhow!("the log's state at seq {seq} cannot be carried: {refused}"))?;
     Ok(CarryFile { source: totals.source, totals, parts })
 }
 
@@ -176,10 +181,17 @@ fn last_checkpoint(path: &Path) -> anyhow::Result<Option<u64>> {
 /// Error cases:
 /// - it is longer than `MAX_FILE_BYTES`
 fn encode(file: &CarryFile) -> anyhow::Result<Vec<u8>> {
+    encode_within(file, MAX_FILE_BYTES)
+}
+
+/// `file` as JSON, at most `limit` bytes long.
+/// Error cases:
+/// - it is longer than `limit`
+fn encode_within(file: &CarryFile, limit: u64) -> anyhow::Result<Vec<u8>> {
     let bytes = serde_json::to_vec(file).context("encoding the carry file")?;
     ensure!(
-        bytes.len() as u64 <= MAX_FILE_BYTES,
-        "the carry is {} bytes, past the {MAX_FILE_BYTES} the launch log's first segment can hold for its members",
+        bytes.len() as u64 <= limit,
+        "the carry is {} bytes, past the {limit} a start reads into memory",
         bytes.len()
     );
     Ok(bytes)
@@ -208,8 +220,15 @@ pub fn write(file: &CarryFile, out: &Path) -> anyhow::Result<[u8; 32]> {
 /// - its source is not the one its parts begin with, or its parts do not end with `End`
 /// - its totals are not what its parts carry (`carried_by`)
 pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
+    read_within(path, MAX_FILE_BYTES)
+}
+
+/// `read`, of a file at most `limit` bytes long.
+/// Error cases:
+/// - see `read`, with `limit` for `MAX_FILE_BYTES`
+fn read_within(path: &Path, limit: u64) -> anyhow::Result<(CarryFile, [u8; 32])> {
     let length = fs::metadata(path).with_context(|| format!("reading {}", path.display()))?.len();
-    ensure!(length <= MAX_FILE_BYTES, "{} is longer than a carry file may be", path.display());
+    ensure!(length <= limit, "{} is longer than a carry file may be", path.display());
     let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let file: CarryFile =
         serde_json::from_slice(&bytes).with_context(|| format!("{} is not a carry file", path.display()))?;
@@ -222,11 +241,22 @@ pub fn read(path: &Path) -> anyhow::Result<(CarryFile, [u8; 32])> {
 }
 
 /// What `parts` carry from `source` once they apply, as `End`'s `StateCarried` reports it: the accounts holding an
-/// entitlement or a stake, the sums entitled and staked, and the number of awards. `None` for sums past
-/// `TokenUnits`, which no carry that applies reaches.
+/// entitlement or a carried stake, the sums entitled and staked, and the number of awards. With no stake part, as
+/// from `V93`, the staked sum is the source's total staked `Begin` proves, which the new log mirrors again, or zero
+/// for a `Begin` that names none, which the engine refuses. `None` for sums past `TokenUnits`, which no carry that
+/// applies reaches.
 fn carried_by(source: CarrySource, parts: &[CarryPart]) -> Option<StateCarried> {
     let mut accounts = BTreeSet::new();
     let (mut entitled, mut staked, mut awards) = (0u128, 0u128, 0u64);
+    if !parts.iter().any(|part| matches!(part, CarryPart::Stakes { .. })) {
+        staked = parts
+            .iter()
+            .find_map(|part| match part {
+                CarryPart::Begin { globals, .. } => source_staked(globals),
+                _ => None,
+            })
+            .unwrap_or(0);
+    }
     for part in parts {
         let (entries, sum) = match part {
             CarryPart::Entitlements { entries } => (entries, &mut entitled),
@@ -246,7 +276,15 @@ fn carried_by(source: CarrySource, parts: &[CarryPart]) -> Option<StateCarried> 
     Some(StateCarried { source, accounts: accounts.len() as u64, entitled, staked, awards })
 }
 
+/// The total staked the source's remaining-state leaf, `globals`, records, in base units.
+fn source_staked(globals: &str) -> Option<u128> {
+    let leaf: serde_json::Value = serde_json::from_str(globals).ok()?;
+    serde_json::from_value::<TokenUnits>(leaf.get("staking")?.get("staked_total")?.clone()).ok().map(|staked| staked.0)
+}
+
 #[cfg(test)]
 mod chain_tests;
+#[cfg(test)]
+mod scale_tests;
 #[cfg(test)]
 mod tests;

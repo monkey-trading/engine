@@ -88,6 +88,8 @@ pub(super) struct Chain {
     pub(super) governance: Address,
     pub(super) registry: Address,
     pub(super) staking: Address,
+    /// The block the registry, and the staking contract with it, deployed in.
+    pub(super) staking_deployed: u64,
     /// The `RegistryLens` beside the registry, once a scenario deploys one.
     pub(super) lens: Option<Address>,
     /// The `OperatorSchedule` the registry names, once a scenario deploys one.
@@ -179,6 +181,7 @@ impl Chain {
             governance,
             registry: Address::ZERO,
             staking: Address::ZERO,
+            staking_deployed: 0,
             lens: None,
             schedule: None,
             vote: None,
@@ -206,6 +209,7 @@ impl Chain {
         )
             .abi_encode_params();
         chain.registry = deploy(&chain.provider, from, "OperatorRegistry.sol/OperatorRegistry.json", &args).await;
+        chain.staking_deployed = chain.provider.request::<_, U64>("eth_blockNumber", ()).await.unwrap().to();
         chain.staking = chain.view(chain.registry, stakingCall {}).await;
         chain
     }

@@ -230,8 +230,10 @@ impl StakingCursor {
 /// contract has been read to name the vault: a schedule, vote or fault event before then stalls the
 /// same way. With `turns`, the bound registry, the progress from `V65` carries the registry's turn
 /// state at `to`: the boundary of the drawn turn naming the operator, from `V67` else that of a drawn
-/// turn yet to start, or none. A failed event read, by range or by hash, halves `range`; a completed
-/// chunk lets it grow back.
+/// turn yet to start, or none. With `remirroring`, a carried genesis's stakes are mirrored again
+/// (`V93`): only the staking contract's own events mirror, as the registry, schedule, vote and fault
+/// events in those blocks are the source's. A failed event read, by range or by hash, halves `range`;
+/// a completed chunk lets it grow back.
 /// Error cases:
 /// - stalled: a read fails, an event is not on the canonical block there, an event arrives before the
 ///   registry binding is verified, or the engine refuses a mirror
@@ -245,7 +247,7 @@ pub(super) async fn mirror<V: VaultReader>(
     range: &mut AdaptiveSize,
     (from, end, release): (u64, BlockLink, Option<BlockRef>),
     (bound, schedule_bound, vote_bound, fault_bound): (bool, bool, bool, bool),
-    turns: Option<alloy::primitives::Address>,
+    (turns, remirroring): (Option<alloy::primitives::Address>, bool),
 ) -> Result<(), PollError> {
     let (to, block_hash) = (end.number, end.hash);
     if from > to {
@@ -271,6 +273,10 @@ pub(super) async fn mirror<V: VaultReader>(
         }
         return Err(stalled);
     }
+    let staked = |event: &StakingEvent| {
+        matches!(event.kind, StakingEventKind::Staked { .. } | StakingEventKind::UnstakeCompleted { .. })
+    };
+    let events: Vec<StakingEvent> = events.into_iter().filter(|event| !remirroring || staked(event)).collect();
     if !bound && !events.is_empty() {
         return Err(PollError::inconsistent(anyhow!(
             "the window names staking events, but the registry has no code at its end: no staking contract it deployed can have emitted them"
@@ -311,8 +317,13 @@ pub(super) async fn mirror<V: VaultReader>(
         };
         let progress = Command::StakingProgress { block: to, block_hash, block_time, named_turn };
         let events = submit(tx, progress).await?;
-        if events.iter().any(|event| matches!(event, Event::AdminRejected { .. })) {
-            return Err(PollError::Stalled(Stall::Refused(anyhow::anyhow!("the engine refused staking progress"))));
+        let refused = events.iter().find_map(|event| match event {
+            Event::AdminRejected { reason } => Some(reason),
+            _ => None,
+        });
+        if let Some(reason) = refused {
+            let refused = anyhow::anyhow!("the engine refused staking progress: {reason}");
+            return Err(PollError::Stalled(Stall::Refused(refused)));
         }
     }
     cursor.next_block = to + 1;

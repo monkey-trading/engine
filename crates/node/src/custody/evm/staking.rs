@@ -1,6 +1,7 @@
 //! Finalized staking catch-up, independent of deposit scan progress.
 
 use anyhow::anyhow;
+use engine_core::staking::StakingCheckpoint;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -31,7 +32,10 @@ impl<V: VaultReader> DepositWatcher<V> {
     /// header there in the same voted answer, so it is bound to the tag's chain too. The authenticated
     /// frontier a window records is read again each poll. Catch-up runs in bounded chunks, the cursor
     /// advancing per chunk. Without a staking contract, a finalised boundary, or before `InitStaking` has
-    /// applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`).
+    /// applied, nothing is read or sequenced and the cursor holds (see `staking::mirror`). From `V93`, while a
+    /// carried genesis's stakes are mirrored again, windows run from the staking contract's deployment
+    /// (`custody.evm.staking.deployment_block`) to the source's frontier and no further, mirroring the staking
+    /// contract's events alone, naming no turn, and paging nothing for a fault proof contract not yet deployed.
     /// Error cases:
     /// - stalled: a staking read fails, an event is not on the canonical block there, a mirrored contract is
     ///   not the one its parent or the schedule's governance record names, or the engine refuses a mirror
@@ -46,21 +50,19 @@ impl<V: VaultReader> DepositWatcher<V> {
         if self.staking.is_none() {
             return Ok(());
         };
-        let configured_start = self.start_block;
-        let Some((from, anchor)) = query(tx, move |engine| {
-            engine.staking().map(|staking| {
-                let from = staking.completed_through.map_or_else(
-                    || staking.mirrored_through.unwrap_or(configured_start).max(configured_start),
-                    |checkpoint| checkpoint.block + 1,
-                );
-                (from, staking.completed_through)
-            })
+        let Some((anchor, mirrored, remirror)) = query(tx, |engine| {
+            engine.staking().map(|staking| (staking.completed_through, staking.mirrored_through, staking.remirror))
         })
         .await
         .map_err(PollError::Fatal)?
         else {
             return Ok(());
         };
+        let start = match remirror {
+            Some(_) => self.remirror_start(anchor, mirrored).await?,
+            None => self.start_block,
+        };
+        let from = anchor.map_or_else(|| mirrored.unwrap_or(start).max(start), |checkpoint| checkpoint.block + 1);
         if let Some(anchor) = anchor
             && self.header_at(anchor.block).await?.hash != anchor.block_hash
         {
@@ -73,6 +75,9 @@ impl<V: VaultReader> DepositWatcher<V> {
         // progress instead of restarting against a moving end. Event-read failures shrink the range (see
         // `staking::mirror`).
         to = to.min(from.saturating_add(self.staking_range.get() - 1));
+        if let Some(pending) = remirror {
+            to = to.min(pending.through.block);
+        }
         let end = self.header_at(to).await?;
         if release.is_some_and(|release| release.number == to && release.hash != end.hash) {
             return Err(PollError::unsettled(anyhow!("the staking window's end is not the release tag's block")));
@@ -85,7 +90,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         if let Some((registry, false)) = self.registry {
             let hash = end.hash;
             let staking =
-                self.staking.as_ref().map(|(cursor, _)| cursor.contract).expect("staking cursor checked above");
+                self.staking.as_ref().map(|(cursor, ..)| cursor.contract).expect("staking cursor checked above");
             match self.vault.registry_staking(BlockRef { number: to, hash }).await.map_err(PollError::rpc)? {
                 None => info!(to, "the registry is not deployed at this window's end"),
                 Some(recorded) => {
@@ -175,7 +180,8 @@ impl<V: VaultReader> DepositWatcher<V> {
                 // so it pages until the contract is deployed there; a window before the record, as in a
                 // catch-up over blocks before the deployment, is no fault of the address.
                 None => {
-                    if query(tx, |engine| engine.operator_faults().config.is_some()).await.map_err(PollError::Fatal)? {
+                    let recorded = query(tx, |engine| engine.operator_faults().config.is_some());
+                    if remirror.is_none() && recorded.await.map_err(PollError::Fatal)? {
                         warn!(
                             alert = "fault_proof_undeployed",
                             contract = %fault_proof,
@@ -212,12 +218,14 @@ impl<V: VaultReader> DepositWatcher<V> {
                 self.governance_settled = self.check_governance_record(at).await?;
             }
         }
-        let (cursor, path) = self.staking.as_mut().expect("staking cursor checked above");
+        let (cursor, path, _) = self.staking.as_mut().expect("staking cursor checked above");
         let bound = self.registry.is_some_and(|(_, bound)| bound);
         let schedule_bound = self.schedule.is_none_or(|(_, bound)| bound);
         let vote_bound = self.vote.is_none_or(|(_, bound)| bound);
-        // The registry's own state says which drawn turn, of the schedule it names, names the operator.
-        let turns = self.registry.and_then(|(registry, bound)| bound.then_some(registry));
+        // The registry's own state says which drawn turn, of the schedule it names, names the operator; the source's
+        // blocks mirrored again name none.
+        let turns =
+            self.registry.and_then(|(registry, bound)| bound.then_some(registry)).filter(|_| remirror.is_none());
         let fault_bound = self.fault_proof.is_none_or(|(_, bound)| bound);
         staking::mirror(
             &self.vault,
@@ -227,7 +235,7 @@ impl<V: VaultReader> DepositWatcher<V> {
             &mut self.staking_range,
             (from, end, release),
             (bound, schedule_bound, vote_bound, fault_bound),
-            turns,
+            (turns, remirror.is_some()),
         )
         .await
     }
@@ -261,5 +269,36 @@ impl<V: VaultReader> DepositWatcher<V> {
                 Ok(true)
             }
         }
+    }
+
+    /// Where a carried genesis's stakes are mirrored again from: the staking contract's deployment, before which
+    /// the first window checks it has no code.
+    /// Error cases:
+    /// - stalled: no deployment block is configured, or the staking contract has code before it, so the window
+    ///   would miss its events
+    /// - stalled: a read fails
+    pub(in crate::custody) async fn remirror_start(
+        &self,
+        anchor: Option<StakingCheckpoint>,
+        mirrored: Option<u64>,
+    ) -> Result<u64, PollError> {
+        let Some(deployed) = self.staking.as_ref().and_then(|(.., deployed)| *deployed) else {
+            return Err(PollError::inconsistent(anyhow!(
+                "the carried stakes are mirrored again from the staking contract's deployment, which \
+                 custody.evm.staking.deployment_block must name"
+            )));
+        };
+        if anchor.is_none() && mirrored.is_none() && deployed > 0 {
+            let before = self.header_at(deployed - 1).await?;
+            let at = BlockRef { number: before.number, hash: before.hash };
+            // The registry deploys the staking contract in its own deployment, so it has code from the same block.
+            if self.vault.registry_staking(at).await.map_err(PollError::rpc)?.is_some() {
+                return Err(PollError::inconsistent(anyhow!(
+                    "the staking contract has code before custody.evm.staking.deployment_block {deployed}: mirroring \
+                     the carried stakes again from there would miss the events before it"
+                )));
+            }
+        }
+        Ok(deployed)
     }
 }

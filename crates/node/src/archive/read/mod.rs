@@ -31,11 +31,15 @@ pub(crate) use tail::read_through;
 /// How long a reader waits for the bucket to answer a request, as a node fetch waits for an archive origin; half a
 /// second in tests.
 const ANSWERED_WITHIN: Duration = if cfg!(test) { Duration::from_millis(500) } else { Duration::from_secs(30) };
-/// The most bytes of a range's object a reader reads: launch flow compresses a range to under a megabyte.
-pub(crate) const MAX_OBJECT_BYTES: u64 = 64 * 1024 * 1024;
-/// The most bytes a reader decompresses from one range's object, which launch flow fills to about 5.5 MB; a
-/// mebibyte in tests.
-const MAX_RANGE_BYTES: u64 = if cfg!(test) { 1 << 20 } else { 256 << 20 };
+/// The most bytes one range holds outside tests: launch flow fills a range to about 5.5 MB, and a carried genesis,
+/// every part of which can sit in one range, adds up to the largest carry file a start reads (`carry::MAX_FILE_BYTES`)
+/// and well under a kibibyte of framing a command, which the 256 MiB beside it covers.
+pub(crate) const RANGE_BYTES: u64 = (256 << 20) + crate::carry::MAX_FILE_BYTES;
+/// The most bytes of a range's object a reader reads: as many as one range holds, which its lines never pass
+/// compressed, though launch flow compresses a range to under a megabyte.
+pub(crate) const MAX_OBJECT_BYTES: u64 = RANGE_BYTES;
+/// The most bytes a reader decompresses from one range's object (`RANGE_BYTES`); a mebibyte in tests.
+const MAX_RANGE_BYTES: u64 = if cfg!(test) { 1 << 20 } else { RANGE_BYTES };
 
 /// Where a log's objects stand at the bucket's public origin: the directory of its range objects.
 #[derive(Clone, Debug, PartialEq, Eq)]

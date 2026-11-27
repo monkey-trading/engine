@@ -1318,7 +1318,10 @@ published log after the server has gone.
 ### MONKEY totals and activity
 
 `GET /v1/monkey` returns `emissions`, the emission schedule and the totals allocated; `staking`, the
-MONKEY staked, the number of stakers and the unstaking cooldown; and `distribution`, the
+MONKEY staked, the number of stakers and the unstaking cooldown, with `remirror` set while a log whose
+genesis carried another log's state is still mirroring the staking contract's events again, naming
+`through_block`, the frontier it mirrors them to, and `staked_total`, the total staked it reaches
+there, until when the stake figures are partial and no epoch closes; and `distribution`, the
 distribution schedule, the house's net asset value, its liquidity floor, `excess_usd`, the amount
 the engine would distribute at the last account scan, and the current `epoch`. Each section is
 `null` until the operator initialises it. The answer also gives `seq`, `time_ms`, and where its data

@@ -21,6 +21,7 @@ mod local;
 mod reader;
 mod scan;
 mod segment_boundary;
+mod segment_size;
 mod span;
 mod torn;
 

@@ -123,8 +123,9 @@ impl GenesisProgress {
     /// compared in the form a config gives it under the latest protocol (see `restated`): parameters
     /// set before `V11` take the config's toxicity notional weighting, or, once the node has carried
     /// one into the log, that one, and a log from before `V40` takes `ceilings`, the config's
-    /// close-spread ceilings. A genesis that form leaves one config load refuses, under rules newer
-    /// than the log, is refused first: no config can name it, so the log needs replacing.
+    /// close-spread ceilings, and a carried genesis leaves out its parts. A genesis that form leaves one
+    /// config load refuses, under rules newer than the log, is refused first: no config can name it, so
+    /// the log needs replacing.
     /// Error cases:
     /// - genesis started, and config load under `client_auth` and `operator` would refuse it (see
     ///   `check_genesis`)
@@ -143,7 +144,11 @@ impl GenesisProgress {
             Some(Command::Admin(AdminCommand::SetParams(config))) => config.toxicity.notional,
             _ => None,
         };
-        let ran = self.restated(self.carried.or(config_weighting), ceilings);
+        // A carried genesis's parts come from the carry file, not the config, under the rules the log ran them under,
+        // which a later version may refuse (`V93` refuses stakes): the in-log checks prove them, and the node compares
+        // their source with the config's (`carry::check_recovered`).
+        let restated = self.restated(self.carried.or(config_weighting), ceilings);
+        let ran: Vec<Command> = restated.into_iter().filter(|cmd| !is_carry_part(cmd)).collect();
         if let Err(refused) = check_genesis_commands(client_auth, operator, ran.clone()) {
             let replace = if self.followed { MOVE_LOG } else { FRESH_LOG };
             bail!(
@@ -153,9 +158,6 @@ impl GenesisProgress {
                 ProtocolVersion::LATEST
             );
         }
-        // A carried genesis's parts come from the carry file, not the config: the in-log checks prove them,
-        // and the node compares their source with the config's (`carry::check_recovered`).
-        let ran: Vec<Command> = ran.into_iter().filter(|cmd| !is_carry_part(cmd)).collect();
         // Configs sequence the ceiling install at genesis; a log that predates it ran the same
         // genesis without that command and takes its ceilings at the `V40` upgrade instead (see
         // `Sequencer::activate_protocol`).
@@ -341,6 +343,18 @@ pub(crate) fn check_genesis_commands_at(
         }
     }
     Ok(engine)
+}
+
+/// The commands a fresh node sequences for `genesis`, each stamped `ts`: the activations, then `genesis`.
+#[cfg(test)]
+pub(crate) fn sequenced_genesis(
+    client_auth: &ClientAuth,
+    operator: Operator,
+    genesis: Vec<Command>,
+    ts: Millis,
+) -> Vec<Sequenced> {
+    let cmds = activation_commands(&Engine::new(), client_auth, operator, Vec::new()).into_iter().chain(genesis);
+    (0..).zip(cmds).map(|(seq, cmd)| Sequenced { seq, ts, cmd }).collect()
 }
 
 /// The reason the engine gave for rejecting an admin or house capital command, if it did.

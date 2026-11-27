@@ -78,7 +78,7 @@ fn total(h: &Harness) -> u128 {
 /// as described above.
 pub(crate) fn carried_genesis(alpha: &mut Harness, version: ProtocolVersion) -> Harness {
     alpha.engine.state_root();
-    let (parts, carried) = alpha.engine.carry_parts().expect("the frozen session carries");
+    let (parts, carried) = alpha.engine.carry_parts(version).expect("the frozen session carries");
     let source = alpha.engine.emissions().expect("the session emits").clone();
 
     let mut h = node_genesis(version, alpha.ts + DAY_MS);
@@ -141,11 +141,15 @@ fn freeze(alpha: &mut Harness) {
 fn check_carried(h: &Harness, alpha: &Harness, carried: StateCarried) {
     assert_eq!(h.engine.carried_from(), Some(carried.source));
     assert_eq!(h.engine.entitlements(), alpha.engine.entitlements());
-    assert_eq!(h.engine.staked_balances(), alpha.engine.staked_balances());
     assert_eq!(h.engine.emissions(), alpha.engine.emissions());
     let (ours, theirs) = (h.engine.staking().expect("staked"), alpha.engine.staking().expect("staked"));
-    assert_eq!((ours.mirrored_through, ours.completed_through), (theirs.mirrored_through, theirs.completed_through));
-    assert_eq!(ours.staked_total, theirs.staked_total);
+    // From `V93` the genesis carries no stake, which the new log mirrors again (`v93`).
+    if ours.remirror.is_none() {
+        assert_eq!(h.engine.staked_balances(), alpha.engine.staked_balances());
+        let frontiers = (theirs.mirrored_through, theirs.completed_through);
+        assert_eq!((ours.mirrored_through, ours.completed_through), frontiers);
+        assert_eq!(ours.staked_total, theirs.staked_total);
+    }
     assert!(h.engine.awards().values().all(|award| award.paid.0 == 0 && award.owed() == award.amount.0));
     assert_eq!(h.engine.awards().len(), alpha.engine.awards().len());
 }

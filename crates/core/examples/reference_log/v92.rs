@@ -2,15 +2,19 @@
 //! in a log whose genesis carried nothing, so a stake mirrored from a block below its completed frontier still
 //! applies; the staking mirror's frontier then passes it again, so the session stays a carry's source.
 //!
-//! `carried` then writes the log a carried genesis opens under `V92` from the session's last command (`v90`'s
-//! genesis): the genesis records the carried staking frontier's block, and the session's stake mirrored again, an
-//! unstake, a registry mirror and a completed scan at or below it are refused; then `v90`'s continuation mirrors
-//! above it.
+//! `carried`, which wrote `v92-carried.jsonl` and now runs as a test, opens the log a carried genesis opens under
+//! `V92` from the session's last command (`v90`'s genesis): the genesis records the carried staking frontier's
+//! block, and the session's stake mirrored again, an unstake, a registry mirror and a completed scan at or below it
+//! are refused; then `v90`'s continuation mirrors above it.
 
 use alloy_primitives::B256;
-use engine_core::command::{AdminCommand, Command, Sequenced};
+#[cfg(test)]
+use engine_core::command::Sequenced;
+use engine_core::command::{AdminCommand, Command};
 use engine_core::emissions::TokenUnits;
-use engine_core::event::{Event, Reject};
+use engine_core::event::Event;
+#[cfg(test)]
+use engine_core::event::Reject;
 use engine_core::operator_bounds::NOTICE_MS;
 use engine_core::protocol::ProtocolVersion;
 use engine_core::types::AccountId;
@@ -54,6 +58,7 @@ pub(crate) fn session(h: &mut Harness) {
 }
 
 /// The log whose genesis carries `alpha`'s state at its last command under `V92`, as described above.
+#[cfg(test)]
 pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
     let mut h = crate::v90::carried_genesis(alpha, ProtocolVersion::V92);
     let staking = h.engine.staking().expect("carried");
@@ -97,6 +102,7 @@ pub(crate) fn carried(alpha: &mut Harness) -> Vec<Sequenced> {
 }
 
 /// The block hash of the staking mirror's completed frontier.
+#[cfg(test)]
 fn staking_hash(h: &Harness) -> B256 {
     h.engine.staking().and_then(|staking| staking.completed_through).expect("a completed frontier").block_hash
 }

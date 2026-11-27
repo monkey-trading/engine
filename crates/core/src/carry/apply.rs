@@ -18,7 +18,7 @@ use crate::merkle::{
     verify_absent,
 };
 use crate::protocol::ProtocolVersion;
-use crate::staking::{Staking, UsdcUnits};
+use crate::staking::{Remirror, Staking, UsdcUnits};
 use crate::types::AccountId;
 
 /// The parts of a source's remaining-state leaf a carried genesis reads; it ignores the rest.
@@ -58,7 +58,8 @@ impl SourceView {
     /// - a protocol before `V90`, whose root holds no total staked
     /// - emissions not initialised, or a period budget outside 1 to `MAX_PERIOD_BUDGET`
     /// - staking not initialised, or with no total staked
-    /// - a staking mirror with no completed frontier, or one below a block it mirrored an event from
+    /// - a staking mirror with no completed frontier, or one below a block it mirrored an event from, or one still
+    ///   mirroring its own carried stakes again
     /// - rotation's switch on in the registry mirror
     pub(super) fn check(self, source: &CarrySource) -> Result<(Emissions, Staking), String> {
         let auth = ClientAuth::Eip712 { chain_id: source.chain_id, vault: source.vault };
@@ -91,6 +92,9 @@ impl SourceView {
             .is_some_and(|completed| staking.mirrored_through.is_none_or(|mirrored| completed.block >= mirrored));
         if !complete {
             return Err("the source's staking mirror has not completed a scan through every block it mirrored".into());
+        }
+        if staking.remirror.is_some() {
+            return Err("the source is still mirroring the stakes its own genesis carried".into());
         }
         if self.operator_election.rotation_enabled {
             return Err("rotation is on in the source's registry mirror".into());
@@ -192,11 +196,15 @@ impl Engine {
         self.carry_balances(CarryStage::Entitlements, entries)
     }
 
-    /// A stakes part: each entry the source root's staked-balance leaf for its account, and positive.
+    /// A stakes part, before `V93`: each entry the source root's staked-balance leaf for its account, and positive.
     /// Error cases:
+    /// - from `V93`, any: the stakes are mirrored again from the staking contract (`staking::remirror`)
     /// - a zero stake, which no staked-balance leaf holds
     /// - any error case of `carry_balances`
     pub(super) fn carry_stakes(&mut self, entries: &[CarriedBalance]) -> Result<(), String> {
+        if self.protocol_version >= ProtocolVersion::V93 {
+            return Err("from V93 a carried genesis carries no stakes: they are mirrored again".into());
+        }
         if let Some(entry) = entries.iter().find(|entry| entry.amount.0 == 0) {
             return Err(format!("a carried stake is positive, and {}'s is zero", entry.account));
         }
@@ -310,11 +318,13 @@ impl Engine {
     }
 
     /// `End`: checks every total, then takes the source's emissions and staking frontier and records the source;
-    /// from `V92` also the frontier's block as the carried one (`carry::frontier`).
+    /// from `V92` also the frontier's block as the carried one (`carry::frontier`). From `V93` it carries no stake:
+    /// a source with stakes leaves the frontier, and the carried one, to the stakes mirrored again, up to the
+    /// source's frontier and total (`staking::remirror`), and one with none takes its frontier as before.
     /// Error cases:
     /// - any error case of `carry_at`
     /// - awards not closed by the proof of the next id
-    /// - entitlements or stakes that do not sum to the source's totals
+    /// - entitlements, or before `V93` stakes, that do not sum to the source's totals
     pub(super) fn carry_end(&mut self, events: &mut Vec<Event>) -> Result<(), String> {
         let progress = self.carry_at(CarryStage::AwardsClosed)?;
         if progress.stage != CarryStage::AwardsClosed {
@@ -326,7 +336,8 @@ impl Engine {
                 progress.entitled, progress.emissions.entitled
             ));
         }
-        if progress.staked != progress.staked_total {
+        let remirror = self.protocol_version >= ProtocolVersion::V93;
+        if !remirror && progress.staked != progress.staked_total {
             return Err(format!(
                 "the carried stakes sum to {}, not the source's total staked of {}",
                 progress.staked, progress.staked_total
@@ -334,12 +345,17 @@ impl Engine {
         }
         let progress = self.carry.take().expect("checked above");
         let staking = self.staking.as_mut().expect("Begin checked staking");
-        staking.mirrored_through = progress.mirrored_through;
-        staking.completed_through = Some(progress.completed_through);
-        if self.protocol_version >= ProtocolVersion::V92 {
-            staking.carried_through = Some(progress.completed_through.block);
+        if remirror && progress.staked_total.0 > 0 {
+            staking.remirror =
+                Some(Remirror { through: progress.completed_through, staked_total: progress.staked_total });
+        } else {
+            staking.mirrored_through = progress.mirrored_through;
+            staking.completed_through = Some(progress.completed_through);
+            if self.protocol_version >= ProtocolVersion::V92 {
+                staking.carried_through = Some(progress.completed_through.block);
+            }
         }
-        let (entitled, staked) = (progress.emissions.entitled, progress.staked);
+        let (entitled, staked) = (progress.emissions.entitled, progress.staked_total);
         self.emissions = Some(progress.emissions);
         self.carried_from = Some(progress.source);
         let accounts: BTreeSet<&AccountId> = self.entitlements.keys().chain(self.staked.keys()).collect();

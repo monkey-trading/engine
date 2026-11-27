@@ -55,8 +55,8 @@ pub struct DepositWatcher<V> {
     usdc: Address,
     pub(super) cursor: Cursor,
     cursor_path: PathBuf,
-    /// The staking mirror's cursor and store, present when the deployment has a staking contract.
-    staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
+    /// The staking mirror's cursor, store and contract's deployment block (`V93`'s re-mirror), with a staking contract.
+    staking: Option<(crate::custody::staking::StakingCursor, PathBuf, Option<u64>)>,
     /// The operator registry mirrored with the staking contract, and whether it has been read to
     /// record the configured staking contract as the one it deployed.
     registry: Option<(Address, bool)>,
@@ -112,7 +112,7 @@ impl<V: VaultReader> DepositWatcher<V> {
                     cfg.start_block,
                     log_seq,
                 )
-                .map(|cursor| (cursor, staking.cursor_path.clone()))
+                .map(|cursor| (cursor, staking.cursor_path.clone(), staking.deployment_block))
             })
             .transpose()?;
         Ok(Self::from_cursor(vault, cfg, cursor, staking))
@@ -123,7 +123,7 @@ impl<V: VaultReader> DepositWatcher<V> {
         vault: V,
         cfg: &EvmCustodySection,
         cursor: Cursor,
-        staking: Option<(crate::custody::staking::StakingCursor, PathBuf)>,
+        staking: Option<(crate::custody::staking::StakingCursor, PathBuf, Option<u64>)>,
     ) -> Self {
         info!(next_block = cursor.next_block, next_deposit_id = cursor.next_deposit_id, "deposit watcher ready");
         // The proof resumes from the last block read, so a change to it stalls rather than passes.

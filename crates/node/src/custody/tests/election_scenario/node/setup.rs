@@ -116,9 +116,10 @@ pub(crate) fn custody_section(chain: &Chain, dir: &std::path::Path, mut custody:
     evm.cursor_path = dir.join("custody.json");
     evm.staking = Some(
         toml::from_str(&format!(
-            "contract = '{:#x}'\ncursor_path = '{}'\n[registry]\ncontract = '{:#x}'{}{}{}{}",
+            "contract = '{:#x}'\ncursor_path = '{}'\ndeployment_block = {}\n[registry]\ncontract = '{:#x}'{}{}{}{}",
             chain.staking,
             dir.join("staking.json").display(),
+            chain.staking_deployed,
             chain.registry,
             chain.lens.map(|lens| format!("\nlens = '{lens:#x}'")).unwrap_or_default(),
             chain.schedule.map(|schedule| format!("\nschedule = '{schedule:#x}'")).unwrap_or_default(),
