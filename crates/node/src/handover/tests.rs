@@ -373,7 +373,7 @@ async fn a_request_for_the_secrets_fetches_its_collateral_before_it_connects() {
     let (cfg, kds) = hardware_successor(&forging).await;
     let (address, answering) = challenging(kds.attempts.clone(), Duration::ZERO).await;
     let sealer = crate::tee::sealing::MockSealer { launch_digest: LAUNCH_DIGEST };
-    let fetched = fetch_secrets(&cfg, &address, &sealer, &forging, AccountId([1; 20]), &[]).await;
+    let fetched = fetch_secrets(&cfg, &address, (&sealer, &forging, None), AccountId([1; 20]), &[]).await;
     assert!(fetched.is_err(), "secrets came from a predecessor that sent none");
     fetched_before_the_challenge(&cfg, &forging, answering.await.unwrap());
 }
@@ -442,7 +442,7 @@ async fn challenging(
         let (mut stream, _) = predecessor.accept().await.unwrap();
         tokio::time::sleep(delay).await;
         let before = fetches.load(std::sync::atomic::Ordering::SeqCst);
-        send(&mut stream, &Challenge { nonce: hex::encode(CHALLENGE) }).await.unwrap();
+        send(&mut stream, &Challenge { nonce: hex::encode(CHALLENGE), standby: true }).await.unwrap();
         let request: Request = receive(&mut stream).await.unwrap();
         (before, fetches.load(std::sync::atomic::Ordering::SeqCst), request)
     });

@@ -12,7 +12,9 @@
 //! member's next drawn turn, under the signer epoch it started and the generation it reserved, until
 //! the key is resealed as the turn's keys under that generation. In every other state the key holds
 //! no authority, and a start seals a new one in its
-//! place, which the candidate registers. On promotion the node keeps the key in memory and reseals it,
+//! place, which the candidate registers. Every take of the turn's keys, a member's or not, signs its
+//! request with this release's key (`open_or_seal`), which a holder takes only while the schedule lists
+//! it as promotable or an admission names it (`handover::admission`). On promotion the node keeps the key in memory and reseals it,
 //! with its account, as the turn's keys (`KeyStore`) under the promotion's generation, so a restart
 //! opens it as those and renews under the same account; the standby seal is deleted only once that
 //! file is durable.
@@ -171,28 +173,26 @@ impl StandbyKeys {
         Ok(StandbyStart::Standby { keys, generated: true })
     }
 
-    /// This release's sealed standby keys in `dir`, for the config whose SHA-256 is `config_sha256`, while
-    /// the schedule in `domain` lists them as `candidate`'s promotable key: what a take at a start signs
-    /// its request with (`successor::ask`). `None` with no sealed keys or while they are not promotable;
-    /// it writes nothing.
+    /// This release's standby keys in `dir`, for the config whose SHA-256 is `config_sha256`, or new ones
+    /// sealed now when it has none: what every take signs its request with (`successor::ask`), any
+    /// enclave's, a member's or not. A holder takes the key only where the schedule lists it as the turn's
+    /// member's promotable key or an admission names it (`handover::admission`), so opening it here reads
+    /// no chain, and a key the schedule does not list signs for nothing else.
     /// Error cases:
-    /// - the platform cannot report, or the sealed file does not open under this release as standby keys
-    /// - the chain cannot be read
-    pub(crate) async fn open_promotable(
-        dir: &Path,
-        sealer: Box<dyn Sealer>,
-        config_sha256: [u8; 32],
-        chain: &impl StandbyChain,
-        (domain, candidate): (&StandbyDomain, AccountId),
-    ) -> anyhow::Result<Option<Self>> {
+    /// - the platform cannot report or derive the key, or the seal cannot be read, written and synced
+    /// - the sealed file does not open under this release as standby keys
+    pub(crate) fn open_or_seal(dir: &Path, sealer: Box<dyn Sealer>, config_sha256: [u8; 32]) -> anyhow::Result<Self> {
         let sealer: Arc<dyn Sealer> = Arc::from(sealer);
         let platform = sealer.platform()?;
         let file = ReleaseFile::new(dir, STANDBY, Box::new(Shared(sealer.clone())), config_sha256)?;
-        let Some(plaintext) = file.read()? else { return Ok(None) };
+        let Some(plaintext) = file.read()? else {
+            let keys = Self::new(file, dir.to_owned(), sealer, platform, KeySet::generate()?)?;
+            keys.seal()?;
+            info!(key = %keys.address(), "sealed a new standby key for this release's handover requests");
+            return Ok(keys);
+        };
         let held = serde_json::from_slice(&plaintext).context("the sealed standby keys do not parse")?;
-        let keys = Self::new(file, dir.to_owned(), sealer, platform, held)?;
-        let state = standby_state(chain, domain, candidate, keys.address()).await?;
-        Ok((state == StandbyState::Promotable).then_some(keys))
+        Self::new(file, dir.to_owned(), sealer, platform, held)
     }
 
     /// The signing key's address.

@@ -34,13 +34,13 @@ use tracing::{info, warn};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
+use crate::handover::admission::Requester;
 use crate::handover::assigned::{Assigned, Assignments, Bound};
 use crate::handover::evidence::CollateralCache;
 use crate::handover::successor::{Answered, ask, confirm};
 use crate::handover::{padded, receive_bytes, send_bytes};
 use crate::log::{CheckpointDomain, LogEntry, Manifest, Offset, offset_of};
 use crate::standby::{Followed, Follower, ReplicaRefused};
-use crate::standby_key::StandbyKeys;
 use crate::tee::Attestor;
 use crate::tee::keys::Head;
 use crate::tee::sealing::{KeyStore, Release, Sealer};
@@ -92,8 +92,8 @@ pub(crate) struct Prepared {
     pub posted: Option<crate::log_heads::Head>,
     /// The turn's assignment the request binds, read again before the keys are sealed (#596).
     pub bound: Bound,
-    /// The member's standby keys, which sign the request (`successor::ask`).
-    pub standby: Option<std::sync::Arc<StandbyKeys>>,
+    /// The member's standby keys, which sign the request, and the admission naming them (`successor::ask`).
+    pub requester: Option<std::sync::Arc<Requester>>,
 }
 
 impl Prepared {
@@ -111,7 +111,7 @@ impl Prepared {
         let observation = vault.observe(View::Finalized, &[]).await?;
         let (generation, _) =
             crate::handover::turns::named_generation(vault, &observation, release, reached_ms).await?;
-        Ok(Self { generation, signer: observation.state.signer, posted, bound: Bound::none(), standby: None })
+        Ok(Self { generation, signer: observation.state.signer, posted, bound: Bound::none(), requester: None })
     }
 
     /// What a skip's member reads before it connects (#596): the generation `assigned`, the latest
@@ -127,7 +127,7 @@ impl Prepared {
     ) -> anyhow::Result<Self> {
         let observation = vault.observe(View::Finalized, &[]).await?;
         let (bound, signer) = (Bound::of(assigned, assignments), observation.state.signer);
-        Ok(Self { generation: assigned.binding.generation, signer, posted: None, bound, standby: None })
+        Ok(Self { generation: assigned.binding.generation, signer, posted: None, bound, requester: None })
     }
 }
 
@@ -320,7 +320,7 @@ async fn receive_tail(stream: &mut TcpStream, listing: &TailListing) -> anyhow::
 /// entries past `follower`'s tip alone, with what `prepared` read before connecting, following
 /// `operator`, if any, until the predecessor answers, quoting with `attestor` and the collateral
 /// `collateral` holds or fetches before connecting, which later attempts reuse, and signing with the
-/// member's standby keys `prepared` holds, if any. The tail must
+/// member's standby keys and admission `prepared` holds, if any. The tail must
 /// extend the copy's seal chain entry by entry and replay onto its replica, end at the handed-over
 /// checkpoint, and leave the replica holding the latest posted log head. The keys are then sealed in
 /// the prepared generation and the handover confirmed.
@@ -348,7 +348,7 @@ pub(crate) async fn take_tail(
     let tip = Tip { seq, link };
     follower.sync()?;
     // The tip alone names what the copy holds: its segment files are its own writer's.
-    let signing = (prepared.bound.binding.as_ref(), prepared.standby.as_deref());
+    let signing = (prepared.bound.binding.as_ref(), prepared.requester.as_deref());
     let asked = ask(cfg, address, attestor, &platform, (None, Some(&tip)), signing, collateral);
     let answered = match operator {
         Some(operator) => {

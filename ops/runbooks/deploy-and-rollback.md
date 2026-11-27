@@ -55,6 +55,15 @@ needs its own approval, and an approval for one step does not cover the next.
   turns have ended, an upgrade or a rollback to such a build therefore hands over as usual. Until
   then, upgrade and roll back only between releases that carry the log check and record the releases
   that handed the keys on, as [Daily turns](operator-candidate.md#daily-turns) describes.
+- **A running release hands its keys only to an enclave that it can bind to its operator.** From the
+  release that checks standby keys on, the running release takes a successor's request only when
+  the successor's own standby key signs it and the operator key admits that key, as step 4 of
+  [Upgrade to a new release](#upgrade-to-a-new-release) describes. A running release from before
+  that check reads neither, and its successor sends it neither, so that upgrade hands over by the
+  older release's rules. A release from before that check cannot take the keys from one after it,
+  because it neither reads the running release's challenge nor signs its request with a standby key.
+  **A rollback to a release from before the check therefore goes through
+  [New keys](key-recovery.md#new-keys), never a `predecessor` file.**
 - **Staging is not yet running.** [Staging](#staging) runs each release for 24 hours before
   production does, once its host is in place. Until then, run each procedure against a testnet vault
   first. The steps are the same.
@@ -700,11 +709,39 @@ file below.
    configuration, and the handing of the enclave's keys to it.
 
    `B` first asks `A` for the delivered secrets, without stopping `A`. `A` checks `B`'s quote
-   against the vendor's certificate chain and the release that the vault names, and sends the bundle
-   encrypted to `B`. `B` accepts it only under the signature of the operator that `B`'s
+   against the vendor's certificate chain and the release that the vault names, and checks that an
+   admission names the standby key that `B`'s enclave signs its requests with. Then it sends the
+   bundle encrypted to `B`. `B` accepts it only under the signature of the operator that `B`'s
    configuration names. If the move fails, `B` raises `secret_missing`, and you deliver the secrets
    to `B` yourself, as [Secrets](key-recovery.md#secrets) describes. `A` refuses to move the secrets
    while rotation is on, and a bundle signed before an operator rotation does not move.
+
+   **Admit `B`'s enclave.** `A` hands `B` neither the secrets nor the keys until an admission of
+   `B`'s standby key is in `B`'s sealing directory. With rotation off, the operator key that `A`'s
+   log holds signs it. With rotation on, your candidate's admin key signs it instead, as
+   [Admit your enclave for a take](operator-candidate.md#admit-your-enclave-for-a-take) describes.
+
+   1. Read `B`'s standby key and release from its console. As it starts, `B` logs
+      `this enclave signs its handover requests with its standby key`, with the fields `key` and
+      `release`. While no admission names the key, `B` holds with `secret_missing`, and its
+      console says that `A` keeps its secrets because no admission names the key.
+
+   2. Sign the admission on your workstation with the operator key. The command signs offline and
+      calls nothing, and prints the address that signed, which must be the operator key's.
+
+      ```shell
+      engine admin --config <B's config.toml> --key-file <operator key file> sign-admission \
+        --release <release> --key <standby key> --out handover-admission.json
+      ```
+
+   3. Copy `handover-admission.json` into `B`'s `[tee.sealing]` directory.
+
+      **Changes the live system.** The owner must approve placing the admission, because it lets
+      that enclave take the keys.
+
+   `B` asks again within 30 seconds and takes the secrets. If `B` instead stopped after `A` refused
+   the keys, start `B` again once the file is in place. **An admission names one enclave's key.
+   Never copy one to another host.**
 
    `B` then connects to `A` for the keys. `A` checks `B`'s quote in the same way, stops sequencing,
    signs a final checkpoint, and sends the keys and the log's tail encrypted to `B`. `B` writes the
@@ -749,6 +786,7 @@ before a successor holds the keys loses the keys.**
 | `handover_unconfirmed` on `A` | Sequencing has stopped, and no successor holds the keys yet. `A` keeps serving successors. | Start `B` again. |
 | `handover_unconfirmed` on `B` | `B` has sealed the keys, but `A` did not acknowledge, so `A` may still be running. | Wait until `A` has powered off, and then start `B` again. |
 | `handover_failed` on `A` | `A` stopped without a successor, and its keys no longer open. | Follow [The running release stopped](key-recovery.md#the-running-release-stopped). |
+| `B` holds with `secret_missing`, or refuses to start, saying that no admission names its standby key | `A` hands nothing to an enclave that the operator has not admitted. | Admit `B`'s enclave, as step 4 of [Upgrade to a new release](#upgrade-to-a-new-release) describes. |
 | `B` refuses to start, naming a log that does not reach the checkpoint | The log on `B`'s disk ends before `A`'s final checkpoint. | Copy the log again, as step 9 of [Prepare a release](#prepare-a-release) describes, and start `B` again. |
 
 **How to tell it is resolved.** `B` serves `/v1/markets`, `release_superseded` has resolved, and

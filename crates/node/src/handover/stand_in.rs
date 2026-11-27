@@ -66,7 +66,7 @@ async fn respond(
     answer: Option<Answer>,
 ) -> anyhow::Result<()> {
     let challenge = [0x5c; 32];
-    send(stream, &Challenge { nonce: hex::encode(challenge) }).await?;
+    send(stream, &Challenge { nonce: hex::encode(challenge), standby: true }).await?;
     let request: Request = receive(stream).await?;
     let mut answer = answer;
     while let Some(Answer::Held(held, then)) = answer {

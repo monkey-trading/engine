@@ -45,21 +45,19 @@ impl Exchange {
     }
 
     /// A skip of `turn` at `position` in `generation` to the set's candidate 0xc1 with `key`, running
-    /// the successor's release.
+    /// the successor's release, whose promotable standby key is the successor's.
     pub(super) fn skip_to_successor(&self, turn: u64, key: AccountId, position: u16, generation: u64) -> Assigned {
-        Assigned { admin_key: key, ..skip(turn, position, 0xc1, self.upgrade().id(), generation) }
+        let standby = Some(self.requesting.keys.address());
+        Assigned { admin_key: key, standby, ..skip(turn, position, 0xc1, self.upgrade().id(), generation) }
     }
 
     /// The successor's side, binding the latest assignment the shared reader shows.
     async fn take_bound(&self) -> anyhow::Result<KeyStore> {
-        self.take_signed(None).await
+        self.take_signed(Some(&self.requester())).await
     }
 
-    /// `take_bound`, the request signed with `standby`, when given.
-    pub(super) async fn take_signed(
-        &self,
-        standby: Option<&crate::standby_key::StandbyKeys>,
-    ) -> anyhow::Result<KeyStore> {
+    /// `take_bound`, the request signed by `requester`'s standby key, when given, with its admission.
+    pub(super) async fn take_signed(&self, requester: Option<&crate::handover::Requester>) -> anyhow::Result<KeyStore> {
         let vault = Vault {
             signer: AccountId(self.old.enclave_key().unwrap().address()),
             current: self.current.clone(),
@@ -70,7 +68,8 @@ impl Exchange {
         };
         let sealer = MockSealer { launch_digest: UPGRADE };
         let assignments: Arc<dyn crate::handover::assigned::Assignments> = self.assignments.clone();
-        let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, standby);
+        let parts =
+            (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, requester);
         crate::handover::take_with(
             &self.successor,
             &self.address,
@@ -300,9 +299,13 @@ async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_s
     // The latest agreed block shows the draw, B's release signing the newest head, and B in the set with
     // no assignment of the turn, the reorg having removed its skip, and its archive unreachable; the
     // finalised turn names no source. Only the newest head's holder leads A to B.
+    let a_standby = crate::standby_key::StandbyKeys::for_test(&scratch_dir("handover-reorged-a-standby"));
+    let a_requester = crate::handover::Requester { key: Arc::new(a_standby), admission: None };
     let drawn = Assigned {
         reason: Reason::Draw,
         head_release: Some(exchange.upgrade().id()),
+        standby: Some(a_requester.key.address()),
+        admin_key: key,
         ..skip(turn, 0, 0xc1, a.id(), DRAWN)
     };
     exchange.assignments.set(Some(drawn));
@@ -332,7 +335,8 @@ async fn a_restarted_drawn_member_takes_the_continuing_log_back_from_a_reorged_s
     let at = vault.observe(View::Finalized, &[]).await.unwrap();
     let scheduled = exchange.scheduled.lock().unwrap().clone().expect("the turn is drawn");
     assert!(scheduled.source.is_none());
-    let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, None);
+    let parts =
+        (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as &dyn crate::tee::Attestor, Some(&a_requester));
     let taken =
         crate::handover::turns::take_keys(&a_cfg, &vault, (&at, &scheduled), parts, &exchange.metrics, Some(reader))
             .await
@@ -388,6 +392,7 @@ pub(super) async fn listener_over(
         retained: std::sync::Mutex::new(None),
         tail_evidence: Default::default(),
         assignments: Some(exchange.assignments.clone()),
+        retained_operator: std::sync::Mutex::new(None),
     };
     (listener, drains)
 }

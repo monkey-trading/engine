@@ -24,7 +24,8 @@ use tracing::info;
 use crate::config::{NamedSecret, NodeConfig};
 use crate::handover::evidence::{self, CollateralCache, Quoting};
 use crate::handover::{
-    CHALLENGE_TIMEOUT, Challenge, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, padded, receive, send,
+    CHALLENGE_TIMEOUT, Challenge, Kx, MESSAGE_TIMEOUT, REPLY_TIMEOUT, Reply, Request, Requester, member_digest, padded,
+    receive, send,
 };
 use crate::log::CheckpointDomain;
 use crate::secrets::SignedBundle;
@@ -72,15 +73,15 @@ pub(super) fn hpke_info(domain: CheckpointDomain) -> Vec<u8> {
 }
 
 /// This release's secrets, from the release whose handover listener is at `address`: the bundle the
-/// operator signed, whole, which may hold more than this config reads.
+/// operator signed, whole, which may hold more than this config reads. The request is signed with the
+/// standby key of `requester`, with its admission, which the running release requires (`admit`).
 /// Error cases:
 /// - the predecessor cannot be reached in time or refuses, or its quote does not bind what it sent
 /// - what it sent does not decrypt, is not signed by `operator`, or fails `Bundle::check_values`
 pub(crate) async fn fetch_secrets(
     cfg: &NodeConfig,
     address: &str,
-    sealer: &dyn Sealer,
-    attestor: &dyn Attestor,
+    (sealer, attestor, requester): (&dyn Sealer, &dyn Attestor, Option<&Requester>),
     operator: AccountId,
     named: &[NamedSecret],
 ) -> anyhow::Result<SignedBundle> {
@@ -98,6 +99,8 @@ pub(crate) async fn fetch_secrets(
     let challenge: Challenge = timeout(CHALLENGE_TIMEOUT, receive(&mut stream))
         .await
         .context("the predecessor sent no challenge in time")??;
+    // A holder from before the standby check reads neither field, and refuses a request with one.
+    let requester = requester.filter(|_| challenge.standby);
     let challenge: [u8; 32] = hex::decode(&challenge.nonce)
         .ok()
         .and_then(|nonce| nonce.try_into().ok())
@@ -112,7 +115,8 @@ pub(crate) async fn fetch_secrets(
         reads: String::new(),
         secrets_only: true,
         binding: None,
-        standby_signature: None,
+        standby_signature: requester.map(|requester| requester.key.sign(member_digest(domain, &request)).to_string()),
+        admission: requester.and_then(|requester| requester.admission.clone()),
         evidence,
     };
     send(&mut stream, &message).await?;
@@ -125,7 +129,7 @@ pub(crate) async fn fetch_secrets(
             evidence,
         ),
         Reply::Refused { reason } | Reply::Missed { reason, .. } => {
-            bail!("the predecessor keeps its secrets: {reason}")
+            return Err(super::successor::refused(cfg, "secrets", &reason, requester));
         }
         Reply::Keys { .. } | Reply::Confirmed { .. } => {
             bail!("the predecessor answered a request for secrets with keys")

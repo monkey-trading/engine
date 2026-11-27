@@ -18,6 +18,7 @@ use tracing::{error, info};
 
 use crate::checkpoints::{CheckpointChain, View};
 use crate::config::NodeConfig;
+use crate::handover::admission::Requester;
 use crate::handover::assigned::{Binding, Bound};
 use crate::handover::evidence::{self, CollateralCache, Peer, Quoting};
 use crate::handover::tail::{TailRefused, Tip, Unacknowledged, tail_report_data, version_name};
@@ -28,7 +29,6 @@ use crate::handover::{
 };
 use crate::log::{CheckpointDomain, LogEntry, Manifest, SegmentInfo, segment_seq};
 use crate::metrics::Metrics;
-use crate::standby_key::StandbyKeys;
 use crate::tee::keys::{Head, KeySet};
 use crate::tee::sealing::{KeyStore, Platform, Release, Sealer};
 use crate::tee::{Attestor, EnclaveKey};
@@ -40,14 +40,13 @@ use crate::tee::{Attestor, EnclaveKey};
 pub(crate) async fn take(
     cfg: &NodeConfig,
     address: &str,
-    sealer: &dyn Sealer,
-    attestor: &dyn Attestor,
+    parts: (&dyn Sealer, &dyn Attestor, Option<&Requester>),
     vault: &impl CheckpointChain,
     reached_ms: Option<engine_core::types::Millis>,
     metrics: &Metrics,
 ) -> anyhow::Result<KeyStore> {
     let assignments = crate::handover::assigned::for_config(cfg, "successor_assignments")?;
-    take_with(cfg, address, (sealer, attestor, None), vault, reached_ms, metrics, assignments).await
+    take_with(cfg, address, parts, vault, reached_ms, metrics, assignments).await
 }
 
 /// This release's keys, taken from the release whose handover listener is at `address`, reading the
@@ -60,8 +59,9 @@ pub(crate) async fn take(
 /// out, and the last must reach the handed-over checkpoint. Without the predecessor's signed
 /// acknowledgement the keys are not sealed, and the start fails under `handover_unconfirmed`: the
 /// predecessor may still run. The request binds the latest assignment `assignments` reads, when it
-/// names this release, read again before the keys are sealed (#596), and, with `standby`, this member's
-/// standby key signs it, which a holder requires while the schedule lists that key as promotable.
+/// names this release, read again before the keys are sealed (#596), and, with `requester`, this
+/// enclave's standby key signs it, with the admission naming that key, which a holder requires unless
+/// the schedule lists the key as the turn's member's promotable one.
 /// Error cases:
 /// - `[tee.sealing]` is missing, or this enclave cannot quote
 /// - the predecessor cannot be reached in time, refuses, or its quote does not bind the keys it sent
@@ -75,7 +75,7 @@ pub(crate) async fn take(
 pub(crate) async fn take_with(
     cfg: &NodeConfig,
     address: &str,
-    (sealer, attestor, standby): (&dyn Sealer, &dyn Attestor, Option<&StandbyKeys>),
+    (sealer, attestor, requester): (&dyn Sealer, &dyn Attestor, Option<&Requester>),
     vault: &impl CheckpointChain,
     reached_ms: Option<engine_core::types::Millis>,
     metrics: &Metrics,
@@ -92,7 +92,7 @@ pub(crate) async fn take_with(
     let release = Release { launch_digest: platform.launch_digest, config_sha256: cfg.file_sha256 };
     let bound = Bound::read(assignments, &release).await?;
     let collateral = CollateralCache::new(evidence::PREFETCH_REUSE);
-    let signing = (bound.binding.as_ref(), standby);
+    let signing = (bound.binding.as_ref(), requester);
     let Answered { mut stream, request, mut keys, peer } =
         ask(cfg, address, attestor, &platform, (log_tip, None), signing, &collateral).await?;
     let head = keys.predecessor_head.clone().context("the keys carry no final checkpoint")?;
@@ -143,8 +143,8 @@ pub(super) struct Answered {
 
 /// Connects to the predecessor at `address`, binds a request to its challenge — naming `tip` for a
 /// tail handover, and `log_tip` for whole segments, and `binding`, the turn's assignment it takes, when
-/// it read one (#596) — under this enclave's quote, signed with this member's `standby` key, if given
-/// (`member_digest`), and opens the keys its quote-bound answer carries.
+/// it read one (#596) — under this enclave's quote, signed with the standby key of `requester`, if given
+/// (`member_digest`), with its admission, and opens the keys its quote-bound answer carries.
 /// The quote's collateral is fetched into `collateral` before connecting, unless it holds a fresh fetch.
 /// The predecessor's certificates are checked at the host's time, before trusted time runs: the vault
 /// naming the key bounds what this accepts.
@@ -157,7 +157,7 @@ pub(super) async fn ask(
     attestor: &dyn Attestor,
     platform: &Platform,
     (log_tip, tip): (Option<u64>, Option<&Tip>),
-    (binding, standby): (Option<&Binding>, Option<&StandbyKeys>),
+    (binding, requester): (Option<&Binding>, Option<&Requester>),
     collateral: &CollateralCache,
 ) -> anyhow::Result<Answered> {
     let domain = CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse()? };
@@ -167,7 +167,7 @@ pub(super) async fn ask(
         predecessor = address,
         ?log_tip,
         tip = ?tip.map(|tip| tip.seq),
-        standby = ?standby.map(StandbyKeys::address),
+        standby = ?requester.map(|requester| requester.key.address()),
         "asking the running release for its keys"
     );
     // The collateral comes first: the predecessor gives the request a few seconds from its challenge.
@@ -180,6 +180,8 @@ pub(super) async fn ask(
     let challenge: Challenge = timeout(CHALLENGE_TIMEOUT, receive(&mut stream))
         .await
         .context("the predecessor sent no challenge in time")??;
+    // A holder from before the standby check reads neither field, and refuses a request with one.
+    let requester = requester.filter(|_| challenge.standby);
     let challenge: [u8; 32] = hex::decode(&challenge.nonce)
         .ok()
         .and_then(|nonce| nonce.try_into().ok())
@@ -193,7 +195,8 @@ pub(super) async fn ask(
         Some(binding) => bound_report_data(domain, &request, binding),
         None => request,
     };
-    let standby_signature = standby.map(|keys| keys.sign(member_digest(domain, &request)).to_string());
+    let standby_signature = requester.map(|requester| requester.key.sign(member_digest(domain, &request)).to_string());
+    let admission = requester.and_then(|requester| requester.admission.clone());
     let evidence = evidence::produce_with(&quoting, attestor, platform, request, Some(&collateral)).await?;
     let config_sha256 = hex::encode(cfg.file_sha256);
     let request_message = Request {
@@ -205,6 +208,7 @@ pub(super) async fn ask(
         secrets_only: false,
         binding: binding.copied(),
         standby_signature,
+        admission,
         evidence,
     };
     send(&mut stream, &request_message).await?;
@@ -216,7 +220,7 @@ pub(super) async fn ask(
             hex::decode(ciphertext).context("ciphertext")?,
             evidence,
         ),
-        Reply::Refused { reason } => bail!("the predecessor keeps its keys: {reason}"),
+        Reply::Refused { reason } => return Err(refused(cfg, "keys", &reason, requester)),
         Reply::Missed { reason, miss } => return Err(TailRefused { miss, reason }.into()),
         Reply::Confirmed { .. } => bail!("the predecessor confirmed a handover it never made"),
         Reply::Secrets { .. } => bail!("the predecessor answered a request for the keys with secrets"),
@@ -233,6 +237,22 @@ pub(super) async fn ask(
     )?;
     let keys = open_keys(domain, &secret, &request, &encapped_key, &ciphertext)?;
     Ok(Answered { stream, request, keys, peer })
+}
+
+/// The predecessor's refusal to send its `what` for `reason`, which names, for a request no admission
+/// came with, the key this enclave signed it with and how an operator admits that key.
+pub(super) fn refused(cfg: &NodeConfig, what: &str, reason: &str, requester: Option<&Requester>) -> anyhow::Error {
+    let unadmitted = requester.filter(|requester| requester.admission.is_none());
+    let Some(requester) = unadmitted else { return anyhow::anyhow!("the predecessor keeps its {what}: {reason}") };
+    let dir = cfg.tee.sealing.as_ref().map(|sealing| sealing.dir.join(crate::handover::admission::ADMISSION_FILE));
+    anyhow::anyhow!(
+        "the predecessor keeps its {what}: {reason}. This enclave signed with its standby key {} for release 0x{}: \
+         the key that answers for this release signs an admission naming it, `engine admin sign-admission`, into \
+         {}, or, for a turn's member, the candidate registers it as its standby key",
+        requester.key.address(),
+        hex::encode(requester.key.release().id()),
+        dir.map_or_else(|| "the sealing directory".into(), |dir| dir.display().to_string())
+    )
 }
 
 /// Takes the whole segments the keys name (`tails`) past the copy's listed tip `log_tip` into the

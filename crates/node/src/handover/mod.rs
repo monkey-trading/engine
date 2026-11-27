@@ -70,6 +70,8 @@ use crate::log::CheckpointDomain;
 use crate::tee::keys::KeySet;
 use crate::tee::sealing::Release;
 
+pub(crate) mod admission;
+pub(crate) use admission::Requester;
 pub(crate) mod assigned;
 mod copy;
 pub(crate) use copy::{Finalized, accepted_before, copy_start, replay_restored, sync_predecessor_log};

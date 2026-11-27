@@ -5,6 +5,7 @@ use super::*;
 
 use k256::ecdsa::SigningKey;
 
+use super::requester::admit_in;
 use crate::handover::fetch_secrets;
 use crate::secrets::Bundle;
 use crate::secrets::tests::{bundle, full};
@@ -20,7 +21,9 @@ impl Exchange {
     /// The successor's side, asking for the secrets alone, signed for by `operator`.
     pub(super) async fn fetch(&self, operator: AccountId) -> anyhow::Result<crate::secrets::SignedBundle> {
         let sealer = MockSealer { launch_digest: UPGRADE };
-        fetch_secrets(&self.successor, &self.address, &sealer, &MockAttestor, operator, &named(self)).await
+        let requester = self.requester();
+        let parts = (&sealer as &dyn crate::tee::sealing::Sealer, &MockAttestor as _, Some(&requester));
+        fetch_secrets(&self.successor, &self.address, parts, operator, &named(self)).await
     }
 
     /// Has the predecessor hold `bundle`, signed by `key`.
@@ -140,6 +143,7 @@ async fn a_prompt_move_raises_nothing() {
     );
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     cfg.tee.sealing.as_mut().unwrap().secrets = Some(toml::from_str(&format!("listen = '127.0.0.1:{port}'")).unwrap());
+    admit_in(&cfg, &operator_key());
     let start = crate::KeyStart {
         predecessor: Some(exchange.address.clone()),
         mock_launch_digest: Some(UPGRADE),
@@ -167,6 +171,7 @@ async fn a_holding_start_takes_the_bundle_once_the_vault_names_its_release() {
     );
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     cfg.tee.sealing.as_mut().unwrap().secrets = Some(toml::from_str(&format!("listen = '127.0.0.1:{port}'")).unwrap());
+    admit_in(&cfg, &operator_key());
     let start = crate::KeyStart {
         predecessor: Some(exchange.address.clone()),
         mock_launch_digest: Some(UPGRADE),
@@ -244,7 +249,8 @@ async fn a_host_cannot_turn_a_request_for_the_keys_into_one_for_the_secrets_or_b
         reads: String::new(),
         secrets_only: false,
         binding: None,
-        standby_signature: None,
+        standby_signature: exchange.standby_signature(&bound),
+        admission: exchange.requester().admission,
         evidence,
     };
     send(&mut stream, &flipped).await.unwrap();

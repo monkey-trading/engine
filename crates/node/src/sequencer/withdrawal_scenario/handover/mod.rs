@@ -34,6 +34,7 @@ use crate::sequencer::withdrawal_scenario::client::{Client, User};
 use crate::sequencer::withdrawal_scenario::flows::last_seq;
 mod third;
 mod upgrade;
+use crate::sequencer::withdrawal_scenario::admission::admit;
 use crate::sequencer::withdrawal_scenario::handover::upgrade::upgrade_with_rotation_on;
 use crate::sequencer::withdrawal_scenario::node::{ChildProcess, Node, free_port, write_config};
 use crate::sequencer::withdrawal_scenario::rpc::{
@@ -44,6 +45,7 @@ use crate::sequencer::withdrawal_scenario::standby::{pay_b, rotation_and_staking
 use crate::sequencer::withdrawal_scenario::{
     CHILD_ALERTS, CHILD_CONFIG, CHILD_FEED, CHILD_KEYS, CHILD_LAUNCH_DIGEST, CHILD_TEST,
 };
+use crate::tee::sealing::Release;
 use crate::test_support::LOADED_WAIT;
 
 /// The deployer's operator key, which `config/anvil.toml` names: the initial operator in effect.
@@ -249,6 +251,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
 
     // 5. B starts: it resolves A's handover endpoint from the registry, fetches the published log,
     //    takes the keys and the final segment, and continues; A exits; A's authorization pays.
+    let b_release_id = Release { launch_digest: B_DIGEST, config_sha256: b_config_hash };
+    admit(&b_dir.join("keys"), b_release_id, &b_admin, node.chain.vault)?;
     let mut b_child = spawn_release(&b_dir, &b_config_path, &node, B_DIGEST, None)?;
     let b_client = Client::new(b_port, node.chain.vault)?;
     let mut b_check = child_checker(&mut b_child);
@@ -313,6 +317,8 @@ pub(super) async fn elected_operator_takes_over() -> anyhow::Result<()> {
     node.chain.warp_to(effective2 + 120).await?;
     node.chain.sync_release().await?;
     node.chain.wait_finalized_release(a_release).await?;
+    let a_release_id = Release { launch_digest: A_DIGEST, config_sha256: a_config_hash };
+    admit(&node.dir.join("keys"), a_release_id, &operator_key, node.chain.vault)?;
     node.restart_keys(None, Some(A_DIGEST)).await?;
     // B, a rotation-set member, follows A once it has handed the keys back.
     let b_name = b_dir.file_name().context("B's directory has a name")?.to_string_lossy();

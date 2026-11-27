@@ -125,6 +125,8 @@ pub(super) struct Reads {
     pub(super) turn: Option<Option<ScheduledTurn>>,
     /// At the endpoint's block and at the quorum's head.
     pub(super) rotation: Option<(bool, bool)>,
+    /// The operator the registry names; by default the dev config's operator, on the current release.
+    pub(super) named: Option<Option<crate::handover::quorum::Named>>,
 }
 
 impl Majority {
@@ -151,7 +153,11 @@ impl crate::handover::quorum::ReleaseQuorum for Majority {
         let synced = reads.synced.or(*self.synced.lock().unwrap()).unwrap_or(current.id);
         let turn = reads.turn.clone().unwrap_or_else(|| self.scheduled.lock().unwrap().clone());
         let turn = turn.filter(|_| now_ms.is_some()).as_ref().map(crate::handover::quorum::TurnFacts::from);
-        Box::pin(async move { Ok(crate::handover::quorum::Held { current, synced, turn }) })
+        let rotation = reads.rotation.map_or_else(|| self.rotation.finalized.load(Ordering::SeqCst), |(at, _)| at);
+        let admin_key = dev_config().operator().unwrap().address;
+        let named = reads.named.unwrap_or(Some(crate::handover::quorum::Named { admin_key, release: current.id }));
+        let held = crate::handover::quorum::Held { current, synced, turn, rotation, named };
+        Box::pin(async move { Ok(held) })
     }
 
     fn rotation<'a>(

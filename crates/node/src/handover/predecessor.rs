@@ -71,6 +71,9 @@ pub(crate) struct Predecessor<C = CheckpointRpc> {
     /// The log's daily turns as sequencing stopped, which admit a later turn's member once the
     /// sequencer is gone (`ensure_logged`).
     retained: std::sync::Mutex<Option<engine_core::turns::DailyTurns>>,
+    /// The log's operator key as sequencing stopped, which answers for a successor the vault's own
+    /// release names once the sequencer is gone (`requester`).
+    retained_operator: std::sync::Mutex<Option<AccountId>>,
     /// The log's protocol version and the last tip found on it, which answer a tail request once the
     /// sequencer is gone (`tail_after`).
     tail_evidence: std::sync::Mutex<tail::Evidence>,
@@ -133,6 +136,7 @@ impl Predecessor {
             engine: None,
             logged: std::sync::Mutex::new(None),
             retained: std::sync::Mutex::new(None),
+            retained_operator: std::sync::Mutex::new(None),
             tail_evidence: Default::default(),
             assignments: crate::handover::assigned::for_config(cfg, "handover_assignments")?,
             quorum: Arc::new(crate::custody::ReleaseReader::connect(&cfg.custody)?),
@@ -236,6 +240,7 @@ impl<C: CheckpointChain> Predecessor<C> {
                     return Ok(refuse(stream, e).await);
                 }
                 self.retain_turns().await;
+                self.retain_operator().await;
                 self.retain_version().await;
                 let stopped = self.stop().await;
                 match &stopped {
@@ -321,8 +326,9 @@ impl<C: CheckpointChain> Predecessor<C> {
     /// minimum TCB, its policy is this release's, and the vault names that release at finality, or
     /// the finalised schedule names it for the turn trusted time has reached (`turns`) and this
     /// release's log accepted it, as the checkpoint endpoint and the custody quorum both read them
-    /// (`quorum`), or the latest agreed block's assignment does as `admit_turn` states, which also holds
-    /// a turn's member to its own enclave by its standby key.
+    /// (`quorum`), or the latest agreed block's assignment does as `admit_turn` states, and the request is
+    /// from the successor's own enclave, by the standby key the schedule or an admission names
+    /// (`requester`).
     /// Error cases:
     /// - any of those checks fails, or the vault cannot be read
     async fn admit(
@@ -442,6 +448,7 @@ fn unconfirmed(why: &str) -> Served {
 mod assignment;
 pub(super) mod checks;
 mod listener;
+mod requester;
 mod secrets;
 mod tail;
 

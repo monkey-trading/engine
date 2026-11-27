@@ -13,11 +13,17 @@ use super::tail;
 pub(super) struct Challenge {
     /// 32 random bytes, hex.
     pub(super) nonce: String,
+    /// Whether the holder takes a request only from the successor's own enclave: signed by its standby
+    /// key (`member_digest`), with the admission naming that key where it has one. A holder from before
+    /// that check sends none, and refuses a request with either field, so a successor sends it neither.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) standby: bool,
 }
 
 /// The successor's request: a one-time public key, the config it runs with and, for the keys, the
 /// newest protocol version its build reads, and its quote over them and the connection's challenge,
-/// which a turn's member also signs with its standby key.
+/// which the successor also signs with its release's standby key, with the admission naming that key
+/// where it has one.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
@@ -47,6 +53,10 @@ pub(super) struct Request {
     /// (`member_digest`), which the holder requires while the schedule lists one as promotable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) standby_signature: Option<String>,
+    /// The admission naming the standby key that signed, for a successor whose key the schedule does
+    /// not list as promotable (`admission`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) admission: Option<super::admission::Admission>,
     pub(super) evidence: Evidence,
 }
 

@@ -39,7 +39,9 @@ impl AdminAction {
                 AdminCommand::SetBenchmarkRate { benchmark, annual_bps }
             }
             AdminAction::SyncBenchmarks { .. } => bail!("publisher sync is asynchronous"),
-            AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) => bail!("secrets take no admin command"),
+            AdminAction::DeliverSecrets(_) | AdminAction::SecretsStatus(_) | AdminAction::SignAdmission(_) => {
+                bail!("secrets and admissions take no admin command")
+            }
             AdminAction::SetNotice { text } => {
                 check_notice_text(&text).map_err(anyhow::Error::msg)?;
                 AdminCommand::SetNotice { text }

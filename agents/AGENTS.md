@@ -447,10 +447,16 @@ an index: load only the rule whose hint matches the current action.
   names, takes the keys — and the sealed tail segment, so no seq is missing — over HPKE after each
   release attests the other, the holder admitting a release, a turn or, for the delivered secrets, a
   rotation switch its checkpoint endpoint reads only once a strict majority of the custody providers
-  reads the same at the same final block (`handover/quorum.rs`, `custody/release_reads.rs`), and a
-  turn's member only with the signature of the standby key the schedule lists as its candidate's
-  promotable key over its request, or by its release alone while it holds none
-  (`handover/predecessor/assignment.rs`, `member::take_standby`); the elected successor resolves the incumbent's handover endpoint from
+  reads the same at the same final block (`handover/quorum.rs`, `custody/release_reads.rs`), and every
+  successor, the delivered secrets' included, only from its own enclave: each request carries the
+  signature of the release's standby key the enclave sealed (`StandbyKeys::open_or_seal`), sent only to
+  a holder whose challenge asks for it (`Challenge::standby`), which the
+  holder takes only as the turn's member's promotable key or as an admission names it, signed by the
+  turn's admin key, while rotation is on and no turn names the operator by the admin key of the
+  operator the registry names, read through the quorum, or while it is off by the operator key the
+  holder's log holds (`handover/admission.rs`, `handover/predecessor/requester.rs`; `engine admin
+  sign-admission` writes the admission into the successor's sealing directory, `handover-admission.json`,
+  and nothing admits a successor by its release alone); the elected successor resolves the incumbent's handover endpoint from
   the registry's recorded source and fetches the published log first), the trusted time check against
   Roughtime servers with sequenced time held to monotonic time's pace (`clock.rs`), the custody adapter (mock, which from V75 records a staking frontier at the engine's time once an epoch has ended past it, `custody/mock_frontier.rs`, or EVM vault deposits over alloy, each window of blocks read once with the hash of its last block and checked for a reorganisation each poll by that boundary's header read again, walking back through the stored window ends on a mismatch, and each receipt's block and the deposit count read again once final before its principal is released (`custody/evm/progress.rs`, `custody/tests/confirmed/scan/boundary.rs`), from V83 holding a reorganisation's transitions until each orphan is paired or, at the eligible head, disproved, and moving its receipts in one command, `custody/evm/lifecycle/transitions.rs`, mirroring the
   staking contract's finalised events once `InitStaking` has applied, with V27 scan progress
@@ -1784,6 +1790,10 @@ Run from the repo root:
   --key-file <key> deliver-secrets --to <host:port> --release <release.toml> --secrets-file <file>`
   (`secrets-status` reads what it attests it holds; `--allow-mock` for a dev node). Against anything
   but a local dev node, [no-deploy](rules/no-deploy.md) applies
+- Admit a successor enclave's standby key for a handover: `cargo run -p engine-node -- admin --config <config>
+  --key-file <key> sign-admission --release <release id> --key <standby key> --out handover-admission.json`, signed
+  offline by the key that answers for it, into the successor's sealing directory. Placing it for anything but a local
+  dev node falls under [no-deploy](rules/no-deploy.md)
 - Production secrets dev scenario: `./scripts/dev-production-secrets.sh` (the vault scenario's
   requirements; obviously fake values, private temporary data, and its own free ports)
 - Operator election dev scenario: `./scripts/dev-operator-election.sh` (starts Anvil, deploys the

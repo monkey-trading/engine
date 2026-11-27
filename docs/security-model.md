@@ -1403,7 +1403,11 @@ timelock has superseded therefore never signs again from its old sealed file, ev
 again later.
 
 The keys move to a new release only after the vault names it, and only after each release attests
-the other over a challenge fresh to the connection. An enclave takes a peer's quote, in a handover,
+the other over a challenge fresh to the connection. Neither the keys nor the delivered secrets go to
+an enclave of that release unless its request carries the signature of the standby key that it
+sealed, and that key is the successor's promotable key or an admission by the key that answers for
+the successor names it, as [Elections and daily turns](#elections-and-daily-turns) describes. An
+enclave takes a peer's quote, in a handover,
 a standby key's vouch or a log check, only from a CPU model that its attested configuration's
 `[[tee.cpu_models]]` lists, the release manifest's entries, at that model's own minimum, never at
 its own platform's versions. A trading server whose own processor its list does not admit raises
@@ -1428,7 +1432,9 @@ the custody providers must then read the same at that block, which they must nam
 and hold final. Any difference refuses the request, raises the Warning
 `checkpoint_endpoint_disagrees`, and sequencing goes on. While the custody providers' latest agreed
 block shows a turn naming the operator, that read fixes the successor's release itself, and the
-endpoint can only refuse. The delivered secrets move only once the endpoint and the custody
+endpoint can only refuse. At the endpoint's block, the custody providers also read the registry's
+rotation switch and the operator that it names, which answer for a successor that no turn names.
+The delivered secrets move only once the endpoint and the custody
 providers each read the registry's rotation switch off, both at the finalized block and at the
 latest.
 
@@ -1590,12 +1596,26 @@ the turns its log held at the stop show it will accept, up to seven turns ahead.
 back an enclave's Roughtime replies can therefore delay a handover, but cannot bring it forward.
 
 The turn's release and assignment are public, so an enclave that runs the member's release on any
-SEV-SNP host proves both. The holder therefore also requires the member's own enclave: the request
+SEV-SNP host proves both. The holder therefore also requires the member's own enclave. Every request
 must carry a signature over its report data, which binds the connection's challenge, the one-time
-key the keys are encrypted to and the assignment, by the standby key that the schedule lists as the
-candidate's promotable key at the custody quorum's latest agreed block. That key is sealed in the
-member's own enclave for its release and registered from the candidate's account, so another enclave
-of the same release holds another key, which no candidate registered.
+key the keys are encrypted to and the assignment, by the requester's standby key. That key is sealed
+in the requester's own enclave for its release, so another enclave of the same release holds another
+key. The holder takes the key as the member's only in two cases:
+
+- the schedule lists it as the candidate's promotable key at the custody quorum's latest agreed
+  block, which only the candidate's account registers;
+- the schedule lists no promotable key for the candidate, and an admission names the key for the
+  member's release, signed by the turn's admin key (`engine admin sign-admission`). The candidate
+  signs one before its first registration lands, after its own release move voids the key, as in an
+  upgrade in office, and after a promotion consumes the key. A registered key ends every earlier
+  admission's use.
+
+A handover that no turn names binds the successor the same way. An election's handover before a
+schedule is named needs an admission by the admin key of the operator that the registry names, for
+the release that the registry names, both read by the custody quorum at the checkpoint endpoint's
+block. An upgrade while rotation is off, and its move of the delivered secrets, need an admission by
+the operator key that the incumbent's log holds in effect. The host carries the admission to the
+successor, and can only withhold it: it names a key that no other enclave holds.
 
 A holder that the schedule names again in a new generation, after a turn that nobody took, seals its
 live keys in that generation on its sequencing thread before it logs `TurnTaken`. No copy is
@@ -1621,16 +1641,19 @@ Known limits:
 - Turns are a day long. The `short-turns` feature, which makes a turn five minutes long and a set's
   notice one turn, is for development only. A `production` build does not compile with it, and a
   production trading server refuses to mirror a schedule whose `turnLength()` is not a day.
-- A member whose candidate holds no promotable standby key is admitted by its release and assignment
-  alone. That is the case until its first registration lands, after its own release move voids the
-  key, including the move of an upgrade in office, and after a promotion consumes it. Until its
-  candidate registers a key, an enclave that runs its release on another host can take that member's
-  keys and stall its turn until a skip or a promotion moves it on. That enclave runs the same code,
-  so it signs only honest states, and it holds none of the member's delivered secrets.
-- An election's handover, before a schedule is named, and an upgrade while rotation is off admit the
-  release the vault names, which anyone can reproduce, since no schedule records a standby key to
-  bind the successor to. Whoever first runs that release on an SEV-SNP host and asks for the keys
-  takes them, and in an upgrade the delivered secrets, into the same code on its own host.
+- A host can stall a handover in three ways. It can withhold a successor's admission. It can delete
+  the successor's sealed standby key, so that its enclave seals another. It can rewrite the holder's
+  challenge so that it no longer asks for a standby signature, which a holder from before that check
+  does not send, so the successor sends none and is refused. The handover then waits until the
+  host relays the messages unaltered, or the key that answers for the successor signs an admission
+  of the new key, or, for a turn's member, the candidate registers it.
+- An admission names a key and a release, and stays good for both: nothing revokes it but a change
+  of the key that signed it or, for a turn's member, a registered standby key. A host that kept a
+  copy of an admitted enclave's sealed standby key and its admission can therefore take the keys
+  into that enclave again if the vault names the same release again, before the enclave that the
+  operator meant to admit. The enclave runs the same code, so it signs only honest states, but its
+  host can then stall. Changing the configuration makes a new release, which no earlier admission
+  names.
 - A trading server activates its build's newest protocol version at boot, and an older build cannot
   read the log after that. Every member of the rotation sets must therefore run a release that
   implements a version before any member's trading server activates it.

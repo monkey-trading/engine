@@ -136,7 +136,7 @@ async fn obtain(
 /// - the release has no keys sealed in the vault's generation of it and no flag: refused while
 ///   rotation is off or the registry names no handover source for the incumbent; new keys cannot
 ///   be sealed, the predecessor's log cannot be fetched, the standby key a take signs with cannot be
-///   read (`member::take_standby`), or the handover fails
+///   opened or sealed (`member::requester`), or the handover fails
 async fn obtain_with(
     cfg: &NodeConfig,
     start: &KeyStart,
@@ -226,8 +226,8 @@ async fn obtain_with(
         let vault = vault.context("--predecessor needs [checkpoints]: the vault names the key")?;
         // Trusted time has reached a turn's boundary when the schedule names this release for it.
         let reached = turn.as_ref().map(|turn| turn.boundary);
-        let standby = crate::node::member::take_standby(cfg, start).await?;
-        let parts = (sealer.as_ref(), attestor, standby.as_ref());
+        let requester = crate::node::member::requester(cfg, start)?;
+        let parts = (sealer.as_ref(), attestor, requester.as_ref());
         crate::handover::take_with(cfg, address, parts, vault, reached, metrics, assignments).await?
     } else if let (Some(vault), Some(turn)) = (vault, &turn) {
         // No sealed keys and no flag, and the schedule names this release for the turn trusted time
@@ -235,8 +235,8 @@ async fn obtain_with(
         // never took its own turn, from the one before it.
         let at = vault.observe(crate::checkpoints::View::Finalized, &[]).await?;
         crate::node::member::before_whole_log_take(cfg, start)?;
-        let standby = crate::node::member::take_standby(cfg, start).await?;
-        let parts = (sealer.as_ref(), attestor, standby.as_ref());
+        let requester = crate::node::member::requester(cfg, start)?;
+        let parts = (sealer.as_ref(), attestor, requester.as_ref());
         crate::handover::turns::take_keys(cfg, vault, (&at, turn), parts, metrics, assignments).await?
     } else if let Some(vault) = vault {
         // No sealed keys and no flag: while the registry has rotation on and the vault names this
@@ -263,8 +263,8 @@ async fn obtain_with(
                     "the vault names this release through an election in effect: taking the keys from the \
                      operator it replaced"
                 );
-                let standby = crate::node::member::take_standby(cfg, start).await?;
-                let parts = (sealer.as_ref(), attestor, standby.as_ref());
+                let requester = crate::node::member::requester(cfg, start)?;
+                let parts = (sealer.as_ref(), attestor, requester.as_ref());
                 crate::handover::take_with(cfg, &source.endpoint, parts, vault, None, metrics, assignments).await?
             }
             None => bail!("{}", refusal(dir, generation)),

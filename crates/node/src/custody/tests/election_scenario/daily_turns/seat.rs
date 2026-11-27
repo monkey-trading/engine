@@ -126,7 +126,22 @@ impl Member {
             .unwrap(),
         );
         cfg.file_sha256 = CONFIG_HASH;
+        self.admit(&cfg);
         cfg
+    }
+
+    /// Seals its release's standby key, which signs its takes, and writes its admin key's admission of
+    /// it for `cfg`'s vault, as its candidate does before the key is registered: no member here reads
+    /// the latest agreed block, so none takes a turn by a promotable key.
+    fn admit(&self, cfg: &NodeConfig) {
+        let sealer = Box::new(MockSealer { launch_digest: self.digest });
+        let standby = crate::standby_key::StandbyKeys::open_or_seal(&self.keys, sealer, CONFIG_HASH).unwrap();
+        let domain =
+            crate::log::CheckpointDomain { chain_id: cfg.custody.chain_id, vault: cfg.custody.vault.parse().unwrap() };
+        let admission =
+            crate::handover::admission::Admission::sign(&self.key, domain, standby.address(), self.release().id());
+        let file = self.keys.join(crate::handover::admission::ADMISSION_FILE);
+        std::fs::write(file, serde_json::to_vec(&admission).unwrap()).unwrap();
     }
 
     /// Runs this member's wait for its turns on `clock`'s time under `cfg`, from boot or once `resume`
