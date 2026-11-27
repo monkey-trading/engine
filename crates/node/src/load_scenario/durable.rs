@@ -29,7 +29,7 @@ use crate::load_scenario::archived::Archived;
 use crate::log::{CheckpointDomain, CheckpointParent, Manifest, ReplayWorkers};
 use crate::sequencer::recovery_scale::flow::config;
 use crate::sequencer::recovery_scale::paired::node_config;
-use crate::sequencer::{Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg};
+use crate::sequencer::{ReplayedLog, Request, Sequencer, SequencerConfig, SignedWithdrawal, StreamMsg};
 use crate::snapshot::sealing::Endpoint;
 use crate::stats::Stats;
 use crate::tee::EnclaveKey;
@@ -221,30 +221,47 @@ pub(super) async fn open_launch(
     if !recovering {
         return Sequencer::recover(cfg, durable.key.clone(), stream.clone(), withdrawals);
     }
-    let signer = AccountId(durable.key.address());
     let parent = *durable.finalized.lock().unwrap_or_else(PoisonError::into_inner);
     cfg.checkpoint_parent = parent;
     let domain = CheckpointDomain { chain_id: CHAIN_ID, vault: VAULT };
+    let log = read_launch_log(durable, (cfg.log_dir, domain), parent, stats).await?;
+    Sequencer::recover_from(log, cfg, durable.key.clone(), stream.clone(), withdrawals)
+}
+
+/// Reads the log in `log_dir`, checkpointed under `domain`, from the newest daily snapshot the vault's finalized checkpoint `parent` allows, with
+/// `stats` holding the dashboard record the snapshot carries, or one started over when it carries none, for the
+/// replay of the log after it to record into.
+/// Error cases:
+/// - no daily snapshot serves the start, or the log after it does not read
+async fn read_launch_log(
+    durable: &Durable,
+    (log_dir, domain): (&Path, CheckpointDomain),
+    parent: CheckpointParent,
+    stats: &Stats,
+) -> anyhow::Result<ReplayedLog> {
+    let signer = AccountId(durable.key.address());
     let daily = durable.daily_snapshots().context("[daily_snapshots]")?;
     let bounds = Bounds { finalized: parent.seq, before: None, keep_from: None };
     let signers = BTreeSet::from([signer]);
-    let start = snapshot_start_against(None, (daily, cfg.log_dir), (domain, &signers), bounds, &NoRoots)
+    let mut start = snapshot_start_against(None, (daily, log_dir), (domain, &signers), bounds, &NoRoots)
         .await
         .context("no daily snapshot serves the start")?;
+    match crate::daily_snapshots::History::read(start.snapshot.history.take().as_deref()).stats {
+        Some(record) => stats.restore(record),
+        None => stats.restart(),
+    }
     let trust = (Some(domain), Some(signer), Some(parent));
-    let workers = ReplayWorkers::available();
-    let log = Sequencer::read_log_starting(
+    Sequencer::read_log_starting(
         start,
-        cfg.log_dir,
+        log_dir,
         trust,
         Default::default(),
         |_| {},
         None,
         Some(stats.clone()),
         None,
-        workers,
-    )?;
-    Sequencer::recover_from(log, cfg, durable.key.clone(), stream.clone(), withdrawals)
+        ReplayWorkers::available(),
+    )
 }
 
 /// What the owner returned once it was stopped. A node whose sequencer has gone leaves the owner's input
@@ -310,6 +327,26 @@ mod tests {
     use anyhow::{Context, anyhow};
 
     use super::*;
+
+    /// A restart from a daily snapshot goes on from the dashboard record the snapshot carries, so the series and
+    /// activity from before it survive, with the log before the snapshot off the host.
+    #[tokio::test]
+    async fn a_launch_restart_restores_the_dashboard_record_its_daily_snapshot_carries() {
+        use crate::node::recovery::history_tests::{Written, remove_segments_before};
+
+        let written = Written::run("soak-launch-restart-record").await;
+        remove_segments_before(&written.cfg.node.log_dir, written.snapshot.seq);
+        let root = written.snapshot.root.parse().expect("the snapshot's checkpoint root");
+        let parent = CheckpointParent { has_checkpoint: true, seq: written.snapshot.seq, root };
+        // The domain `Written`'s node checkpoints under.
+        let domain = CheckpointDomain { chain_id: 31_337, vault: AccountId([0; 20]) };
+        let (stats, log_dir) = (Stats::new(&written.cfg).expect("stats"), written.cfg.node.log_dir.clone());
+        let durable =
+            Durable { cfg: written.cfg, key: written.key, finalized: Arc::new(Mutex::new(parent)), archived: None };
+        let log = read_launch_log(&durable, (&log_dir, domain), parent, &stats).await.expect("the start");
+        assert_eq!(log.snapshot_sequence(), Some(written.snapshot.seq), "the start went on from the snapshot");
+        assert_eq!(stats.dump(), written.stats.dump(), "the dashboard record");
+    }
 
     #[test]
     fn an_owner_closing_with_its_input_is_a_shutdown_and_any_other_error_is_not() {
