@@ -229,15 +229,16 @@ impl Drop for Archived {
 /// How often the bucket drops the tails the vault has finalized past.
 const FORGET_EVERY: Duration = Duration::from_secs(10);
 
-/// Drops, every `FORGET_EVERY`, each checkpoint's tail at or below the vault's finalized checkpoint, which no reader
-/// takes once the ranges hold what it did: a bucket's lifecycle rule for them. Without it a run holds every tail in
+/// Drops, every `FORGET_EVERY`, each checkpoint's tail below the vault's finalized checkpoint, which no reader takes
+/// once the ranges hold what it did, and keeps the finalized checkpoint's own, whose range is not whole until a later
+/// checkpoint is finalized: a bucket's lifecycle rule for them. Without it a run holds every tail in
 /// this process's memory, which at ten times launch flow is more than the log itself.
 async fn forget_tails(bucket: crate::archive::stand_in::Handle, vault: Vault) {
     use crate::archive::Finality;
     loop {
         tokio::time::sleep(FORGET_EVERY).await;
         if let Ok(Some((finalized, _))) = vault.finalized().await {
-            bucket.with(|held| held.objects.retain(|key, _| tail_seq(key).is_none_or(|seq| seq > finalized)));
+            bucket.with(|held| held.objects.retain(|key, _| tail_seq(key).is_none_or(|seq| seq >= finalized)));
         }
     }
 }

@@ -39,7 +39,9 @@
 # more than six ranges behind or a storage task ends, and the run when it was a day long and the bucket holds no
 # range or snapshot, three days long and nothing left the host, or none of its restarts from the third day on found
 # the log's older segments off the host. The archive's and the snapshots' alerts fail an interval as any alert
-# does. SOAK_STORAGE=0 runs the node as one with `[snapshots]` instead: a recovery cache every SOAK_SNAPSHOT_SECS
+# does. That shape runs no history index (the launch node's retention, #1301, and `[snapshots]`' paired index are
+# covered by SOAK_STORAGE=0 only), and the storage runs at a test build's timings: the window passes and the
+# uploaders poll every 20 ms. SOAK_STORAGE=0 runs the node as one with `[snapshots]` instead: a recovery cache every SOAK_SNAPSHOT_SECS
 # (300) of sequenced time, its history index, and a restart from the newest cache.
 # It runs SOAK_HOURS (8) at SOAK_MULTIPLE (10) times launch flow in intervals of
 # SOAK_REPORT_MINUTES (60), each judged in windows of SOAK_WINDOW_SECS (120):

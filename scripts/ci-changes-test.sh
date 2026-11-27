@@ -55,7 +55,7 @@ for foundation in crates/core/src/engine/mod.rs crates/wire/src/lib.rs crates/no
   case_ pull_request "rust image $node wasm_verifier" "$foundation"
 done
 case_ pull_request "rust ct_watch engine_build" crates/node/src/ct_watch/mod.rs
-case_ pull_request "rust scenario_tests" crates/node/src/archive/uploader.rs crates/node/src/archive/scenario.rs \
+case_ pull_request "rust scenario_tests soak" crates/node/src/archive/uploader.rs crates/node/src/archive/scenario.rs \
   crates/node/src/archive/uploader/tests.rs scripts/dev-log-archive.sh crates/node/src/archive/read/scenario.rs \
   crates/node/src/archive/read/segments/tests.rs scripts/dev-archive-read.sh \
   crates/node/src/sequencer/recovery_scale/snapshot_archive.rs scripts/dev-snapshot-archive.sh \
@@ -67,9 +67,12 @@ for feed in crates/node/src/feeds/coinbase.rs crates/node/src/feeds/mod.rs crate
 done
 for rotation in crates/node/src/handover/tail.rs crates/node/src/node/member/turn.rs crates/node/src/seed_relay/mod.rs \
   crates/node/src/sequencer/turns.rs crates/node/src/custody/registry.rs crates/node/src/api/operator.rs \
-  crates/node/src/api/awards.rs crates/node/src/archive/read/segments.rs crates/node/src/archive/read/source.rs \
-  crates/node/src/archive/window/restore.rs crates/node/src/archive/window/bounds.rs; do
+  crates/node/src/api/awards.rs; do
   case_ pull_request "rust $anvil log_heads scenario_tests recovery_scale engine_build" "$rotation"
+done
+for reader in crates/node/src/archive/read/segments.rs crates/node/src/archive/read/source.rs \
+  crates/node/src/archive/window/restore.rs crates/node/src/archive/window/bounds.rs; do
+  case_ pull_request "rust $anvil log_heads scenario_tests recovery_scale soak engine_build" "$reader"
 done
 for custody in crates/node/src/custody/quorum.rs crates/node/src/checkpoints/mod.rs crates/node/src/exit.rs \
   crates/node/src/withdrawals.rs crates/node/src/sequencer/payouts.rs; do

@@ -5,13 +5,13 @@
 //! has handed it the shutdown cache. A node started again on the same directory reads its newest
 //! cache and the commands past it.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
 use engine_core::types::AccountId;
-use std::collections::BTreeSet;
 use tokio::sync::{Semaphore, broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -207,7 +207,7 @@ pub(super) fn open(
 }
 
 /// Recovers the sequencer on the log in `dir` as the launch configuration starts one: the log read from the newest
-/// daily snapshot whose checkpoint the vault has finalized, which signed by this node's key, and the log after it, or,
+/// daily snapshot whose checkpoint the vault has finalized, signed by this node's key, and the log after it, or,
 /// for a fresh run, an empty log. The log before that snapshot may be off the host.
 /// Error cases:
 /// - no daily snapshot serves the start, or the log after it does not read, or the sequencer refuses it
