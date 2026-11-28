@@ -367,7 +367,21 @@ cp -R "$work/log-full" "$work/log"
 start_node "$work/node4.log"
 ours="$(last_log_seq)"
 [[ "$ours" =~ ^[0-9]+$ ]] || fail "no seq in the restored log"
-# A head this node never released: seq ours+1000 over a junk cumulative prefix, extending the real
+# The restarted node holds a longer log than the posted head, so its own poster releases a newer
+# head on chain shortly after the start, and again every posting interval. The overtaking head must
+# extend whatever head is latest when it lands, so first wait for the node's own first post, then
+# read the parent and post, and read and sign again if a poster's post slipped in between (the
+# contract reverts NotParent, selector 0xe20becd3).
+leg3_posted="$posted"
+node_posted=""
+for _ in $(seq 1 450); do
+  seq_now="$(posted_seq)"
+  [[ "$seq_now" =~ ^[0-9]+$ && "$seq_now" -gt "$leg3_posted" ]] && node_posted="$seq_now" && break
+  kill -0 "$node_pid" 2>/dev/null || fail "node exited before posting its head"
+  sleep 0.2
+done
+[[ -n "$node_posted" ]] || fail "the restarted node did not post a head past $leg3_posted within 90s"
+# A head this node never released: seq ours+1000 over a junk cumulative prefix, extending the latest
 # confirmed head as its parent (only a first post of the epoch may name none) — far enough ahead
 # that this log's own head, which keeps moving on mock feed prices (~13 commands a second), cannot
 # overtake it before the poster's next read — signed by the published mock enclave key (the
@@ -377,14 +391,25 @@ ours="$(last_log_seq)"
 # --no-hash signs the raw digest, the same form the enclave key signs.
 junk_link="0x$(printf '11%.0s' $(seq 1 32))"
 junk_seq=$((ours + 1000))
-parent_seq="$(posted_seq)"
-parent_link="$(posted_head | sed -n 2p | tr -d '[:space:]')"
-data="$(python3 "$work/log_head_digest.py" 31337 "$vault" "$(vault_epoch)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link")"
-digest="$(cast keccak "$data")"
-signature="$(cast wallet sign --no-hash --private-key "$mock_key" "$digest")"
-[[ "$signature" =~ ^0x[0-9a-f]{130}$ ]] || fail "no 65-byte signature for the overtaking head"
-cast send "$logheads" "post(uint64,bytes32,uint64,bytes32,bytes)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link" "$signature" \
-  --private-key "$junk_relayer_key" --rpc-url "$rpc" >/dev/null
+sent=""
+for attempt in 1 2 3 4 5; do
+  parent_head="$(posted_head)"
+  parent_seq="$(sed -n 1p <<<"$parent_head" | tr -d '[:space:]')"
+  parent_link="$(sed -n 2p <<<"$parent_head" | tr -d '[:space:]')"
+  data="$(python3 "$work/log_head_digest.py" 31337 "$vault" "$(vault_epoch)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link")"
+  digest="$(cast keccak "$data")"
+  signature="$(cast wallet sign --no-hash --private-key "$mock_key" "$digest")"
+  [[ "$signature" =~ ^0x[0-9a-f]{130}$ ]] || fail "no 65-byte signature for the overtaking head"
+  if send_out="$(cast send "$logheads" "post(uint64,bytes32,uint64,bytes32,bytes)" "$junk_seq" "$junk_link" "$parent_seq" "$parent_link" "$signature" \
+    --private-key "$junk_relayer_key" --rpc-url "$rpc" 2>&1)"; then
+    sent=yes
+    break
+  fi
+  # Only the poster's own post landing between the read and the send is retried.
+  grep -q "e20becd3" <<<"$send_out" || fail "the overtaking post failed: $send_out"
+  echo "leg 4: the node's poster released a newer head than parent seq $parent_seq (attempt $attempt); reading the parent again"
+done
+[[ -n "$sent" ]] || fail "the overtaking head did not land in 5 attempts: $send_out"
 posted_ms="$(now_ms)"
 # The poster reads at a majority-agreed latest block: the overtaking head is visible to its next
 # read, at most `read_interval_secs` away, without advancing the chain.
